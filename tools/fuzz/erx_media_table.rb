@@ -20,11 +20,13 @@ module ErxMediaTableFuzz
   ROOT = File.expand_path('../..', __dir__)
   CORE = 'erlang/apps/erx_media/src/erx_media_table.erl'
   SOURCES = %w[test/erlang/erx_media_table_cases.erl test/erlang/erx_media_table_fuzz.erl].freeze
-  Seeded = Data.define(:checked, :unchecked, :verdict)
+  # An entry let past its usable area reaches either the medium's end or the backup
+  # header there, so either verdict catches the first copy.
+  Seeded = Data.define(:checked, :unchecked, :verdicts)
   SEEDED = [Seeded.new(checked: 'Last =< LastUsable orelse fail({past_the_end, [Number]})',
-                       unchecked: 'is_integer(Last)', verdict: 'served_outside'),
+                       unchecked: 'is_integer(Last)', verdicts: %w[served_outside served_metadata]),
             Seeded.new(checked: 'andalso fail({gpt_metadata, Copy})', unchecked: 'andalso false',
-                       verdict: 'served_metadata')].freeze
+                       verdicts: %w[served_metadata])].freeze
   DEADLINE_SECONDS = '300'
 
   module_function
@@ -38,7 +40,7 @@ module ErxMediaTableFuzz
       raise "#{CORE} does not hold #{seeded.checked} once" unless core.scan(seeded.checked).size == 1
 
       output, status = fuzz(core.sub(seeded.checked, seeded.unchecked), seed: seed)
-      abort("a copy without #{seeded.checked} passed:\n#{output}") if status.success? || !output.include?(seeded.verdict)
+      abort("a copy without #{seeded.checked} passed:\n#{output}") if status.success? || seeded.verdicts.none? { |verdict| output.include?(verdict) }
     end
     puts 'erx_media_table serves only volumes inside the medium and apart from its table, and no seeded copy passes'
   end

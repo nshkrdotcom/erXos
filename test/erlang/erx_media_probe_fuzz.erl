@@ -45,7 +45,7 @@ round_of(Seed) ->
     Written = lists:nth(rand:uniform(3), [[], [msdosfs], [msdosfs, littlefs]]),
     Atoms = erlang:system_info(atom_count),
     Answer = try
-                 erx_media_probe:format(erx_media_probe_tests:reader(Volume, none), Written)
+                 erx_media_probe:format(erx_media_probe_tests:reader(Volume, none), maps:get(length, Volume), Written)
              catch
                  Class:Reason:Stack -> error({raised, Class, Reason, Stack})
              end,

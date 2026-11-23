@@ -18,7 +18,7 @@ require_relative '../../test/fixtures/probe_volumes'
 # block of a zero size then raises.
 module ErxMediaProbeFuzz
   ROOT = File.expand_path('../..', __dir__)
-  DECODER = 'erlang/apps/erx_storage/src/erx_fat_read.erl'
+  DECODER = 'erlang/apps/erx_fat/src/erx_fat_read.erl'
   SOURCES = %w[erlang/apps/erx_media/src/erx_media_probe.erl test/erlang/erx_media_probe_tests.erl
                test/erlang/erx_media_probe_fuzz.erl].freeze
   CHECKED = 'when BytesPerSector =:= 0; PerCluster =:= 0 ->'

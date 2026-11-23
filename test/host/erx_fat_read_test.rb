@@ -21,8 +21,8 @@ require_relative '../../tools/lib/erx/boot_record'
 # authorized_keys.
 class ErxFatReadTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
-  CORE = 'erlang/apps/erx_storage/src/erx_fat_read.erl'
-  APPLICATIONS = %w[erx erx_files erx_blk erx_storage].freeze
+  CORE = 'erlang/apps/erx_fat/src/erx_fat_read.erl'
+  APPLICATIONS = %w[erx erx_fat].freeze
   TESTS = %w[test/erlang/erx_fat_read_tests.erl].freeze
 
   Fault = Data.define(:name, :from, :to, :caught_by)

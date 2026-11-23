@@ -89,7 +89,7 @@ a_long_name_out_of_order_is_not_found_test() ->
 a_volume_not_laid_out_as_the_record_partition_is_refused_test() ->
     [?assertEqual({error, not_its_volume}, read(Volume))
      || Volume <- ["reserved_before_the_count", "data_not_at_the_record", "two_sector_clusters",
-                   "large_sectors", "past_the_partition", "small_fat", "blank"]].
+                   "large_sectors", "past_the_partition", "small_fat", "untyped", "blank"]].
 
 a_failed_sector_read_ends_the_reader_test() ->
     Read = reader("found"),

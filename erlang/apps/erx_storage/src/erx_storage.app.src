@@ -5,14 +5,15 @@
 %% volume on the block driver's data window, its owner erx_lfs over the NIF
 %% erx_littlefs, mounted at the domain's /data. Only the storage domain's boot
 %% script boots it; its supervisor starts the block driver's, erx_blk_sup, first, whose
-%% windows it reads, erx_blk being a library application. The system release does not
+%% windows it reads, erx_blk being a library application, as is erx_fat, whose read
+%% core reads the record volume. The system release does not
 %% ship it.
 {application, erx_storage,
  [{description, "erXos storage domain"},
   {vsn, "1"},
-  {modules, [erx_fat_read, erx_lfs, erx_lfs_sup, erx_littlefs, erx_storage_app, erx_storage_sup, erx_storage_login_keys,
+  {modules, [erx_lfs, erx_lfs_sup, erx_littlefs, erx_storage_app, erx_storage_sup, erx_storage_login_keys,
               erx_storage_system]},
   {registered, [erx_storage_sup, erx_lfs]},
-  {applications, [kernel, stdlib, erx, erx_files, erx_blk]},
+  {applications, [kernel, stdlib, erx, erx_files, erx_blk, erx_fat]},
   {mod, {erx_storage_app, []}},
   {env, []}]}.

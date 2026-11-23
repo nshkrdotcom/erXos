@@ -137,20 +137,21 @@ sector(Read, Index) ->
         _ -> fail(read_failed)
     end.
 
-%% The boot sector's BPB (section 3.1) and its admission.
+%% The boot sector's BPB (section 3.1) and its admission: a FAT16 by boot_sector/1,
+%% the one place a volume's type is decided, laid out as the record partition.
 volume(Read) ->
     case sector(Read, 0) of
         <<_:11/binary, ?SECTOR:16/little, 1, Reserved:16/little, Fats, RootEntries:16/little,
           Total16:16/little, _Media, FatSectors:16/little, _:8/binary, Total32:32/little,
-          _:474/binary, 16#55, 16#aa>> ->
+          _:474/binary, 16#55, 16#aa>> = Sector ->
             Total = case Total16 of 0 -> Total32; _ -> Total16 end,
             Root = Reserved + Fats * FatSectors,
             DataStart = Root + (RootEntries * ?ENTRY + ?SECTOR - 1) div ?SECTOR,
             Clusters = Total - DataStart,
-            admitted(Reserved > ?ERX_MEDIUM_RECORD_COUNT_START andalso Fats >= 1 andalso RootEntries >= 1
+            admitted(boot_sector(Sector) =:= {fat, 16}
+                     andalso Reserved > ?ERX_MEDIUM_RECORD_COUNT_START andalso Fats >= 1 andalso RootEntries >= 1
                      andalso DataStart =:= ?ERX_MEDIUM_RECORD_SELECT_START
                      andalso Total =< ?ERX_MEDIUM_RECORD_SECTORS
-                     andalso Clusters >= ?FAT16_MIN andalso Clusters < ?FAT32_MIN
                      andalso FatSectors * ?SECTOR >= (Clusters + 2) * 2),
             #volume{read = Read, fat = Reserved, root = Root, root_entries = RootEntries, clusters = Clusters};
         _ ->

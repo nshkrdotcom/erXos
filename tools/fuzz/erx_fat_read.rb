@@ -18,7 +18,7 @@ require_relative '../../test/fixtures/fat_record_volume'
 # ask for a sector past the partition.
 module ErxFatReadFuzz
   ROOT = File.expand_path('../..', __dir__)
-  CORE = 'erlang/apps/erx_storage/src/erx_fat_read.erl'
+  CORE = 'erlang/apps/erx_fat/src/erx_fat_read.erl'
   FUZZ = 'test/erlang/erx_fat_read_fuzz.erl'
   CHECKED = 'Cluster >= 2 andalso Cluster < Clusters + 2 orelse fail(does_not_read),'
   UNCHECKED = 'Clusters > 0,'

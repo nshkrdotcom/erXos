@@ -38,16 +38,16 @@ fsimg(Name) ->
 with(Volume, Overlay) ->
     maps:merge(Volume, maps:remove(length, signed(Overlay, 0))).
 
-%% The volume's placement: sectors past its length are erange.
+%% The volume's placement; the probe never asks for a sector past its length.
 reader(#{length := Length} = Volume, _Failing) ->
-    fun(Lba) when Lba >= Length -> {error, erange};
+    fun(Lba) when Lba >= Length -> error({read_past_the_volume, Lba});
        (Lba) -> {ok, maps:get(Lba, Volume, <<0:(?SECTOR * 8)>>)}
     end.
 
 probe(Volume) -> probe(Volume, ?DEVELOPMENT).
 
 probe(Volume, Written) ->
-    {ok, Probe} = erx_media_probe:format(reader(Volume, none), Written),
+    {ok, Probe} = erx_media_probe:format(reader(Volume, none), maps:get(length, Volume), Written),
     Probe.
 
 %% A seed of each row.
@@ -97,9 +97,15 @@ a_volume_too_short_lacks_the_signatures_past_it_test() ->
 
 a_failed_read_fails_the_probe_test() ->
     Read = fun(2) -> {error, eio}; (_) -> {ok, <<0:(?SECTOR * 8)>>} end,
-    ?assertEqual({error, {read, eio}}, erx_media_probe:format(Read, ?DEVELOPMENT)),
+    ?assertEqual({error, {read, eio}}, erx_media_probe:format(Read, 1000, ?DEVELOPMENT)),
     Short = fun(_) -> {ok, <<0:8>>} end,
-    ?assertEqual({error, {read, {short, 1}}}, erx_media_probe:format(Short, ?DEVELOPMENT)).
+    ?assertEqual({error, {read, {short, 1}}}, erx_media_probe:format(Short, 1000, ?DEVELOPMENT)).
+
+%% A sector inside the volume whose read fails, erange included, fails the probe:
+%% only the volume's length says where its sectors end.
+an_erange_inside_the_volume_fails_the_probe_test() ->
+    Read = fun(2) -> {error, erange}; (_) -> {ok, <<0:(?SECTOR * 8)>>} end,
+    ?assertEqual({error, {read, erange}}, erx_media_probe:format(Read, 1000, ?DEVELOPMENT)).
 
 a_boot_sector_without_a_cluster_count_has_no_type_test() ->
     <<Head:11/binary, _:16, Rest/binary>> = maps:get(0, fsimg("fat16.img")),

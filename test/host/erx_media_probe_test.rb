@@ -17,7 +17,7 @@ require_relative '../fixtures/probe_volumes'
 class ErxMediaProbeTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
   PROBE = 'erlang/apps/erx_media/src/erx_media_probe.erl'
-  APPLICATIONS = %w[erx erx_files erx_blk erx_storage erx_media].freeze
+  APPLICATIONS = %w[erx erx_fat erx_media].freeze
   TESTS = %w[test/erlang/erx_media_probe_tests.erl].freeze
 
   Fault = Data.define(:name, :from, :to, :caught_by)
@@ -37,6 +37,9 @@ class ErxMediaProbeTest < Minitest::Test
     Fault.new(name: 'littlefs read in block 0 alone',
               from: '|| Block <- [0, ?ERX_PROBE_LITTLEFS_BLOCK]]},', to: '|| Block <- [0]]},',
               caught_by: 'a_fat32_volume_that_kept_a_littlefs_superblock_selects_littlefs_test'),
+    Fault.new(name: "the volume's length ignored",
+              from: "read(_Read, Lba, Length) when Lba >= Length ->\n    past_the_volume;\n", to: '',
+              caught_by: 'a_volume_too_short_lacks_the_signatures_past_it_test'),
     Fault.new(name: 'a failed read taken as a missing signature',
               from: '{error, Reason} -> throw({?MODULE, Reason})', to: '{error, _} -> past_the_volume',
               caught_by: 'a_failed_read_fails_the_probe_test')

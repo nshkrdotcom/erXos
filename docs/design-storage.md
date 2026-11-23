@@ -1785,7 +1785,9 @@ Fiasco from the sixth word, `record_volume`, of the domain's
 the holder of the manifest's window
 ([design-fiasco.md](design-fiasco.md#the-booted-slot)). It reads the
 file with `erx_fat_read`, the pure read
-core of the FAT format that the FAT server above reads through too:
+core of the FAT format that the FAT server above reads through too,
+in the FAT server's application `erx_fat`, a library application with
+no `mod` that the storage domain's release names beside `erx_storage`:
 `root_file(ReadSector, Name, MaxBytes)` takes a function that reads one
 sector of the window, the long name and the size bound, and answers
 `{ok, Bytes}` or `{error, Finding}`, one of the closed set of

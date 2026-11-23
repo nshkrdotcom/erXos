@@ -501,7 +501,11 @@ release check refuses a release other than the media domain's that names
 `erx_media`; a media domain's release that names `erx_storage`, whose
 `erx_littlefs` loads the NIF, or `erx_blk`, the block driver; and, in a
 release build, a media domain's release that names `erx_lfs` or carries
-the littlefs port.
+the littlefs port. FAT's read core, `erx_fat_read`, lies in `erx_fat`,
+the FAT server's application, a library application with no `mod` that
+depends on neither, so the media domain's release and the storage
+domain's both name it and `erx_media` depends on it, never on
+`erx_storage`.
 
 ## Reading a medium
 
@@ -586,8 +590,11 @@ format reaches a sector outside its volume.
 
 ### The probe
 
-`erx_media_probe:format(Read)` runs in the volume's own process and
-reads, through the volume's placement, a fixed set of sectors. It
+`erx_media_probe:format(Read, Length, Written)` runs in the volume's own
+process and reads, through the volume's placement, a fixed set of the
+sectors below Length, the volume's length; a failed read of any of them
+fails the probe, since a signature it could not read is not known to be
+absent. It
 answers the first format in the order below whose signature it finds,
 which **selects** the volume's format, and, of the other formats the
 build writes, those whose signature it also finds, for the writable

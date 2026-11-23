@@ -4,7 +4,7 @@
 -module(erx_media_probe).
 -moduledoc """
 The format of a drive's volume, named by its own bytes (docs/design-drives.md,
-"The probe"). format/2 reads a fixed set of the volume's 512-byte sectors through
+"The probe"). format/3 reads a fixed set of the volume's 512-byte sectors through
 the function it is handed, the volume's placement, each once, and tries each
 format's signature in `fstyp`'s order, the header at the largest offset first. The
 first format found **selects** the volume's format; of the other formats the build
@@ -17,15 +17,16 @@ erx_fat_read:boot_sector/1, which also gives the FAT type, so the type has one
 source: a FAT12 volume is answered as `msdosfs` with `fat => 12`, for its mount to
 refuse by name.
 
-A sector the placement refuses with `erange` lies past the volume, which then lacks
-the signatures there. Any other failed read is the probe's one failure,
-`{error, {read, Reason}}`: a signature it could not read is not known to be absent,
-and reading on would select a later format by mistake.
+The probe is handed the volume's length in sectors: a sector at or past it is not
+read, and the volume lacks the signatures there. A failed read of any sector inside
+it, `erange` included, is the probe's one failure, `{error, {read, Reason}}`: a
+signature it could not read is not known to be absent, and reading on would select a
+later format by mistake.
 """.
 
 -include("generated/erx_abi.hrl").
 
--export([format/2]).
+-export([format/3]).
 -export_type([name/0, probe/0, read_sector/0]).
 
 -define(SECTOR, 512).
@@ -37,13 +38,13 @@ and reading on would select a later format by mistake.
 -type signature() :: {non_neg_integer(), binary()}.
 
 -doc """
-The volume's format, read through Read, with the formats Written that the build
-writes also found on it.
+The format of a volume of Length sectors, read through Read, with the formats
+Written that the build writes also found on it.
 """.
--spec format(read_sector(), [name()]) -> {ok, probe()} | {error, {read, term()}}.
-format(Read, Written) ->
+-spec format(read_sector(), non_neg_integer(), [name()]) -> {ok, probe()} | {error, {read, term()}}.
+format(Read, Length, Written) when is_integer(Length), Length >= 0 ->
     try
-        Sectors = maps:from_list([{Lba, read(Read, Lba)} || Lba <- lists:usort(sectors())]),
+        Sectors = maps:from_list([{Lba, read(Read, Lba, Length)} || Lba <- lists:usort(sectors())]),
         Found = [Name || {Name, Test} <- order(), found(Test, Sectors)],
         {ok, probe(Found, Written, Sectors)}
     catch
@@ -75,10 +76,11 @@ order() ->
 sectors() ->
     [0 | [Offset div ?SECTOR || {_Name, Signatures} <- order(), is_list(Signatures), {Offset, _} <- Signatures]].
 
-read(Read, Lba) ->
+read(_Read, Lba, Length) when Lba >= Length ->
+    past_the_volume;
+read(Read, Lba, _Length) ->
     case Read(Lba) of
         {ok, <<Sector:?SECTOR/binary>>} -> Sector;
-        {error, erange} -> past_the_volume;
         {ok, Other} -> throw({?MODULE, {short, byte_size(Other)}});
         {error, Reason} -> throw({?MODULE, Reason})
     end.

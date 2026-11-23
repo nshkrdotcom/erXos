@@ -48,7 +48,7 @@ module FatRecordVolume
   VOLUME_ID = 0x08
   DELETED = 0xe5
   BPB = { bytes_per_sector: SECTOR, sectors_per_cluster: 1, reserved: RESERVED, fats: FATS,
-          root_entries: ROOT_ENTRIES, total: TOTAL, fat_sectors: FAT_SECTORS }.freeze
+          root_entries: ROOT_ENTRIES, total: TOTAL, fat_sectors: FAT_SECTORS, type: 'FAT16   ' }.freeze
 
   # One root-directory file: its directory entries, its FAT links and its clusters'
   # bytes.
@@ -100,7 +100,8 @@ module FatRecordVolume
     total16, total32 = bpb.fetch(:total) < 0x10000 ? [bpb.fetch(:total), 0] : [0, bpb.fetch(:total)]
     head = ["\xeb\x3c\x90".b, 'ERXTEST ', bpb.fetch(:bytes_per_sector), bpb.fetch(:sectors_per_cluster),
             bpb.fetch(:reserved), bpb.fetch(:fats), bpb.fetch(:root_entries), total16, 0xf8,
-            bpb.fetch(:fat_sectors), 63, 255, 0, total32].pack('a3a8vCvCvvCvvvVV')
+            bpb.fetch(:fat_sectors), 63, 255, 0, total32, 0x80, 0, 0x29, 0x12345678, 'NO NAME    ',
+            bpb.fetch(:type)].pack('a3a8vCvCvvCvvvVVCCCVa11a8')
     head.ljust(510, "\0") + "\x55\xaa".b
   end
 
@@ -183,6 +184,7 @@ module FatRecordVolume
     'two_sector_clusters' => volume(files: [keys], bpb: { sectors_per_cluster: 2 }),
     'large_sectors' => volume(files: [keys], bpb: { bytes_per_sector: 1024 }),
     'past_the_partition' => volume(files: [keys], bpb: { total: TOTAL + 1 }),
+    'untyped' => volume(files: [keys], bpb: { type: 'MSWIN   ' }),
     'straddle' => volume(files: [*SHORT_ONLY, keys]),
     'out_of_order' => volume(files: [out_of_order]),
     'small_fat' => volume(files: [keys], bpb: { fat_sectors: FAT_SECTORS - 1, reserved: RESERVED + FATS }),

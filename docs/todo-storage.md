@@ -52,6 +52,12 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
      FAT32 and EROFS; a host tool that writes a littlefs volume's files with `erx_lfs_config`; an MBR and
      a GPT writer; signature-only images of the refused formats), and the QEMU cases of design-drives.md
      in the `usb` suite, over its stick plumbing.
+  Open findings of step 3's reviews:
+  * [Medium] `erx_lfs` lies in `erx_storage`, which the media domain's release may not name, so
+    step 4's littlefs volumes need it moved to an application of its own, as `erx_fat_read` moved to
+    `erx_fat`, before the release check of step 4 can pass with littlefs in a development build.
+  * [Low] `erx_media_table`'s `VOLUMES_MAX` is a local macro of 8 until step 1's `media_volumes_max`
+    limit exists in `abi/manifest.txt`; then the reader takes the generated macro.
 * [High] storage and apps, the system partition and the `system` tree
   ([docs/todo-system-partition.md](todo-system-partition.md),
   [design-storage.md](design-storage.md#the-system-tree)): each slot
@@ -365,7 +371,7 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   the rule that a USB domain holds its controller's unit and nothing else, which keeps what drives a
   stick from parsing anything, has no check, as the media domain's and a block drive holder's
   allow-lists have (`check_drive_domains`).
-* [Low] storage, a host writing beside the boot-selection record (`erlang/apps/erx_storage/src/erx_fat_read.erl`;
+* [Low] storage, a host writing beside the boot-selection record (`erlang/apps/erx_fat/src/erx_fat_read.erl`;
   [design-storage.md](design-storage.md#removable-media-fat)): a computer that writes the `ERXOS` volume,
   copying `authorized_keys` or its own metadata (macOS's `.Trashes`, `._` files, `.fseventsd`), may put clusters
   beside the record in its erase unit, and a card pulled mid-copy, or a flash erase of that unit, can tear the
@@ -491,14 +497,14 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   image holds the release too, from which the system domain starts, until
   the boot from the medium decides which releases leave the boot image
   ([design-storage.md](design-storage.md#data-model)).
-* [Low] storage, long-name case in `erx_fat_read` (`erlang/apps/erx_storage/src/erx_fat_read.erl`, `upper/1`;
+* [Low] storage, long-name case in `erx_fat_read` (`erlang/apps/erx_fat/src/erx_fat_read.erl`, `upper/1`;
   [design-storage.md](design-storage.md#removable-media-fat)): the read core maps only ASCII letters to upper
   case before comparing long names, where the design compares after mapping every Basic Multilingual Plane code
   unit through a case table generated from Unicode's character database; so a name whose letters differ only by
   a non-ASCII code unit whose simple uppercase is an ASCII letter (U+0131, U+017F) is not found, which fails safe for
   `authorized_keys`. The FAT server, which needs the table, generates it and `upper/1` takes it.
 * [Low] storage, FAT's format constants have two copies (`tools/lib/erx/fat_volume.rb`, `FAT16_MIN`, `FAT32_MIN`,
-  the entry markers and attributes; `erlang/apps/erx_storage/src/erx_fat_read.erl`, the same as macros): an
+  the entry markers and attributes; `erlang/apps/erx_fat/src/erx_fat_read.erl`, the same as macros): an
   `abi/formats/fat.txt` would give both, and the FAT server, one source, as `abi/formats/erofs.txt` does for EROFS.
   The test fixture (`test/fixtures/fat_record_volume.rb`) and the fuzz target keep their own values on purpose, as
   oracles independent of the reader.
