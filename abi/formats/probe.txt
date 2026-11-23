@@ -1,0 +1,46 @@
+# Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
+# SPDX-License-Identifier: BSD-2-Clause
+# The signatures of the drives' probe (docs/design-drives.md, "The probe"), in the
+# probe's order: for each format the byte offset in the volume where its signature
+# lies and the bytes it holds there. EROFS's and F2FS's are their own formats' magic
+# and superblock offset (abi/formats/erofs.txt, abi/formats/f2fs.txt), and FAT's is the
+# FAT server's boot-sector decoder, erx_fat_read:boot_sector/1. FreeBSD src at commit
+# 95719d8a895bf8170851e9844d9b4092b1d2b6fe.
+
+# UFS: struct fs's fs_magic, its last field (sys/ufs/ffs/fs.h:446, :451), in a
+# superblock at each of SBLOCKSEARCH's offsets (:68-76), holding FS_UFS1_MAGIC or
+# FS_UFS2_MAGIC (:457-458), little-endian.
+limit probe_ufs_magic_offset u32 1372
+limit probe_ufs_superblock_ufs2 u32 65536
+limit probe_ufs_superblock_ufs1 u32 8192
+limit probe_ufs_superblock_floppy u32 0
+limit probe_ufs_superblock_piggy u32 262144
+bytes probe_ufs1_magic 4 value 54190100
+bytes probe_ufs2_magic 4 value 19015419
+# ISO 9660: the volume descriptor's type, CD001 and version (usr.sbin/fstyp/cd9660.c:38-50).
+limit probe_cd9660_offset u32 32768
+bytes probe_cd9660_magic 8 value 0143443030310100
+# HFS+ and HFSX: the volume header's signature and version (usr.sbin/fstyp/hfsplus.c:42,
+# :106-112), big-endian.
+limit probe_hfsplus_offset u32 1024
+bytes probe_hfsplus_magic 4 value 482b0004
+bytes probe_hfsx_magic 4 value 48580005
+# ext2: the superblock's s_magic, 56 bytes into the superblock at 1024
+# (usr.sbin/fstyp/ext2fs.c:39-63), little-endian.
+limit probe_ext2fs_offset u32 1080
+bytes probe_ext2fs_magic 2 value 53ef
+# littlefs: the superblock's name, at byte 8 of block 0 or of block 1 of 4 KiB
+# (littlefs SPEC.md:444-447).
+limit probe_littlefs_offset u32 8
+limit probe_littlefs_block u32 4096
+bytes probe_littlefs_magic 8 value 6c6974746c656673
+# APFS: the container superblock's nx_magic, after its 32-byte object header
+# (usr.sbin/fstyp/apfs.c:77-93).
+limit probe_apfs_offset u32 32
+bytes probe_apfs_magic 4 value 4e585342
+# exFAT: the boot sector's file-system name (usr.sbin/fstyp/exfat.c:333).
+limit probe_exfat_offset u32 3
+bytes probe_exfat_magic 8 value 4558464154202020
+# NTFS: the boot sector's system id (usr.sbin/fstyp/ntfs.c:146-147).
+limit probe_ntfs_offset u32 3
+bytes probe_ntfs_magic 8 value 4e54465320202020

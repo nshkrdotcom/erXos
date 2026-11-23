@@ -40,8 +40,8 @@ else the read function raises or throws propagates.
 
 -include("generated/erx_abi.hrl").
 
--export([root_file/3]).
--export_type([finding/0, read_sector/0]).
+-export([root_file/3, boot_sector/1]).
+-export_type([finding/0, read_sector/0, fat_type/0]).
 
 -define(SECTOR, 512).
 -define(ENTRY, 32).
@@ -88,6 +88,48 @@ root_file(Read, Name, MaxBytes) ->
     end.
 
 fail(Finding) -> throw({?MODULE, Finding}).
+
+-type fat_type() :: 12 | 16 | 32 | none.
+
+-doc """
+Whether a volume whose first sector is Sector holds FAT, by fstyp's test
+(usr.sbin/fstyp/msdosfs.c:48-115 at FreeBSD 95719d8a895b): the boot sector's
+`0x55 0xAA` signature, or the Raspberry Pi Pico bootloader's zero signature behind
+its jump bytes, then a non-zero 16-bit FAT size with `FAT` at the FAT12 and FAT16
+type field, or a zero one and a non-zero 32-bit FAT size with `FAT` at FAT32's. A
+FAT volume's type follows from its count of clusters alone (section 3.5), and is
+`none` when its BIOS parameter block gives no count: a zero sector or cluster size,
+or a data area that starts at or past the volume's end. The drives' probe and the
+FAT server's mount both take the type from here.
+""".
+-spec boot_sector(<<_:4096>>) -> {fat, fat_type()} | not_fat.
+boot_sector(<<Jump:3/binary, _Oem:8/binary, BytesPerSector:16/little, PerCluster, Reserved:16/little, Fats,
+              RootEntries:16/little, Total16:16/little, _Media, Fat16:16/little, _:8/binary, Total32:32/little,
+              Fat32:32/little, _:14/binary, Type16:3/binary, _:25/binary, Type32:3/binary, _:425/binary,
+              Signature:2/binary>>) ->
+    Signed = Signature =:= <<16#55, 16#aa>>
+        orelse (Signature =:= <<0, 0>> andalso Jump =:= <<16#eb, 16#3c, 16#90>>),
+    Named = (Fat16 =/= 0 andalso Type16 =:= <<"FAT">>)
+        orelse (Fat16 =:= 0 andalso Fat32 =/= 0 andalso Type32 =:= <<"FAT">>),
+    FatSectors = case Fat16 of 0 -> Fat32; _ -> Fat16 end,
+    Total = case Total16 of 0 -> Total32; _ -> Total16 end,
+    case Signed andalso Named of
+        true -> {fat, fat_type(BytesPerSector, PerCluster, Total, Reserved + Fats * FatSectors, RootEntries)};
+        false -> not_fat
+    end.
+
+%% The type from the count of clusters, the data area starting after Before
+%% sectors and the root directory's.
+fat_type(BytesPerSector, PerCluster, _Total, _Before, _RootEntries) when BytesPerSector =:= 0; PerCluster =:= 0 ->
+    none;
+fat_type(BytesPerSector, PerCluster, Total, Before, RootEntries) ->
+    DataStart = Before + (RootEntries * ?ENTRY + BytesPerSector - 1) div BytesPerSector,
+    case Total > DataStart andalso (Total - DataStart) div PerCluster of
+        false -> none;
+        Clusters when Clusters < ?FAT16_MIN -> 12;
+        Clusters when Clusters < ?FAT32_MIN -> 16;
+        _ -> 32
+    end.
 
 sector(Read, Index) ->
     case Read(Index) of

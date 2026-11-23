@@ -29,6 +29,7 @@ include formats/hid.txt
 include formats/bluetooth.txt
 include formats/input.txt
 include formats/mbr.txt
+include formats/probe.txt
 include formats/usb.txt
 include formats/xhci.txt
 include formats/sdhci.txt
