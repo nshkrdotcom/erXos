@@ -22,8 +22,8 @@ class ErxMediaTableTest < Minitest::Test
   # Each fault replaces one passage of erx_media_table; the case named in caught_by must fail.
   FAULTS = [
     Fault.new(name: 'the status-byte test dropped',
-              from: 'lists:all(fun(#slot{status = Status}) -> Status =:= 0 orelse Status =:= ?ACTIVE end, Slots)',
-              to: 'is_list(Slots)',
+              from: 'Status =:= ?ERX_MBR_STATUS_INACTIVE orelse Status =:= ?ERX_MBR_STATUS_ACTIVE end,',
+              to: 'is_integer(Status) end,',
               caught_by: 'a_boot_sector_whose_status_bytes_are_code_is_no_table_test'),
     Fault.new(name: 'the overlap check made order-dependent',
               from: 'A < B, FirstA =< LastB andalso FirstB =< LastA],', to: 'A < B, FirstA =< FirstB andalso FirstB =< LastA],',
@@ -33,7 +33,7 @@ class ErxMediaTableTest < Minitest::Test
               caught_by: 'an_entry_running_backwards_refuses_the_table_test'),
     Fault.new(name: 'a missing primary signature taken as no GPT',
               from: '{true, _} -> {gpt, gpt(Medium)};',
-              to: '{true, _} -> case sector(1, Medium) of <<?GPT_SIGNATURE, _/binary>> -> {gpt, gpt(Medium)}; ' \
+              to: '{true, _} -> case binary:part(sector(1, Medium), 0, ?ERX_GPT_SIGNATURE_SIZE) of ?ERX_GPT_SIGNATURE_BYTES -> {gpt, gpt(Medium)}; ' \
                   '_ -> {none, whole(Medium)} end;',
               caught_by: 'a_primary_header_without_its_signature_is_read_from_the_backup_test'),
     Fault.new(name: 'the status-byte test made before the 0xEE test',
@@ -53,8 +53,11 @@ class ErxMediaTableTest < Minitest::Test
     Fault.new(name: "the other copy's array left out of the metadata",
               from: 'array_range(Taken) | other_array(Other)]', to: 'array_range(Taken) | other_array({error, Other})]',
               caught_by: 'a_usable_area_that_meets_the_other_array_is_refused_test'),
+    Fault.new(name: "the array's place bounded by the medium alone",
+              from: 'andalso array_placed(Header, Last),', to: 'andalso array_last(Header) =< Last,',
+              caught_by: 'an_array_out_of_its_place_fails_its_header_test'),
     Fault.new(name: 'the array bound removed',
-              from: 'andalso Entries * EntrySize =< ?GPT_ARRAY_MAX', to: '',
+              from: 'andalso Entries * EntrySize =< ?ERX_GPT_ARRAY_MAX', to: '',
               caught_by: 'an_array_of_17_kib_is_refused_test'),
     Fault.new(name: 'the end check a sector short',
               from: 'Last =< LastUsable orelse fail({past_the_end, [Number]})',

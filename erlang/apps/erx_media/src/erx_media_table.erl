@@ -46,19 +46,14 @@ read/2; it makes no atom from the medium's bytes.
 -export([read/2, place/3]).
 -export_type([sectors/0, volume/0, finding/0, answer/0]).
 
--define(SECTOR, 512).
--define(PROTECTIVE, 16#ee).
--define(EXTENDED, [16#05, 16#0f, 16#85]).
--define(ACTIVE, 16#80).
-%% The GPT header (sys/sys/disk/gpt.h): its signature and least revision
-%% (GPT_HDR_SIG, GPT_HDR_REVISION), its least size (g_part_gpt.c:478), the least
-%% entry size (:501), and erXos's bound on an array, room for 128 entries of 128
-%% bytes.
--define(GPT_SIGNATURE, "EFI PART").
--define(GPT_REVISION, 16#00010000).
--define(GPT_HEADER_MIN, 92).
--define(GPT_ENTRY_MIN, 128).
--define(GPT_ARRAY_MAX, 16384).
+%% The sector, sector 0's and the GPT's layouts are abi/formats/mbr.txt's and
+%% abi/formats/gpt.txt's.
+-define(SECTOR, ?ERX_MBR_SECTOR_SIZE).
+-define(ENTRIES_BYTES, (?ERX_MBR_ENTRIES * ?ERX_MBR_ENTRY_SIZE)).
+-define(EXTENDED, [?ERX_MBR_TYPE_EXTENDED, ?ERX_MBR_TYPE_EXTENDED_LBA, ?ERX_MBR_TYPE_EXTENDED_LINUX]).
+-define(GUID_BYTES, 16).
+-define(NAME_BYTES, (?ERX_GPT_ENTRY_SIZE - ?ERX_GPT_ENTRY_OFF_NAME)).
+%% The volumes a medium serves at most (docs/design-drives.md, "The table").
 -define(VOLUMES_MAX, 8).
 
 -type lba() :: non_neg_integer().
@@ -123,7 +118,8 @@ sector(Lba, Medium) ->
     Sector.
 
 %% Rules 1, 3 and 5: which scheme sector 0 holds.
-scheme(Sector = <<_:?ERX_MBR_ENTRIES_OFFSET/binary, Entries:64/binary, 16#55, 16#aa>>, Medium) ->
+scheme(Sector = <<_:?ERX_MBR_ENTRIES_OFFSET/binary, Entries:?ENTRIES_BYTES/binary, ?ERX_MBR_SIGNATURE:16/little>>,
+       Medium) ->
     Slots = slots(Entries),
     case {protective(Slots), mbr_table(Sector, Entries, Slots)} of
         {true, _} -> {gpt, gpt(Medium)};
@@ -134,15 +130,21 @@ scheme(_Sector, Medium) ->
     {none, whole(Medium)}.
 
 slots(Entries) ->
-    [#slot{number = Number, status = Status, type = Type, start = Start, length = Length}
-     || {Number, <<Status, _:3/binary, Type, _:3/binary, Start:32/little, Length:32/little>>}
-            <- lists:enumerate([Entry || <<Entry:16/binary>> <= Entries])].
+    [#slot{number = Number, status = u8(Entry, ?ERX_MBR_ENTRY_OFF_STATUS), type = u8(Entry, ?ERX_MBR_ENTRY_OFF_TYPE),
+           start = u32(Entry, ?ERX_MBR_ENTRY_OFF_LBA_START), length = u32(Entry, ?ERX_MBR_ENTRY_OFF_LBA_SECTORS)}
+     || {Number, Entry} <- lists:enumerate([Entry || <<Entry:?ERX_MBR_ENTRY_SIZE/binary>> <= Entries])].
 
-protective(Slots) -> lists:any(fun(#slot{type = Type}) -> Type =:= ?PROTECTIVE end, Slots).
+protective(Slots) -> lists:any(fun(#slot{type = Type}) -> Type =:= ?ERX_MBR_TYPE_GPT_PROTECTIVE end, Slots).
 
 mbr_table(Sector, Entries, Slots) ->
-    lists:all(fun(#slot{status = Status}) -> Status =:= 0 orelse Status =:= ?ACTIVE end, Slots)
-        andalso not (Entries =:= <<0:512>> andalso plausible_bpb(Sector)).
+    lists:all(fun(#slot{status = Status}) -> Status =:= ?ERX_MBR_STATUS_INACTIVE orelse Status =:= ?ERX_MBR_STATUS_ACTIVE end,
+              Slots)
+        andalso not (Entries =:= <<0:(?ENTRIES_BYTES * 8)>> andalso plausible_bpb(Sector)).
+
+%% The little-endian fields of a record whose length its reader matched.
+u8(Record, Offset) -> binary:at(Record, Offset).
+u32(Record, Offset) -> <<_:Offset/binary, Value:32/little, _/binary>> = Record, Value.
+u64(Record, Offset) -> <<_:Offset/binary, Value:64/little, _/binary>> = Record, Value.
 
 %% g_part_mbr.c:176-191: a bytes-per-sector field that is a power of two from 512 to
 %% 4096 and a sectors-per-cluster field that is a power of two from 1 to 128.
@@ -195,31 +197,42 @@ header_of({ok, Header}) -> Header.
 header(_Copy, Lba, #medium{last = Last}) when Lba > Last ->
     {error, gpt_header};
 header(Copy, Lba, Medium = #medium{last = Last}) ->
-    case sector(Lba, Medium) of
-        <<?GPT_SIGNATURE, Revision:32/little, Size:32/little, Crc:32/little, _Reserved:4/binary,
-          Self:64/little, Alternate:64/little, First:64/little, LastUsable:64/little, _Disk:16/binary,
-          Table:64/little, Entries:32/little, EntrySize:32/little, ArrayCrc:32/little, _/binary>> = Sector ->
-            Header = #header{copy = Copy, self = Self, alternate = Alternate, first = First, last = LastUsable,
-                             table = Table, entries = Entries, entry_size = EntrySize, array_crc = ArrayCrc},
-            Passes = Size >= ?GPT_HEADER_MIN andalso Size =< ?SECTOR andalso header_crc(Sector, Size) =:= Crc
-                andalso Revision >= ?GPT_REVISION
-                andalso Self =:= Lba andalso Alternate =/= Self andalso Alternate =< Last
-                andalso First >= 2 andalso First =< LastUsable andalso LastUsable < Last
-                andalso Entries >= 1 andalso EntrySize >= ?GPT_ENTRY_MIN andalso EntrySize rem 8 =:= 0
-                andalso Entries * EntrySize =< ?GPT_ARRAY_MAX
-                andalso array_last(Header) =< Last,
-            case Passes of
-                true -> {ok, Header};
-                false -> {error, gpt_header}
-            end;
-        _ ->
-            {error, gpt_header}
+    Sector = sector(Lba, Medium),
+    Size = u32(Sector, ?ERX_GPT_HEADER_OFF_SIZE),
+    Header = #header{copy = Copy, self = u64(Sector, ?ERX_GPT_HEADER_OFF_LBA_SELF),
+                     alternate = u64(Sector, ?ERX_GPT_HEADER_OFF_LBA_ALT), first = u64(Sector, ?ERX_GPT_HEADER_OFF_LBA_START),
+                     last = u64(Sector, ?ERX_GPT_HEADER_OFF_LBA_END), table = u64(Sector, ?ERX_GPT_HEADER_OFF_LBA_TABLE),
+                     entries = u32(Sector, ?ERX_GPT_HEADER_OFF_ENTRIES),
+                     entry_size = u32(Sector, ?ERX_GPT_HEADER_OFF_ENTRY_SIZE),
+                     array_crc = u32(Sector, ?ERX_GPT_HEADER_OFF_CRC_TABLE)},
+    #header{self = Self, alternate = Alternate, first = First, last = LastUsable, entries = Entries,
+            entry_size = EntrySize} = Header,
+    Passes = binary:part(Sector, ?ERX_GPT_HEADER_OFF_SIGNATURE, ?ERX_GPT_SIGNATURE_SIZE) =:= ?ERX_GPT_SIGNATURE_BYTES
+        andalso Size >= ?ERX_GPT_HEADER_MIN andalso Size =< ?SECTOR
+        andalso header_crc(Sector, Size) =:= u32(Sector, ?ERX_GPT_HEADER_OFF_CRC_SELF)
+        andalso u32(Sector, ?ERX_GPT_HEADER_OFF_REVISION) >= ?ERX_GPT_REVISION
+        andalso Self =:= Lba andalso Alternate =/= Self andalso Alternate =< Last
+        andalso First >= 2 andalso First =< LastUsable andalso LastUsable < Last
+        andalso Entries >= 1 andalso EntrySize >= ?ERX_GPT_ENTRY_MIN andalso EntrySize rem 8 =:= 0
+        andalso Entries * EntrySize =< ?ERX_GPT_ARRAY_MAX
+        andalso array_placed(Header, Last),
+    case Passes of
+        true -> {ok, Header};
+        false -> {error, gpt_header}
     end.
 
 %% The header's CRC-32 over its size, its own field read as zero.
 header_crc(Sector, Size) ->
-    <<Before:16/binary, _Crc:4/binary, After/binary>> = binary:part(Sector, 0, Size),
+    <<Before:?ERX_GPT_HEADER_OFF_CRC_SELF/binary, _Crc:4/binary, After/binary>> = binary:part(Sector, 0, Size),
     erlang:crc32([Before, <<0:32>>, After]).
+
+%% g_part_gpt.c:513-524: the array starts after sector 1, ends before the medium's
+%% last sector, and neither its first nor its last sector lies in the usable area.
+%% An array that encloses the usable area passes here; rule 2 refuses it.
+array_placed(Header = #header{table = Table, first = First, last = LastUsable}, Last) ->
+    ArrayLast = array_last(Header),
+    Usable = fun(Lba) -> Lba >= First andalso Lba =< LastUsable end,
+    Table >= 2 andalso ArrayLast < Last andalso not Usable(Table) andalso not Usable(ArrayLast).
 
 array_bytes(#header{entries = Entries, entry_size = EntrySize}) -> Entries * EntrySize.
 
@@ -252,12 +265,15 @@ gpt_entries(<<>>, _EntrySize, _Number) ->
     [];
 gpt_entries(Array, EntrySize, Number) ->
     <<Entry:EntrySize/binary, Rest/binary>> = Array,
-    <<Type:16/binary, Guid:16/binary, First:64/little, Last:64/little, _Attributes:8/binary,
-      Name:72/binary, _/binary>> = Entry,
-    case Type of
-        <<0:128>> -> gpt_entries(Rest, EntrySize, Number + 1);
-        _ -> [#entry{number = Number, first = First, last = Last, type = Type, serve = yes, name = Name, guid = Guid}
-              | gpt_entries(Rest, EntrySize, Number + 1)]
+    case binary:part(Entry, ?ERX_GPT_ENTRY_OFF_TYPE, ?GUID_BYTES) of
+        <<0:(?GUID_BYTES * 8)>> ->
+            gpt_entries(Rest, EntrySize, Number + 1);
+        Type ->
+            [#entry{number = Number, first = u64(Entry, ?ERX_GPT_ENTRY_OFF_LBA_START),
+                    last = u64(Entry, ?ERX_GPT_ENTRY_OFF_LBA_END), type = Type, serve = yes,
+                    name = binary:part(Entry, ?ERX_GPT_ENTRY_OFF_NAME, ?NAME_BYTES),
+                    guid = binary:part(Entry, ?ERX_GPT_ENTRY_OFF_UUID, ?GUID_BYTES)}
+             | gpt_entries(Rest, EntrySize, Number + 1)]
     end.
 
 %% Rule 6: each entry runs forward inside [FirstUsable, LastUsable], and no two

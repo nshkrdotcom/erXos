@@ -531,9 +531,13 @@ crafted field wraps.
    read from as its own and another sector inside the medium as its
    alternate, its usable area's first sector is at least 2 and at most
    its last, which lies before the medium's last sector, as FreeBSD
-   bounds it (`:500-504`), and its entry array lies inside the medium,
-   holds at least one entry, of at least 128 bytes and a multiple of 8,
-   and is at most 16 KiB, room for 128 entries of 128 bytes; an array
+   bounds it (`:500-504`), and its entry array holds at least one entry,
+   of at least 128 bytes and a multiple of 8, is at most 16 KiB, room
+   for 128 entries of 128 bytes, starts at sector 2 or later, ends
+   before the medium's last sector, and has neither its first nor its
+   last sector inside the usable area, as FreeBSD places it
+   (`:513-524`), so a copy whose array lies in its own usable area
+   fails and the other copy is tried; an array
    passes when its CRC-32 checks. The primary copy is taken when its
    header and its array pass, and the backup otherwise; when neither
    passes, the table is refused, naming the primary's finding. Neither
@@ -1268,7 +1272,7 @@ so a pass shows the code under test ran.
 | Test | Seeded fault that must fail it |
 | --- | --- |
 | `erx_media_table` over written cases of each rule: an MBR with one and with four entries; a FAT boot sector with zero entries and a plausible BPB, read as no table; a boot sector whose status bytes are not 0 or `0x80`, read as no table; entries of type `0x00` and of start or length 0 skipped; an extended entry listed and not served; an entry past the end, one that runs backwards and two overlapping entries, each refusing the table, the overlap in both orders | the status-byte test dropped, so a boot sector with code is read as a table; the overlap check made order-dependent, so the second order passes; the backwards check dropped |
-| the GPT cases: a GPT behind its protective entry; a primary header that fails its signature, its CRC, its usable area's bounds, an area past the medium's end among them, and its array's bounds in turn, each read from the backup at the last sector; a primary header that passes over an array that fails its CRC, read from the backup at the primary's alternate sector, which is not the last; both copies failing, refused and never read as an MBR or as no table; a signed sector 0 with an `0xEE` entry and a status byte neither `0x00` nor `0x80` over an otherwise mountable FAT boot sector, refused and never mounted whole; an array of 17 KiB; nine used entries, eight served; a usable area that meets a header, the taken array, the other copy's array, and an array that encloses the usable area, each refused `gpt metadata` | a missing primary signature taken as no GPT, so the medium falls back to no table; the status-byte test made before the `0xEE` test, so the protective sector's FAT mounts whole; the usable area's bounds dropped, so the primary whose area lies past the end is taken and the backup never read; the backup read at the last sector after a passing header, so the alternate copy is missed; the array compared by its ends alone, so the enclosing array passes; the other copy's array left out of the metadata set; the array bound removed |
+| the GPT cases: a GPT behind its protective entry; a primary header that fails its signature, its CRC, its usable area's bounds, an area past the medium's end among them, and its array's bounds in turn, each read from the backup at the last sector; a primary header that passes over an array that fails its CRC, read from the backup at the primary's alternate sector, which is not the last; both copies failing, refused and never read as an MBR or as no table; a signed sector 0 with an `0xEE` entry and a status byte neither `0x00` nor `0x80` over an otherwise mountable FAT boot sector, refused and never mounted whole; an array of 17 KiB; nine used entries, eight served; a primary array that starts at sector 0, one that starts and one that ends inside the usable area, each read from the backup, and one that ends on the last sector, where the backup header is then read, refused; both arrays inside their usable areas, refused `gpt header`; a usable area that meets a header, the other copy's array, and an array that encloses the usable area, each refused `gpt metadata` | a missing primary signature taken as no GPT, so the medium falls back to no table; the status-byte test made before the `0xEE` test, so the protective sector's FAT mounts whole; the usable area's bounds dropped, so the primary whose area lies past the end is taken and the backup never read; the backup read at the last sector after a passing header, so the alternate copy is missed; the array compared by its ends alone, so the enclosing array passes; the other copy's array left out of the metadata set; the array bound removed; the array's place bounded by the medium alone, so the array at sector 0 is taken |
 | the table as a property test: for every MBR and GPT the generator writes, the served volumes lie inside the medium, pairwise apart and apart from every metadata sector, and `place/3` never answers a sector outside its volume | the end check written `<` for `=<` |
 | `erx_media_probe` on a seed of each table row; on a FAT32 volume holding EROFS's magic at 1,024 bytes, which selects `erofs`; on a FAT32 volume that kept a littlefs superblock in block 1, which selects `littlefs` with `msdosfs` also found, mounting `ro also msdosfs` in a development build and `none format` in a release, which serves no littlefs; and on a FAT12 volume fsimg writes, refused `none format` | the order reversed, so the first volume selects `msdosfs`; the written-formats check dropped, so the littlefs volume is found alone; the FAT type left to the mount, so the FAT12 volume is selected and mounted |
 | littlefs's signature over volumes the tree's littlefs writes with `erx_lfs_config`: freshly formatted, after many commits, after compactions of the root pair that leave its current superblock in block 1, and cut mid-commit and mounted again, each found by the probe and mounted | the signature read in block 0 alone, so the compacted volume is `unknown` |
@@ -1290,6 +1294,9 @@ so a pass shows the code under test ran.
 Each lands with its parser and builds the same sources for the host:
 
 * `erx_media_table`, MBR and GPT, seeded from the host tests' cases;
+  every served volume lies inside the medium and holds none of the
+  sectors the reader read, and a copy without the end check, or
+  without the metadata rule, must fail;
 * `erx_media_probe`, seeded from one volume of each format;
 * the FAT server's decoders, already a target of the storage design;
 * the EROFS decoder, through `erx_media_blocks`, the reader's existing
@@ -1471,12 +1478,16 @@ and littlefs stays a stopgap; FAT12 is refused by name.
     `c26b2a7467a59e46a1253741a603e609035e48e6e0840e4631bfde4432e1f28b`;
   * `sys/geom/part/g_part_gpt.c`,
     `e6aa9bcbf92e0e07cca5f48589dd5c3fbb80b088e9086fc2001a1d5dd45fc42b`;
+  * `sys/sys/disk/gpt.h`,
+    `b941378450760804b8f7d829040d85d08e9cb55a095fdaf1dc2fdcd0bdeb6201`;
   * `sys/geom/part/g_part.c`,
     `936eac38d5c7a71f3b9643839972e1871301f600792a9a6b0d41fe76384c85bf`;
   * `sys/ufs/ffs/fs.h`,
     `977d6f15bac9eeccb6512a31d479af91a588bf331ca2f718d1e1c8cfdc70aea1`;
   * `usr.sbin/fstyp/fstyp.c`,
     `5c2eee079cf60baa7af5ad25f5dbff1e7a4be62a8a6cbf418a2197464bac77ac`;
+  * `usr.sbin/fstyp/msdosfs.h`,
+    `8b47c04c2ddad4c3ef6141fef64ef125283e8a7d61431ccdf1630123f92d4058`;
   * `usr.sbin/fstyp/msdosfs.c`,
     `9f8909ef88cfff0800b79ba2c20f7698d811af746771355e3fcc5b964507b48d`;
   * `usr.sbin/fstyp/cd9660.c`,

@@ -14,6 +14,14 @@ limit mbr_signature_offset u32 510
 limit mbr_signature u16 0xaa55
 limit mbr_status_inactive u8 0x00
 limit mbr_type_empty u8 0x00
+limit mbr_status_active u8 0x80
+# The type of a GPT's protective entry, and the extended types the drives' table lists and
+# does not serve (docs/design-drives.md, "The table"): FreeBSD's DOSPTYP_EXT and
+# DOSPTYP_EXTLBA (g_part_mbr.c:133-134), and Linux's extended type.
+limit mbr_type_gpt_protective u8 0xee
+limit mbr_type_extended u8 0x05
+limit mbr_type_extended_lba u8 0x0f
+limit mbr_type_extended_linux u8 0x85
 
 # One entry of a master or extended boot record.
 layout erx_mbr_entry wire_le 4 16

@@ -10,9 +10,9 @@
 %% the CRCs of the headers it can in half the rounds so the checks past them are
 %% reached, and reads the table. Whatever the medium holds, the reader never raises and
 %% makes no atom, asks only for sectors of the medium and at most five times, and
-%% every volume it serves lies inside the medium, apart from sector 0 and from every
-%% other served volume, and place/3 keeps each request inside its volume. The seed
-%% comes from make check-fuzz.
+%% every volume it serves lies inside the medium, apart from every sector the reader
+%% read and from every other served volume, and place/3 keeps each request inside its
+%% volume. The seed comes from make check-fuzz.
 
 -module(erx_media_table_fuzz).
 -export([run/1]).
@@ -43,13 +43,13 @@ round_of({SeedCapacity, SeedImage}) ->
                 2 -> Mutated
             end,
     Atoms = erlang:system_info(atom_count),
-    Answer = try
-                 erx_media_table_cases:read(Capacity, Image)
-             catch
-                 Class:Reason:Stack -> error({raised, Class, Reason, Stack})
-             end,
+    {Answer, Read} = try
+                         erx_media_table_cases:read_sectors(Capacity, Image)
+                     catch
+                         Class:Reason:Stack -> error({raised, Class, Reason, Stack})
+                     end,
     Atoms =:= erlang:system_info(atom_count) orelse error({made_an_atom, Answer}),
-    check(Answer, Capacity).
+    check(Answer, Capacity, Read).
 
 capacity(Seed) ->
     case rand:uniform(6) of
@@ -126,23 +126,26 @@ mended(<<Head:12/binary, Size:32/little, _:32, Rest:60/binary, Entries:32/little
 mended(Header, _Image) ->
     Header.
 
-check({refused, _}, _Capacity) ->
+%% Read is every sector the reader read, each one the table occupies, so no served
+%% volume holds one.
+check({refused, _}, _Capacity, _Read) ->
     0;
-check({none, [#{number := 1, first := 0, length := Capacity, serve := yes}]}, Capacity) ->
+check({none, [#{number := 1, first := 0, length := Capacity, serve := yes}]}, Capacity, _Read) ->
     0;
-check({Scheme, Volumes}, Capacity) when Scheme =:= mbr; Scheme =:= gpt ->
+check({Scheme, Volumes}, Capacity, Read) when Scheme =:= mbr; Scheme =:= gpt ->
     Served = [{First, First + Length - 1, Volume}
               || Volume = #{first := First, length := Length, serve := yes} <- Volumes],
     length(Served) =< 8 orelse error({served_too_many, Volumes}),
     [error({served_outside, Volume}) || {First, Last, Volume} <- Served, First < 1 orelse Last >= Capacity],
     [error({served_overlapping, A, B}) || {FirstA, LastA, A} <- Served, {FirstB, LastB, B} <- Served,
                                          A =/= B, FirstA =< LastB, FirstB =< LastA],
+    [error({served_metadata, Volume, Lba}) || {First, Last, Volume} <- Served, Lba <- Read, Lba >= First, Lba =< Last],
     [placed(Volume, First, Last) || {First, Last, Volume} <- Served],
     case Served of
         [] -> 0;
         _ -> 1
     end;
-check(Answer, Capacity) ->
+check(Answer, Capacity, _Read) ->
     error({unexpected_answer, Capacity, Answer}).
 
 placed(Volume, First, Last) ->

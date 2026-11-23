@@ -131,11 +131,31 @@ an_entry_outside_the_usable_area_refuses_the_table_test() ->
 a_usable_area_that_meets_a_header_is_refused_test() ->
     ?assertEqual({refused, {gpt_metadata, primary}}, table(?C, gpt(?C, [{100, 199}], #{backup_lba => 2000}))).
 
-a_usable_area_that_meets_the_taken_array_is_refused_test() ->
-    ?assertEqual({refused, {gpt_metadata, primary}}, table(?C, gpt(?C, [{200, 299}], #{primary_table => 100}))).
+%% g_part_gpt.c:513-524: a header whose array starts below sector 2, ends on the
+%% medium's last sector, or has an end inside the usable area fails, and the backup
+%% is read.
+an_array_out_of_its_place_fails_its_header_test() ->
+    Sector0 = mbr_sector(<<0:(446 * 8)>>, [{0, 16#ee, 1, ?C - 1}]),
+    AtSector0 = #{table => 0, entries => 4, array_crc => erlang:crc32(Sector0)},
+    ?assertEqual({gpt, [{1, 300, 100, yes}]},
+                 table(?C, gpt(?C, [{100, 199}], #{sector0 => Sector0, primary => AtSector0,
+                                                    backup_entries => [{300, 399}]}))),
+    %% An array on the last sector leaves no room for the backup header read there.
+    ?assertEqual({refused, {gpt_header, primary}},
+                 table(?C, gpt(?C, [{100, 199}], #{backup_lba => 4000, usable => {34, 3900}, primary_table => ?C - 32,
+                                                    backup_entries => [{300, 399}]}))),
+    ?assertEqual({gpt, [{1, 300, 100, yes}]},
+                 table(?C, gpt(?C, [{200, 299}], #{primary_table => 100, backup_entries => [{300, 399}]}))),
+    ?assertEqual({gpt, [{1, 300, 100, yes}]},
+                 table(?C, gpt(?C, [{100, 199}], #{primary_table => 20, backup_entries => [{300, 399}]}))).
+
+both_arrays_in_their_usable_area_refuse_the_table_test() ->
+    ?assertEqual({refused, {gpt_header, primary}},
+                 table(?C, gpt(?C, [{200, 299}], #{primary_table => 100, backup_table => 3000}))).
 
 a_usable_area_that_meets_the_other_array_is_refused_test() ->
-    ?assertEqual({refused, {gpt_metadata, primary}}, table(?C, gpt(?C, [{100, 199}], #{usable => {34, 4070}}))).
+    ?assertEqual({refused, {gpt_metadata, primary}},
+                 table(?C, gpt(?C, [{100, 199}], #{usable => {34, 4070}, backup => #{last => 4000}}))).
 
 an_array_that_encloses_the_usable_area_is_refused_test() ->
     ?assertEqual({refused, {gpt_metadata, primary}}, table(?C, gpt(?C, [{12, 18}], #{usable => {10, 20}}))).

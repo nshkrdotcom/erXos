@@ -1,0 +1,43 @@
+# Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
+# SPDX-License-Identifier: BSD-2-Clause
+# The GUID partition table's header and entry, as FreeBSD declares them
+# (sys/sys/disk/gpt.h, struct gpt_hdr and struct gpt_ent, at FreeBSD src commit
+# 95719d8a895bf8170851e9844d9b4092b1d2b6fe). Every field is little-endian. The header
+# is read from a 512-byte sector: its own CRC-32 covers its first hdr_size bytes with
+# that field read as zero, and the entry array's CRC-32 covers entries * entry_size
+# bytes from the array's first sector.
+bytes gpt_signature 8 value 4546492050415254
+limit gpt_revision u32 0x00010000
+# The least header size FreeBSD admits and the least entry size (g_part_gpt.c:472,
+# :509), and erXos's own bound on an array: room for 128 entries of 128 bytes.
+limit gpt_header_min u32 92
+limit gpt_entry_min u32 128
+limit gpt_array_max u32 16384
+
+# The header, with FreeBSD's explicit padding; a header's size field may be as small as
+# the padding's offset.
+layout erx_gpt_header wire_le 8 96
+  field signature u8 0 count 8
+  field revision u32 8
+  field size u32 12
+  field crc_self u32 16
+  field reserved u32 20
+  field lba_self u64 24
+  field lba_alt u64 32
+  field lba_start u64 40
+  field lba_end u64 48
+  field uuid u8 56 count 16
+  field lba_table u64 72
+  field entries u32 80
+  field entry_size u32 84
+  field crc_table u32 88
+  field padding u32 92
+
+# One entry of the array; an all-zero type is an unused entry.
+layout erx_gpt_entry wire_le 8 128
+  field type u8 0 count 16
+  field uuid u8 16 count 16
+  field lba_start u64 32
+  field lba_end u64 40
+  field attributes u64 48
+  field name u16 56 count 36

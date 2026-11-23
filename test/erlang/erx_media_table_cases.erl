@@ -8,15 +8,18 @@
 %% such a map as the medium's reader does, a sector the map lacks reading as zeros.
 
 -module(erx_media_table_cases).
--export([read/2, mbr/1, mbr_sector/2, fat_boot/1, gpt/3, seeds/0]).
+-export([read/2, read_sectors/2, mbr/1, mbr_sector/2, fat_boot/1, gpt/3, seeds/0]).
 
 -define(SECTOR, 512).
 -define(TYPE, <<"erxos test type!">>).
 -define(ROUNDS, 5).
 
-%% The table erx_media_table reads from Image, and the requests it made; at most
-%% sector 0, two headers and two arrays are ever asked for.
-read(Capacity, Image) -> read(Capacity, Image, #{}, ?ROUNDS).
+%% The table erx_media_table reads from Image; at most sector 0, two headers and two
+%% arrays are ever asked for.
+read(Capacity, Image) -> element(1, read_sectors(Capacity, Image)).
+
+%% The table, and the sectors read for it, each of them one the table occupies.
+read_sectors(Capacity, Image) -> read(Capacity, Image, #{}, ?ROUNDS).
 
 read(Capacity, Image, Seen, Rounds) ->
     case erx_media_table:read(Capacity, Seen) of
@@ -27,7 +30,7 @@ read(Capacity, Image, Seen, Rounds) ->
         {need, Lbas} ->
             error({too_many_requests, Lbas});
         Answer ->
-            Answer
+            {Answer, maps:keys(Seen)}
     end.
 
 %% Sector 0 holding the four Slots, {Status, Type, Start, Length}, after zero bytes.
