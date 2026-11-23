@@ -159,12 +159,14 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   drain's two stops. With it, [Low]: between a line driver's end and its fresh start, through a reset's off wait,
   and after a reset that fails, the UART keeps the old driver's `IMSC`, so a controller's bytes raise a line it shares with the host link with no
   driver to clear them; the old driver could mask it as it ends.
-* [Medium] bluetooth, the line keeper's shape (`erlang/apps/erx_uart/src/erx_line.erl`): its decisions and effects
-  (the driver's sends, `exit/2`, the answers) are made in the same steps, so its tests are hand-picked cases rather
-  than an exhaustive exploration of reads, writes, resets, input, flushes and ends; split it into a pure core that
-  returns actions, as `erx_bt_hci_core` is, and explore it. With it: the reset waits for the old driver through the
-  link the start makes rather than a monitor it takes, the fresh driver's start blocks the keeper while it programs
-  the UART, and the heap bound's slack (`start_link/2`) is a round number, not derived from the grant's largest write.
+* [Medium] bluetooth, the line keeper's edge (`erlang/apps/erx_uart/src/erx_line.erl`): the core (`erx_line_core`)
+  still holds the `erx_fs_waits` set, which sends each answer and monitors each grant itself, so the core is not
+  pure, its exploration sees answers in the test's mailbox rather than as actions, and a grant's end (the set's
+  `dropped`) is never explored; keep the set in the edge, as `erx_bt_fs` does, or give `erx_fs_waits` a form that
+  returns its answers as actions. The exploration checks how a reset runs and that a reset's `ok` leaves the
+  buffer empty, but not flush answers or the order of writes and resets, which only hand-picked cases cover; the reset waits for the old driver through the link the start makes rather
+  than a monitor it takes; a driver's start runs inside the keeper's step, so it blocks the keeper while it programs
+  the UART; and the heap bound's slack (`start_link/2`) is a round number, not derived from the grant's largest write.
 * [Medium] bluetooth, `erx_bt_sup`'s restart intensity (`erlang/apps/erx_bt/src/erx_bt_sup.erl`;
   docs/design-bluetooth.md "Concurrency" and "Failure handling"): the design gives none, so OTP's default of
   one restart in 5 s applies; a controller group that exhausts its own 5 restarts in 60 s about every 30 s is

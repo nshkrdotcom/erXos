@@ -9,8 +9,8 @@ keeper of every request of the tree that waits for an event. `erx_line_fs`
 is the tree; its callbacks hand this process what cannot finish at once.
 
 **The driver** speaks the console driver's messages (erx_console): the
-line sends it `{erx_console_output, Ref, Bytes}` and hears
-`{erx_console_written, Ref}` once they are written, and
+line sends it `{erx_console_output, Token, Bytes}` and hears
+`{erx_console_written, Token}` once they are written, and
 `{erx_console_input, Bytes}` as bytes arrive. The line starts it with the
 function it was started with, with the grant's flow or with flow `none`, and
 is linked to it, trapping exits, so the line's end ends the driver. A driver
@@ -67,11 +67,18 @@ driver that ends during the power cycle leaves the UART as it programmed
 it, so step 5 then has no driver to end.
 
 **A reset that fails**, at a start that does not start or a notification
-answered other than `ok`, fails by one transition: the line ends the
-holding driver, if any, and waits for its end, so no driver runs with flow
-`none` past it; the line is left broken with no driver; the reset answers
-`eio`, and so does every write that arrived during it. The next reset
-begins with no driver to stop.
+answered other than `ok`, fails the same way at any step: the line ends the
+holding driver, if any, and waits for its end as it waits for every event,
+answering flushes, clunks and reads meanwhile, so no driver runs with flow
+`none` past the reset; then the line is left broken with no driver, and the
+reset answers `eio`, as does every write that arrived during it. The next
+reset begins with no driver to stop.
+
+**Decisions and effects.** `erx_line_core` makes every decision above: it
+takes each message as an event and returns the next state and the actions
+to perform. This module is its edge: it performs those actions (starting a
+driver, sending it bytes, ending it, asking for a notification, starting a
+timer) through `erx_actions:perform/3`, and serves the grants and the status.
 
 **The tree's grants** (erx_fs_grants) the line starts and is linked to,
 so the end of either ends the other and its supervisor restarts both. The
@@ -113,31 +120,12 @@ dropped.
                | #{notify := fun((off | on) -> ok | {error, term()}),
                    off := pos_integer(), on := pos_integer()}.
 
-%% A reset begun: its wait, its answer, the holding driver (the one started with flow
-%% none, from step 2 until its end, which alone clears it) and the event the reset waits
-%% for next.
--record(reset, {wait :: erx_fs_waits:wait(),
-                done :: term(),
-                holding = none :: pid() | none,
-                step :: {stopping, Old :: pid() | none}
-                      | {notifying, off | on, Notifier :: pid()}
-                      | {waiting, off | on, Timer :: reference()}
-                      | releasing}).
-
 -record(line, {start :: start(),
-               power :: power(),
+               %% The power line's notification call, none for a device without one.
+               notify :: none | fun((off | on) -> ok | {error, term()}),
                %% The tree's grants, linked: the end of either ends the other.
                grants :: pid(),
-               %% The driver, or none from a reset's first step to its last and
-               %% while the line is broken with no driver.
-               driver :: pid() | none,
-               rx = <<>> :: binary(),
-               broken = false :: boolean(),
-               %% The write handed to the driver: its wait, the reference the
-               %% driver's written answer carries, and the answer it then gets.
-               writing = none :: none | {erx_fs_waits:wait(), reference(), term()},
-               reset = none :: none | #reset{},
-               waits = erx_fs_waits:new() :: erx_fs_waits:waits()}).
+               core :: erx_line_core:core()}).
 
 -doc """
 Starts a line whose driver Start starts and whose device's power line is Power, linked
@@ -156,7 +144,12 @@ init({Start, Power}) ->
     process_flag(trap_exit, true),
     {ok, Grants} = erx_fs_grants:start_link(erx_line_fs, self()),
     ok = erx_facet:serve(line, Grants),
-    {ok, started(Start(self(), grant), #line{start = Start, power = Power, grants = Grants, driver = none})}.
+    {Notify, Times} = case Power of
+                          none -> {none, none};
+                          #{notify := Call, off := Off, on := On} -> {Call, #{off => Off, on => On}}
+                      end,
+    {Core, Actions} = erx_line_core:new(Times),
+    {ok, perform_all(Actions, #line{start = Start, notify = Notify, grants = Grants, core = Core})}.
 
 -doc false.
 handle_call(_Request, _From, L) ->
@@ -185,11 +178,13 @@ to the system domain's code only.
 format_status(Status) ->
     erx_report:status(Status, #{state => fun state/1, message => fun message/1}).
 
-state(#line{rx = Rx, broken = Broken, driver = Driver, reset = Reset, waits = Waits}) ->
+state(#line{core = Core}) ->
+    #{rx := Rx, broken := Broken, driver := Driver, reset := Reset, requests := Requests} =
+        erx_line_core:facts(Core),
     #{rx => erx_report:bytes(Rx), broken => Broken, driver => Driver,
       resetting => Reset =/= none,
       requests => [{Wait, shown_request(Request), State}
-                   || {Wait, Request, State} <- erx_fs_waits:list(Waits)]};
+                   || {Wait, Request, State} <- Requests]};
 state(_State) ->
     hidden.
 
@@ -206,226 +201,38 @@ shown_request({read, _Count} = Read) -> Read;
 shown_request({reset, _Offset, _Count} = Reset) -> Reset;
 shown_request(_Request) -> hidden.
 
-%% Every message is one event; after it, whatever may begin begins (pump/1), so
-%% no event can leave a write or a reset waiting that the state lets run.
+%% Every message but the grants' end is one event of the core.
 -doc false.
 handle_info({'EXIT', Grants, Reason}, #line{grants = Grants} = L) ->
     {stop, {grants_ended, erx_report:reason_name(Reason)}, L};
 handle_info(Message, L) ->
-    {noreply, pump(event(Message, L))}.
+    {noreply, step({info, Message}, L)}.
 
-event(?ERX_FS_WAIT(Wait, Request), L) ->
-    take(Wait, Request, L);
-event({erx_console_input, Bytes}, L) ->
-    input(Bytes, L);
-event({erx_console_written, Ref}, #line{writing = {Wait, Ref, Written}} = L) ->
-    answer(Wait, Written, L#line{writing = none});
-event({'EXIT', Old, _}, #line{reset = #reset{step = {stopping, Old}}} = L) ->
-    stopped(L);
-event({'EXIT', Notifier, Answer}, #line{reset = #reset{step = {notifying, Phase, Notifier}}} = L) ->
-    notified(Phase, Answer, L);
-event({timeout, Timer, Phase}, #line{reset = #reset{step = {waiting, Phase, Timer}}} = L) ->
-    waited(Phase, L);
-event({'EXIT', Holding, _}, #line{reset = #reset{holding = Holding} = R} = L) ->
-    released(L#line{reset = R#reset{holding = none}});
-event({'EXIT', Driver, _}, #line{driver = Driver} = L) when Driver =/= none ->
-    no_driver(L);
-event(Message, #line{waits = Waits} = L) ->
-    case erx_fs_waits:info(Message, Waits) of
-        {flushed, Settled} -> L#line{waits = Settled};
-        %% A begun request, the write in flight or the reset, is answered
-        %% when its effect ends.
-        {begun, _Wait, _Request, Flushing} -> L#line{waits = Flushing};
-        {dropped, Dropped} -> L#line{waits = Dropped};
-        %% A late answer of a driver a reset ended, or another process's end.
-        unknown -> L
-    end.
+%% Steps the core with one event and performs its actions in order. The core never
+%% stops the line, so every step continues.
+step(Event, #line{core = Core} = L) ->
+    {Next, Actions} = erx_line_core:step(Event, Core),
+    perform_all(Actions, L#line{core = Next}).
 
-%% Waiting requests ----------------------------------------------------------
+perform_all(Actions, L) ->
+    {continue, Performed} = erx_actions:perform(Actions, fun perform/2, L),
+    Performed.
 
-take(Wait, {read, _Count} = Read, #line{reset = Reset, broken = Broken} = L)
-  when Reset =/= none; Broken ->
-    refuse(Wait, Read, {error, eio}, L);
-take(Wait, {read, _Count} = Read, L) ->
-    serve(hold(Wait, Read, L));
-take(Wait, {write, _Offset, _Bytes} = Write, L) ->
-    hold(Wait, Write, L);
-take(Wait, {reset, _Offset, _Count} = Reset, L) ->
-    hold(Wait, Reset, L).
-
-hold(Wait, Request, #line{waits = Waits} = L) ->
-    L#line{waits = erx_fs_waits:hold(?ERX_FS_WAIT(Wait, Request), Waits)}.
-
-%% A request answered in the step that takes it, through the set as every answer is.
-refuse(Wait, Request, Refused, L) ->
-    answer(Wait, Refused, hold(Wait, Request, L)).
-
-answer(Wait, Result, #line{waits = Waits} = L) ->
-    L#line{waits = erx_fs_waits:answer(Wait, Result, Waits)}.
-
-answer_all(Waits, Result, L) ->
-    lists:foldl(fun(Wait, Acc) -> answer(Wait, Result, Acc) end, L, Waits).
-
-%% The requests still waiting, in the order they arrived.
-waiting(#line{waits = Waits}) ->
-    [{Wait, Request} || {Wait, Request, waiting} <- erx_fs_waits:list(Waits)].
-
-readers(L) ->
-    [{Wait, Count} || {Wait, {read, Count}} <- waiting(L)].
-
-%% Reads ---------------------------------------------------------------------
-
-%% Bytes from the driver: kept, then given to the waiting reads in their order.
-input(_Bytes, #line{reset = Reset, broken = Broken} = L) when Reset =/= none; Broken ->
-    L;
-input(Bytes, #line{rx = Rx} = L) when byte_size(Rx) + byte_size(Bytes) > ?ERX_LINE_RX_MAX ->
-    answer_all([Wait || {Wait, _} <- readers(L)], {error, eio}, L#line{rx = <<>>, broken = true});
-input(Bytes, #line{rx = Rx} = L) ->
-    serve(L#line{rx = <<Rx/binary, Bytes/binary>>}).
-
-serve(#line{rx = <<>>} = L) ->
-    L;
-serve(#line{rx = Rx} = L) ->
-    case readers(L) of
-        [{Wait, Count} | _] ->
-            Size = min(Count, byte_size(Rx)),
-            <<Taken:Size/binary, Rest/binary>> = Rx,
-            serve(answer(Wait, {ok, Taken}, L#line{rx = Rest}));
-        [] ->
-            L
-    end.
-
-%% Writes and resets ---------------------------------------------------------
-
-%% Begins what may begin: the oldest waiting reset unless one runs, which goes
-%% ahead of every write; else the oldest waiting write unless a reset runs or a
-%% write is in flight.
-pump(#line{reset = none} = L) ->
-    case [{Wait, {ok, Count, Offset}} || {Wait, {reset, Offset, Count}} <- waiting(L)] of
-        [{Reset, Done} | _] -> begin_reset(Reset, Done, L);
-        [] -> begin_write(L)
-    end;
-pump(L) ->
-    L.
-
-begin_write(#line{writing = none, driver = none} = L) ->
-    answer_all([Wait || {Wait, {write, _Offset, _Bytes}} <- waiting(L)], {error, eio}, L);
-begin_write(#line{writing = none, driver = Driver, waits = Waits} = L) ->
-    case [{Wait, Offset, Bytes} || {Wait, {write, Offset, Bytes}} <- waiting(L)] of
-        [{Wait, Offset, Bytes} | _] ->
-            Ref = make_ref(),
-            Driver ! {erx_console_output, Ref, Bytes},
-            L#line{writing = {Wait, Ref, {ok, byte_size(Bytes), Offset}},
-                   waits = erx_fs_waits:began(Wait, Waits)};
-        [] ->
-            L
-    end;
-begin_write(L) ->
-    L.
-
-%% Step 1: the driver ends. Every write sent before the reset answers eio, the one
-%% the driver holds and those still waiting, since no byte of the last bring-up
-%% survives a reset, and so does every read waiting; writes sent after it wait
-%% for it. The rest follows the driver's end, in stopped/1, at once when the line
-%% had no driver, after which whatever may begin next begins too.
-begin_reset(Reset, Done, #line{driver = Driver, waits = Waits} = L) ->
-    {Before, _} = lists:splitwith(fun({Wait, _}) -> Wait =/= Reset end, waiting(L)),
-    Ended = [Wait || {Wait, Request} <- Before, element(1, Request) =:= write] ++
-            [Wait || {Wait, _Count} <- readers(L)] ++
-            in_flight(L),
-    Begun = answer_all(Ended, {error, eio},
-                       L#line{driver = none, writing = none,
-                              reset = #reset{wait = Reset, done = Done, step = {stopping, Driver}},
-                              waits = erx_fs_waits:began(Reset, Waits)}),
-    case Driver of
-        none -> pump(stopped(Begun));
-        _ -> exit(Driver, kill), Begun
-    end.
-
-%% Step 2, once the old driver has ended, which its own messages came before, so
-%% none of them is taken: the holding driver is started with flow none, whose start
-%% programs the UART without waiting and leaves RTS deasserted while the controller
-%% powers up, and the buffer is emptied. A line with no power line goes on to
-%% step 5 at once.
-stopped(#line{power = none} = L) ->
-    afresh(L);
-stopped(#line{start = Start, reset = R} = L) ->
-    case Start(self(), none) of
-        {ok, Holding} -> notify(off, L#line{rx = <<>>, reset = R#reset{holding = Holding}});
-        {error, _Reason} -> failed(L)
-    end.
-
-%% Steps 3 and 4 begin: the device service is asked for the off or the on
-%% notification from a process linked to the line, whose end carries the answer, so
-%% the line goes on taking requests while the firmware worker makes it, and the
-%% line's own end ends it. A crash of the call ends it with a refusal, never with the
-%% call's terms, which no report then shows.
-notify(Phase, #line{power = #{notify := Notify}, reset = R} = L) ->
+%% A start's answer and a notifier's pid are the core's next event, stepped before any
+%% other message is taken. The notifier is linked to the line, so the line's end ends
+%% it, and its end carries the answer: a crash of the call ends it with a refusal, never
+%% with the call's terms, which no report then shows.
+perform({start, Flow}, #line{start = Start} = L) ->
+    step({started, Flow, Start(self(), Flow)}, L);
+perform({notify, Phase}, #line{notify = Notify} = L) ->
     Notifier = spawn_link(fun() -> exit({notified, try Notify(Phase) catch _:_ -> {error, crashed} end}) end),
-    L#line{reset = R#reset{step = {notifying, Phase, Notifier}}}.
-
-%% A notification performed starts the line's timer for the off or the on time; any
-%% other end of the notifier fails the reset.
-notified(Phase, {notified, ok}, #line{power = Power, reset = R} = L) ->
-    Timer = erlang:start_timer(maps:get(Phase, Power), self(), Phase),
-    L#line{reset = R#reset{step = {waiting, Phase, Timer}}};
-notified(_Phase, _Failed, L) ->
-    failed(L).
-
-%% The off time passed: step 4 begins. The on time passed: step 5 begins with the
-%% holding driver's end (released/1), or at once when it has ended already.
-waited(off, L) ->
-    notify(on, L);
-waited(on, #line{reset = #reset{holding = none}} = L) ->
-    afresh(L);
-waited(on, #line{reset = #reset{holding = Holding} = R} = L) ->
-    exit(Holding, kill),
-    L#line{reset = R#reset{step = releasing}}.
-
-%% The holding driver has ended: step 5 goes on when it was waiting for that end. One
-%% that ends earlier leaves the UART as it programmed it, RTS deasserted, and the power
-%% cycle goes on.
-released(#line{reset = #reset{step = releasing}} = L) ->
-    afresh(L);
-released(L) ->
+    step({notifying, Phase, Notifier}, L);
+perform({timer, Ms, Token}, L) ->
+    _ = erlang:start_timer(Ms, self(), Token),
+    L;
+perform({output, Driver, Token, Bytes}, L) ->
+    Driver ! {erx_console_output, Token, Bytes},
+    L;
+perform({kill, Pid}, L) ->
+    exit(Pid, kill),
     L.
-
-%% Step 5, once no driver runs: the driver is started with the grant's flow, whose
-%% start programs the UART afresh without waiting (docs/design-bluetooth.md, "A
-%% reset"), the buffer is emptied, the broken mark cleared and the reset answers.
-afresh(#line{reset = #reset{wait = Reset, done = Done}, start = Start} = L) ->
-    case Start(self(), grant) of
-        {ok, Fresh} ->
-            answer(Reset, Done, L#line{driver = Fresh, rx = <<>>, broken = false, reset = none});
-        {error, _Reason} ->
-            failed(L)
-    end.
-
-%% A reset that fails, at any step: the holding driver, if any, is killed and the line
-%% waits for its end, which a kill makes prompt, so no driver runs with flow none
-%% past the reset and the next one has no driver to stop; the line is left broken
-%% with no driver, which answers every write that arrived during the reset eio; and
-%% the reset answers eio. The holding field names a driver whose end the line has not
-%% taken yet (it is cleared only there), so the wait always ends.
-failed(#line{reset = #reset{wait = Reset, holding = Holding}} = L) ->
-    ok = kill_and_wait(Holding),
-    answer(Reset, {error, eio}, no_driver(L#line{reset = none})).
-
-kill_and_wait(none) ->
-    ok;
-kill_and_wait(Driver) ->
-    exit(Driver, kill),
-    receive {'EXIT', Driver, _} -> ok end.
-
-%% The line's driver as Start answered at the line's start.
-started({ok, Driver}, L) -> L#line{driver = Driver};
-started({error, _Reason}, L) -> no_driver(L).
-
-%% The line broken with no driver: the buffer is dropped and the reads and writes
-%% waiting answer eio, as every later one does until a reset starts a driver.
-no_driver(L) ->
-    Waiting = [Wait || {Wait, Request} <- waiting(L), element(1, Request) =/= reset] ++ in_flight(L),
-    answer_all(Waiting, {error, eio}, L#line{driver = none, writing = none, rx = <<>>, broken = true}).
-
-in_flight(#line{writing = none}) -> [];
-in_flight(#line{writing = {Wait, _Ref, _Written}}) -> [Wait].
