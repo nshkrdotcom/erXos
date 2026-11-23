@@ -292,11 +292,11 @@ line, UART0's, which share line 153 through its one owner
 the system domain runs no driver for the auxiliary SPI controllers or the
 other PL011s. UART0 carries the board's CYW43455 on GPIO 30 to 33 in
 function ALT3, as CTS0, RTS0, TXD0 and RXD0, with hardware flow control;
-whether the firmware leaves those pins in ALT3 is probe B-P1, and if it
-does not, `config.txt` gains `gpio=` lines for them as it has for UART3's.
-The controller's power line is a pin of the firmware's GPIO expander,
-which the platform record lists as two notifications of UART0's entry,
-off and on, and its patch, `BCM4345C0.hcd`, ships in the boot image
+the firmware leaves those pins as inputs, so `config.txt` sets them with
+`gpio=30-33=a3`, as it sets UART3's. The controller's power line is pin 0
+of the firmware's GPIO expander, which the platform record lists as two
+notifications of UART0's entry, off and on, and the controller's ROM
+serves the Bluetooth stages without a patch
 ([design-bluetooth.md](design-bluetooth.md#the-hardware)). The VideoCore's message interface shares the
 mailbox's page, which the kernel keeps, so it goes to no driver (PL2,
 [research](research-boards-storage.md#checks-against-local-copies)). The

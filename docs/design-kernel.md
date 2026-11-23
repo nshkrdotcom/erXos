@@ -2735,9 +2735,9 @@ caller chooses neither the request nor its argument, only a row of the
 platform record the build checked
 ([design-board-sensors.md](design-board-sensors.md#the-construction-the-firmwares-requests-are-rows-of-the-platform-record)):
 
-* **The rows.** Each row is a tag from a closed set, with the one
-  argument the record gives and a fixed answer window of at most 64
-  bytes. A resource carved with `ERX_CARVE_DEVICE` from a device entry
+* **The rows.** Each row is a tag from a closed set, with the argument
+  words the record gives, as many as the tag's request, and a fixed
+  answer window of at most 64 bytes. A resource carved with `ERX_CARVE_DEVICE` from a device entry
   the platform record names with requests names that device's rows, such
   as a PCIe bridge's notification that has the USB controller behind it
   load its firmware ([design-usb.md](design-usb.md#the-vl805s-firmware));

@@ -94,8 +94,16 @@ sees it (4.8.1); the Report Map is at most 512 octets (HIDS 2.6.1).
 * **The Raspberry Pi 4's controller is a Cypress CYW43455 on UART0**, the
   first PL011, on GPIO 30 to 33 in function ALT3: CTS0, RTS0, TXD0 and
   RXD0 (BCM2711 peripherals, section 5.3; Raspberry Pi documentation,
-  `interfaces.adoc`, the table of primary and secondary UARTs). Whether
-  the firmware leaves those pins in ALT3 is probe B-P1.
+  `interfaces.adoc`, the table of primary and secondary UARTs). The
+  firmware leaves the four pins as inputs (probe B-P1,
+  [research-bluetooth-pi4.md](research-bluetooth-pi4.md#b-p1-uart0s-pins-at-erxoss-start)),
+  so the Pi 4's `config.txt` sets them with `gpio=30-33=a3`, as it sets
+  UART3's pins. The line names the function alone, so each pin keeps its
+  pull from power-on (a `gpio=` line makes only the changes it names,
+  Raspberry Pi documentation, `config_txt-gpio.adoc`); the probe set the
+  same function with the pulls untouched, and UART0 carried the
+  controller's answers at once. Where that line comes from is an open
+  decision ([Decisions](#decisions), 5).
 * **UART0 is held, undriven.** The five PL011s share one register page
   and one interrupt line, 153, so they are one unit, which the system
   domain holds for UART3, the host link
@@ -103,26 +111,53 @@ sees it (4.8.1); the Report Map is at most 512 octets (HIDS 2.6.1).
   `config/platforms/raspi4b.json`, unit `hostlink-uart`). Each PL011's
   clock is 48 MHz in the record, so 115200 baud divides as the host
   link's does.
-* **Power.** The controller's enable line is, by all accounts, a pin of
-  the firmware's GPIO expander, which the VideoCore drives on a mailbox
-  request. FreeBSD's expander driver numbers those pins from 128
-  (`raspberrypi_gpio.c:51`) and sets one with the property tag
+* **Power.** The controller's enable line is pin 0 of the firmware's
+  GPIO expander, which the VideoCore drives on a mailbox request: the
+  firmware's device tree names it in the `shutdown-gpios` property of
+  UART0's `bluetooth` child, with flags 0, and the expander's
+  `gpio-line-names` call it `BT_ON` (probe B-P2,
+  [research-bluetooth-pi4.md](research-bluetooth-pi4.md#b-p2-the-controllers-power)).
+  FreeBSD's expander driver numbers the expander's eight pins from 128
+  (`raspberrypi_gpio.c:50-51`) and sets one with the property tag
   `0x00038041`, whose request is the pin and its state
-  (`bcm2835_firmware.h:144`, `:161-168`). Which pin, and its polarity,
-  only GPL sources state; probe B-P2 reads them from the device tree the
-  firmware passes at run time, which is data, and records whether the
-  firmware leaves the controller powered.
-* **The patch.** Every permissive host that drives a CYW43xxx loads a
-  patch into the controller's RAM before use: NetBSD's `btattach` sends
-  the vendor command `0xFC2E` (download minidriver), replays the `.hcd`
-  file as HCI commands of the form `opcode(2, little-endian) length(1)
-  payload`, each awaiting its Command Complete, sleeps, and resets
-  (`init_bcm43xx.c:105-141`); Zephyr's Infineon driver does the same and
-  stops at any record but `0xFC4C` (Write RAM) and `0xFC4E` (Launch RAM),
-  though only after sending it (`hci_uart_infineon.c:141-191`). The Pi
-  4's patch is
-  `BCM4345C0.hcd`, which the fetch step downloads and the Pi 4's image
-  ships ([Stage 1](#the-bring-up)).
+  (`bcm2835_firmware.h:144`, `:161-168`), so the request names pin 128.
+  The line is active high: state 1 powers the controller and state 0
+  turns it off. 300 ms off and 500 ms on bring the controller back at
+  115200 baud, answering `HCI_Reset` 1 ms after the on time, and it sends
+  nothing between power-on and that command. The firmware leaves the
+  controller powered, so the first reset of a boot turns off a running
+  controller. The firmware leaves the set tag's response word 0, as
+  FreeBSD records, and answers the get tag `0x00030041` normally, its
+  state word reading as the level set; erXos sends only the set tag
+  ([The power line](#the-power-line)).
+* **The controller reads the host's RTS as it powers up.** Powered up
+  with UART0's RTS, its own CTS, deasserted, the controller's ROM answers
+  every standard command tried and advertises; powered up with RTS
+  asserted, it is in a download mode that answers only `HCI_Reset` and
+  the vendor patch commands, and only when `HCI_Reset` comes first
+  (probe B-P3, runs 1 to 4). Infineon's firmware download guide describes
+  the same choice for its controllers: the boot code reads the chip's
+  CTS when reset is released, LOW giving download mode and HIGH "a mode
+  ready to accept all HCI commands" (AIROC HCI firmware download, 3.1 to
+  3.3). So every power-up holds RTS deasserted until the on time has
+  passed ([A reset](#a-reset)).
+* **The ROM serves the stages without a patch.** In the mode ready for
+  every command the controller's ROM reports HCI version 7, LMP version
+  7, manufacturer `0x000f` and LMP subversion `0x6119`, advertises, and
+  accepts a connection as a peripheral (probes B-P3 and B-P4): a Mac
+  connected and sent its ATT Exchange MTU Request at once. Hosts that
+  drive a CYW43xxx load a patch into the controller's RAM before use:
+  NetBSD's `btattach` sends the vendor command `0xFC2E` (download
+  minidriver), replays the `.hcd` file as HCI commands of the form
+  `opcode(2, little-endian) length(1) payload`, each awaiting its Command
+  Complete, sleeps, and resets (`init_bcm43xx.c:105-141`); Zephyr's
+  Infineon driver does the same and stops at any record but `0xFC4C`
+  (Write RAM) and `0xFC4E` (Launch RAM), though only after sending it
+  (`hci_uart_infineon.c:141-191`). erXos loads a patch only where a
+  board's manifest names one ([The bring-up](#the-bring-up), step 4), and
+  the Pi 4's manifests name none; whether a Pi 4 image ships
+  `BCM4345C0.hcd` at all is an open decision
+  ([Decisions](#decisions), 4).
 * **QEMU has no Bluetooth.** QEMU removed its Bluetooth emulation in 5.0
   "without replacement" (QEMU's 5.0 change log), and QEMU `virt`'s two
   PL011s are the console and the host link (`virt.rst:36`, `:55-62`). The
@@ -164,6 +199,8 @@ Specification at
 | | | `usr.sbin/bluetooth/hcsecd/hcsecd.h` | `fcb787bdad0ea5cde10d6fd3d6a058414686a1d783d34aa324b148c26de0e849` |
 | RPi-Distro bluez-firmware | `cdf61dc691a4` | `LICENSE.cypress` | `a92f031f19089fa63bd24ac4c5298ca1356670321b39c67024a961ee3285fff7` |
 | Raspberry Pi documentation | `c6a64966af13` | `computers/configuration/interfaces.adoc` | `20c0c5f8dcf2ba501ec7888028aa576be2c965f9b06dd04022e3c9d187b33cef` |
+| | | `config_txt-gpio.adoc` | `4ad5c0286da3f97f4eb0031af2377c11bd89d78c81f92c3c022187b942b454c0` |
+| Infineon, AIROC HCI firmware download user guide | 002-32056 Rev. *B | `infineon.github.io/btsdk-docs/BT-SDK/AIROC-HCI-Firmware-Download.pdf`, fetched 2026-11-22 | `a9c593bdd184c673eeb0df2b76a70cd86cfed6d7f1e9fbbd001f4f38254b8e60` |
 | BCM2711 ARM Peripherals | unversioned | the PDF | `d6e16ea089a1716e80621f99a26e130a2379f0a81d945dc22e4f80dc49dcdc78` |
 | PrimeCell UART (PL011) Technical Reference Manual | ARM DDI 0183G, r1p5 | the PDF, from `documentation-service.arm.com` | `9cfe1a296ebe7accd905fb569e4c545ed9ca01d8341603568017319abe7e51e7` |
 | QEMU | wiki, read 2026-11-14 | `wiki.qemu.org/ChangeLog/5.0` | `210bfe5e852d8395bfd937cf312ac62d936ee8948d6c310f19110f161843ca00` |
@@ -400,7 +437,8 @@ no device. Its release script, `bt`, ships `kernel`, `stdlib`, `erx`, `erx_files
 * its arguments: the advertised name (the machine's host name by
   default), the appearance, the connection limit (1 by default, at most
   `bt_connections_max`), the patch file and the manufacturer it applies
-  to where the board needs one, and the service the console serves, if
+  to where the board's controller needs one (none on the Pi 4, whose ROM
+  serves the stages, [The hardware](#the-hardware)), and the service the console serves, if
   any (the opt-in of [Decisions](#decisions), 2: absent from every
   manifest erXos ships). They are application keys of `erx_bt` in OTP's
   own form, `-erx_bt Key Value` among the row's `init` arguments, which
@@ -507,13 +545,13 @@ that would pass it marks the line **broken**: buffered bytes are dropped
 and every read answers `eio` until the next `reset`. A loss of bytes is a
 loss of synchronization, which H4 answers with a reset anyway (Part A,
 section 4), so the line's one failure is the controller's restart. A
-driver that does not start, at the line's start or at step 3 of a
+driver that does not start, at the line's start or at step 2 or 5 of a
 reset, or that ends outside a reset, as a broken queue ends one, marks
 the line broken as well and leaves it with no driver: buffered bytes
 are dropped, every `data` read and write answers `eio`, a reset whose
-step 3 started none answers `eio` before its next step, with the broken
-mark set after step 3 cleared it, and the next `reset` tries the driver
-again. So whatever a device does ends at most its line's driver, never
+step 2 or 5 started none answers `eio` before its next step, with the
+broken mark set after that step cleared it, and the next `reset` tries
+the driver again. So whatever a device does ends at most its line's driver, never
 the line's process, and nothing it does restarts a supervisor whose end
 would take the host link with it. The driver's start logs why it
 failed, except for an empty transport, which has no device to report.
@@ -549,10 +587,10 @@ process it monitors, so a reset ends; a data write may not
 * a `reset` waits for the old driver's end, then for two notifications
   of [The power line](#the-power-line), each at most 1 s at the device
   service's firmware worker once the worker's earlier requests, each at
-  most 1 s, have run, and for the off and on times, and the fresh
-  driver's start programs its registers without waiting; a notification
-  that fails or times out answers the `reset` `eio` before its next
-  step;
+  most 1 s, have run, for the off and on times, and for the holding
+  driver's end; each fresh start of the driver programs its registers
+  without waiting; a notification that fails or times out answers the
+  `reset` `eio` before its next step;
 * a `data` write waits for the driver, which may hold bytes for as long
   as a controller holds CTS off under `rts_cts` flow. Such a write ends
   at the line's next `reset`, whose first step ends the driver and
@@ -573,27 +611,49 @@ bound covers both.
 
 #### A reset
 
-`reset` takes the line through four steps, in this order, each finished
-before the next:
+A reset is a power cycle between two fresh starts of the driver: the
+first holds the UART's RTS deasserted while the controller powers up, so
+the controller boots in the mode that answers every command
+([The hardware](#the-hardware)), and the second opens the grant's flow
+once the on time has passed. A fresh start is the one place a line's
+registers are programmed, so holding RTS and releasing it need no
+message beyond the driver's start. `reset` takes the line through five
+steps, in this order, each finished before the next:
 
 1. **Stop the driver.** The line's driver process ends, so nothing
-   touches the UART until step 3.
-2. **Device off.** Where the platform names a power line for the UART's
-   device, the line service asks for its off notification and waits the
-   off time ([The power line](#the-power-line)).
-3. **The UART afresh.** The line service starts the driver again with
-   `init => fresh` in its record, which programs the UART from nothing
-   (below), empties the receive buffer and clears the broken mark.
-4. **Device on.** It asks for the on notification and waits the on time,
-   then discards whatever the driver delivered during the wait, which a
-   controller powering up may send, and answers.
+   touches the UART until step 2.
+2. **The UART held.** The line service starts the driver with
+   `init => fresh` and flow `none` in its record, whatever the grant's
+   flow, which programs the UART from nothing (below) with neither
+   `RTSEN` nor `CR`'s `RTS` set, so RTS is deasserted, and empties the
+   line's receive buffer and clears the broken mark.
+3. **Device off.** The line service asks for the power line's off
+   notification and waits the off time
+   ([The power line](#the-power-line)).
+4. **Device on.** It asks for the on notification and waits the on time.
+   The controller reads its CTS, the UART's RTS, as it powers up, and
+   finds it deasserted.
+5. **The UART afresh.** The holding driver ends, and the line service
+   starts the driver again with `init => fresh` and the grant's rate and
+   flow, which writes `CR` 0 first, so RTS stays deasserted, empties both
+   FIFOs, and sets `RTSEN` only in its last write; it empties the line's
+   receive buffer and clears the broken mark, and the line answers.
 
 So no byte and no setting of the last bring-up survives a `reset`:
-the transmit FIFO is emptied while the controller is off, the receive
-side holds only what the new controller sends after the answer, and the
-UART's rate, format and flow are the grant's, whatever the boot or the
-last driver left. A platform with no power line runs steps 1 and 3 alone,
-and its bring-up relies on `HCI_Reset`.
+the transmit FIFO is emptied before the controller goes off, the
+receive side holds only what the new controller sends after the answer,
+since what it sent during the on time is in a FIFO step 5 empties or in
+the buffer it empties, and the UART's rate, format and flow are the
+grant's, whatever the boot or the last driver left. A holding driver
+that ends during the power cycle changes nothing: its end is step 5's
+first act, and it leaves `CR` as it wrote it, RTS deasserted. A
+platform that names no power line for the UART's device runs steps 1
+and 5 alone, and its bring-up relies on `HCI_Reset`; the platforms
+this design names are the Pi 4, which has a power line, and QEMU
+`virt`, whose line is a virtio port with no RTS
+([The line on QEMU `virt`](#the-line-on-qemu-virt)). A UART controller
+on a board with no power line would meet the controller in the mode its
+own power-up chose.
 
 **Its driver is `erx_pl011`, started fresh.** For the console and the
 host link, `erx_pl011` keeps what the boot left: it clears neither FIFO,
@@ -623,7 +683,13 @@ following the programming note of the PL011's manual (DDI 0183G, page
 4. `ICR` written with every interrupt bit.
 5. `CR` written whole: `UARTEN`, `TXE` and `RXE`, and `RTSEN` and
    `CTSEN` when the flow is `rts_cts`, so the PL011 holds RTS off while
-   its receive FIFO is full and sends only while CTS is on.
+   its receive FIFO is full and sends only while CTS is on. With flow
+   `none` the write sets neither `RTSEN` nor `RTS`, so RTS is
+   deasserted, the state [A reset](#a-reset)'s step 2 holds through the
+   power cycle: the board read RTS0 high with `CR` `0x8301`, which
+   differs from that write only in `CTSEN`, a transmit control
+   ([research-bluetooth-pi4.md](research-bluetooth-pi4.md#b-p3-the-controller-before-the-patch),
+   run 4).
 
 Either start ends by attaching the UART's interrupt line and then
 writing `IMSC` whole with the receive and receive-timeout interrupts
@@ -668,15 +734,44 @@ firmware's requests, `erx_firmware_request`
 ([design-kernel.md](design-kernel.md#firmware-requests)), whose
 `index` names one of the notifications the platform record lists for the resource's device,
 the VL805's one being index 0. The Pi 4's record lists two for UART0's
-device entry, `/soc/serial@7e201000`: index 0 turns the controller off
-and index 1 turns it on, each the tag `0x00038041` with the expander pin
-`128 + P` and that state, and it gives the off and on times,
-provisionally Zephyr's 300 ms and 500 ms
-(`hci_uart_infineon.c:38-39`, `:236-246`); probe B-P2 settles the pin,
-the polarity and the times. UART0's device record, which the line
-service reads at a tree's start, carries the times and whether the
-device has a power line.
+device entry, `/soc/serial@7e201000`: index 0, `bt_off`, turns the
+controller off with the tag `set_gpio_state` and the words 128 and 0,
+and index 1, `bt_on`, turns it on with the words 128 and 1: expander
+pin 0, `BT_ON`, active high. It gives the off and on times, 300 ms and
+500 ms, Zephyr's (`hci_uart_infineon.c:38-39`, `:236-246`), which bring
+the controller back at 115200 baud (probe B-P2,
+[research-bluetooth-pi4.md](research-bluetooth-pi4.md#the-power-phases)).
+UART0's device record, which the line service reads at a tree's start,
+carries the times and whether the device has a power line.
 
+* **The request.** `abi/formats/vc_property.txt` declares the tag as a
+  member of the closed set `fw_tag`, `set_gpio_state`, `0x00038041`,
+  beside `notify_xhci_reset`: its request is two words, the pin and the
+  state (`bcm2835_firmware.h:161-168`), its answer window empty, its
+  least answer 0, and a response word of 0 is performed (below). The same
+  file declares `vc_row_words`, 2, the most request words a device row
+  carries, and the generator refuses a device row whose tag's request is
+  longer. A firmware request row carries its tag's request
+  words: in the platform record a row's `arguments` is a list as long as
+  its tag's request, `[1048576]` for the VL805's notification and
+  `[128, 0]` for `bt_off`; the manifest's `erx_mf_firmware_request`
+  (`abi/manifest.txt`) carries two words, `argument0` and `argument1`,
+  the generator writing 0 past the tag's request; `liberx`'s
+  `erx_firmware_row_t` (`liberx/backend/api.h`) carries the same two
+  words, which the system library copies from the record
+  (`liberx/system/dom_apply.c`) and the mailbox core writes as the
+  request's first words, reading only as many as the tag's declaration
+  says. So the platform record states each row's words once, the tag's
+  declaration says how many are sent, and no caller supplies one. The
+  manifest generator checks each row against its tag: a
+  `notify_xhci_reset` row names a PCIe bridge, and its one word is one
+  of the bridge's places' addresses; a `set_gpio_state` row names a
+  placed UART device, a pin of the expander, 128 to 135
+  (`raspberrypi_gpio.c:50-51`), and a state of 0 or 1, and a device's
+  `set_gpio_state` rows are exactly two, off then on, of one pin with
+  different states, so the off and on rows drive the line to its two
+  levels; which level is off is the record's fact, read by probe B-P2. The get tag, `0x00030041`, is not declared: nothing reads
+  the line's state back.
 * **Authority.** The line service asks the device service,
   `erx_devices:power(Device, off | on)`, a call inside the system
   domain. The device service makes the kernel call through the domain
@@ -690,18 +785,35 @@ device has a power line.
   notification, no device outside the system domain asks for one, and no
   domain but the system domain holds a resource that names the entry.
 * **Deadline and answer.** The call's: a poll of at most 1 s, the answer
-  matched by its buffer, `ERX_OK` for a success whose tag's response
-  word has bit 31 set or is 0, and an error status for any other
-  answer, for a resource without notifications and for an index past
-  its device's list. The word of 0 is a fact of `0x00038041`: FreeBSD
-  records that the firmware does not set the set-GPIO-state tag's
-  response word, and takes a word of 0 as its answer
-  (`bcm2835_mbox.c:362-370`), so that tag's declaration takes it as
+  matched by its buffer, and an error status for a resource without
+  notifications and for an index past its device's list
+  ([design-kernel.md](design-kernel.md#firmware-requests)). The answer
+  check reads the response code, the first tag and the tag's response
+  word, and accepts per tag:
+
+  | Answer | `notify_xhci_reset` | `set_gpio_state` |
+  | --- | --- | --- |
+  | response code other than `0x80000000`, or a first tag other than the row's | `ERX_EPROTO` | `ERX_EPROTO` |
+  | response word with bit 31 set | `ERX_OK`, no bytes | `ERX_OK`, no bytes |
+  | response word 0 | `ERX_ENOTSUP`: the firmware ignored the tag | `ERX_OK`, no bytes: performed |
+  | any other response word without bit 31 | `ERX_ENOTSUP` | `ERX_ENOTSUP` |
+
+  The word of 0 is a fact of `0x00038041`: FreeBSD records that the
+  firmware does not set the set-GPIO-state tag's response word, and
+  takes a word of 0 as its answer (`bcm2835_mbox.c:362-370`), and the
+  Pi 4's firmware leaves it 0 on every set while the controller's power
+  follows the state (probe B-P2). So that tag's declaration takes it as
   performed, once, for every caller
-  ([design-board-sensors.md](design-board-sensors.md#the-requests)).
-  On this tag an ignored request cannot be told from a performed one;
-  the controller's bring-up after the cycle is what shows a power line
-  that did nothing, and probe B-P2 records the raw word. The device
+  ([design-board-sensors.md](design-board-sensors.md#the-requests)): the
+  mailbox core's tag declaration, `erx_vc_tag_t`
+  (`include/erx/core/vc_property.h`), carries a field
+  `zero_performed`, which only `set_gpio_state`'s declaration sets, and
+  `erx_vc_answer` (`kernel/core/vc_property.c`) answers a response
+  word of 0 `ERX_OK` with no bytes where it is set, and `ERX_ENOTSUP`
+  where it is not, as for any word without bit 31. With an empty window
+  nothing of the value buffer is read. On this tag an ignored request
+  cannot be told from a performed one; the controller's bring-up after
+  the cycle is what shows a power line that did nothing. The device
   service answers `ok` for `ERX_OK` and `{error, Status}` otherwise,
   and the line service answers `reset` with `eio` for any error,
   before its next step.
@@ -766,7 +878,7 @@ queue ends the driver, which leaves the line broken with no driver, as
 any driver's end outside a `reset` does.
 
 QEMU `virt`'s platform record names no power line, so a
-`reset` is the steps of [A reset](#a-reset) without steps 2 and 4: the
+`reset` is steps 1 and 5 of [A reset](#a-reset) alone: the
 driver's fresh start resets the device, which returns every buffer and
 drops what the device held, and the line drops what it buffered. Bytes
 QEMU or the socket still holds may reach the fresh driver, so the line
@@ -836,7 +948,8 @@ status as its reason.
    answer is the core's input `line_ready`
    ([The controller process's effects](#the-controller-processs-effects)).
    The controller is fresh
-   from power-on where the platform has a power line, and the UART is
+   from power-on where the platform has a power line, booted with RTS
+   deasserted in the mode that answers every command, and the UART is
    programmed afresh ([A reset](#a-reset)). The reset is under its own
    deadline, `bt_line_reset_timeout_ms`, 5 s: two power notifications,
    each answered within the mailbox's 1 s, and the off and on times, with
@@ -848,10 +961,14 @@ status as its reason.
 2. **`HCI_Reset`** (HCI 7.3.2).
 3. **Identify.** Read Local Version Information (7.4.1), Read Local
    Supported Commands (7.4.2), LE Read Local Supported Features Page 0
-   (7.8.3) and Read BD_ADDR (7.4.6), each shown at `/proc/bt`.
-4. **Patch**, only when the row names a patch; with none, the bring-up
-   goes from step 3 to step 5. The row also names the
-   manufacturer the patch is for, from probe B-P3; a controller that
+   (7.8.3) and Read BD_ADDR (7.4.6), each shown at `/proc/bt`. The Pi
+   4's ROM answers HCI version 7, manufacturer `0x000f`, LMP subversion
+   `0x6119`, and the address `aa:aa:aa:aa:aa:aa`, a placeholder that
+   names no board, which the identity address never uses
+   ([The identity address](#the-identity-address)).
+4. **Patch**, only when the row names a patch; with none, as on the Pi
+   4, the bring-up goes from step 3 to step 5. The row also names the
+   manufacturer the patch is for, as Read Local Version reports it; a controller that
    reports another stops the bring-up with `patch_for_other_controller`,
    so no vendor command reaches a controller it was not written for. The
    step sends `0xFC2E` and waits `bt_patch_minidriver_ms`, replays the
@@ -863,8 +980,10 @@ status as its reason.
    first ones, so the bring-up patches at most once and is a line of
    states, not a loop. The waits are NetBSD's, 1 s
    and 4 s (`init_bcm43xx.c:123-125`, `:139`), the longer of the two
-   permissive hosts' (Zephyr waits none and 270 ms); probe B-P5 settles
-   them. The patch is read whole, by `erx_bt_patch:records/1`, before its
+   permissive hosts' (Zephyr waits none and 270 ms). Only the download mode
+   was seen to take the minidriver, and no record was sent, so on a
+   board whose manifest names a patch, probe B-P5 settles the waits and
+   whether the mode step 1 boots takes the minidriver and the records. The patch is read whole, by `erx_bt_patch:records/1`, before its
    first record is sent: it accepts a file made only of complete records
    of the opcodes `0xFC4C` and `0xFC4E`, which Zephyr's loader also
    requires, and refuses any other, so a damaged file sends nothing
@@ -897,16 +1016,21 @@ status as its reason.
 7. **Ready.** LE Set Advertising Enable (7.8.9) while connections are
    below the limit.
 
-The patch ships in the Pi 4's image as a file of `erx_bt`'s `priv`
-directory, unmodified, under its license (Cypress's Driver End User
-License Agreement, `LICENSE.cypress` of the firmware repository, which
-grants reproduction and distribution "in object code form only, solely
-for use in connection with Cypress integrated circuit products" and
-forbids modification), with its notice in the image's `NOTICES`; the Pi 4's
-manifest alone names it. It is in the boot image rather than on the
-boot partition beside the VideoCore firmware because erXos, not the
+A patch, where a board's manifest names one, ships in that board's image
+as a file of `erx_bt`'s `priv` directory, unmodified, under its license,
+with its notice in the image's `NOTICES`, and only the manifest that
+names it brings it in. It is in the boot image rather than on the boot
+partition beside the VideoCore firmware because erXos, not the
 firmware, reads it, and only the slot writer may read a slot's partitions
-([design-system.md](design-system.md#the-manifest), property 8).
+([design-system.md](design-system.md#the-manifest), property 8). The
+Pi 4's controller needs none for the stages
+([The hardware](#the-hardware)), so the Pi 4's manifests name none.
+Its patch, `BCM4345C0.hcd`, is under Cypress's Driver End User License
+Agreement, `LICENSE.cypress` of the firmware repository, which grants
+reproduction and distribution "in object code form only, solely for use
+in connection with Cypress integrated circuit products" and forbids
+modification; whether a Pi 4 image ships it is open
+([Decisions](#decisions), 4).
 
 ### Commands and data credits
 
@@ -2325,7 +2449,7 @@ and stops in the reverse order, the controller process first.
 | Interface | Refusal | When |
 | --- | --- | --- |
 | the line's `ctl` | `einval` | any write but `reset` |
-| | `eio` | a power notification answered other than `ERX_OK`, `ERX_ETIMEDOUT` for every one after the boot's first timeout included; the fresh driver did not start |
+| | `eio` | a power notification answered other than `ERX_OK`, `ERX_ETIMEDOUT` for every one after the boot's first timeout included; the holding or the fresh driver did not start |
 | the line's `data` | `eio` | a read while the line is broken; a read or a write while it has no driver |
 | the control tree's `pair` | `ebusy` | another window is open |
 | | `einval` | a first write other than `display` or `nodisplay` |
@@ -2383,12 +2507,14 @@ Each core's test is paired with the seeded faults it must catch.
 | `erx_bt_link_core`, explored | reassembly at every fragment size; one outstanding request; commands past the queue discarded and counted; a first pairing reaches its level before the store answers, a reconnection the bond's; a Pairing Request on a resolved link fails; `encrypted` set only by a success report after a Reply; one Security Request, never during encryption; a bonded configuration write answered only after the store's `ok`; a resolved link sends no `subscriptions` or `served` and indicates no Service Changed before its encryption, and restores the bond's subscriptions at it, refusing a configuration write before it Insufficient Encryption; a failure before the verdict reaches the window; every controller message's step returns `taken`; `keep` and `keeping` leave in one step, and a `withdraw` after it changes nothing | an Encryption Change accepted after a Negative Reply; encryption accepted only for kept bonds; the configuration write answered before the store; the bond's subscriptions taken at `new/1` (a resolved link's configuration reads as the bond's before encryption); a `withdraw` taken in the Security Manager's `done` (the outcome `withdrawn` while the store keeps the bond); the pairing not awaited from its `admit` |
 | `erx_smp_core`, explored over every message order | Passkey Entry and Just Works complete; every refusal of [Secure Connections only](#secure-connections-only) fires; a `display` window refuses Just Works; one pairing per window | the key-size check removed; the curve check removed (the `y + 1` point accepted); the link-key bit kept |
 | `erx_bt_window` | the wait doubles from 2 to 64 s after failures, a disconnection mid-pairing counting as one, and a failure imposes twice the last one's wait halved for each whole 600 s since it, within 2 and 64 s; a Pairing Request during it answers Repeated Attempts and leaves the window open; back-to-back windows do not shorten it | the wait reset when a window opens; a disconnection not counted; the wait never decayed; the maximum applied before the decay |
-| `erx_pl011:program/1` | `fresh` writes `CR` 0 first, clears `FEN` before the divisors, drains the receive side within 33 reads, writes the divisors before `LCR_H` and `CR` whole last with the flow enables; `keep` clears no FIFO and programs the divisors only of an unprogrammed UART | `LCR_H` before the divisors, so the rate never latches; `fresh` keeping the boot's divisors |
+| `erx_pl011:program/1` | `fresh` writes `CR` 0 first, clears `FEN` before the divisors, drains the receive side within 33 reads, writes the divisors before `LCR_H` and `CR` whole last with the flow enables; under flow `none` no step sets `RTSEN` or `RTS`, and under `rts_cts` only the last sets `RTSEN`; `keep` clears no FIFO and programs the divisors only of an unprogrammed UART | `LCR_H` before the divisors, so the rate never latches; `fresh` keeping the boot's divisors; `RTS` set under flow `none` |
 | `erx_smp_crypto` | SMP Appendix D's sample data for `f4`, `f5`, `f6` and `ah` | the AES-CMAC key byte order reversed |
 | `erx_bt_state` | a state round-trips; another version, a truncation and an oversized count are refused; the largest state the declared table allows encodes in at most 4 KiB | the bond count read without its bound |
 | the store's table, against a scripted fake store and a development file over a fake data tree that fails a chosen step | a start reading `unavailable` or an undecodable blob runs with no bonds and refuses pairing, configuration writes and `forget ADDRESS`, and `forget all` replaces the bad blob; a start reading `none` makes the identity address; a `put` that reached the medium but answered `unavailable` fails the pairing, and the next pairing reads first and keeps its bond; after every confirmed change and read the domain's bonds are the store's; over the development file, a pairing's `put` that the storage completes after its deadline and after a confirmed `forget` of a bond it holds does not bring the bond back at the next start; a lower generation landing late, a `.new` name and names not the store's leave `get`'s blob the highest generation's | `unavailable` read as `none` (a pairing overwrites the stored bonds); the pre-put state kept after an unconfirmed `put` (the failed pairing's bond lost); the development file read at its lowest generation, and an unconfirmed `put` not counted in the next generation (each brings the forgotten bond back); a `.new` name not counted; `forget all` put without reading the generation |
 | the line's `ctl` grammar | `reset`, with or without newline; everything else `einval` | a prefix match accepting `resetx` |
-| the line service's reset, over a model driver and device service | the four steps in order; the driver's input during the on time discarded; a power `{error, _}` answers `eio` before the next step | the driver started before the off notification, so the old FIFO drains into the new controller |
+| the line service's reset, over a model driver and device service | the five steps in order: the driver started with flow `none` before the off notification, the off and on notifications with their times between, and the driver started with the grant's flow only after the on time; input during the power cycle never reaches a reader; a power `{error, _}` answers `eio` before the next step; with no power line, steps 1 and 5 alone | the grant's flow passed to the holding start, so RTS is asserted as the controller powers up; the second start made before the on time has passed; the holding start dropped, so the old driver's settings meet the power-up |
+| the mailbox core's answer check, `erx_vc_answer`, over buffers the test writes | `set_gpio_state` with response word 0, and with bit 31 set, is `ERX_OK` with no bytes; `notify_xhci_reset` with word 0 is `ERX_ENOTSUP`; a nonzero word without bit 31 is `ERX_ENOTSUP` for both; a wrong code or first tag is `ERX_EPROTO`; both request words of a `set_gpio_state` row reach the buffer, and one of a `notify_xhci_reset` row | `zero_performed` ignored, so the power line's answer is refused as the probe saw; `zero_performed` taken as true for every tag, so an ignored VL805 notification reads as performed; the request built from the row's first word alone |
+| the manifest generator's firmware request rows | the Pi 4's record packs `bt_off` and `bt_on` with their two words and the VL805's row with its one; a `set_gpio_state` row with a pin outside 128 to 135, a state other than 0 or 1, one row alone, two rows of one state, or `arguments` longer or shorter than its tag's request is refused | the pair check removed, so a record whose off row turns the controller on packs |
 | the line service through a real `erx_fs` grant, reader and writer on one `data` file | a write is answered within 1 s while a read waits, and the driver's answer reaches the read once; a `reset` answers a waiting read `eio`; a clunk during a waiting read is answered within 1 s and the next reader gets the next bytes whole | a `read` that waits inside its callback; a dropped flush of a waiting read |
 | flushes of begun and buffered requests, with power notifications held by the test | a `reset` flushed at any step is answered once its last step is done, then the flush; a write flushed after the driver took its bytes answers its count; a read flushed with bytes buffered answers with them, and before bytes arrive `eintr`, the next read getting them whole | a flushed `reset` answered `eintr` while its steps run; a read held while bytes are buffered |
 | the identity address | 10,000 addresses have the static form and parse in Bumble's `Address` as static | the top bits cleared |
@@ -2470,16 +2596,23 @@ browsers show the declared table; a terminal app for Nordic's UART
 service echoes through an app; the phone pairs by typing the passkey the
 `pair` file shows, reboots the machine, and reads an `authenticated`
 value again; the console logs in from the phone; a `reset` written
-while the stack is mid-way through a patch download is followed by a
-bring-up that reaches advertising. The board probes precede the first
-of these ([Board probes](#board-probes)).
+while a phone is connected is followed by a bring-up that reaches
+advertising. Its seeded failure is a line whose reset passes the grant's
+flow to the holding start: the controller then boots in download mode,
+answers `HCI_Reset` and not Read Local Version, and the bring-up stops at
+its identify step at the command deadline, which shows the reset's order
+is what the passing run rests on. On a board whose manifest names a
+patch, a `reset` written mid-way through the patch download is also
+followed by a bring-up that reaches advertising. The board probes
+precede the first of these ([Board probes](#board-probes)).
 
 ## Performance
 
 Nothing here is on a fast path. What may matter, and is on the watch
 list ([todo-performance.md](todo-performance.md)):
 
-* the patch download at 115200 baud: `BCM4345C0.hcd` is 63,806 bytes in
+* the patch download at 115200 baud, on a board whose manifest names a
+  patch: `BCM4345C0.hcd` is 63,806 bytes in
   the firmware repository's tree listing at `cdf61dc691a4`, about 5.5 s
   at 11,520 bytes a second before the record overheads and the 5 s of
   waits, so a boot or a restart advertises some ten seconds after the
@@ -2490,8 +2623,8 @@ list ([todo-performance.md](todo-performance.md)):
   two domains, measured by a peer script that times write requests
   through an echo handler, on QEMU and on the board;
 * `erx_pl011`'s wait of 1 ms at a time while its transmit FIFO is full
-  (`erx_pl011.erl:45`, `:236-243`), which the patch download and bursts
-  of notifications meet.
+  (`erx_pl011.erl:45`, `:236-243`), which bursts of notifications and a
+  patch download meet.
 
 ## Alternatives considered
 
@@ -2536,6 +2669,22 @@ list ([todo-performance.md](todo-performance.md)):
 * **A power line left alone.** Without a power cycle, a restarted
   bring-up meets a controller at an unknown rate, patched or not, and
   needs a case for each.
+* **Opening the flow with a message to the driver.** One fresh start
+  holding RTS through the power cycle and a message that then sets
+  `RTSEN` would save a start, but the driver speaks the console's six
+  messages and no other; a second fresh start, a few register writes,
+  opens the flow with nothing new.
+* **Setting UART0's pins from erXos.** The pin controller's page sets
+  every pin, the console's included, so a manifest gives it to no
+  domain, the system domain or a domain of its own
+  ([design-header-io.md](design-header-io.md#the-pin-controller-and-the-console)), and the line
+  service cannot count on holding it; `config.txt` sets the pins before
+  anything runs, as it sets UART3's.
+* **The patch on the Pi 4.** Loading `BCM4345C0.hcd` at every bring-up
+  costs some ten seconds at 115200 baud
+  ([Performance](#performance)), puts a binary under Cypress's driver
+  license in the image, and fixes nothing the stages were seen to need:
+  the ROM advertises and accepts a connection without it.
 * **A UART left as the last driver had it.** Restarting `erx_pl011` the
   console's way keeps the boot's divisors and both FIFOs, so a restarted
   bring-up would meet the last controller's bytes and whatever rate the
@@ -2591,30 +2740,62 @@ list ([todo-performance.md](todo-performance.md)):
    them, wait for an out-of-band method, by NFC or a code the phone
    scans, designed separately. Static passkeys printed on a device are
    excluded: they leak over repeated attempts.
+4. **Open: whether a Pi 4 image ships `BCM4345C0.hcd`.** The Pi 4's ROM
+   advertises and accepts a connection without the patch (probes B-P3
+   and B-P4), so no stage this design builds needs it, and the Pi 4's
+   manifests name none. Shipping it would bring a binary under Cypress's
+   Driver End User License Agreement into every Pi 4 image, beside its
+   entry in the dependency table of [design.md](design.md) and the
+   image license check's acceptance of that license. Recommendation:
+   ship nothing, take the dependency row and the license acceptance out,
+   and leave the patch step unbuilt until a board's checklist fails on
+   its ROM; the step stays designed here for that board.
+5. **Open: where the line `gpio=30-33=a3` comes from.** The Pi 4's
+   `config.txt` gets its `gpio=` lines from the header map, whose rows
+   are GPIO 0 to 27, the 40-pin header's
+   ([design-header-io.md](design-header-io.md#the-construction-one-map-of-the-header)),
+   and UART0's pins, GPIO 30 to 33, are on the board, not the header;
+   WiFi's slot needs the same for GPIO 34 to 39
+   ([design-wifi.md](design-wifi.md#facts-this-design-does-not-have), F1). Recommendation: the pin table
+   `hw/pins/bcm2711.txt` gains the bank's on-board pins from Table 94,
+   and the platform record a list of on-board pin rows beside the header
+   map, each a pin, its function and the device that uses it, from which
+   the `config.txt` writer derives lines as it does from the header map;
+   design-header-io decides its shape. A fixed line in the writer would
+   be a second source of pins, which that design rules out.
 
 ## Board probes
 
 Each runs on the Pi 4 under Fiasco before the code that depends on
-it, and its readings go into a research record.
+it, and its readings go into a research record,
+[research-bluetooth-pi4.md](research-bluetooth-pi4.md). B-P1 to B-P4
+are read; what they settle is in [The hardware](#the-hardware),
+[A reset](#a-reset) and [The power line](#the-power-line).
 
-* **B-P1** Read GPIO 30 to 33's function at erXos's start. If not ALT3,
-  `config.txt` gains `gpio=` lines for them, as it has for UART3's pins.
-* **B-P2** Before any power notification, send `HCI_Reset` at 115200 on
-  UART0: did the firmware leave the controller powered? Read the
-  expander node's `gpio-line-names` from the device tree the firmware
-  passes, find the controller's enable line, its pin and polarity, and
-  check that a cycle with 300 ms off and 500 ms on brings the controller
-  back at 115200; record whether the controller sends any byte between
-  power-on and `HCI_Reset`, and the raw response word the firmware
-  leaves in each power notification's answer, which the tag's
-  declaration takes as performed when it is 0.
-* **B-P3** Read Local Version and Read BD_ADDR before and after the patch:
-  the manufacturer the patch row names, the ROM's and the patch's versions.
-* **B-P4** Advertise and accept a connection on the ROM firmware, without
-  the patch: is the patch needed for the stages at all?
-* **B-P5** The patch's two waits: does the download succeed with
-  Zephyr's shorter ones?
-* **B-P6** Kill the Bluetooth domain mid-way through a patch download,
-  with CTS held off by the controller, and check that the next `reset`
-  starts the driver without waiting on `BUSY` and that the next bring-up
-  reaches advertising.
+* **B-P1, read.** GPIO 30 to 33 are inputs at erXos's start, so
+  `config.txt` sets them to ALT3 ([Decisions](#decisions), 5).
+* **B-P2, read.** The firmware leaves the controller powered; the
+  enable line is expander pin 0, `BT_ON`, request pin 128, active high;
+  300 ms off and 500 ms on bring the controller back at 115200; it sends
+  nothing between power-on and `HCI_Reset`; the set tag's response word
+  is 0, which its declaration takes as performed.
+* **B-P3, read before any patch.** Powered up with RTS deasserted, the
+  ROM reports HCI version 7, LMP version 7, manufacturer `0x000f`, LMP
+  subversion `0x6119` and the placeholder address `aa:aa:aa:aa:aa:aa`;
+  powered up with RTS asserted, it is in download mode. The reading
+  after a patch belongs to a board whose manifest names one.
+* **B-P4, read.** On the ROM the controller advertises and accepts a
+  connection as a peripheral, after which the phone sends its ATT
+  Exchange MTU Request: the stages need no patch to begin. Whether the
+  ROM serves GATT, the serial service and pairing as the stages build
+  them is read by the board's checklist over the real stack
+  ([On the board](#on-the-board)), not by a probe.
+* **B-P5**, on a board whose manifest names a patch: the patch's two
+  waits, whether the download succeeds with Zephyr's shorter ones, and
+  whether the mode the reset boots takes the minidriver and the records:
+  only the download mode was seen to take the minidriver (run 3), and
+  no run sent a record.
+* **B-P6**, on a board whose manifest names a patch: kill the Bluetooth
+  domain mid-way through a patch download, with CTS held off by the
+  controller, and check that the next `reset` starts the driver without
+  waiting on `BUSY` and that the next bring-up reaches advertising.
