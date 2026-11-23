@@ -306,8 +306,10 @@ imports. Upstream copyright names, notices and comments retain their
 original text. The origin inventory supplies the imported baseline;
 an imported directory is not a blanket exemption for additions.
 
-Link maps identify the object files and archive members that contribute
-to an executable; compiler dependency files identify their source/header
+The list of inputs LLD prints under `--trace` identifies the object files
+and archive members a link loads, including one whose only bytes LLD
+merges into a section of its own, which a link map shows only as
+`<internal>`; compiler dependency files identify their source/header
 closure. Build records bind generated objects to those inputs and their
 tool identities. Recording an archive's name alone cannot establish the
 licenses of its selected members. Every closure member resolves to an
@@ -379,7 +381,8 @@ configuration is recorded with the executable. Fiasco is built
 with the same LLVM clang, `ld.lld` and binary tools as erXos's own C17
 code, as subprocesses, through `Makeconf.local` files that name them
 ([design-fiasco.md](design-fiasco.md#the-releases-fiasco-build)). Both
-record compiler identity, effective flags, linker maps and dependency files.
+record compiler identity, effective flags, each link's input list and
+dependency files.
 
 `bootstrap`'s direct library requirements are `drivers_uart`, `libfdt`,
 `libc_minimal`, `cxx_base` and `cxx_io`. Only the pinned `drivers-frst`

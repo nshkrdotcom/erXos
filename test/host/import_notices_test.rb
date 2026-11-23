@@ -6,7 +6,7 @@ require 'minitest/autorun'
 require 'tmpdir'
 require_relative '../../tools/lib/erx/pack_provenance'
 require_relative '../../tools/lib/erx/release_files'
-require_relative '../fixtures/lld_map'
+require_relative '../fixtures/link_inputs'
 
 class ImportNoticesTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__).freeze
@@ -21,21 +21,21 @@ class ImportNoticesTest < Minitest::Test
       source = File.join(ROOT, relative)
       artifact = File.join(directory, 'image')
       object = File.join(directory, 'object.o')
-      map = File.join(directory, 'map')
+      inputs = File.join(directory, 'link.inputs')
       dependency = File.join(directory, 'object.d')
       File.binwrite(artifact, 'fixture image')
       File.binwrite(object, 'fixture object')
-      File.write(map, LldMapFixture.text(object))
+      File.write(inputs, LinkInputsFixture.text(object))
       File.write(dependency, "#{object}: #{source}\n")
       reference = lambda { |path| { 'path' => path, 'sha256' => Digest::SHA256.file(path).hexdigest } }
       receipt = { 'version' => 1, 'kind' => 'linked', 'artifact' => reference.call(artifact),
-                  'linker_map' => reference.call(map).merge('directory' => '.'),
+                  'linker_inputs' => reference.call(inputs).merge('directory' => '.'),
                   'compiles' => [{ 'object' => reference.call(object), 'dependency' => reference.call(dependency),
                                    'directory' => '.', 'sources' => [reference.call(source)] }],
                   'archives' => [], 'inputs' => [] }
       path = File.join(directory, 'record.json')
       File.write(path, JSON.generate(receipt))
-      catalog = Erx::BuildInputs.pack(root: ROOT, paths: [artifact, object, map, dependency, path])
+      catalog = Erx::BuildInputs.pack(root: ROOT, paths: [artifact, object, inputs, dependency, path])
       resolver = Erx::PackProvenance.new(root: ROOT, catalog: catalog,
                                          imports: { 'musl' => 'permanent', 'otp' => 'permanent' })
       records = resolver.resolve(receipt: path, artifact: artifact, build_kind: 'release')
@@ -44,7 +44,7 @@ class ImportNoticesTest < Minitest::Test
   end
 
   # As record_for, but through a compiled receipt (a beam's), which names its sources directly
-  # instead of through a linker map, resolved against the imports the release's files come
+  # instead of through a link's input list, resolved against the imports the release's files come
   # from. Returns the records and the NOTICES rendered from them.
   def records_for_compiled(relatives)
     base = File.join(ROOT, 'build/test')

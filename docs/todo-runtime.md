@@ -540,7 +540,7 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   `not_alive`, or `badarg` from `open_port`) in the case events and let a row name the class it expects, so a
   different failure is reported.
 * [Medium] `tools/lib/erx/runtime_seam.rb`: `check_elf_objects` reads only the emulator's objects and six named libraries, unlike the hosted
-  check, which reads the executable, so a library added only to the native link can import an unlisted name. Derive the list from the root's link map.
+  check, which reads the executable, so a library added only to the native link can import an unlisted name. Derive the list from the root's link input list (LLD's `--trace`).
 * [Low] `test/fixtures/runtime_event_harness.c`: the sleep step's waker is a single-threaded model of `sched_set_park_flag` and the wake in `erl_process.c`, at fixed points, and the
   `scheduler_wait` exit test (`erx_event_leave_wait_ready`) pins the call by source text, so the real crossing of a scheduler and its waker is not run.
 * [Low] `otp/erts/lib_src/Makefile.in`: `depend.mk` has no prerequisites and is made once per build copy, so a header that a lib_src source

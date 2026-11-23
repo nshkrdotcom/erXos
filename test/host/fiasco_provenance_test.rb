@@ -6,7 +6,7 @@ require 'minitest/autorun'
 require 'tmpdir'
 require 'fileutils'
 require_relative '../../tools/lib/erx/fiasco_provenance'
-require_relative '../fixtures/lld_map'
+require_relative '../fixtures/link_inputs'
 
 class FiascoProvenanceTest < Minitest::Test
   # The part of FiascoInputs the attribution of a captured source reads.
@@ -219,9 +219,9 @@ class FiascoProvenanceTest < Minitest::Test
   def test_a_release_audit_reads_only_the_release_kernel
     Dir.mktmpdir do |temporary|
       root = File.realpath(temporary)
-      release = Erx::FiascoProvenance.new(root: root, runner: nil, kind: Erx::BuildKind::RELEASE).executable_maps
-      assert_equal({ 'kernel' => %w[fiasco fiasco.map].map { |name| File.join(root, 'build/fiasco/kernel-release', name) } }, release)
-      development = Erx::FiascoProvenance.new(root: root, kind: Erx::BuildKind::DEVELOPMENT, runner: nil).executable_maps
+      release = Erx::FiascoProvenance.new(root: root, runner: nil, kind: Erx::BuildKind::RELEASE).executable_links
+      assert_equal({ 'kernel' => %w[fiasco fiasco.inputs].map { |name| File.join(root, 'build/fiasco/kernel-release', name) } }, release)
+      development = Erx::FiascoProvenance.new(root: root, kind: Erx::BuildKind::DEVELOPMENT, runner: nil).executable_links
       assert_equal %w[kernel bootstrap sigma0], development.keys
       assert_equal File.join(root, 'build/fiasco/kernel/fiasco'), development.fetch('kernel').first
     end
@@ -422,11 +422,11 @@ class FiascoProvenanceTest < Minitest::Test
     Dir.mktmpdir do |root|
       root = File.realpath(root)
       build = File.join(root, 'build/fiasco')
-      Erx::FiascoProvenance.new(root: root, kind: Erx::BuildKind::DEVELOPMENT, runner: nil).executable_maps.each_value do |artifact_path, map_path|
-        FileUtils.mkdir_p(File.dirname(map_path))
+      Erx::FiascoProvenance.new(root: root, kind: Erx::BuildKind::DEVELOPMENT, runner: nil).executable_links.each_value do |artifact_path, inputs_path|
+        FileUtils.mkdir_p(File.dirname(inputs_path))
         File.binwrite(artifact_path, 'first artifact')
-        File.binwrite(File.join(File.dirname(map_path), 'root.o'), 'object')
-        File.write(map_path, LldMapFixture.text('root.o'))
+        File.binwrite(File.join(File.dirname(inputs_path), 'root.o'), 'object')
+        File.write(inputs_path, LinkInputsFixture.text('root.o'))
       end
       version = File.join(build, 'version.log')
       File.write(version, 'fixture archive tool')
@@ -487,21 +487,20 @@ class FiascoProvenanceTest < Minitest::Test
     end
   end
 
-  # An executable whose map names nothing audits nothing, so the audit refuses it rather
-  # than certify an empty contribution list: an empty map, a map that is not LLD's, or
-  # an LLD map with no input section.
+  # An executable whose input list names nothing would audit nothing, so the audit
+  # refuses it rather than certify an empty contribution list: an empty list, and a
+  # list that is not LLD's --trace output, such as a link map.
   def test_an_executable_with_no_audited_contribution_is_refused
     Dir.mktmpdir do |root|
       root = File.realpath(root)
-      map = File.join(root, 'build/fiasco/image.map')
-      FileUtils.mkdir_p(File.dirname(map))
-      { '' => /LLD link map header/,
-        "Linker script and memory map\n .text 0x10000 0x4 root.o\n" => /LLD link map header/,
-        LldMapFixture.text => /no object contributions/ }.each do |bytes, message|
-        File.write(map, bytes)
-        # The audit reads each input once, so each map gets an auditor of its own.
+      list = File.join(root, 'build/fiasco/image.inputs')
+      FileUtils.mkdir_p(File.dirname(list))
+      { '' => /does not end with a newline/,
+        "Linker script and memory map\n .text 0x10000 0x4 root.o\n" => /not an input name/ }.each do |bytes, message|
+        File.write(list, bytes)
+        # The audit reads each input once, so each list gets an auditor of its own.
         auditor = Erx::FiascoProvenance.new(root: root, kind: Erx::BuildKind::DEVELOPMENT, runner: nil)
-        error = assert_raises(Erx::Error, bytes.inspect) { auditor.send(:audit_executable, 'fixture', map, map) }
+        error = assert_raises(Erx::Error, bytes.inspect) { auditor.send(:audit_executable, 'fixture', list, list) }
         assert_match message, error.message, bytes.inspect
       end
     end
@@ -516,8 +515,8 @@ class FiascoProvenanceTest < Minitest::Test
       end
       archive = File.join(build, 'lib.a')
       File.binwrite(archive, "!<arch>\narchive")
-      map = File.join(build, 'image.map')
-      File.write(map, LldMapFixture.text('lib.a(member.o)'))
+      inputs = File.join(build, 'image.inputs')
+      File.write(inputs, LinkInputsFixture.text('lib.a(member.o)'))
       runner = Object.new
       extracted = File.join(build, 'one/member.o')
       listing = File.join(build, 'archive-list.log')
@@ -526,13 +525,13 @@ class FiascoProvenanceTest < Minitest::Test
       auditor = Erx::FiascoProvenance.new(root: root, kind: Erx::BuildKind::DEVELOPMENT, runner: runner)
       auditor.instance_variable_set(:@unresolved, [])
       auditor.instance_variable_set(:@sources, {})
-      auditor.send(:audit_executable, 'fixture', archive, map)
+      auditor.send(:audit_executable, 'fixture', archive, inputs)
       assert auditor.instance_variable_get(:@unresolved).any? { |message| message.include?('ambiguous archive') }
       File.write(File.join(build, '.erx-archive-inputs'), 'one/member.o')
       auditor = Erx::FiascoProvenance.new(root: root, kind: Erx::BuildKind::DEVELOPMENT, runner: runner)
       auditor.instance_variable_set(:@unresolved, [])
       auditor.instance_variable_set(:@sources, {})
-      result = auditor.send(:audit_executable, 'fixture', archive, map)
+      result = auditor.send(:audit_executable, 'fixture', archive, inputs)
       refute auditor.instance_variable_get(:@unresolved).any? { |message| message.include?('ambiguous archive') }
       member = result.fetch('contributions').first.fetch('compiles').first
       assert_equal 'build/fiasco/one/member.o', member.fetch('object').fetch('path')
@@ -546,10 +545,10 @@ class FiascoProvenanceTest < Minitest::Test
       FileUtils.mkdir_p(build)
       object = File.join(build, 'member.o')
       archive = File.join(build, 'lib.a')
-      map = File.join(build, 'image.map')
+      inputs = File.join(build, 'image.inputs')
       File.binwrite(object, 'object')
       File.binwrite(archive, "!<arch>\noriginal archive")
-      File.write(map, LldMapFixture.text('lib.a(member.o)'))
+      File.write(inputs, LinkInputsFixture.text('lib.a(member.o)'))
       extracted_from = nil
       listing = File.join(build, 'archive-list.log')
       File.write(listing, "member.o\n")
@@ -562,7 +561,7 @@ class FiascoProvenanceTest < Minitest::Test
       auditor = Erx::FiascoProvenance.new(root: root, kind: Erx::BuildKind::DEVELOPMENT, runner: runner)
       auditor.instance_variable_set(:@unresolved, [])
       auditor.instance_variable_set(:@sources, {})
-      result = auditor.send(:audit_executable, 'fixture', object, map)
+      result = auditor.send(:audit_executable, 'fixture', object, inputs)
       refute_equal archive, extracted_from
       assert_equal Digest::SHA256.hexdigest("!<arch>\noriginal archive"), result.fetch('contributions').first.fetch('archive').fetch('sha256')
     end

@@ -16,30 +16,24 @@ require_relative 'fiasco_parts'
 require_relative 'fiasco_toolchain'
 
 module Erx
-  # A receipt binds the actual output, link map and compiler dependency files.
+  # A receipt binds the actual output, the inputs its link loaded and the compiler
+  # dependency files.
   # Licenses are derived from those inputs, never asserted by the caller that
   # requests an image. External files require exact reviewed registry entries.
   class PackProvenance
     MAX_METADATA = 64 * 1024 * 1024
-    # The columns of the row an LLD link map (-Map) opens with.
-    LLD_MAP_HEADER = %w[VMA LMA Size Align Out In Symbol].freeze
-    # Every later row of the map: VMA, LMA and size in hex, alignment in decimal and
-    # one space, then a name indented eight spaces per level: an output section at
-    # none, an input section eight in, a symbol sixteen in (lld/ELF/MapFile.cpp,
-    # writeHeader and writeMapFile). The name may be empty.
-    LLD_MAP_ROW = /\A *[0-9a-f]+ +[0-9a-f]+ +[0-9a-f]+ +\d+ (?<indent>(?: {8}){0,2})(?<name>\S.*)?\n\z/
-    LLD_INPUT_INDENT = (' ' * 8).b.freeze
-    # The other rows at the input level: the linker script's assignments and byte
-    # commands inside an output section, as written in the script, or no name. Any
-    # other row there without an input section is refused, not passed over.
-    LLD_SCRIPT_COMMAND = /\A(?:(?:PROVIDE|PROVIDE_HIDDEN|HIDDEN|ASSERT|BYTE|SHORT|LONG|QUAD|SQUAD)[ ]?\(|
-                           [A-Za-z0-9_.$]+[ ](?:[-+*\/&|]|<<|>>)?=[ ])/x
-    # The section-name string table's row. LLD writes .shstrtab into every output
-    # (SyntheticSections.cpp) and, unless a linker script names it, places it with
-    # the other non-allocated tables it makes after every other section
-    # (Writer.cpp); a script that names it puts it last (task.ld), with at most
-    # the other tables and its top-level assertions after it.
-    LLD_SECTION_NAMES = '<internal>:(.shstrtab)'.b.freeze
+    # One input a link loaded, as LLD's --trace names it (lld/ELF/InputFiles.cpp,
+    # doParseFile, and toStr): a file as the link names it, or an archive member as
+    # archive(member). Printable ASCII without spaces, so every later message and
+    # lookup can take the name as it is, and no leading ~, which File.expand_path
+    # would read as a home directory.
+    LINK_INPUT = /\A(?<file>(?!~)[!-'*-~]+)(?:\((?<member>[!-'*-~]+)\))?\z/
+    # One line of a link's input list: the file the link named, relative to the link's
+    # directory, and the archive member it took from that file, or nil when the link
+    # loaded the file whole.
+    LinkInput = Data.define(:file, :member) do
+      def to_s = member ? "#{file}(#{member})" : file
+    end
     # The statuses of a package of an image: permanent, or package-local for a package of
     # a local test image (LicenseCheck::PACKAGE_LOCAL). A dependency is registered
     # under one of DependencyStatus::ALL.
@@ -201,44 +195,25 @@ module Erx
     end
     private_class_method :dependency_rule
 
-    # Input columns identify contributions; filename suffixes have no meaning
-    # to a linker. Every link the build makes is LLD's, so its map is the one
-    # format, read whole: after LLD's header row every line must be one of
-    # its rows, the map must end with a newline, and every input section
-    # must come before LLD's .shstrtab row, so a map cut short (mid-row or at
-    # a line boundary) or with anything appended is refused rather than read
-    # for the rows that happen to parse. Input sections are the rows eight
-    # spaces in; output sections (no indent) and symbols (sixteen) contribute
-    # nothing.
-    def self.contributors(bytes)
-      raise Error, 'link map is too large' if bytes.bytesize > MAX_METADATA
-      map = bytes.b
-      header, *lines = map.lines
-      raise Error, 'link map does not open with the LLD link map header' unless header&.split == LLD_MAP_HEADER
-      raise Error, 'link map does not end with a newline' unless map.end_with?("\n")
-      rows = lines.map { |line| LLD_MAP_ROW.match(line) || raise(Error, 'link map has a line that is not an LLD map row') }
-      table = rows.rindex { |row| row[:indent] == LLD_INPUT_INDENT && row[:name] == LLD_SECTION_NAMES }
-      raise Error, 'link map has no .shstrtab row, which LLD writes after every input section' unless table
-      inputs = rows.each_with_index.filter_map do |row, index|
-        name = row[:name]
-        next unless row[:indent] == LLD_INPUT_INDENT && name
-        unless name.include?(':(')
-          next if name.match?(LLD_SCRIPT_COMMAND)
-
-          raise Error, 'link map row at the input level names neither an input section nor a script command'
-        end
-        input = /\A(.+):\([^()]*\)\z/.match(name)
-        raise Error, 'unsupported LLD input contribution' unless input
-        [index, input[1]] unless input[1] == '<internal>'
-      end
-      raise Error, 'link map has an input section after its .shstrtab row' if inputs.any? { |index, _| index > table }
-      result = inputs.map(&:last).uniq
-      # Printable ASCII, so every later message and lookup can take the name as it is.
-      unless result.all? { |input| input.match?(/\A[!-'*-~]+(?:\([!-'*-~]+\))?\z/) }
-        raise Error, 'unsupported link input name'
-      end
-      raise Error, 'link map contains no object contributions' if result.empty?
-      result.freeze
+    # The inputs a link loaded, from the list LLD's --trace prints: one line per
+    # object, shared object or archive member, as LLD reads it and before it
+    # merges, folds or discards a section, so an input whose only bytes in the
+    # output sit in a section LLD made (merged strings and constants) is named
+    # as every other is. A loaded input whose bytes all went counts as well,
+    # which only widens the audit. A receipt or audit names only a list from a
+    # link that succeeded: Fiasco's make rules give the list its name only after
+    # the link exits cleanly, and NativeRoot raises before it writes the receipt.
+    # A list that does not end with a newline (cut short, or empty) or has a line
+    # that is not one input name is refused.
+    def self.link_inputs(bytes)
+      raise Error, 'link input list is too large' if bytes.bytesize > MAX_METADATA
+      list = bytes.b
+      raise Error, 'link input list does not end with a newline' unless list.end_with?("\n")
+      list.lines(chomp: true).uniq.map do |line|
+        parts = LINK_INPUT.match(line)
+        raise Error, 'link input list has a line that is not an input name' unless parts
+        LinkInput.new(file: parts[:file], member: parts[:member])
+      end.freeze
     end
 
     private
@@ -270,7 +245,7 @@ module Erx
                 build_kind: build_kind, depth: depth + 1, expected: file.fetch('sha256'))
         end
       when 'linked'
-        exact_keys(receipt, %w[version kind artifact linker_map compiles archives inputs])
+        exact_keys(receipt, %w[version kind artifact linker_inputs compiles archives inputs])
         resolve_link(receipt, records: records, build_kind: build_kind)
       when 'fiasco'
         resolve_fiasco(receipt, records: records, build_kind: build_kind)
@@ -370,11 +345,10 @@ module Erx
     end
 
     def resolve_link(receipt, records:, build_kind:)
-      map = receipt.fetch('linker_map')
-      exact_keys(map, %w[path sha256 directory])
-      directory = File.expand_path(path_value(map.fetch('directory')), @root)
-      map_bytes = verified_read(map.reject { |key, _| key == 'directory' })
-      contributors = self.class.contributors(map_bytes)
+      loaded = receipt.fetch('linker_inputs')
+      exact_keys(loaded, %w[path sha256 directory])
+      directory = File.expand_path(path_value(loaded.fetch('directory')), @root)
+      contributors = self.class.link_inputs(verified_read(loaded.reject { |key, _| key == 'directory' }))
       compiles = receipt.fetch('compiles')
       archives = receipt.fetch('archives')
       inputs = receipt.fetch('inputs')
@@ -424,13 +398,12 @@ module Erx
         end
       end
       contributors.each do |contributor|
-        if contributor.include?('(')
-          archive, _separator, member = contributor.partition('(')
-          key = "#{File.expand_path(archive, directory)}(#{member}"
-          object = archive_members[key]
+        if contributor.member
+          archive = File.expand_path(contributor.file, directory)
+          object = archive_members["#{archive}(#{contributor.member})"]
           unless object
             # A registered archive is keyed by its real path; a link names it as the search path does.
-            archive_path = File.realpath(File.expand_path(archive, directory))
+            archive_path = File.realpath(archive)
             if @external.key?(archive_path)
               attribute(archive_path, records, build_kind)
               next
@@ -438,7 +411,7 @@ module Erx
           end
           raise Error, "unresolved archive contribution: #{contributor}" unless object
         else
-          object = File.expand_path(contributor, directory)
+          object = File.expand_path(contributor.file, directory)
         end
         sources = objects[object]
         if sources

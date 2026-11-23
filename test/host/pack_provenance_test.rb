@@ -6,7 +6,7 @@ require 'minitest/autorun'
 require 'tmpdir'
 require_relative '../../tools/lib/erx/pack_provenance'
 require_relative '../../tools/lib/erx/serving_set'
-require_relative '../fixtures/lld_map'
+require_relative '../fixtures/link_inputs'
 
 class PackProvenanceTest < Minitest::Test
   # Each catalog class closes over the caller's record, including instances
@@ -37,8 +37,8 @@ class PackProvenanceTest < Minitest::Test
   end
   def archive_fixture(bytes:, &on_run)
     archive = write('root.a', bytes)
-    File.write(@map, LldMapFixture.text('root.a(root.o)'))
-    @receipt['linker_map'] = reference(@map).merge('directory' => '.')
+    File.write(@inputs, LinkInputsFixture.text('root.a(root.o)'))
+    @receipt['linker_inputs'] = reference(@inputs).merge('directory' => '.')
     @receipt['archives'] = [reference(archive).merge('members' => [
       { 'name' => 'root.o', 'sha256' => reference(@object).fetch('sha256'), 'object_path' => 'root.o' }
     ])]
@@ -144,65 +144,74 @@ class PackProvenanceTest < Minitest::Test
     end
   end
 
-  # Only a map that opens with LLD's header row is read. Without it, an empty map, a GNU
-  # ld map or an LLD map cut off at its start would yield only the rows that happen to
-  # parse, and the license gate would pass over what the map leaves out.
-  def test_a_link_map_without_lld_header_is_refused
-    ["", "\n", "Linker script and memory map\n .text 0x10000 0x4 root.o\n",
-     "10000 10000 4 4 root.o:(.text)\n"].each do |map|
-      error = assert_raises(Erx::Error, map.inspect) { Erx::PackProvenance.contributors(map) }
-      assert_match(/LLD link map header/, error.message, map.inspect)
+  LLD_MERGED = File.expand_path('../fixtures/lld_merged', __dir__)
+
+  # merged.trace and merged.map come from one LLD 23.1.3 link of the sources beside them:
+  #   clang --target=aarch64-none-elf -c {a,b,c}.s && llvm-ar rc lib.a c.o
+  #   ld.lld --gc-sections --trace -Map merged.map a.o b.o lib.a -o merged.elf > merged.trace
+  # b.o holds only a merged string, so its bytes sit in a section LLD made: the map shows
+  # them as <internal> and never names b.o, while --trace names every input LLD loaded.
+  def test_link_inputs_name_an_input_whose_only_bytes_were_merged
+    refute_includes File.read(File.join(LLD_MERGED, 'merged.map')), 'b.o'
+    assert_equal ['a.o', 'b.o', 'lib.a(c.o)'],
+                 Erx::PackProvenance.link_inputs(File.binread(File.join(LLD_MERGED, 'merged.trace'))).map(&:to_s)
+  end
+
+  # The audit follows each input of that link to its sources: b.c, whose only output is
+  # the merged string, among them.
+  def test_a_traced_link_attributes_the_sources_of_every_loaded_input
+    compiles = %w[a b c].map do |name|
+      source = write("#{name}.c", "/* SPDX-License-Identifier: BSD-2-Clause */\nint #{name};\n")
+      { 'object' => reference(write("#{name}.o", "#{name} object bytes")),
+        'dependency' => reference(write("#{name}.d", "#{name}.o: #{name}.c\n")),
+        'directory' => '.', 'sources' => [reference(source)] }
+    end
+    member = File.join(@root, 'c.o')
+    listing = write('archive-members.txt', "c.o\n")
+    runner = Object.new
+    runner.define_singleton_method(:run) { |argv, **_options| { 'log' => argv[1] == 't' ? listing : member } }
+    @resolver = Erx::PackProvenance.new(root: @root, catalog: build_catalog, runner: runner)
+    File.binwrite(@inputs, File.binread(File.join(LLD_MERGED, 'merged.trace')))
+    @receipt.merge!('linker_inputs' => reference(@inputs).merge('directory' => '.'), 'compiles' => compiles,
+                    'archives' => [reference(write('lib.a', "!<arch>\nlib")).merge('members' => [
+                      { 'name' => 'c.o', 'sha256' => reference(member).fetch('sha256'), 'object_path' => 'c.o' }
+                    ])])
+    assert_equal %w[a.c b.c c.c], resolve.map { |record| record.fetch('path') }.sort
+  end
+
+  # The list is whole or refused: a cut leaves no final newline, and a line that is not
+  # one input name (empty, with a space as a map row has, or with parentheses that are
+  # not one archive member, or a leading ~ that path expansion would take for a home
+  # directory) is refused, as is a list naming nothing or past the bound.
+  def test_a_cut_or_malformed_link_input_list_is_refused
+    list = LinkInputsFixture.text('root.o', 'lib.a(member.o)')
+    assert_equal [Erx::PackProvenance::LinkInput.new(file: 'root.o', member: nil),
+                  Erx::PackProvenance::LinkInput.new(file: 'lib.a', member: 'member.o')],
+                 Erx::PackProvenance.link_inputs(list)
+    { list.chomp => /does not end with a newline/,
+      list[0, list.index('member')] => /does not end with a newline/,
+      '' => /does not end with a newline/,
+      "#{list}\n" => /not an input name/,
+      "#{list}210128 210128 10 4 root.o:(.text)\n" => /not an input name/,
+      "#{list}root\to\n" => /not an input name/,
+      "#{list}lib.a(member.o\n" => /not an input name/,
+      "#{list}lib.a(a)(b)\n" => /not an input name/,
+      "#{list}(member.o)\n" => /not an input name/,
+      "#{list}~/root.o\n" => /not an input name/,
+      "#{list}r\xC3\xB6ot.o\n".b => /not an input name/,
+      "x\n" * ((Erx::PackProvenance::MAX_METADATA / 2) + 1) => /too large/ }.each do |bytes, message|
+      error = assert_raises(Erx::Error, bytes[0, 80].inspect) { Erx::PackProvenance.link_inputs(bytes) }
+      assert_match message, error.message, bytes[0, 80].inspect
     end
   end
 
-  # A map cut short or with anything appended is refused, not read for the rows that
-  # parse: a cut mid-row leaves no final newline, a cut at a line boundary loses the
-  # .shstrtab row LLD writes after every input, and junk is a line that is no LLD row.
-  def test_a_cut_or_extended_link_map_is_refused
-    map = LldMapFixture.text('root.o', 'other.o')
-    assert_equal %w[root.o other.o], Erx::PackProvenance.contributors(map)
-    rows = map.lines
-    { map.chomp => /does not end with a newline/,
-      map[0, map.index('other.o') + 3] => /does not end with a newline/,
-      rows.take(rows.size - 2).join => /no \.shstrtab row/,
-      rows.take(3).join => /no \.shstrtab row/,
-      "#{map}trailing junk\n" => /not an LLD map row/,
-      "#{map}\n" => /not an LLD map row/,
-      map.sub(' root.o', 'root.o') => /not an LLD map row/ }.each do |bytes, message|
-      error = assert_raises(Erx::Error, bytes.inspect) { Erx::PackProvenance.contributors(bytes) }
-      assert_match message, error.message, bytes.inspect
-    end
-  end
-
-  # Contributions are input sections, LLD's second level: a symbol row sixteen spaces in
-  # is passed over even when its demangled name has the input delimiter in it, and so
-  # are the script's assignments and byte commands at the input level. Any other row
-  # there, and an input name outside printable ASCII, is refused.
-  def test_only_input_section_rows_are_contributions
-    rows = LldMapFixture.text('root.o').lines
-    with = ->(*names) { [*rows.take(3), *names.map { |name| LldMapFixture.row(0x10000, 0, 1, name) }, *rows.drop(3)].join }
-    passed_over = ["#{' ' * 16}ns::(anonymous namespace)::helper", "#{' ' * 8}_stext = .",
-                   "#{' ' * 8}. += 0x10", "#{' ' * 8}QUAD(_start)", "#{' ' * 8}PROVIDE_HIDDEN (start = .)",
-                   ' ' * 8]
-    assert_equal ['root.o'], Erx::PackProvenance.contributors(with.call(*passed_over))
-    { "#{' ' * 8}hidden.o" => /neither an input section nor a script command/,
-      "#{' ' * 8}hidd\xC3\xA9n.o:(.text)".b => /unsupported link input name/ }.each do |name, message|
-      error = assert_raises(Erx::Error, name.inspect) { Erx::PackProvenance.contributors(with.call(name)) }
-      assert_match message, error.message, name.inspect
-    end
-  end
-
-  # What may follow .shstrtab: .strtab, after it in an output not stripped, and the
-  # top-level assertions of a script that names the tables, which LLD writes with no
-  # name. An input section may not, since a cut there would go unseen.
-  def test_only_tables_and_assertions_follow_the_section_names
-    map = LldMapFixture.text('root.o')
-    strtab = LldMapFixture.row(0, 0x10, 1, '.strtab') + LldMapFixture.row(0, 0x10, 1, "#{' ' * 8}<internal>:(.strtab)")
-    assertion = LldMapFixture.row(0x10004, 0, 1, '')
-    assert_equal ['root.o'], Erx::PackProvenance.contributors(map + strtab + assertion + assertion)
-    late = LldMapFixture.row(0, 4, 4, '.late') + LldMapFixture.row(0, 4, 4, "#{' ' * 8}late.o:(.late)")
-    error = assert_raises(Erx::Error) { Erx::PackProvenance.contributors(map + late) }
-    assert_match(/input section after its \.shstrtab row/, error.message)
+  # A map's input-section shape, file:(section), is a well-formed name of an archive
+  # member, so the list admits it; no file of that name exists, so the audit refuses it.
+  def test_a_map_row_name_in_the_list_is_unresolved
+    File.write(@inputs, LinkInputsFixture.text('root.o', 'root.o:(.text)'))
+    @receipt['linker_inputs'] = reference(@inputs).merge('directory' => '.')
+    error = assert_raises(Erx::Error) { resolve }
+    assert_match %r{No such file or directory.*/root\.o:\z}, error.message
   end
 
   def test_compiler_mp_phony_rules_only_repeat_prerequisites
@@ -246,9 +255,9 @@ class PackProvenanceTest < Minitest::Test
     @object = write('root.o', 'object bytes')
     @artifact = write('root.elf', 'linked bytes')
     @dependency = write('root.d', "root.o: root.c\n")
-    @map = write('root.map', LldMapFixture.text('root.o'))
+    @inputs = write('root.inputs', LinkInputsFixture.text('root.o'))
     @receipt = { 'version' => 1, 'kind' => 'linked', 'artifact' => reference(@artifact),
-                 'linker_map' => reference(@map).merge('directory' => '.'),
+                 'linker_inputs' => reference(@inputs).merge('directory' => '.'),
                  'compiles' => [{ 'object' => reference(@object), 'dependency' => reference(@dependency),
                                   'directory' => '.', 'sources' => [reference(@source)] }],
                  'archives' => [], 'inputs' => [] }
@@ -765,11 +774,11 @@ class PackProvenanceTest < Minitest::Test
     end
   end
 
-  def test_consumed_map_dependency_and_nested_receipt_bytes_match_their_hashes
+  def test_consumed_input_list_dependency_and_nested_receipt_bytes_match_their_hashes
     component = write('component.json', JSON.generate(@receipt))
     producer = write('producer.rb', "# SPDX-License-Identifier: BSD-2-Clause\n")
     original = Marshal.load(Marshal.dump(@receipt))
-    [@map, @dependency, component].each do |path|
+    [@inputs, @dependency, component].each do |path|
       before = File.binread(path)
       @receipt = if path == component
                    { 'version' => 1, 'kind' => 'assembled', 'artifact' => reference(@artifact),
@@ -835,8 +844,8 @@ class PackProvenanceTest < Minitest::Test
     refute_includes(@resolver.opened_paths || [], File.realpath(secret))
   end
 
-  def test_stale_artifact_object_source_dependency_and_map_are_refused
-    [@artifact, @object, @source, @dependency, @map].each do |path|
+  def test_stale_artifact_object_source_dependency_and_input_list_are_refused
+    [@artifact, @object, @source, @dependency, @inputs].each do |path|
       original = File.binread(path)
       File.binwrite(path, original + 'changed')
       assert_raises(Erx::Error) { resolve }
@@ -859,17 +868,17 @@ class PackProvenanceTest < Minitest::Test
   end
 
   def test_unresolved_link_object_is_not_silently_ignored
-    File.write(@map, LldMapFixture.text('hidden.o'))
-    @receipt['linker_map'] = reference(@map).merge('directory' => '.')
+    File.write(@inputs, LinkInputsFixture.text('hidden.o'))
+    @receipt['linker_inputs'] = reference(@inputs).merge('directory' => '.')
     error = assert_raises(Erx::Error) { resolve }
     assert_includes error.message, 'unresolved linked object'
   end
 
   def test_alternate_object_names_cannot_hide_linked_contributions
     ['hidden.obj', 'extensionless', 'odd.lib(member.obj)'].each do |name|
-      File.write(@map, LldMapFixture.text('root.o', name))
-      @receipt['linker_map'] = reference(@map).merge('directory' => '.')
-      assert_equal ['root.o', name], Erx::PackProvenance.contributors(File.binread(@map))
+      File.write(@inputs, LinkInputsFixture.text('root.o', name))
+      @receipt['linker_inputs'] = reference(@inputs).merge('directory' => '.')
+      assert_equal ['root.o', name], Erx::PackProvenance.link_inputs(File.binread(@inputs)).map(&:to_s)
       assert_raises(Erx::Error) { resolve }
     end
   end

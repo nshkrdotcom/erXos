@@ -19,7 +19,7 @@ module Erx
   # copy, as the hosted runtime is. Its compiler sees erXos's musl alone, through a sysroot
   # of musl's headers and the libraries the root's link names. OTP's own link of beam.emu
   # checks that no name is missing; the root the image boots is linked again by NativeRoot,
-  # from the same objects, for its link map.
+  # from the same objects, for its input list.
   class NativeRuntime < Runtime
     TARGET = 'aarch64-unknown-erxos'
     XCOMP_FILE = "xcomp/erl-xcomp-#{TARGET}.conf".freeze

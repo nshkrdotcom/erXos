@@ -93,6 +93,11 @@ ifneq ($(HOST_LINK),1)
   ifeq ($(CONFIG_BID_GENERATE_MAPFILE),y)
     LDFLAGS += -Map $(strip $@).map
   endif
+  # erXos: the link keeps the inputs it loaded, as LLD's --trace prints them,
+  # in $@.inputs for erXos's license audit; the list takes that name only once
+  # the link succeeds, so it is the whole list of the last link that succeeded.
+  LDFLAGS += --trace
+  BID_LINK_INPUTS = > $@.inputs.tmp && mv $@.inputs.tmp $@.inputs
   LDFLAGS += $(addprefix -L, $(L4LIBDIR))
   LDFLAGS += $(addprefix $(if $(filter lld,$(BID_LD_TYPE)),-T,-dT) , $(LDSCRIPT))
   LDFLAGS += --warn-common
@@ -154,7 +159,7 @@ endif
 
 $(TARGET): $(OBJS) $(LIBDEPS)
 	@$(LINK_MESSAGE)
-	$(VERBOSE)$(call MAKEDEP,$(CONFIG_INT_LD_NAME),,,ld) $(LINK_PROGRAM) -o $@ $(BID_LDFLAGS_FOR_LINKING) $(OBJS) $(LIBS) $(EXTRA_LIBS)
+	$(VERBOSE)$(call MAKEDEP,$(CONFIG_INT_LD_NAME),,,ld) $(LINK_PROGRAM) -o $@ $(BID_LDFLAGS_FOR_LINKING) $(OBJS) $(LIBS) $(EXTRA_LIBS) $(BID_LINK_INPUTS)
 	$(if $(BID_GEN_CONTROL),$(VERBOSE)echo "Requires: $(REQUIRES_LIBS)" >> $(PKGDIR)/Control)
 	$(if $(BID_POST_PROG_LINK_MSG_$@),@$(BID_POST_PROG_LINK_MSG_$@))
 	$(if $(BID_POST_PROG_LINK_$@),$(BID_POST_PROG_LINK_$@))

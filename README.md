@@ -711,7 +711,7 @@ and their hashes are published so a rebuild can be compared.
 
 Only LLVM will do, and not Apple's SDK clang or GCC: the build, Fiasco and L4Re
 included, uses clang as a cross compiler (`--target`) and its sanitizers with
-`llvm-symbolizer`, links with lld and reads lld's link maps for the
+`llvm-symbolizer`, links with lld and reads the input list lld prints under `--trace` for the
 image's source record, and admits into an image only the LLVM resource
 headers that `config/provenance/llvm.json` lists, each by its own LLVM
 license line. For Homebrew at

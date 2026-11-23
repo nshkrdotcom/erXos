@@ -2014,7 +2014,7 @@ and the file goes.
 
 **Source records.** The kernel and `sigma0` carry an `assembled` receipt over Fiasco's
 own receipt, so their notices come from Fiasco's audit. The root carries a `linked`
-receipt over its objects, dependency files and link map. Its dependency files leave out
+receipt over its objects, dependency files and the input list its link prints under LLD's `--trace`. Its dependency files leave out
 system headers (Fiasco's and the compiler's). Fiasco's three archives that its link takes
 members of are registered whole, with the license of the package they come from, since
 their members have no compile record a `linked` receipt could name.
@@ -2024,7 +2024,7 @@ configure and make from `otp/xcomp/erl-xcomp-aarch64-unknown-erxos.conf` in a pr
 sysroot of musl's headers and the root's libraries, and fails if an object imports a name
 `sys/erxos/imports.txt` does not list. OTP's own link of `beam.emu` shows that no name is missing.
 `NativeRoot` links the root again from `erl_main.o`, `libbeam.a`, OTP's other archives, `libc.a` and
-Fiasco's libraries, without debug information, because its link map is what the root's receipt reads.
+Fiasco's libraries, without debug information, because its link's input list is what the root's receipt reads.
 OTP's and musl's archives are registered whole in the source record, with the license of the package
 they come from, as Fiasco's are.
 

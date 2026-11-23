@@ -222,7 +222,7 @@ module Erx
     end
 
     # The system's root task with the receipt that binds it to what the link took: its
-    # objects, their dependency files and the link map (PackProvenance reads these). The
+    # objects, their dependency files and its input list (PackProvenance reads these). The
     # dependency files leave out Fiasco's, musl's and the compiler's headers, system
     # headers here, so the receipt names erXos's own sources. Fiasco's audit answers for
     # Fiasco's; TODO.md holds musl's. Returns the program, its receipt, and every file those name.
@@ -244,12 +244,10 @@ module Erx
 
     # The BeamAsm image: DOMAIN_RUNTIME over the archives of ERTS's BeamAsm flavour, musl
     # and the C++ runtime (NativeJitRuntime), with its receipt. The check that it links
-    # BeamAsm and asmjit keeps an interpreter link from passing as it. The link map keeps
-    # C++ names mangled: a demangled one such as `std::(anonymous namespace)::x` reads
-    # as an input contribution to the map's reader (PackProvenance.contributors).
+    # BeamAsm and asmjit keeps an interpreter link from passing as it.
     def build_jit_runtime_receipted(directory:, archives:)
       program = build(name: 'erts-jit', sources: DOMAIN_RUNTIME, directory: directory, archives: archives, strip_debug: true,
-                      script: TASK_LINK_SCRIPT, link_flags: [*TASK_LINK_FLAGS, '--no-demangle'], place: nil)
+                      script: TASK_LINK_SCRIPT, link_flags: TASK_LINK_FLAGS, place: nil)
       InterpreterImage.check_beamasm(program: program, nm: nm, runner: @runner)
       receipted(program, sources: DOMAIN_RUNTIME, script: TASK_LINK_SCRIPT, directory: directory)
     end
@@ -305,10 +303,12 @@ module Erx
       libraries = LIBRARIES.map { |library| @fiasco.user_library(library) }
       program = File.join(directory, name)
       flags = [*(place ? self.class.place_flags(place, ram_first: @platform.ram_first) : []), *link_flags]
-      @runner.run([@linker, *self.class.link_options(script: script, flags: flags, strip_debug: strip_debug), '-Map', map_path(program),
+      # --trace lists every input the link loads on standard output, the receipt's record of
+      # them (PackProvenance.link_inputs); a link that fails raises before a receipt names it.
+      @runner.run([@linker, *self.class.link_options(script: script, flags: flags, strip_debug: strip_debug), '--trace',
                    '-o', program, *objects,
                    *self.class.archive_group(archives, boot_core: @fiasco.boot_core_archive, libraries: libraries)],
-                  name: "native-root-#{name}-link", deadline: 60, chdir: @source)
+                  name: "native-root-#{name}-link", deadline: 60, chdir: @source, stdout: inputs_path(program))
       CounterReads.check(program: program, objdump: File.join(File.dirname(@compiler), 'llvm-objdump'), runner: @runner)
       program
     end
@@ -342,23 +342,24 @@ module Erx
 
     def object_path(source, directory) = File.join(directory, "#{source.tr('/', '_').tr('.', '_')}.o")
 
-    def map_path(program) = "#{program}.map"
+    def inputs_path(program) = "#{program}.inputs"
 
     def nm = File.join(File.dirname(@compiler), 'llvm-nm')
 
     # A linked receipt over program: its objects, compiled from sources into directory,
-    # their dependency files, the link map and the link script; and every file it names.
+    # their dependency files, the inputs its link loaded and the link script; and every
+    # file it names.
     def receipted(program, sources:, script:, directory:)
       compiles = sources.map { |source| compile_record(source, directory: directory) }
       linked = {
         'version' => 1, 'kind' => 'linked', 'artifact' => reference(program),
-        'linker_map' => reference(map_path(program)).merge('directory' => '.'),
+        'linker_inputs' => reference(inputs_path(program)).merge('directory' => '.'),
         'compiles' => compiles, 'archives' => [], 'inputs' => [reference(File.join(@root, script))]
       }
       receipt = File.join(directory, "#{File.basename(program)}.receipt.json")
       File.write(receipt, JSON.pretty_generate(linked) + "\n")
       named = compiles.flat_map { |record| [record.fetch('object'), record.fetch('dependency'), *record.fetch('sources')] }
-      inputs = [program, map_path(program), receipt, File.join(@root, script),
+      inputs = [program, inputs_path(program), receipt, File.join(@root, script),
                 *named.map { |file| File.expand_path(file.fetch('path'), @root) }].uniq
       { program: program, receipt: receipt, inputs: inputs.freeze }.freeze
     end

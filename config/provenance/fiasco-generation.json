@@ -111,7 +111,7 @@
     "fiasco/mk/mk/binary.inc": "5ede7b24f83d35e9df92f1e62a2148134e375412a560dc727040e50520d7f654",
     "fiasco/mk/mk/install.inc": "592450adbe49b6ba807197162d75326c5bb23c7732baf489c3903784fee23351",
     "fiasco/mk/mk/lib.mk": "2c1f456f30703b2e6959d46c7293713828572922c6a7e983893f78a3968a7e90",
-    "fiasco/mk/mk/prog.mk": "57b869c5df95773d870e3dd2b00d24ea3047f0bde371231b1330d38bd59889a6",
+    "fiasco/mk/mk/prog.mk": "7853d28bbdfd398cef52c00f17cf28cf29d6b38eedb5c71771be17b61da6338d",
     "fiasco/mk/mk/util.mk": "21ef020d94261934bd7d0b70ae6782f870b4b76dbc1e3d650d74572ba029e296",
     "fiasco/mk/tool/bin/l4image": "e30d2a198a9dfe628f95d7f510b95b021f0e95bc366e3bd59893db03d4e578f7",
     "fiasco/mk/tool/bin/makeconf": "96403152fada9a58de5ddb74ba2d6fc7c89919f884a0d0186cce81249655f268",

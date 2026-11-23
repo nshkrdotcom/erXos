@@ -209,8 +209,8 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   platform record or `QemuPlan::MACHINES` when 1b-I's stage (a) runs a suite on the model.
 * [Low] tooling, `tools/lib/erx/native_root.rb` (`build_system_receipted`): the
   root's linked receipt does not name its place, the `--defsym` of
-  `erx_fiasco_image_start` that `place_flags` adds; only the link map it binds
-  by hash shows it. Record it, which needs a field in `PackProvenance`'s
+  `erx_fiasco_image_start` that `place_flags` adds, and nothing it binds by
+  hash shows it. Record it, which needs a field in `PackProvenance`'s
   `linked` schema (`exact_keys`), or bind the place as a link input.
 * [Medium] build, document links: no `make check` step resolves the `file.md#anchor` links of the design
   documents, `TODO.md`, `README.md`, `CLAUDE.md` and the comments of `tools/`, `test/` and the sources, so
@@ -573,7 +573,7 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   store it on `Step`.
 * [Low] `tools/lib/erx/interpreter_image.rb`: the check reads the linked program's symbol table, so a link that
   discards locals (`-x`, hidden visibility turned local) could hide C++ while keeping `erl_start`. The root's link
-  strips debug information only. Check the lld link map's input members as well, which no stripping changes.
+  strips debug information only. Check the link's input list (LLD's `--trace`) as well, which no stripping changes.
 * [Medium] `test/guest/native_irq/guest.c`: the line's unbind and rebind come before the first typed character, so
   nothing checks that a line still fires after it was delivered, acked, detached and attached again. Type a third
   character after the rebind and add its checkpoint to `tools/lib/erx/native_irq.rb`.
@@ -915,14 +915,18 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
 
 ## Security residuals
 
-* [Medium] build, the license gate's link-map reader (`PackProvenance.contributors` in
-  `tools/lib/erx/pack_provenance.rb`): it takes the inputs a link used from the rows of LLD's map
-  that name an input section, and passes over the `<internal>` ones. An object whose only live
-  bytes LLD merges into a synthetic section (`SHF_MERGE` string literals) or folds away (`--icf`,
-  which no build passes) shows only as `<internal>:(...)` or not at all, so its license is never
-  checked. Inferred from LLD's design, not yet shown with a link: a link of an object holding
-  only merged strings settles it, and the fix reads such inputs from the linker's own list
-  (`--trace` or `--why-extract`) instead of the map.
+* [Medium] build, a link's input list (`PackProvenance.link_inputs` in
+  `tools/lib/erx/pack_provenance.rb`): the list has no end record and names no artifact, so that it
+  is whole and belongs to the link the audit reads rests on each of its writers
+  (`fiasco/kernel/src/Makerules.KERNEL`, `fiasco/mk/mk/prog.mk`, `NativeRoot#build`) renaming or
+  binding it only after a link that succeeded. A list cut at a line boundary passes the reader, for
+  instance if LLD exits 0 after a failed write to standard output (inferred, not shown). One link
+  wrapper that appends an end line with the output's hash, which the reader requires and the audit
+  checks against the artifact, would make the property hold by construction.
+* [Low] build, the license audit of Fiasco's links (`FiascoProvenance#audit_executable`): LLD's
+  `--trace` names no linker script (`-T`, `INCLUDE`), and a script can put bytes into the output.
+  NativeRoot names its script in the receipt's `inputs`; check that Fiasco's audit attributes the
+  kernel's, bootstrap's and sigma0's scripts, and add them if it does not.
 * [Low] build, git started by host tooling (`tools/lib/erx/fiasco.rb`, `submodule.rb`, `source_revision.rb`):
   each site builds its own argv, so "git runs no program a repository names" holds only where someone
   remembered it. `Fiasco#import_git`'s `git archive` runs plain `git` in the Fiasco clone, applying the

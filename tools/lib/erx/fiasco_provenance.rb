@@ -25,13 +25,13 @@ module Erx
   # missing source records prevent a successful build record.
   class FiascoProvenance
     PARTS = FiascoParts::NAMES
-    # The executables a development build's image packs beside its kernel, and
-    # their link maps, under build/fiasco. A release kernel is audited alone.
-    USER_MAPS = {
-      'bootstrap' => ['users/pkg/bootstrap/server/src/OBJ-arm64_armv8a-nofpu-plain/bootstrap.elf',
-                      'users/pkg/bootstrap/server/src/OBJ-arm64_armv8a-nofpu-plain/bootstrap.elf.map'],
-      'sigma0' => ['users/pkg/l4re-core/sigma0/server/src/OBJ-arm64_armv8a-std-l4f/sigma0',
-                   'users/pkg/l4re-core/sigma0/server/src/OBJ-arm64_armv8a-std-l4f/sigma0.map']
+    # The executables a development build's image packs beside its kernel, under
+    # build/fiasco. A release kernel is audited alone. Each link's inputs are the
+    # list LLD's --trace printed for it, which the link rule keeps beside the
+    # executable as NAME.inputs (Makerules.KERNEL, mk/prog.mk).
+    USER_EXECUTABLES = {
+      'bootstrap' => 'users/pkg/bootstrap/server/src/OBJ-arm64_armv8a-nofpu-plain/bootstrap.elf',
+      'sigma0' => 'users/pkg/l4re-core/sigma0/server/src/OBJ-arm64_armv8a-std-l4f/sigma0'
     }.freeze
 
     # The header line that attributes an erXos source. A file added to a fork
@@ -146,13 +146,13 @@ module Erx
          .group_by { |path| File.basename(path) }
     end
 
-    # Each executable the audit reads, by name: its artifact and link map. The
-    # kernel is the build kind's; a development build adds its image's users.
-    def executable_maps
-      kernel = { 'kernel' => [File.join(@kernel, 'fiasco'), File.join(@kernel, 'fiasco.map')] }
-      return kernel unless @plan.users
-
-      kernel.merge(USER_MAPS.transform_values { |paths| paths.map { |path| File.join(@build, path) } })
+    # Each executable the audit reads, by name: its artifact and the list of its
+    # link's inputs. The kernel is the build kind's; a development build adds its
+    # image's users.
+    def executable_links
+      executables = { 'kernel' => File.join(@kernel, 'fiasco') }
+      executables.merge!(USER_EXECUTABLES.transform_values { |path| File.join(@build, path) }) if @plan.users
+      executables.transform_values { |artifact| [artifact, "#{artifact}.inputs"] }
     end
 
     def audit
@@ -172,8 +172,8 @@ module Erx
       load_generation_profiles
       archive_tool = tool_identity(@archive_requested || toolchain.program('ar'), role: 'archive')
       @archive_program = archive_tool.fetch('path')
-      executables = executable_maps.map do |name, (artifact, map)|
-        audit_executable(name, artifact, map)
+      executables = executable_links.map do |name, (artifact, inputs)|
+        audit_executable(name, artifact, inputs)
       end
       tools = [archive_tool]
       image = nil
@@ -597,12 +597,12 @@ module Erx
       @toolchain ||= FiascoToolchain.from_environment
     end
 
-    def audit_executable(name, artifact, map)
-      directory = File.dirname(map)
-      contributions = PackProvenance.contributors(read(map)).map do |input|
-        archive, member = input.match(/\A(.+)\(([^()]+)\)\z/)&.captures
-        if archive
-          archive_path = File.realpath(File.expand_path(archive, directory))
+    def audit_executable(name, artifact, inputs)
+      directory = File.dirname(inputs)
+      contributions = PackProvenance.link_inputs(read(inputs)).map do |input|
+        member = input.member
+        if member
+          archive_path = File.realpath(File.expand_path(input.file, directory))
           member_hash = archive_member_hash(archive_path, member: member)
           manifest = File.join(File.dirname(archive_path), '.erx-archive-inputs')
           candidates = File.file?(manifest) ? archive_objects(manifest) : @objects.fetch(member, [])
@@ -617,10 +617,10 @@ module Erx
           contribution['construction'] = reference(manifest) if File.file?(manifest)
           contribution
         else
-          audit_object(File.expand_path(input, directory))
+          audit_object(File.expand_path(input.file, directory))
         end
       end
-      { 'name' => name, 'artifact' => reference(artifact), 'map' => reference(map), 'contributions' => contributions }
+      { 'name' => name, 'artifact' => reference(artifact), 'inputs' => reference(inputs), 'contributions' => contributions }
     end
 
     def archive_objects(manifest)

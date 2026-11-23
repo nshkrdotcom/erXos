@@ -1,0 +1,18 @@
+             VMA              LMA     Size Align Out     In      Symbol
+          200120           200120        6     1 .rodata
+          200120           200120        6     1         <internal>:(.rodata.str1.1)
+          210128           210128       14     4 .text
+          210128           210128       10     4         a.o:(.text)
+          210128           210128        0     1                 $x
+          210128           210128        0     1                 _start
+          210138           210138        4     4         lib.a(c.o):(.text)
+          210138           210138        0     1                 $x
+          210138           210138        0     1                 helper
+               0                0       1c     1 .comment
+               0                0       1c     1         <internal>:(.comment)
+               0                0       a8     8 .symtab
+               0                0       a8     8         <internal>:(.symtab)
+               0                0       32     1 .shstrtab
+               0                0       32     1         <internal>:(.shstrtab)
+               0                0       1c     1 .strtab
+               0                0       1c     1         <internal>:(.strtab)

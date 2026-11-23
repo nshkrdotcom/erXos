@@ -9,7 +9,7 @@ require_relative '../../tools/lib/erx/pack_provenance'
 require_relative '../../tools/lib/erx/output_directory'
 require_relative 'generated_tree'
 
-# A real freestanding AArch64 ELF, with compiler dependency and linker map
+# A real freestanding AArch64 ELF, with compiler dependency and link input list
 # receipts. No libc or compiler runtime enters this fixture's link closure.
 module PackRootFixture
   module_function
@@ -27,7 +27,7 @@ module PackRootFixture
     object = File.join(directory, 'root.o')
     dependency = File.join(directory, 'root.d')
     artifact = File.join(directory, 'root.elf')
-    map = File.join(directory, 'root.map')
+    inputs_list = File.join(directory, 'root.inputs')
     runner.run([compiler, '--target=aarch64-none-elf', '-std=c17', '-ffreestanding',
                 '-M', '-MF', dependency, '-MT', object, *Erx::Generated.include_flags(root: root),
                 '-I', File.join(root, 'include'), source],
@@ -43,8 +43,8 @@ module PackRootFixture
                name: 'compile-pack-root', deadline: 60, chdir: root)
     runner.run([linker, '--build-id=none',
                 '-z', "max-page-size=#{codec.constant('page_size')}", '-T', script,
-                '-Map', map, object, '-o', artifact],
-               name: 'link-pack-root', deadline: 60, chdir: root)
+                '--trace', object, '-o', artifact],
+               name: 'link-pack-root', deadline: 60, chdir: root, stdout: inputs_list)
     _targets, after_sources = Erx::PackProvenance.dependencies(File.binread(dependency))
     after_inputs = after_sources.map { |path| reference(File.expand_path(path, root), root) }
     unless inputs == after_inputs && script_input == reference(script, root) &&
@@ -52,14 +52,14 @@ module PackRootFixture
       raise Erx::Error, 'fixture sources changed during compilation'
     end
     receipt = { 'version' => 1, 'kind' => 'linked', 'artifact' => reference(artifact, root),
-                'linker_map' => reference(map, root).merge('directory' => '.'),
+                'linker_inputs' => reference(inputs_list, root).merge('directory' => '.'),
                 'compiles' => [{ 'object' => reference(object, root),
                                  'dependency' => reference(dependency, root), 'directory' => '.',
                                  'sources' => inputs }],
                 'archives' => [], 'inputs' => [script_input, template_input] }
     receipt_path = File.join(directory, 'root.receipt.json')
     File.write(receipt_path, JSON.pretty_generate(receipt) + "\n")
-    paths = [artifact, object, dependency, map, receipt_path, script, template, *sources.map { |path| File.expand_path(path, root) }]
+    paths = [artifact, object, dependency, inputs_list, receipt_path, script, template, *sources.map { |path| File.expand_path(path, root) }]
     catalog = Erx::BuildInputs.pack(root: root, paths: paths)
     (inputs + [script_input, template_input]).each do |reference|
       catalog.authorize(File.expand_path(reference.fetch('path'), root), expected: reference.fetch('sha256'))
