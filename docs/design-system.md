@@ -5180,8 +5180,8 @@ trusted base, with the domains that hold unconfined devices and the PCIe
 domain, whole, which holds configuration space and nothing else. The
 devices domain is outside it, with no exception: the console's and the
 host link's UARTs are the system domain's, and a pin controller that
-sets their pins' functions is held by no domain or within the trusted
-base (property 8).
+can put their signals on a pin is held by no domain or by the system
+domain (property 8).
 The domain library and the device NIF are C17 under the construction rules
 that bind the kernel's own C (the chokepoint checks, iterative parsing,
 checked arithmetic, ASCII-only generated code); the rest of the system

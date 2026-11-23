@@ -14,12 +14,12 @@ read, on pins the model's console does not use, and a read back.
 * **Program:** a throwaway bare-metal probe for the model alone, not in
   erXos's tree: `qemu-raspi4b-pin-write-2026-11-23/pin_write_probe.c` in
   the history repository (`~/erxos-history`, commit `f25f128`, SHA-256
-  `fef48d78...`), built with the header probe's compiler flags and linker
+  `fef48d7810e2894e86c3bf51407d62bbb84ae3b8279da4658795638ceb1ebbb8`), built with the header probe's compiler flags and linker
   script (`test/raspi4b/header_probe.ld`) and the accessors generated from
   `hw/svd/bcm2711_gpio` and `hw/svd/mini_uart`, on erXos commit
   `364d1b90d`. The same directory holds the build and run commands
   (`run.txt`), the binary and the serial log (`serial.log`, SHA-256
-  `0e733dec...`).
+  `0e733dec787b95d7eb2989dba3044a9336a79c57a8bd1543edd4fee38b66e4d3`).
 * **Load:** no firmware, no BL31 and no device tree: the probe at
   `0x200000`, where CPU 0 starts through QEMU's loader; the other CPUs
   wait in `wfe`. The console is the mini UART on QEMU's second serial
@@ -44,8 +44,8 @@ whole word, and reads it again.
 | low level enable, GPLEN0 | bit 23 set | **0: not kept** |
 | GPSET0 then GPCLR0, GPIO 20 an output | bit 20 | GPLEV0 bit 20 read 0, then 1 after GPSET0, 0 after GPCLR0, 1 after a second GPSET0 |
 
-GPEDS0 read 0 while the six enables were written, with GPIO 23 an input
-reading low.
+GPEDS0, read once after the six enables had been written, held 0; GPIO
+23's level was not read then.
 
 Two more readings, outside the four kinds the design names:
 

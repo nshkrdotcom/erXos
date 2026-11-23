@@ -1,0 +1,13 @@
+%% Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
+%% SPDX-License-Identifier: BSD-2-Clause
+
+%% The pin driver (docs/design-pinctrl.md, "The pin driver"): erx_pins_core, the decisions
+%% over a controller's table, and one pure planner per kind of pin controller,
+%% erx_pins_bcm2711 for the Raspberry Pi 4's GPIO block.
+{application, erx_pins,
+ [{description, "erXos pin driver: the pin table's decisions and each kind's planner"},
+  {vsn, "1"},
+  {modules, [erx_pins_bcm2711, erx_pins_core]},
+  {registered, []},
+  {applications, [kernel, stdlib]},
+  {env, []}]}.

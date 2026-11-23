@@ -780,23 +780,24 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   recorded as its board evidence; the reader's refusals, each with a table that breaks only it; the manifest's `pins` table in place of `onboard_pins`;
   the `pins` record and its packed layout in `abi/erx_abi.txt`, counted in the boot page's room; the map of function
   numbers generated from `hw/pins/<kind>.txt`; the manifest check's unit, holder and one-GPIO-controller clauses.
-* [Medium] pin control, `erx_pins` on the BCM2711 ([design-pinctrl.md](design-pinctrl.md#the-pin-driver)), after the
-  table and on open decision 1: `erx_pins_core`, `erx_pins_bcm2711` with `plan/2` over function, pull and level as
-  field writes and commands, the check by planning again, the register module with `hw/svd/bcm2711_gpio`'s pull
-  registers, the start plan (`default` for a device with `default` alone, nothing for a device with other
-  states) in the system release before the domain service and the line service, a start for a configuration that fails when it
-  leaves unset a device that configuration uses, the generated mark of which configurations use each device, the
-  release's choice of configuration (normal, rescue or none), a probe of QEMU `raspi4b`'s GPIO model that writes a
-  changed value to each kind of register the plan checks and reads it back, with the rows of a field the model does
-  not keep left out of the model's table and reported as not run, the log line, the chokepoint entry and `/proc/domains/D/pins`. The platform record's `gpio` row is 180
+* [Medium] pin control, the `erx_pins` driver on the BCM2711 ([design-pinctrl.md](design-pinctrl.md#the-pin-driver)),
+  after the table, over the pure `erx_pins_core` and `erx_pins_bcm2711` that are built: the register module with
+  `hw/svd/bcm2711_gpio`'s pull registers, the driver process that reads, plans, applies and checks, its start in
+  the system release before the domain service and the line service with the release booting the configuration
+  `erx_pins_core:configuration/1` chooses, the generated mark of which configurations use each device, the log
+  line, the chokepoint entry and `/proc/domains/D/pins`. The QEMU `raspi4b` cases run over every row: the model
+  keeps function and pull fields and shows GPSET and GPCLR at GPLEV, and no row states an edge
+  ([research-qemu-raspi4b-pins.md](research-qemu-raspi4b-pins.md)). The platform record's `gpio` row is 180
   bytes, shorter than the SVD's block of `0xf4`, which holds the pull registers at `0xe4`; widen it, since the device
   NIF refuses a record smaller than its peripheral's block. In the same change the root's write goes:
   `kernel/core/bcm2711_pins.c` and its header, `liberx/backend/fiasco/bcm2711_pins.c`, `board_pins` and
   `root_report_pins`, the chokepoint group and `onboard_pins`. Parity on the board: GPFSEL3 reads `0x00000fff` and the
   Bluetooth controller answers; the boot time before and after.
 * [Medium] pin control, `/dev/gpio` ([design-header-io.md](design-header-io.md#devgpio); plan.md 1b-I (e), package
-  4), on open decision 2: the `gpio` service of `erx_pins`, `erx_hold`, an unheld pin taken only when it reads idle,
-  edge events, the LED and the button.
+  4): the `gpio` service of `erx_pins`, `erx_hold`, an unheld pin taken only when it reads idle,
+  edge events, the LED and the button. QEMU `raspi4b` keeps none of the detect enables
+  ([research-qemu-raspi4b-pins.md](research-qemu-raspi4b-pins.md)), so on the model an `edge` line answers `eio` and
+  `event` reports nothing; how the QEMU suite's edge cases treat the model is settled with them.
 * [Medium] pin control, RP1 ([design-rp1.md](design-rp1.md#pins)), with 1b-J's RP1 package: `hw/pins/rp1.txt` from
   [research-rp1-clocks.md](research-rp1-clocks.md), section 6; the `rp1` kind, which plans a pin's `CTRL` and pad together
   in the order the design gives; the pin parts, `pads_bank2` among them, and RP1's rows; `erx_pins` in the unit
