@@ -10,8 +10,8 @@ require_relative '../lib/erx/bench_measurement'
 
 # The BENCH line validator (Erx::BenchMeasurement.cell) over mutated lines, as a guest
 # could print them. Each input either raises Erx::Error and nothing else, or answers a
-# cell whose histogram holds no more samples than its profile asked for, and whose summary
-# can be derived. Whether its answers are right is test/host/bench_line_test.rb's.
+# cell whose histogram holds no more samples than its profile asked for. Whether its
+# answers are right is test/host/bench_line_test.rb's.
 module Erx
   module BenchLineFuzz
     MEASUREMENT = BenchMeasurement
@@ -77,7 +77,6 @@ module Erx
       histogram = cell.detail.fetch('histogram')
       samples = histogram.sum(&:last)
       raise 'an accepted histogram past its profile' if samples > PROFILES.fetch(cell.operation).samples
-      raise 'an accepted cell that miscounts its samples' unless cell.summary.fetch('samples', 0) == samples
     rescue Erx::Error
       nil
     end

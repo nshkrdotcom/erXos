@@ -38,6 +38,10 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   `park-deadline`, the two wake handshakes, `trigger-take`, and `bench/erx_wake_bench.erl` with
   `bench/erx_bench_hist.erl` for `erlang-timer` in the `xdomain` bench image, each boot given to the suite as its
   runner. Lands with its two seeded runs.
+* [Low] benchmarks, the `BENCH` line fuzz target (`tools/fuzz/bench_line.rb`): its seeded fault, the
+  validator's check that a histogram holds the line's sample count removed, is run by hand and kept nowhere;
+  make it a test that runs a fixed number of inputs from a fixed seed against the faulted validator, so the
+  target's one invariant is shown to catch what it guards.
 * [Medium] benchmarks, `sched` ([design-bench.md](design-bench.md#2-sched-how-a-cpu-is-shared)): `native_task`
   program modes for the recording spinners, `share-equal`, `share-tasks` and `band-work`; lands with the quantum
   case's seed run.

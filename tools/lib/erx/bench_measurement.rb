@@ -19,29 +19,21 @@ module Erx
 
     # Raises Erx::Error naming the first field that is wrong.
     def validate(value, workload:, iterations:, samples:, flavour:)
-      reason = refusal(value, workload: workload, iterations: iterations, samples: samples, flavour: flavour)
-      raise Error, "benchmark measurement #{reason}" if reason
-    end
-
-    # The first reason a measurement is refused, or nil when it is acceptable.
-    def refusal(value, workload:, iterations:, samples:, flavour:)
-      return 'is not a JSON object' unless value.is_a?(Hash)
-
+      measured(value.is_a?(Hash), 'is not a JSON object')
       asked = { 'workload' => workload, 'iterations' => iterations, 'samples' => samples,
                 'emu_flavor' => flavour, 'schedulers' => 1 }
-      wrong = asked.find { |field, want| !value[field].eql?(want) }
-      return "field #{wrong.first} is not the requested #{wrong.last}" if wrong
-
+      asked.each { |field, want| measured(value[field].eql?(want), "field #{field} is not the requested #{want}") }
+      measured(positive_integer?(value['operations']), 'field operations is not a positive integer')
+      measured(value['beam_md5'].is_a?(String) && MD5_HEX.match?(value['beam_md5']),
+               'field beam_md5 is not a lowercase MD5 digest')
       times = value['ns_per_operation']
-      if !positive_integer?(value['operations'])
-        'field operations is not a positive integer'
-      elsif !(value['beam_md5'].is_a?(String) && MD5_HEX.match?(value['beam_md5']))
-        'field beam_md5 is not a lowercase MD5 digest'
-      elsif !(times.is_a?(Array) && times.size == samples)
-        'field ns_per_operation is not one number per sample'
-      elsif !times.all? { |time| time.is_a?(Numeric) && time.finite? && time.positive? }
-        'field ns_per_operation holds a time that is not positive and finite'
-      end
+      measured(times.is_a?(Array) && times.size == samples, 'field ns_per_operation is not one number per sample')
+      measured(times.all? { |time| time.is_a?(Numeric) && time.finite? && time.positive? },
+               'field ns_per_operation holds a time that is not positive and finite')
+    end
+
+    def measured(valid, reason)
+      raise Error, "benchmark measurement #{reason}" unless valid
     end
 
     def positive_integer?(value) = value.is_a?(Integer) && value.positive?
@@ -64,8 +56,6 @@ module Erx
     # What a guest may report; the host alone decides timed_out, rejected and not_run.
     GUEST_STATUSES = %w[measured partial unsupported failed].freeze
     GUEST_CLOCKS = %w[counter virtual].freeze
-    # A reason: lowercase words, no control character, nothing a terminal interprets.
-    REASON = /\A[a-z][a-z0-9 ,:_()-]{0,79}\z/
     REQUIRED = %w[benchmark operation conditions frequency_hz status samples histogram largest counts].freeze
     # The optional fields, and the profile each belongs to (nil: any profile).
     OPTIONAL = { 'reason' => nil, 'min' => nil, 'max' => nil, 'uncertainty' => nil, 'raw' => 'expensive',
@@ -86,12 +76,12 @@ module Erx
       need(count?(samples) && samples <= profile.samples, 'field samples is not a count the profile allows')
       status = fields['status']
       need(GUEST_STATUSES.include?(status), 'field status is not one a guest reports')
-      need(status != 'measured' || samples == profile.samples, 'a measured cell lacks samples the profile asked for')
-      reason = fields['reason']
-      need(status == 'measured' ? reason.nil? : (reason.is_a?(String) && REASON.match?(reason)),
-           'field reason is absent where it is needed, or not a plain reason')
+      frequency = fields['frequency_hz']
+      need(frequency.is_a?(Integer) && FREQUENCY_HZ.cover?(frequency), 'field frequency_hz is not a frequency')
+      # The cell itself holds a measured cell to every sample, the reason to its
+      # character set and the extremes to their buckets, whether read from a line or a file.
       BenchRecord::Cell.new(benchmark: benchmark, operation: operation, conditions: conditions(fields['conditions']),
-                            profile: profile, status: status, reason: reason, counts: counts(fields['counts']),
+                            profile: profile, status: status, reason: fields['reason'], counts: counts(fields['counts']),
                             detail: detail(fields, profile: profile.name, samples: samples))
     end
 
@@ -148,15 +138,11 @@ module Erx
       need(wrong.nil?, 'holds a field of another profile')
       histogram = histogram(fields['histogram'], 'histogram')
       need(histogram.sum { |_, _, count| count } == samples, 'field histogram does not hold every sample')
-      need(fields.key?('min') == samples.positive? && fields.key?('max') == samples.positive?,
-           'fields min and max are not given exactly when there are samples')
-      range = samples.positive? ? extremes(fields, histogram) : nil
+      range = BenchRecord.extremes(fields)
       largest(fields['largest'], range: range, samples: samples)
       raw(fields['raw'], range: range, samples: samples) if fields.key?('raw')
       phases(fields, samples: samples) if profile == 'periodic'
       need(!fields.key?('uncertainty') || tick?(fields['uncertainty']), 'field uncertainty is not a tick count')
-      need(fields['frequency_hz'].is_a?(Integer) && FREQUENCY_HZ.cover?(fields['frequency_hz']),
-           'field frequency_hz is not a frequency')
       fields.slice('frequency_hz', 'histogram', 'min', 'max', 'largest', 'raw', 'phases', 'excess', 'uncertainty')
     end
 
@@ -164,17 +150,6 @@ module Erx
       need(BenchRecord.histogram?(value) && value.all? { |bucket| bucket.all?(TICK) },
            "field #{name} is not ascending [low, last, count] buckets of ticks")
       value
-    end
-
-    # min and max, each inside the bucket that must hold it: the range of every sample.
-    def extremes(fields, histogram)
-      low, = histogram.first
-      _, last, = histogram.last
-      min, max = fields.values_at('min', 'max')
-      need(min.is_a?(Integer) && max.is_a?(Integer) && min <= max, 'fields min and max are not ordered ticks')
-      need(min.between?(low, histogram.first[1]) && max.between?(histogram.last[0], last),
-           'fields min and max lie outside the histogram buckets that hold them')
-      min..max
     end
 
     # The largest samples, [sequence, value] with value not increasing, the first the
@@ -211,7 +186,7 @@ module Erx
       raise Error, "BENCH line #{reason}" unless valid
     end
 
-    private_class_method :decode, :conditions, :tick?, :count?, :parameter?, :counts, :detail, :histogram, :extremes, :largest,
+    private_class_method :measured, :decode, :conditions, :tick?, :count?, :parameter?, :counts, :detail, :histogram, :largest,
                          :raw, :phases, :need
   end
 end

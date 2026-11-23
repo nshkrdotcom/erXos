@@ -49,6 +49,8 @@ module Erx
     # A percentile is reported only with at least this many samples above it.
     ABOVE = 10
     TOO_FEW = { 'unsupported' => 'too few samples' }.freeze
+    # A reason: words starting lowercase, no control character, nothing a terminal interprets.
+    REASON = /\A[a-z][A-Za-z0-9 ,:_()-]{0,79}\z/
 
     # A condition that a value fails names the field, never the value.
     def self.check(valid, what)
@@ -56,6 +58,22 @@ module Erx
     end
 
     def self.plain_hash?(value) = value.is_a?(Hash) && value.keys.all?(String)
+
+    # The range min..max of detail's samples, each extreme inside the histogram bucket that
+    # must hold it; nil, with neither given, when the histogram holds no sample.
+    def self.extremes(detail)
+      histogram = detail.fetch('histogram', [])
+      given = detail.slice('min', 'max')
+      if histogram.empty?
+        check(given.empty?, 'min and max are given without samples')
+        return nil
+      end
+      (first_low, first_last, _), (last_low, last_last, _) = histogram.values_at(0, -1)
+      min, max = given.values_at('min', 'max')
+      check(min.is_a?(Integer) && max.is_a?(Integer) && min.between?(first_low, first_last) &&
+            max.between?(last_low, last_last), 'min and max do not lie in the histogram buckets that hold them')
+      min..max
+    end
 
     # Buckets [low, last, count] of tick counts, each holding low to last, both included,
     # with a positive count, in ascending order and not overlapping
@@ -163,14 +181,18 @@ module Erx
                           'benchmark or operation is not a declaration name')
         BenchRecord.check(conditions.is_a?(Conditions) && profile.is_a?(Profile), 'cell conditions are not typed')
         BenchRecord.check(STATUSES.include?(status), 'status is not one of the cell statuses')
-        BenchRecord.check(status == 'measured' ? reason.nil? : (reason.is_a?(String) && !reason.empty?),
-                          'a cell that is not measured needs its reason')
+        BenchRecord.check(status == 'measured' ? reason.nil? : (reason.is_a?(String) && REASON.match?(reason)),
+                          'a cell that is not measured needs its reason, in plain words')
         BenchRecord.check(counts.is_a?(Hash) && counts.keys.sort == %w[early lost missed] &&
                           counts.values.all? { |count| count.is_a?(Integer) && !count.negative? },
                           'counts are not lost, early and missed')
         BenchRecord.check(BenchRecord.plain_hash?(detail), 'detail is not a map')
         BenchRecord.check(BenchRecord.histogram?(detail.fetch('histogram', [])),
                           'histogram is not ascending [low, last, count] buckets')
+        histogram = detail.fetch('histogram', [])
+        BenchRecord.check(status != 'measured' || histogram.sum { |_, _, count| count } == profile.samples,
+                          'a measured cell lacks samples its profile asked for: it holds every sample or is partial')
+        BenchRecord.extremes(detail)
         BenchRecord.check(status != 'measured' || (counts['lost'].zero? && counts['early'].zero?),
                           'a cell with a lost wake or an early return is failed, not measured')
         BenchRecord.check(!NO_SUMMARY.include?(status) || detail.fetch('histogram', []).empty?,

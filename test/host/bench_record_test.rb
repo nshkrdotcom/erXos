@@ -42,15 +42,16 @@ class BenchRecordTest < Minitest::Test
   end
 
   def cell(benchmark: 'wake', operation: 'park-deadline', batch: 1, status: 'measured', early: 0,
-           histogram: [[1000, 1016, 2000]])
+           histogram: [[1000, 1016, 2000]], reason: status == 'measured' ? nil : 'test',
+           extremes: histogram.empty? ? {} : { 'min' => histogram.first.first, 'max' => histogram.last[1] })
     Record::Cell.new(
       benchmark: benchmark, operation: operation,
       conditions: Record::Conditions.new(load: 'idle', placement: 'service-cpu', parameters: {}, clock: 'counter',
                                          batch: batch),
       profile: Record::Profile.new(name: 'periodic', warmup: 0, samples: 2000, runs: 1),
-      status: status, reason: status == 'measured' ? nil : 'test',
+      status: status, reason: reason,
       counts: { 'lost' => 0, 'early' => early, 'missed' => 0 },
-      detail: { 'histogram' => histogram, 'min' => 1000, 'max' => 1016 }
+      detail: { 'histogram' => histogram }.merge(extremes)
     )
   end
 
@@ -212,6 +213,27 @@ class BenchRecordTest < Minitest::Test
 
   # n samples, one to a bucket of one tick, so the sample of rank r reports r.
   def histogram(count) = (1..count).map { |value| [value, value, 1] }
+
+  def test_a_measured_cell_holds_every_sample_its_profile_asked_for
+    error = assert_raises(Erx::Error) { cell(histogram: [[1000, 1016, 1999]]) }
+    assert_match(/every sample/, error.message)
+    cell(status: 'partial', histogram: [[1000, 1016, 1999]])
+  end
+
+  def test_a_cells_extremes_lie_in_the_buckets_that_hold_them
+    histogram = [[1000, 1007, 1000], [1008, 1016, 1000]]
+    assert_raises(Erx::Error) { cell(histogram: histogram, extremes: { 'min' => 1008, 'max' => 1016 }) }
+    assert_raises(Erx::Error) { cell(histogram: histogram, extremes: { 'min' => 1000 }) }
+    assert_raises(Erx::Error) { cell(status: 'partial', histogram: [], extremes: { 'min' => 1, 'max' => 1 }) }
+    cell(histogram: histogram, extremes: { 'min' => 1003, 'max' => 1009 })
+  end
+
+  def test_a_cells_reason_holds_nothing_a_terminal_interprets
+    ["esc \e[31m", 'Upper', "tab\there", 'a' * 81].each do |reason|
+      assert_raises(Erx::Error) { cell(status: 'unsupported', histogram: [], reason: reason) }
+    end
+    cell(status: 'unsupported', histogram: [], reason: 'counters across CPUs not bounded closely enough')
+  end
 
   def test_a_percentile_needs_ten_samples_above_it
     [[Record::P99, 1000, 990], [Record::P999, 10_000, 9990], [Record::P50, 20, 10]].each do |p, count, value|

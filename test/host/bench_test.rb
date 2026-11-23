@@ -31,12 +31,18 @@ class BenchTest < Minitest::Test
              'samples' => 2, 'ns_per_operation' => [1.0, 2.0], 'schedulers' => 1,
              'beam_md5' => 'a' * 32 }.freeze
 
-  def refusal(**override)
-    Erx::BenchMeasurement.refusal(SAMPLE.merge(override.transform_keys(&:to_s)), **ASKED)
+  def refusal(**override) = refusal_of(SAMPLE.merge(override.transform_keys(&:to_s)))
+
+  # The message validate raises for value, or nil when it accepts it.
+  def refusal_of(value, **asked)
+    Erx::BenchMeasurement.validate(value, **ASKED, **asked)
+    nil
+  rescue Erx::Error => e
+    e.message
   end
 
   def test_a_measurement_matching_what_was_asked_is_accepted
-    assert_nil Erx::BenchMeasurement.refusal(SAMPLE, **ASKED)
+    assert_nil refusal_of(SAMPLE)
     assert_nil Erx::BenchMeasurement.validate(SAMPLE, **ASKED)
   end
 
@@ -51,7 +57,7 @@ class BenchTest < Minitest::Test
     assert_match(/not one number per sample/, refusal(ns_per_operation: [1.0]))
     assert_match(/not positive and finite/, refusal(ns_per_operation: [Float::INFINITY, 2.0]))
     assert_match(/not positive and finite/, refusal(ns_per_operation: [0, 2.0]))
-    assert_match(/not a JSON object/, Erx::BenchMeasurement.refusal([], **ASKED))
+    assert_match(/not a JSON object/, refusal_of([]))
   end
 
   def test_validate_raises_the_refusal_as_an_error
@@ -86,7 +92,7 @@ class BenchTest < Minitest::Test
       assert_equal 10_001, measurement.fetch('operations')
       assert_equal 1, measurement.fetch('iterations')
       assert_equal 1, measurement.fetch('schedulers')
-      assert_nil Erx::BenchMeasurement.refusal(measurement, workload: 'ring', iterations: 1, samples: 1, flavour: 'emu')
+      assert_nil refusal_of(measurement, workload: 'ring', iterations: 1, samples: 1, flavour: 'emu')
     end
   end
 

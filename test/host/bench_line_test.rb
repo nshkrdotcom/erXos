@@ -51,14 +51,14 @@ class BenchLineTest < Minitest::Test
 
   def test_fields_that_disagree_are_refused
     {
-      { 'samples' => 39 } => /measured cell lacks samples/,
+      { 'samples' => 39 } => /histogram does not hold every sample/,
       { 'samples' => 41 } => /samples is not a count/,
       { 'samples' => 40.0 } => /samples is not a count/,
-      { 'max' => 5000 } => /outside the histogram buckets/,
+      { 'max' => 5000 } => /lie in the histogram buckets/,
       { 'largest' => [[0, 1001], [1, 1199]] } => /descending order from the maximum/,
       { 'largest' => [[0, 1199], [0, 1199]] } => /names one sample twice/,
       { 'status' => 'timed_out', 'reason' => 'x' } => /status is not one a guest reports/,
-      { 'status' => 'measured', 'reason' => 'x' } => /reason is absent where it is needed/,
+      { 'status' => 'measured', 'reason' => 'x' } => /needs its reason/,
       { 'raw' => [1] } => /field of another profile/,
       { 'counts' => { 'lost' => 0, 'early' => 0 } } => /lost, early and missed/,
       { 'frequency_hz' => 0 } => /frequency/
