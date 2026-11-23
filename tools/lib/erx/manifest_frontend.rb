@@ -62,7 +62,7 @@ module Erx
         'share' => %w[quota_ns period_ns cpuset capacity_mcpu capacity_first slice_us grace_us base ceiling flags],
         'principal' => %w[memory grant domains names default_limits ceiling_limits],
         'runtime_limits' => %w[max_frame max_message_heap funnel_depth exports tmp overlay atoms foreign_atoms processes],
-        'limits' => %w[memory outer grant spaces lane connections crash flags runtime_limits peer_held peer_held_total],
+        'limits' => %w[memory outer grant spaces lane connections crash flags runtime_limits band peer_held peer_held_total],
         'lane_class' => %w[lane],
         'domain' => %w[principal limits kind flags runtime release restarts restart_period_s args env],
         'session' => %w[limits runtime release args env],

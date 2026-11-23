@@ -516,6 +516,12 @@ typedef struct erx_dom_spec {
 	uint32_t	connections;	/* its connections quota, sizing the reserve */
 	uint32_t	system_lane;	/* data area of the lane the system domain reads */
 	uint32_t	crash;		/* crash area size; zero for none */
+	/*
+	 * The band its threads run at and the band of every space below it,
+	 * set by the origin constructor (docs/design-fiasco.md, "Bands").
+	 */
+	erx_band_t	band;
+	erx_band_t	space_band;
 	uint32_t	args_len;
 	uint32_t	env_len;	/* args_len + env_len <= ERX_BOOT_STRINGS_MAX */
 	char		strings[ERX_BOOT_STRINGS_MAX];
@@ -576,6 +582,7 @@ typedef struct erx_dom_configured {
 	erx_grant_t	grant, spaces;
 	erx_runtime_limits_t runtime_limits;
 	uint32_t	lane, connections;
+	erx_band_t	band;		/* its limits record's */
 	/* What the domain service reads of the row (erx_domain_lib:configured/0). */
 	const char	*name;		/* an identifier in the manifest's strings, */
 	uint32_t	name_len;	/* which outlive the view; <= ERX_DOM_NAME_MAX */
@@ -605,6 +612,7 @@ typedef struct erx_dom_template {
 	erx_grant_t	grant, spaces;
 	erx_runtime_limits_t runtime_limits;
 	uint32_t	lane, connections;
+	erx_band_t	band;		/* its limits record's; an app's session ignores it */
 	uint32_t	release, release_files, runtime;
 	/* Its arguments and environment, as a configured row's. */
 	const char	*args, *env;
@@ -747,6 +755,7 @@ typedef struct erx_dom_view {
 	uint32_t		 npartial;
 	uint32_t		 partial_principal;	/* the partial boot's principal */
 	erx_runtime_limits_t	 native_limits;
+	erx_band_t		 native_band;	/* native_limits' record's, a partial boot's band */
 	erx_grant_t		 system_grant;	/* system's grant */
 	uint32_t		 system_reserve;	/* thousandths of system's rate */
 	uint32_t		 system_lane;	/* the manifest's */
@@ -1123,8 +1132,9 @@ erx_status_t	erx_dom_plan_session(const erx_dom_view_t *, uint32_t id,
  * `entry` (docs/design-packaging.md, "An app's session") as
  * erx_dom_plan_session plans one of a template's own principal, from the
  * app template under the entry's principal, with `memory`, the declared
- * memory of the app's record, for its own budget, and principal=N naming
- * the entry's principal. The pairing is the function's own: the app
+ * memory of the app's record, for its own budget, the app band whatever
+ * the template's limits record names (docs/design-fiasco.md, "Bands"), and
+ * principal=N naming the entry's principal. The pairing is the function's own: the app
  * template names no principal, so erx_dom_plan_session refuses it, and
  * this function plans nothing but it, so no other template is planned for
  * an app principal and the app template for no other principal. Beside

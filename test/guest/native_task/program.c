@@ -464,12 +464,17 @@ mode_write_refused(void)
 	static const char text[] = WRITE_REFUSED_TEXT;
 	const erx_fiasco_space_create_request_t create = { .caller = erx_fiasco_thread_self()->index,
 	    .parent = ERX_CAP_SELF, .cap_limit = 16 };
+	const erx_fiasco_domain_space_create_request_t domain = { .space = create, .band = ERX_BAND_DRIVER,
+	    .space_band = ERX_BAND_DRIVER, .cpuset = 1 };
 	const erx_fiasco_task_write_request_t request = { .caller = erx_fiasco_thread_self()->index,
 	    .len = sizeof(text) - 1 };
 	erx_fiasco_reply_t reply;
 
 	if (erx_fiasco_service_call(ERX_FIASCO_CALL_TEST_SPACE_CREATE, &create, sizeof(create), &reply) != ERX_ENOTSUP)
 		return (141);
+	/* Only the domain library, in the root, makes a domain row, whose band a task would otherwise pick. */
+	if (erx_fiasco_service_call(ERX_FIASCO_CALL_DOMAIN_SPACE_CREATE, &domain, sizeof(domain), &reply) != ERX_ENOTSUP)
+		return (142);
 	erx_fiasco_utcb_store_bytes(text, request.len);
 	return (erx_fiasco_service_call(ERX_FIASCO_CALL_TASK_WRITE, &request, sizeof(request), &reply) == ERX_ENOTSUP ?
 	    0 : 140);

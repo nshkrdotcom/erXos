@@ -328,6 +328,21 @@ erx_space_create(uint64_t budget, uint64_t parent, uint64_t fault, uint64_t labe
 	return (status);
 }
 
+int
+erx_space_create_domain(uint64_t budget, uint64_t parent, uint64_t fault, uint64_t label, uint32_t flags,
+    uint32_t cap_limit, const erx_space_domain_t *domain, uint64_t *space)
+{
+	const erx_fiasco_domain_space_create_request_t request = { .space = { .caller = erx_fiasco_thread_self()->index,
+	    .budget = budget, .parent = parent, .fault = fault, .label = label, .flags = flags, .cap_limit = cap_limit },
+	    .band = domain->band, .space_band = domain->space_band, .cpuset = domain->cpuset };
+	erx_fiasco_reply_t reply;
+	const int status = erx_fiasco_service_call(ERX_FIASCO_CALL_DOMAIN_SPACE_CREATE, &request, sizeof(request), &reply);
+
+	if (status == ERX_OK)
+		*space = reply.first;
+	return (status);
+}
+
 uint32_t
 erx_space_cap_limit_max(void)
 {

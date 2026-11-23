@@ -103,6 +103,13 @@ class DomCoreTest < Minitest::Test
     'an app entry may run two sessions' => [".domains_max = 1, .share = source->grant,", ".domains_max = 2, .share = source->grant,"],
     'a refused placement keeps its entries' => ["\t\t\tview->nprincipals = first - 1;\n", ""],
     'an app session takes the template memory' => ["\tspec->memory = memory;\n", "\tspec->memory = memory > 0 ? source->memory : 0;\n"],
+    'an app session takes the template band' => ["\tspec.band = ERX_BAND_APP;\n", ""],
+    'a principal request keeps its own band' =>
+      ["\tspec->band = ERX_BAND_APP;\n\tspec->space_band = ERX_BAND_APP;\n\tmemset(", "\tmemset("],
+    'configured sub-spaces run in the app band' =>
+      ["\tspec->space_band = source->band;\n", "\tspec->space_band = ERX_BAND_APP;\n"],
+    'a partial boot runs in the app band' => ["\tspec->band = view->native_band;\n", "\tspec->band = ERX_BAND_APP;\n"],
+    'session programs take the session band' => ["\tspec->band = source->band;\n\tspec->space_band = ERX_BAND_APP;\n", "\tspec->band = source->band;\n\tspec->space_band = source->band;\n"],
     'a bar is taken outside the bridge windows' =>
       ["bar->address < window->pci ||\n\t\t    bar->address - window->pci > window->size || " \
        'span > window->size - (bar->address - window->pci))', 'false)'],
@@ -238,6 +245,10 @@ class DomCoreTest < Minitest::Test
     %w[request configured session partial].each do |origin|
       assert_includes lines, "ctor boot_flags #{origin} 0 1", "#{origin}'s boot flags carry no supervised"
     end
+    assert_includes lines, 'ctor bands partial=2,2 request=0,3,3 configured=0,1,1 session=0,2,3',
+                    'a partial boot runs at its native_limits record\'s band, a principal\'s request at the app ' \
+                    'band whatever it asks, a configured domain at its record\'s with its sub-spaces, and a ' \
+                    'session at its template\'s with its programs at the app band'
   end
 
   # A7: a plan that installs a foreign gate, or more rights than its grants
@@ -293,7 +304,7 @@ class DomCoreTest < Minitest::Test
     "apps place_twice #{EINVAL} 4",
     "apps place_refused #{([EINVAL] * 6).join(' ')} 1",
     "apps place_entry_refused #{EINVAL} 1 0",
-    'apps session 0 principal=4 memory=8 outer=1 origin=4,1 words=principal=4|display=screen|',
+    'apps session 0 principal=4 memory=8 outer=1 origin=4,1 band=3,3 words=principal=4|display=screen|',
     "apps session_refused #{([EINVAL] * 4).join(' ')}",
     "apps budget 0 second=#{ELIMIT} over=#{ENOMEM} fits=0 full=#{ENOMEM}"
   ].freeze

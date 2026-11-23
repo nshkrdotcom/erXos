@@ -78,6 +78,7 @@ module Erx
         crash 0
         flags none
         runtime_limits @runtime_limits.#{DOMAIN}
+        band driver
         peer_held 4096
         peer_held_total 4096
       domain #{DOMAIN}

@@ -909,6 +909,7 @@ module Erx
           values['grant'] = share(record, 'grant')
           values['flags'] = flags(record, 'flags', 'mf_limits_flags')
           values['runtime_limits'] = reference(record, 'runtime_limits', 'runtime_limits')
+          values['band'] = enum(record, 'band', 'band')
           spaces = one(record, 'spaces')
           enabled = (values.fetch('flags') & @codec.member('mf_limits_flags', 'spaces')) != 0
           if spaces.value == 'none' && !spaces.quoted

@@ -58,9 +58,23 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   `used` partial with `guarantee`, `cap` and `carved` exact (the topic refuses every handle but `ERX_CAP_SELF`
   and reports only `used`: `service.c`, `ERX_INFO_BUDGET`); and the tests and seeded fault the design lists ([design-fiasco.md](design-fiasco.md), "Memory and
   budgets" and "Reporting a budget"). It blocks the release.
-* [High] 0.2 on Fiasco, `liberx/backend/fiasco` and the manifest: priority bands, CPU sets and per-domain
-  thread limits from each domain's manifest row, applied at every thread's start, a create past the limit
-  `ERX_ELIMIT` ([design-fiasco.md](design-fiasco.md#bands)).
+* [High] 0.2 on Fiasco, `liberx/backend/fiasco` and the domain service: each domain's threads within its
+  grant's CPU set. The root keeps the set in the domain row `domain_space_create` makes, but starts and moves
+  threads with the mask they name; the CPU-ceiling row of [the verification](design-fiasco.md#verification)
+  wants the start narrowed to the set, a move naming only CPUs outside it `ERX_EINVAL`, and a domain whose set
+  names no online CPU refused at admission with its diagnostic. Only a domain row holds a set: a sub-space's
+  row holds 0, so the narrowing reads the set through the row's `domain`, never the task's own row, and the
+  root's row should hold every CPU rather than 0; moving `space_band` and `cpuset` into a record only domain
+  rows have would make the wrong read unwritable ([design-fiasco.md](design-fiasco.md#bands)).
+* [Medium] 0.2 on Fiasco, `liberx/backend/fiasco`: every thread start reads the band table only because each
+  `l4_scheduler_run_thread` site (`service.c`, `watchdog_thread.c`) calls `erx_fiasco_band_priority`; a new
+  site with its own `l4_sched_param` builds. Make `band.c` the one producer of the scheduling parameters,
+  from a band and a CPU mask, with a chokepoint rule refusing `l4_sched_param(` elsewhere (the CPU narrowing
+  above wants the same function) ([design-fiasco.md](design-fiasco.md#bands)).
+* [High] 0.2 on Fiasco, `test/guest`: the band suite of [the verification](design-fiasco.md#verification),
+  its band, sub-space band, app session band and root-only domain form rows, each with its seeded failure.
+  The pure decisions and their seeds are host tests (`test/host/fiasco_band_test.rb`,
+  `test/host/dom_core_test.rb`); what a spinning domain does to a higher band's echo needs the guest.
 * [Medium] 0.2 on Fiasco, `liberx/backend/fiasco`: whole-space pause and resume by the root, for `fork`'s copy
   and job control: the request answered only once every thread is held, the root never waiting for a thread;
   each thread not already held stopped by `ex_regs` with `Exr_cancel` and `Exr_trigger_exception`, its
@@ -104,9 +118,9 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   settles whether the toolchain's `libgcc` links into `bootstrap` or `sigma0` (`fiasco/mk/mk/Makeconf:505-506`)
   ([design-fiasco.md](design-fiasco.md#the-releases-fiasco-build)).
 * [High] 0.2 on Fiasco, `liberx/backend/fiasco` and `abi/manifest.txt`: per-domain thread, object and mapping
-  limits and the band in the domain-limits record, its threads within the grant's `cpuset`
-  ([design-abi.md](design-abi.md#principal-domain-and-limit-records)), so an app's session takes them
-  from the app template's `limits session` record as every other limit
+  limits in the domain-limits record, carried to the root in `domain_space_create` beside the bands and the
+  CPU set it carries ([design-abi.md](design-abi.md#principal-domain-and-limit-records)), so an app's session
+  takes them from the app template's `limits session` record as every other limit but its band
   ([design-packaging.md](design-packaging.md)), with no
   table of the root's shared between domains; the machine-wide tables (`irq.c:60`'s `irq_objects`, the page
   index's labels and its slice entries) become shares of each domain's limits, a create or map past a limit
@@ -235,7 +249,6 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   and returns with the `erx` backend's kernel.
 * [High] Fiasco backend, `liberx/backend/fiasco`, thread handles, blocks 0.2: the handle the root or a creator holds to a created space's first thread is `erx_backend_thread_handle_other`'s value (`liberx/backend/core/handles.h`), the task in the generation bits above slot bits no entry can have, so a close, dup or pass of it is `ERX_ESTALE`, but it is not the entry of the creator's handle table that design-fiasco.md's "Thread creation" names, so `erx_object_info` and the lookup's type and rights checks do not see it. It carries the task row and no generation, so a creator that keeps it past its child's end names the thread 0 of its next child given the same row (`erx_thread_start`, `erx_thread_set_affinity`), beyond FD2's index reuse within one task; the entry's space record generation removes that. Make it the design's ordinary entry, made by the one create path and checked by the one lookup; that needs own-task handles moved first, since an entry value of generation 0 and an own index are the same number. Own-task thread handles are still the bare index, not `ERX_FIASCO_THREAD_HANDLE_BASE` plus the index that "Thread handles" names, so thread 0's handle equals `ERX_CAP_NULL` and `erx_gate_bind` reaches thread 0 only through `ERX_CAP_SELF_THREAD`, and an `erx_cap_pass` item holding an own thread's handle is read as the handle table's entry of that number, so it may pass a memory object instead of being refused; move them onto the base, above `caps_max`, as the design's reserved values. Tests: a pass of an own-thread handle refused (test/host/handles_test.rb covers a close and duplicate of a first-thread handle in a table of 1000 entries).
 * [Low] Fiasco backend, `erx_mem_child`: the child's handle is in its caller's table before the eager copy fills it, so a thread of the same task that closes the parent's handle and makes another object under the same number between the two calls has the child filled from that object. Make the creation and the copy one service request.
-* [Low] Fiasco backend, `liberx/backend/fiasco/service_wire.c`: the decoder copies a call's words into `decoded.request` without checking them against `ERX_FIASCO_WIRE_WORDS_MAX`; `erx_fiasco_mem_copy_request` fills all seven, so a longer layout would overflow it. Refuse past the maximum in the decoder, or assert every layout's size.
 * [Medium] Fiasco backend, native boot's seeded failures: `user_ptr` left 0, the
   archive's sub-type removed and shutdown removed were each run by hand and
   failed as [the verification table](design-fiasco.md#verification) says;
@@ -478,9 +491,8 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   share CPU 0 at the same Fiasco priority (history repository commits 924e652 and de6a618,
   `pi4/2026-11-22-irq-probe/`, images A to C). With ERTS's busy-wait spinning off (image E, commit 66b1a9e)
   the SD line's receipts all fall under 615 us, but the console's lags stay at 0.6 to 2.1 ms. The work is
-  erXos's: ERTS's spinning off, and the priority bands of docs/design-fiasco.md ("Bands", the [High] item
-  above), which put the system domain (the console's holder) and the driver domains (the SD controller's)
-  above every interactive and app domain. Bands separate a domain from other domains' threads, not from its
+  erXos's: ERTS's spinning off, and the priority bands of docs/design-fiasco.md ("Bands"), which put the system domain (the
+  console's holder) and the driver domains (the SD controller's) above every interactive and app domain. Bands separate a domain from other domains' threads, not from its
   own; which domain's threads the owner waited behind is not recorded, so the probe is re-run on the Pi 4
   once both are in.
 

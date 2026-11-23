@@ -27,8 +27,13 @@
 
 #define PROGRAM		"boot/native-task"
 #define RACE_ROUNDS	1000u
-/* How many yields the root waits for a task's threads to be live before it stops the task. */
-#define ROOT_STOPS_WAITS	100000u
+/*
+ * How many milliseconds the root waits, blocked, for a task's threads to be live before it
+ * stops the task. The root runs in the system band, above the task's, so a yield would give
+ * the CPU only to the root's own threads and the task would never run on one CPU.
+ */
+#define ROOT_STOPS_WAITS	10000u
+#define ROOT_STOPS_WAIT_US	UINT64_C(1000)
 
 void erx_fiasco_root_main(void);
 
@@ -183,7 +188,7 @@ case_root_stops(void)
 	bool passed = erx_fiasco_launch(program_entry, 0, MODE_WAIT, &space) == ERX_OK;
 
 	for (uint32_t wait = 0; passed && wait < ROOT_STOPS_WAITS && erx_fiasco_test_pool_free() != live; wait++)
-		erx_yield();
+		erx_fiasco_test_ipc_sleep_us(ROOT_STOPS_WAIT_US);
 	passed = passed && erx_fiasco_test_pool_free() == live && erx_space_stop(space, 33) == ERX_OK &&
 	    erx_fiasco_task_join(space, &status) == ERX_OK && status == 33;
 	say_case("root_stops", passed && erx_fiasco_vm_free_pages() == before && erx_fiasco_test_pool_free() == pairs);

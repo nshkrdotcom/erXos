@@ -100,6 +100,14 @@ erx_space_create(uint64_t budget, uint64_t parent, uint64_t fault, uint64_t labe
 	return (ERX_ENOTSUP);
 }
 
+int
+erx_space_create_domain(uint64_t budget, uint64_t parent, uint64_t fault, uint64_t label, uint32_t flags,
+    uint32_t cap_limit, const erx_space_domain_t *domain, uint64_t *space)
+{
+	(void)budget, (void)parent, (void)fault, (void)label, (void)flags, (void)cap_limit, (void)domain, (void)space;
+	return (ERX_ENOTSUP);
+}
+
 uint32_t
 erx_space_cap_limit_max(void)
 {

@@ -17,13 +17,13 @@
 #include "liberx/backend/api.h"
 #include "liberx/backend/fiasco/log.h"
 #include "liberx/backend/fiasco/pm_wdt.h"
+#include "liberx/backend/fiasco/band.h"
 #include "liberx/backend/fiasco/root_layout.h"
 #include "liberx/backend/fiasco/service.h"
 #include "liberx/backend/fiasco/thread.h"
 #include "liberx/backend/fiasco/watchdog_thread.h"
 
 #define WATCHDOG_STACK_BYTES	16384u
-#define WATCHDOG_PRIORITY	255u
 /* The thread ticks about once a second, as the kernel's timer does, whatever the period: the
  * board's watchdog, reloaded at each tick, fires ERX_PM_WDT_TIMEOUT_S after the last. */
 #define WATCHDOG_TICK_US	UINT64_C(1000000)
@@ -80,7 +80,7 @@ const char *
 erx_fiasco_watchdog_start(const erx_watchdog_config_t *config, erx_watchdog_mode_t mode, const erx_fiasco_pm_wdt_t *board)
 {
 	const l4_cap_idx_t thread = (l4_cap_idx_t)erx_fiasco_root_slot_cap(ERX_FIASCO_SLOT_WATCHDOG);
-	const l4_sched_param_t param = l4_sched_param(WATCHDOG_PRIORITY, 0);
+	const l4_sched_param_t param = l4_sched_param(erx_fiasco_band_priority(ERX_FIASCO_BAND_WATCHDOG), 0);
 
 	watchdog_config = *config;
 	watchdog_mode = mode;

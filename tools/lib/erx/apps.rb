@@ -99,6 +99,7 @@ module Erx
         crash 0
         flags spaces
         runtime_limits @runtime_limits.session
+        band app
         peer_held 4096
         peer_held_total 4096
       principal #{PRINCIPAL}

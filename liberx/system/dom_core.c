@@ -583,6 +583,9 @@ dom_spec_request(const erx_dom_view_t *view,
 	spec->origin = (erx_dom_origin_t){ ERX_DOM_REQUEST, ERX_MF_NONE };
 	spec->system_lane = view->system_lane;
 	spec->crash = ERX_CRASH_SIZE;
+	/* A principal's request names no limits record, so no band above the lowest. */
+	spec->band = ERX_BAND_APP;
+	spec->space_band = ERX_BAND_APP;
 	memset(spec->strings + used, 0, sizeof(spec->strings) - used);
 #define	DOM_PICK(bit, field) do {					\
 	spec->runtime_limits.field = (given & (UINT32_C(1) << (bit))) != 0 ?	\
@@ -659,6 +662,9 @@ dom_spec_configured(const erx_dom_view_t *view, uint32_t id, uint32_t row,
 	spec->connections = source->connections;
 	spec->system_lane = view->system_lane;
 	spec->crash = ERX_CRASH_SIZE;
+	/* Its sub-spaces are its own work, a driver's native shim among them. */
+	spec->band = source->band;
+	spec->space_band = source->band;
 	if (source->name_len <= sizeof(spec->name)) {
 		spec->name_len = source->name_len;
 		memcpy(spec->name, source->name, source->name_len);
@@ -756,6 +762,8 @@ dom_spec_partial(const erx_dom_view_t *view, uint32_t id, uint32_t row,
 	spec->grant = source->grant;
 	spec->runtime_limits = view->native_limits;
 	spec->crash = ERX_CRASH_SIZE;
+	spec->band = view->native_band;
+	spec->space_band = view->native_band;
 }
 
 /*
@@ -798,6 +806,9 @@ dom_spec_session(const erx_dom_view_t *view, uint32_t id, uint32_t template,
 	spec->connections = source->connections;
 	spec->system_lane = view->system_lane;
 	spec->crash = ERX_CRASH_SIZE;
+	/* Its programs are the user's code. */
+	spec->band = source->band;
+	spec->space_band = ERX_BAND_APP;
 	if (name != NULL && name_len <= sizeof(spec->name)) {
 		spec->name_len = name_len;
 		memcpy(spec->name, name, name_len);
@@ -1094,6 +1105,8 @@ erx_dom_plan_app_session(const erx_dom_view_t *view, uint32_t id,
 		return (ERX_EINVAL);
 	dom_spec_session(view, id, apps->template, apps->first + entry, memory, name, name_len,
 	    display, display_len, domain_pid, &spec);
+	/* An app's code is untrusted, so it never runs above an interactive domain, whatever the template's record names. */
+	spec.band = ERX_BAND_APP;
 	return (dom_plan(&spec, view, plan));
 }
 

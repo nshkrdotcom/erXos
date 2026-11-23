@@ -43,6 +43,7 @@ limits native
   crash 0
   flags none
   runtime_limits @runtime_limits.native
+  band app
   peer_held 4096
   peer_held_total 4096
 principal root

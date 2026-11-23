@@ -215,6 +215,23 @@ typedef struct erx_firmware_row {
 int	erx_firmware_request_row(erx_firmware_row_t row, uint8_t answer[ERX_VC_WINDOW_MAX], uint32_t *length)
 	    ERX_WARN_UNUSED_RESULT;
 /*
+ * A domain's space, the Fiasco backend's root-only form of erx_space_create, which only the
+ * domain library calls and erXos's kernel does not have (docs/design-fiasco.md, "Bands"): the
+ * space erx_space_create would make, with the band its threads run at, the band of every space
+ * made below it, and its grant's CPU set. The root records them in the new task's row, which
+ * is the domain's domain row. A band outside erx_band_t is ERX_EINVAL; a call from a task, not
+ * the root, ERX_ENOTSUP, and hosted, which makes no spaces, refuses it as it refuses
+ * erx_space_create.
+ */
+typedef struct erx_space_domain {
+	erx_band_t	band;
+	erx_band_t	space_band;
+	uint64_t	cpuset;
+} erx_space_domain_t;
+
+int	erx_space_create_domain(uint64_t budget, uint64_t parent, uint64_t fault, uint64_t label, uint32_t flags,
+	    uint32_t cap_limit, const erx_space_domain_t *domain, uint64_t *space) ERX_WARN_UNUSED_RESULT;
+/*
  * Maps part of a memory object at reserved addresses of space, which hold neither a
  * committed page nor a mapping (else ERX_EINVAL), in ERX_CAP_SELF or a space the
  * caller created. The mapping keeps the object until a release removes it or the

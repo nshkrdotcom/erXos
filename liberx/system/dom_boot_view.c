@@ -927,7 +927,8 @@ boot_configured(erx_dom_view_t *view, const erx_manifest_view_t *manifest, erx_d
 		    .flags = (profile.flags & ERX_MF_LIMITS_SPACES) != 0 ? ERX_DOM_SPACES : 0,
 		    .release = domain.release, .release_files = domain.release_files, .runtime = domain.runtime,
 		    .memory = profile.memory, .outer = profile.outer, .grant = profile.grant,
-		    .spaces = profile.spaces, .lane = profile.lane, .connections = profile.connections };
+		    .spaces = profile.spaces, .lane = profile.lane, .connections = profile.connections,
+		    .band = profile.band };
 		if (!boot_limits(manifest, domain.limits, &row->runtime_limits))
 			return ("manifest: a configured domain names no limits record");
 		if (domain.name.length == 0 || domain.name.length > ERX_DOM_NAME_MAX)
@@ -1022,7 +1023,7 @@ boot_templates(erx_dom_view_t *view, const erx_manifest_view_t *manifest, erx_do
 		    .flags = (profile.flags & ERX_MF_LIMITS_SPACES) != 0 ? ERX_DOM_SPACES : 0,
 		    .memory = profile.memory, .outer = profile.outer, .grant = profile.grant,
 		    .spaces = profile.spaces, .lane = profile.lane, .connections = profile.connections,
-		    .release = session.release,
+		    .band = profile.band, .release = session.release,
 		    .release_files = session.release_files, .runtime = session.runtime,
 		    .args = strings + session.args.offset, .args_len = session.args.length,
 		    .env = strings + session.env.offset, .env_len = session.env.length };
@@ -1444,6 +1445,7 @@ erx_dom_view_build(erx_dom_lib_t *lib, const erx_manifest_view_t *manifest, uint
     const erx_dom_boot_tables_t *tables)
 {
 	const erx_manifest_t *header = &manifest->header;
+	erx_mf_limits_t native;
 	const char *reason;
 
 	memset(lib, 0, sizeof(*lib));
@@ -1487,8 +1489,10 @@ erx_dom_view_build(erx_dom_lib_t *lib, const erx_manifest_view_t *manifest, uint
 	    tables->parameters)) != NULL ||
 	    (reason = boot_app_grants(&lib->view, manifest)) != NULL)
 		return (reason);
-	if (!boot_limits(manifest, header->native_limits, &lib->view.native_limits))
+	if (!boot_limits(manifest, header->native_limits, &lib->view.native_limits) ||
+	    !erx_manifest_limits_at(manifest, header->native_limits, &native))
 		return ("manifest: native_limits names no limits record");
+	lib->view.native_band = native.band;
 	lib->view.files = tables->files;
 	lib->view.nfiles = nfiles;
 	lib->view.system_grant = header->system_share;

@@ -52,6 +52,9 @@ typedef enum pair_slot {
 /* What erx_space_create hands the fill of its space record. */
 typedef struct task_create {
 	const erx_fiasco_space_create_request_t *request;
+	/* A domain's space create's domain row, checked, less its own index; NULL for any other create. */
+	const erx_fiasco_task_band_t *domain;
+	uint32_t	caller;
 	uint32_t	parent;		/* the parent's task */
 	uint32_t	gate;		/* as erx_fiasco_gate_named gave it */
 	bool		test_task;	/* the launcher's create, from the root */
@@ -66,6 +69,7 @@ static uint32_t	*task_space_of(uint32_t);
 static int	task_space_named(uint32_t, uint64_t, uint32_t *);
 static bool	task_failed(l4_msgtag_t);
 static bool	task_objects_make(uint32_t);
+static int	task_create(task_create_t *, uint64_t *);
 static int	task_fill_space(uint32_t, const void *);
 static void	task_unrun(uint32_t);
 static void	task_unmake(uint32_t);
@@ -166,6 +170,9 @@ erx_fiasco_task_table_init(void)
 	if (reason != NULL)
 		return (reason);
 	erx_fiasco_task(ERX_FIASCO_TASK_ROOT)->state = ERX_FIASCO_TASK_LIVE;
+	/* The root's row is the system domain's domain row: its own threads in the system band, the spaces it makes in the app band. */
+	erx_fiasco_task(ERX_FIASCO_TASK_ROOT)->bands = (erx_fiasco_task_band_t){ .domain = ERX_FIASCO_TASK_ROOT,
+	    .band = ERX_FIASCO_BAND_SYSTEM, .space_band = ERX_BAND_APP };
 	erx_fiasco_task(ERX_FIASCO_TASK_ROOT)->threads[0] = ERX_FIASCO_TASK_THREAD_STARTED;
 	return (NULL);
 }
@@ -385,29 +392,50 @@ int
 erx_fiasco_task_create_body(uint32_t caller, const erx_fiasco_space_create_request_t *request, bool test_task,
     uint64_t *space)
 {
+	/* The test-task mark is the launcher's, which runs in the root, so no other task sets it. */
+	if (test_task && caller != ERX_FIASCO_TASK_ROOT)
+		return (ERX_ENOTSUP);
+	return (task_create(&(task_create_t){ .request = request, .caller = caller, .test_task = test_task }, space));
+}
+
+/* A domain's space: only the domain library, in the root, makes a domain row. */
+int
+erx_fiasco_task_create_domain_body(uint32_t caller, const erx_fiasco_domain_space_create_request_t *request,
+    uint64_t *space)
+{
+	erx_fiasco_task_band_t row;
+
+	if (caller != ERX_FIASCO_TASK_ROOT)
+		return (ERX_ENOTSUP);
+	if (erx_fiasco_band_domain(request, &row) != ERX_OK)
+		return (ERX_EINVAL);
+	return (task_create(&(task_create_t){ .request = &request->space, .domain = &row, .caller = caller }, space));
+}
+
+static int
+task_create(task_create_t *create, uint64_t *space)
+{
+	const erx_fiasco_space_create_request_t *const request = create->request;
 	const uint64_t flags = request->flags, cap_limit = request->cap_limit;
-	task_create_t create = { .request = request, .test_task = test_task };
+	const uint32_t caller = create->caller;
 	int status;
 
 	if ((flags & ~(uint64_t)ERX_SPACE_JIT) != 0 || cap_limit < 2 ||
 	    cap_limit > ERX_FIASCO_CAP_LIMIT_MAX)
 		return (ERX_EINVAL);
-	/* The test-task mark is the launcher's, which runs in the root, so no other task sets it. */
-	if (test_task && caller != ERX_FIASCO_TASK_ROOT)
-		return (ERX_ENOTSUP);
-	status = task_space_named(caller, request->parent, &create.parent);
+	status = task_space_named(caller, request->parent, &create->parent);
 	if (status == ERX_OK)
-		status = erx_fiasco_gate_named(caller, request->fault, &create.gate);
+		status = erx_fiasco_gate_named(caller, request->fault, &create->gate);
 	if (status != ERX_OK)
 		return (status);
 	/* A stopped space takes no child, so a stop's walk of the tree below it is final. */
-	if (erx_fiasco_task(create.parent)->state != ERX_FIASCO_TASK_LIVE)
+	if (erx_fiasco_task(create->parent)->state != ERX_FIASCO_TASK_LIVE)
 		return (ERX_EINVAL);
 	/* The right to make code follows from the image: only the root, or a JIT space, makes a JIT space. */
 	if ((flags & ERX_SPACE_JIT) != 0 && caller != ERX_FIASCO_TASK_ROOT &&
 	    (erx_fiasco_task(caller)->flags & ERX_SPACE_JIT) == 0)
 		return (ERX_ERIGHTS);
-	return (erx_fiasco_object_create(caller, ERX_BACKEND_OBJECT_SPACE, request->budget, task_fill_space, &create,
+	return (erx_fiasco_object_create(caller, ERX_BACKEND_OBJECT_SPACE, request->budget, task_fill_space, create,
 	    space));
 }
 
@@ -419,12 +447,18 @@ static int
 task_fill_space(uint32_t record, const void *argument)
 {
 	const task_create_t *const create = argument;
+	const uint32_t domain = erx_fiasco_task(create->caller)->bands.domain;
+	erx_fiasco_task_band_t bands = create->domain != NULL ? *create->domain :
+	    erx_fiasco_band_inherit(&erx_fiasco_task(domain)->bands, domain);
 	erx_fiasco_task_pairs_t pairs;
 	erx_fiasco_task_t *parent;
 	uint32_t task = 1;
 
 	while (task < erx_backend_grow_table_capacity(&task_rows) && erx_fiasco_task(task)->state != ERX_FIASCO_TASK_ABSENT)
 		task++;
+	/* A domain row names itself. */
+	if (create->domain != NULL)
+		bands.domain = task;
 	/* A row past the capacity takes a page that stays the table's if the range table cannot open. */
 	if (erx_backend_grow_table_room(&task_rows, task + 1) != ERX_OK ||
 	    erx_backend_grow_table_room(&task_spaces, record + 1) != ERX_OK)
@@ -438,7 +472,7 @@ task_fill_space(uint32_t record, const void *argument)
 	}
 
 	*erx_fiasco_task(task) = (erx_fiasco_task_t){ .state = ERX_FIASCO_TASK_LIVE, .flags = (uint32_t)create->request->flags,
-	    .pairs = pairs, .test_task = create->test_task };
+	    .pairs = pairs, .test_task = create->test_task, .bands = bands };
 	if (!task_objects_make(task)) {
 		/* No thread ever ran, so nobody waits on the ended semaphore, no status is owed, and its memory is a few pages. */
 		task_unrun(task);

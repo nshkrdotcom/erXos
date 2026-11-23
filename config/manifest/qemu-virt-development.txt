@@ -237,6 +237,7 @@ limits web
   crash 0
   flags none
   runtime_limits @runtime_limits.web
+  band interactive
   peer_held 4096
   peer_held_total 4096
 # The display domain's limits, whose figures this part's opening comment explains (its
@@ -254,6 +255,7 @@ limits display
   crash 0
   flags none
   runtime_limits @runtime_limits.display
+  band interactive
   peer_held 4096
   peer_held_total 4096
 principal system
@@ -480,6 +482,7 @@ limits usb
   crash 0
   flags none
   runtime_limits @runtime_limits.usb
+  band driver
   peer_held 4096
   peer_held_total 4096
 domain usb

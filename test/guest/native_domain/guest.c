@@ -2434,7 +2434,7 @@ given_view(uint32_t program)
 
 	configured[0] = (erx_dom_configured_t){ .principal = PRINCIPAL, .release = release, .release_files = 1,
 	    .runtime = program, .memory = 2 * MIB, .outer = MIB, .grant = grant, .runtime_limits = limits_default(),
-	    .lane = ERX_LANE_MIN, .name = "holder", .name_len = 6, .kind = ERX_MF_SERVICE,
+	    .lane = ERX_LANE_MIN, .band = ERX_BAND_DRIVER, .name = "holder", .name_len = 6, .kind = ERX_MF_SERVICE,
 	    .args = holder_args, .args_len = sizeof(holder_args) };
 	catalogue[GIVEN_KEPT] = (erx_dom_device_entry_t){ .unit = 0, .row = 0, .role = ERX_MF_DEVICE_ROLE_BLOCK,
 	    .role_word = "block", .peripheral = "virtio_mmio", .path = GIVEN_PATH,

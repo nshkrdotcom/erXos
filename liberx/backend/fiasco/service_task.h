@@ -13,6 +13,7 @@
 #include "erx/log.h"
 #include "erx/core/crash.h"
 #include "liberx/backend/core/slot_pool.h"
+#include "liberx/backend/fiasco/band.h"
 #include "liberx/backend/fiasco/service_wire.h"
 
 /* include/erx/pack.h's; that header's erx_boot_inputs_t is the first stage's, which boot_info.h's readers of this one must not meet. */
@@ -84,6 +85,7 @@ typedef struct erx_fiasco_task {
 	erx_slot_pair_t		 thread_pairs[ERX_FIASCO_THREADS_MAX];
 	erx_log_rate_t		 log_rate;	/* what its erx_debug_log lines have cost, zero at its start */
 	bool			 test_task;	/* the launcher made it, so its task_write reaches the console */
+	erx_fiasco_task_band_t	 bands;		/* fixed when it is made (band.h) */
 } erx_fiasco_task_t;
 
 /*
@@ -145,9 +147,12 @@ const erx_pack_view_t	*erx_fiasco_task_archive(void);
 
 /*
  * The bodies. caller is the calling task; each result is the call table's. A create
- * with test_task is the launcher's test_space_create, which only the root may ask for.
+ * with test_task is the launcher's test_space_create, and a domain create the domain library's
+ * domain_space_create, which only the root may ask for.
  */
 int	erx_fiasco_task_create_body(uint32_t caller, const erx_fiasco_space_create_request_t *request, bool test_task,
+	    uint64_t *space);
+int	erx_fiasco_task_create_domain_body(uint32_t caller, const erx_fiasco_domain_space_create_request_t *request,
 	    uint64_t *space);
 int	erx_fiasco_task_image_map_body(uint32_t caller, uint64_t space, uint64_t image, uint64_t entry, uint64_t *start);
 int	erx_fiasco_task_stop_body(uint32_t caller, uint64_t space, int64_t status);

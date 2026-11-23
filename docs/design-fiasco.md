@@ -875,7 +875,12 @@ derives both bands of a domain from its limits record and its kind:
 * an app's session runs at the app band whatever its template's record names, as
   `erx_dom_plan_app_session` plans it with the `memory` the app's entry carries rather than the
   template's ([design-packaging.md](design-packaging.md#an-apps-session)), so an app, whose code is
-  untrusted, and its programs never run above an interactive domain.
+  untrusted, and its programs never run above an interactive domain;
+* a domain a principal requests runs at the app band, and so does every space below it: the
+  request names no limits record, so nothing it carries can name a higher band, and what it asks
+  for a band is overwritten as its origin is;
+* a partial-boot domain runs at the band of the manifest's `native_limits` record, the record its
+  runtime limits come from, and so does every space below it.
 
 A band is a domain's, not a thread's, so a domain's background work runs in its own band. A spinning
 domain therefore delays only its own band and those below.

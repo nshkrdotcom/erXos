@@ -116,7 +116,7 @@ module ManifestContextFixture
         "  runtime @artifact.emu\n  release @artifact.app\n  restarts 3\n  restart_period_s 5\n  args \"-x y\"\n"
     end
     app = "limits app\n  memory 4194304\n  outer 1048576\n  grant @share.users\n  spaces none\n  lane 4096\n" \
-          "  connections 2\n  crash 0\n  flags none\n  runtime_limits @runtime_limits.system\n" \
+          "  connections 2\n  crash 0\n  flags none\n  runtime_limits @runtime_limits.system\n  band app\n" \
           "  peer_held 4096\n  peer_held_total 4096\n"
     with_quota(domainless(plain), 3).sub("window data\n  holder system", "window data\n  holder @domain.alpha") +
       app + domain.call('alpha', 'required') + domain.call('beta', 'rescue') +

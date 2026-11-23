@@ -129,6 +129,7 @@ limits native
   crash 0
   flags none
   runtime_limits @runtime_limits.system
+  band app
   peer_held 4096
   peer_held_total 4096
 limits session
@@ -141,6 +142,7 @@ limits session
   crash 0
   flags spaces
   runtime_limits @runtime_limits.session
+  band interactive
   peer_held 4096
   peer_held_total 4096
 limits storage
@@ -153,6 +155,7 @@ limits storage
   crash 0
   flags none
   runtime_limits @runtime_limits.storage
+  band driver
   peer_held 4096
   peer_held_total 4096
 limits network
@@ -165,6 +168,7 @@ limits network
   crash 0
   flags none
   runtime_limits @runtime_limits.network
+  band driver
   peer_held 4096
   peer_held_total 4096
 # The system principal's session template, root's session: it starts erx_session and
@@ -468,6 +472,7 @@ limits pcie
   crash 0
   flags none
   runtime_limits @runtime_limits.pcie
+  band driver
   peer_held 4096
   peer_held_total 4096
 domain pcie

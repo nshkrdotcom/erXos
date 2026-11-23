@@ -123,9 +123,9 @@ reset_view(void)
 	    .grant = grant(UINT64_C(5000000), 0x3, 50),
 	    .spaces = grant(UINT64_C(2500000), 0x1, 50),
 	    .runtime_limits = limits(1), .lane = 65536, .connections = 2,
-	    .name = "srv", .name_len = 3 };
+	    .band = ERX_BAND_DRIVER, .name = "srv", .name_len = 3 };
 	/* Atoms the principal's default is not, so a plan shows the template's. */
-	session_template = (erx_dom_template_t){ .principal = 1,
+	session_template = (erx_dom_template_t){ .principal = 1, .band = ERX_BAND_INTERACTIVE,
 	    .flags = ERX_DOM_SPACES, .release = 2, .release_files = 3,
 	    .runtime = 1, .memory = 4 * MIB, .outer = MIB,
 	    .grant = grant(UINT64_C(5000000), 0x3, 30),
@@ -142,6 +142,7 @@ reset_view(void)
 	    .nfiles = sizeof(files) / sizeof(files[0]),
 	    .configured = &configured, .nconfigured = 1, .partial = &partial,
 	    .npartial = 1, .partial_principal = 1, .native_limits = limits(1),
+	    .native_band = ERX_BAND_INTERACTIVE,
 	    .templates = &session_template, .ntemplates = 1,
 	    .system_grant = grant(ERX_QUOTA_NONE, 0xf, 63),
 	    .system_reserve = 250, .system_lane = 16384, .next_connection = 1 };
@@ -745,6 +746,17 @@ constructors(void)
 	printf("ctor boot_flags partial %u %u\n",
 	    erx_dom_plan_boot_flags(&view, &plan, false),
 	    erx_dom_plan_boot_flags(&view, &plan, true));
+	/* Each origin's bands, its own and its sub-spaces', from what the constructor reads. */
+	printf("ctor bands partial=%u,%u", plan.spec.band, plan.spec.space_band);
+	req = base_request();
+	req.band = ERX_BAND_DRIVER;
+	req.space_band = ERX_BAND_DRIVER;
+	status = erx_dom_plan_request(&view, &req, NULL, 0, &plan);
+	printf(" request=%d,%u,%u", (int)status, plan.spec.band, plan.spec.space_band);
+	status = erx_dom_plan_configured(&view, 6, 0, ERX_DOM_PID_NONE, &plan);
+	printf(" configured=%d,%u,%u", (int)status, plan.spec.band, plan.spec.space_band);
+	status = erx_dom_plan_session(&view, 8, 0, "sess", 4, NULL, 0, (erx_dom_pid_t){ 3, 1 }, &plan);
+	printf(" session=%d,%u,%u\n", (int)status, plan.spec.band, plan.spec.space_band);
 }
 
 static int
@@ -1377,9 +1389,9 @@ apps(void)
 	(void)erx_dom_apps_place(&view, 1, APPS_MIB * MIB, APP_ENTRIES);
 	printf("apps session %d", (int)erx_dom_plan_app_session(&view, 8, 2, 8 * MIB, "app_1", 5,
 	    "screen", 6, (erx_dom_pid_t){ 3, 1 }, &plan));
-	printf(" principal=%u memory=%u outer=%u origin=%u,%u words=", plan.spec.principal,
+	printf(" principal=%u memory=%u outer=%u origin=%u,%u band=%u,%u words=", plan.spec.principal,
 	    (unsigned)(plan.spec.memory / MIB), (unsigned)(plan.spec.outer / MIB),
-	    plan.spec.origin.kind, plan.spec.origin.record);
+	    plan.spec.origin.kind, plan.spec.origin.record, plan.spec.band, plan.spec.space_band);
 	for (uint32_t at = 0; at < plan.spec.env_len; at++) {
 		const char byte = plan.spec.strings[plan.spec.args_len + at];
 

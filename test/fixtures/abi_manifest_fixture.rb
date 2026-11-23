@@ -79,6 +79,7 @@ module AbiManifestFixture
     integer(bytes, LIMITS_AT + 16, 1_048_576, width: 8)
     share(bytes, LIMITS_AT + 24, quota: 8_000_000, capacity: 800, base: 16, ceiling: 31)
     integer(bytes, LIMITS_AT + 120, 4096)
+    integer(bytes, LIMITS_AT + 140, 3) # band app
     integer(bytes, LIMITS_AT + 144, 4096, width: 8)
     integer(bytes, LIMITS_AT + 152, 4096, width: 8)
     span(bytes, RUNTIME_AT, 28, 6)

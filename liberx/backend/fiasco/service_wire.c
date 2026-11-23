@@ -17,105 +17,108 @@
 #include "erx/abi.h"
 #include "liberx/backend/fiasco/service_wire.h"
 
-_Static_assert(sizeof(erx_fiasco_vm_map_request_t) / sizeof(uint64_t) == ERX_FIASCO_WIRE_WORDS_MAX,
-    "the longest request");
+/* A request's word count, which fails to build for a layout longer than a decoded request holds. */
+#define WIRE_WORDS(layout)	(0 * sizeof(struct { _Static_assert(sizeof(layout) <= sizeof(uint64_t) * ERX_FIASCO_WIRE_WORDS_MAX, \
+	"a request longer than the decoder holds"); int unused; }) + sizeof(layout) / sizeof(uint64_t))
 
 uint32_t
 erx_fiasco_wire_words(int64_t number)
 {
 	switch (number) {
 	case ERX_CALL_DEBUG_LOG:
-		return (sizeof(erx_fiasco_debug_log_request_t) / sizeof(uint64_t));
+		return (WIRE_WORDS(erx_fiasco_debug_log_request_t));
 	case ERX_FIASCO_CALL_TASK_WRITE:
-		return (sizeof(erx_fiasco_task_write_request_t) / sizeof(uint64_t));
+		return (WIRE_WORDS(erx_fiasco_task_write_request_t));
 	case ERX_FIASCO_CALL_LOG_READ:
-		return (sizeof(erx_fiasco_log_read_request_t) / sizeof(uint64_t));
+		return (WIRE_WORDS(erx_fiasco_log_read_request_t));
 	case ERX_FIASCO_CALL_LOG_TAKE:
-		return (sizeof(erx_fiasco_log_take_request_t) / sizeof(uint64_t));
+		return (WIRE_WORDS(erx_fiasco_log_take_request_t));
 	case ERX_FIASCO_CALL_OBJECT_INFO:
-		return (sizeof(erx_fiasco_object_info_request_t) / sizeof(uint64_t));
+		return (WIRE_WORDS(erx_fiasco_object_info_request_t));
 	case ERX_FIASCO_CALL_THREAD_CREATE:
-		return (sizeof(erx_fiasco_thread_create_request_t) / sizeof(uint64_t));
+		return (WIRE_WORDS(erx_fiasco_thread_create_request_t));
 	case ERX_FIASCO_CALL_THREAD_START:
-		return (sizeof(erx_fiasco_thread_start_request_t) / sizeof(uint64_t));
+		return (WIRE_WORDS(erx_fiasco_thread_start_request_t));
 	case ERX_FIASCO_CALL_THREAD_SET_AFFINITY:
-		return (sizeof(erx_fiasco_thread_set_affinity_request_t) / sizeof(uint64_t));
+		return (WIRE_WORDS(erx_fiasco_thread_set_affinity_request_t));
 	case ERX_FIASCO_CALL_THREAD_REAP:
-		return (sizeof(erx_fiasco_thread_reap_request_t) / sizeof(uint64_t));
+		return (WIRE_WORDS(erx_fiasco_thread_reap_request_t));
 	case ERX_FIASCO_CALL_VM_RESERVE:
 	case ERX_FIASCO_CALL_SPACE_PROTECT:
-		return (sizeof(erx_fiasco_vm_flagged_request_t) / sizeof(uint64_t));
+		return (WIRE_WORDS(erx_fiasco_vm_flagged_request_t));
 	case ERX_FIASCO_CALL_VM_COMMIT:
 	case ERX_FIASCO_CALL_VM_DECOMMIT:
 	case ERX_FIASCO_CALL_VM_RELEASE:
-		return (sizeof(erx_fiasco_vm_range_request_t) / sizeof(uint64_t));
+		return (WIRE_WORDS(erx_fiasco_vm_range_request_t));
 	case ERX_FIASCO_CALL_MACHINE_END:
-		return (sizeof(erx_fiasco_machine_end_request_t) / sizeof(uint64_t));
+		return (WIRE_WORDS(erx_fiasco_machine_end_request_t));
 	case ERX_FIASCO_CALL_IRQ_CREATE:
-		return (sizeof(erx_fiasco_irq_create_request_t) / sizeof(uint64_t));
+		return (WIRE_WORDS(erx_fiasco_irq_create_request_t));
 	case ERX_FIASCO_CALL_IRQ_BIND:
-		return (sizeof(erx_fiasco_irq_bind_request_t) / sizeof(uint64_t));
+		return (WIRE_WORDS(erx_fiasco_irq_bind_request_t));
 	case ERX_FIASCO_CALL_IRQ_UNBIND:
-		return (sizeof(erx_fiasco_irq_request_t) / sizeof(uint64_t));
+		return (WIRE_WORDS(erx_fiasco_irq_request_t));
 	case ERX_FIASCO_CALL_TIME_SET_OFFSET:
-		return (sizeof(erx_fiasco_time_set_offset_request_t) / sizeof(uint64_t));
+		return (WIRE_WORDS(erx_fiasco_time_set_offset_request_t));
 	case ERX_FIASCO_CALL_GROUP_CREATE:
-		return (sizeof(erx_fiasco_group_create_request_t) / sizeof(uint64_t));
+		return (WIRE_WORDS(erx_fiasco_group_create_request_t));
 	case ERX_FIASCO_CALL_DISPATCHER_SET:
-		return (sizeof(erx_fiasco_dispatcher_request_t) / sizeof(uint64_t));
+		return (WIRE_WORDS(erx_fiasco_dispatcher_request_t));
 	case ERX_FIASCO_CALL_GATE_CREATE:
-		return (sizeof(erx_fiasco_gate_create_request_t) / sizeof(uint64_t));
+		return (WIRE_WORDS(erx_fiasco_gate_create_request_t));
 	case ERX_FIASCO_CALL_GATE_BIND:
-		return (sizeof(erx_fiasco_gate_bind_request_t) / sizeof(uint64_t));
+		return (WIRE_WORDS(erx_fiasco_gate_bind_request_t));
 	case ERX_FIASCO_CALL_GATE_WAIT:
 	case ERX_FIASCO_CALL_GATE_CANCEL:
-		return (sizeof(erx_fiasco_gate_wait_request_t) / sizeof(uint64_t));
+		return (WIRE_WORDS(erx_fiasco_gate_wait_request_t));
 	case ERX_FIASCO_CALL_MEM_CREATE:
 	case ERX_FIASCO_CALL_MEM_CREATE_PAGED:
-		return (sizeof(erx_fiasco_mem_create_request_t) / sizeof(uint64_t));
+		return (WIRE_WORDS(erx_fiasco_mem_create_request_t));
 	case ERX_FIASCO_CALL_MEM_CREATE_PHYSICAL:
-		return (sizeof(erx_fiasco_mem_physical_request_t) / sizeof(uint64_t));
+		return (WIRE_WORDS(erx_fiasco_mem_physical_request_t));
 	case ERX_FIASCO_CALL_MEM_CREATE_CONTIGUOUS:
-		return (sizeof(erx_fiasco_mem_contiguous_request_t) / sizeof(uint64_t));
+		return (WIRE_WORDS(erx_fiasco_mem_contiguous_request_t));
 	case ERX_FIASCO_CALL_MEM_DMA_ADDR:
-		return (sizeof(erx_fiasco_mem_dma_request_t) / sizeof(uint64_t));
+		return (WIRE_WORDS(erx_fiasco_mem_dma_request_t));
 	case ERX_FIASCO_CALL_ENTROPY_READ:
-		return (sizeof(erx_fiasco_entropy_read_request_t) / sizeof(uint64_t));
+		return (WIRE_WORDS(erx_fiasco_entropy_read_request_t));
 	case ERX_FIASCO_CALL_ENTROPY_ADD:
-		return (sizeof(erx_fiasco_entropy_add_request_t) / sizeof(uint64_t));
+		return (WIRE_WORDS(erx_fiasco_entropy_add_request_t));
 	case ERX_FIASCO_CALL_VM_MAP:
-		return (sizeof(erx_fiasco_vm_map_request_t) / sizeof(uint64_t));
+		return (WIRE_WORDS(erx_fiasco_vm_map_request_t));
 	case ERX_FIASCO_CALL_SPACE_CREATE:
 	case ERX_FIASCO_CALL_TEST_SPACE_CREATE:
-		return (sizeof(erx_fiasco_space_create_request_t) / sizeof(uint64_t));
+		return (WIRE_WORDS(erx_fiasco_space_create_request_t));
+	case ERX_FIASCO_CALL_DOMAIN_SPACE_CREATE:
+		return (WIRE_WORDS(erx_fiasco_domain_space_create_request_t));
 	case ERX_FIASCO_CALL_IMAGE_MAP:
-		return (sizeof(erx_fiasco_image_map_request_t) / sizeof(uint64_t));
+		return (WIRE_WORDS(erx_fiasco_image_map_request_t));
 	case ERX_FIASCO_CALL_SPACE_STOP:
-		return (sizeof(erx_fiasco_space_stop_request_t) / sizeof(uint64_t));
+		return (WIRE_WORDS(erx_fiasco_space_stop_request_t));
 	case ERX_FIASCO_CALL_TASK_JOIN:
-		return (sizeof(erx_fiasco_task_join_request_t) / sizeof(uint64_t));
+		return (WIRE_WORDS(erx_fiasco_task_join_request_t));
 	case ERX_FIASCO_CALL_CAP_DUP:
 	case ERX_FIASCO_CALL_CAP_CLOSE:
 	case ERX_FIASCO_CALL_OBJECT_DESTROY:
 	case ERX_FIASCO_CALL_MEM_SEAL:
-		return (sizeof(erx_fiasco_cap_request_t) / sizeof(uint64_t));
+		return (WIRE_WORDS(erx_fiasco_cap_request_t));
 	case ERX_FIASCO_CALL_BUDGET_CREATE:
-		return (sizeof(erx_fiasco_budget_create_request_t) / sizeof(uint64_t));
+		return (WIRE_WORDS(erx_fiasco_budget_create_request_t));
 	case ERX_FIASCO_CALL_BUDGET_RESIZE:
-		return (sizeof(erx_fiasco_budget_resize_request_t) / sizeof(uint64_t));
+		return (WIRE_WORDS(erx_fiasco_budget_resize_request_t));
 	case ERX_FIASCO_CALL_CAP_PASS:
-		return (sizeof(erx_fiasco_cap_pass_request_t) / sizeof(uint64_t));
+		return (WIRE_WORDS(erx_fiasco_cap_pass_request_t));
 	case ERX_FIASCO_CALL_IMAGE_SLICE:
-		return (sizeof(erx_fiasco_image_slice_request_t) / sizeof(uint64_t));
+		return (WIRE_WORDS(erx_fiasco_image_slice_request_t));
 	case ERX_FIASCO_CALL_MEM_COPY:
 	case ERX_FIASCO_CALL_MEM_SUPPLY:
-		return (sizeof(erx_fiasco_mem_copy_request_t) / sizeof(uint64_t));
+		return (WIRE_WORDS(erx_fiasco_mem_copy_request_t));
 	case ERX_FIASCO_CALL_MEM_CHILD:
-		return (sizeof(erx_fiasco_mem_child_request_t) / sizeof(uint64_t));
+		return (WIRE_WORDS(erx_fiasco_mem_child_request_t));
 	case ERX_FIASCO_CALL_RELEASE_ENTRY:
-		return (sizeof(erx_fiasco_release_entry_request_t) / sizeof(uint64_t));
+		return (WIRE_WORDS(erx_fiasco_release_entry_request_t));
 	case ERX_FIASCO_CALL_GROUP_CONFIGURE:
-		return (sizeof(erx_fiasco_group_configure_request_t) / sizeof(uint64_t));
+		return (WIRE_WORDS(erx_fiasco_group_configure_request_t));
 	default:
 		return (0);
 	}

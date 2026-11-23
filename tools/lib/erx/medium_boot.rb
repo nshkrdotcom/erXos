@@ -98,7 +98,7 @@ module Erx
     # at boot and, with restarts 0, never again once it halts.
     DOMAIN_ROW = EIGHTH_SHARE +
                  "limits erts\n  memory #{DOMAIN_MEMORY}\n  outer #{DOMAIN_OUTER}\n  grant @share.eighth\n  spaces none\n" \
-                 "  lane 4096\n  connections 0\n  crash 0\n  flags none\n  runtime_limits @runtime_limits.system\n" \
+                 "  lane 4096\n  connections 0\n  crash 0\n  flags none\n  runtime_limits @runtime_limits.system\n  band interactive\n" \
                  "  peer_held 4096\n  peer_held_total 4096\n" \
                  "domain erts\n  principal @principal.system\n  limits @limits.erts\n  kind service\n  flags none\n" \
                  "  runtime @artifact.#{ProductionImage::DOMAIN_RUNTIME_ARTIFACT}\n  release @artifact.#{DOMAIN_BOOT.name}\n" \
@@ -652,6 +652,7 @@ module Erx
           crash 0
           flags none
           runtime_limits @runtime_limits.small
+          band driver
           peer_held 4096
           peer_held_total 4096
       ROW

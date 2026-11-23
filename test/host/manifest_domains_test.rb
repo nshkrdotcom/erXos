@@ -16,7 +16,7 @@ require_relative '../fixtures/manifest_context'
 # domain library's host build, which test/host/dom_planner_test.rb runs.
 class ManifestDomainsTest < Minitest::Test
   APP_LIMITS = "limits app\n  memory 4194304\n  outer 1048576\n  grant @share.users\n  spaces none\n  lane 4096\n" \
-               "  connections 2\n  crash 0\n  flags none\n  runtime_limits @runtime_limits.system\n" \
+               "  connections 2\n  crash 0\n  flags none\n  runtime_limits @runtime_limits.system\n  band app\n" \
                "  peer_held 4096\n  peer_held_total 4096\n"
 
   # Each domain's status, in boot order, and each introduction's; [] plans them all,

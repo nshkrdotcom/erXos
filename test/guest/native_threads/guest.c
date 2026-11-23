@@ -17,6 +17,7 @@
 #include <stdint.h>
 
 #include "erx/abi.h"
+#include "liberx/backend/fiasco/band.h"
 #include "liberx/backend/fiasco/console.h"
 #include "liberx/backend/fiasco/log.h"
 #include "liberx/backend/fiasco/park.h"
@@ -43,7 +44,6 @@
 #define QUIET_PARKS	16u
 #define CPUS_MAX	16u
 #define HOG_PRIORITY	100u
-#define NORMAL_PRIORITY	1u
 #define HOG_TRIES	5u
 #define HOG_NS		(UINT64_C(50) * NS_PER_MS)
 #define NS_PER_MS	UINT64_C(1000000)
@@ -527,8 +527,9 @@ hog_helper(uint64_t cpu)
 		continue;
 	for (uint32_t index = 0; index < cpu_count; index++)
 		hog_delta[index] = atomic_load_explicit(&probe_count[index], memory_order_relaxed) - before[index];
-	/* Back beneath no one: what follows takes locks a thread of this CPU may hold. */
-	(void)erx_fiasco_test_thread_priority(erx_fiasco_thread_self()->index, NORMAL_PRIORITY, UINT64_C(1) << cpu);
+	/* Back to the root task's own band: what follows takes locks a thread of this CPU may hold. */
+	(void)erx_fiasco_test_thread_priority(erx_fiasco_thread_self()->index, erx_fiasco_band_priority(ERX_FIASCO_BAND_SYSTEM),
+	    UINT64_C(1) << cpu);
 	atomic_store_explicit(&hog_done, 1, memory_order_release);
 	(void)erx_umtx_wake(word_addr(&hog_done), 1);
 	erx_thread_exit();

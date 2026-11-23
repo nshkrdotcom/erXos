@@ -9,6 +9,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "erx/abi.h"
+
 /*
  * The root service's decoder (docs/design-fiasco.md, "The root service"): what a
  * received message is, from its gate label, tag and message words. It reads
@@ -25,8 +27,12 @@
 #define ERX_FIASCO_WIRE_EXCEPTION_WORDS	40u
 /* The gate label holds the task's index above the sender's rights. */
 #define ERX_FIASCO_WIRE_LABEL_SHIFT	2u
-/* The longest request, in words. */
-#define ERX_FIASCO_WIRE_WORDS_MAX	7u
+/*
+ * The longest request, in words: domain_space_create's layout. Each case of the decoder's
+ * word table fails to build for a layout longer than this, so a longer request added to the
+ * ABI moves this to its own layout.
+ */
+#define ERX_FIASCO_WIRE_WORDS_MAX	((uint32_t)(sizeof(erx_fiasco_domain_space_create_request_t) / sizeof(uint64_t)))
 
 typedef enum erx_fiasco_wire_kind {
 	ERX_FIASCO_WIRE_DROP = 1,	/* no live task: its answer reaches no running thread */

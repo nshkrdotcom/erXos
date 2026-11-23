@@ -717,8 +717,9 @@ limit fiasco_task_rows u32 1024
 # fiasco_call number and its first word names the calling thread; a layout's
 # size fixes the request's word count, which the service's decoder checks. A
 # reply is erx_fiasco_reply. Number 1 is the ABI's debug_log. test_space_create
-# is the test-task launcher's space_create, which marks the task as a test task
-# and which the service answers only for the root.
+# is the test-task launcher's space_create, which marks the task as a test task,
+# and domain_space_create the domain library's, which carries the domain's bands
+# and CPU set; the service answers both only for the root.
 enum fiasco_call u32
   value thread_create 2
   value thread_start 3
@@ -770,6 +771,7 @@ enum fiasco_call u32
   value mem_seal 51
   value mem_child 52
   value test_space_create 53
+  value domain_space_create 54
 
 # erx_object_info's topics and the report each writes (docs/design-abi.md,
 # "Inspection schema"; docs/design-kernel.md, "Failure handling, diagnostics
@@ -1043,6 +1045,15 @@ layout erx_fiasco_space_create_request wire_le 8 56
   field label u64 32
   field flags u64 40
   field cap_limit u64 48
+
+# A domain's space create (docs/design-fiasco.md, "Bands"): space_create's request,
+# then the band the domain's threads run at, the band of every space below the
+# domain and the CPU set of the domain's grant.
+layout erx_fiasco_domain_space_create_request wire_le 8 72
+  field space erx_fiasco_space_create_request 0
+  field band band 56
+  field space_band band 60
+  field cpuset u64 64
 
 layout erx_fiasco_image_map_request wire_le 8 32
   field caller u64 0

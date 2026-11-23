@@ -83,6 +83,18 @@ class ManifestReaderTest < Minitest::Test
     assert_match(/error inactive limits\[\].spaces/, output)
   end
 
+  # The boot view takes a limits record's band as read (docs/design-fiasco.md, "Bands"), so the
+  # reader refuses one outside the band enum: none, and the root task's own system band.
+  def test_limits_band_outside_the_enum_is_refused
+    [0, 4].each do |band|
+      bytes = AbiManifestFixture.valid
+      AbiManifestFixture.integer(bytes, AbiManifestFixture::LIMITS_AT + 140, band)
+      status, output = decode(bytes)
+      assert_equal 1, status, output
+      assert_match(/error tag limits\[\].band/, output)
+    end
+  end
+
   def test_tagged_facet_parameters_validate_active_payloads
     assert_equal 0, decode(AbiManifestFixture.facet_parameter).first
     status, output = decode(AbiManifestFixture.facet_parameter(scalar: 2))
