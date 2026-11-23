@@ -1076,7 +1076,7 @@ ready(Id, Ref, Provides, Inspect, #{core := Core, waiting := Waiting} = State) -
                                                      perform(Actions, Ready))),
             case Origin of
                 {configured, Row} -> mints({ready, Row, Id, Node, Provides}, Answered);
-                {session, _Template} -> mints({session_ready, minted_rows(Domain), Id, marked(Start)},
+                {session, _Template} -> mints({session_ready, minted_rows(Domain), Id, Node, marked(Start), Provides},
                                               keep_lines(Id, Node, Provides, Answered));
                 request -> Answered
             end;

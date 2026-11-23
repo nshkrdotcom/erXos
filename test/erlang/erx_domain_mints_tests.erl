@@ -65,6 +65,7 @@
 
 -module(erx_domain_mints_tests).
 -include_lib("eunit/include/eunit.hrl").
+-include("generated/erx_abi.hrl").
 
 -export([owner/1]).
 
@@ -407,19 +408,19 @@ session_grants(State) -> erx_domain_mints:grants(State).
 
 %% S1 = 5 ready, session 9 ready and introduced: its grant is minting tag 1.
 session_minting() ->
-    {_, State} = run([ready(?S, 5, #{data => mint(5)}), {session_ready, ?ROWS, 9, none}, {introduced, 1, ok}], sessions()),
+    {_, State} = run([ready(?S, 5, #{data => mint(5)}), {session_ready, ?ROWS, 9, node_of(9), none, #{}}, {introduced, 1, ok}], sessions()),
     ?assertEqual(#{{{session, 9}, data} => {minting, {5, 9}, 1}}, session_grants(State)),
     State.
 
 %% Session 9's grant installed, and session 10's.
 two_sessions_installed() ->
-    {_, State} = run([{session_ready, ?ROWS, 10, none}, {introduced, 2, ok}, {minted, 5, 1, {ok, facet(5)}},
+    {_, State} = run([{session_ready, ?ROWS, 10, node_of(10), none, #{}}, {introduced, 2, ok}, {minted, 5, 1, {ok, facet(5)}},
                       {minted, 5, 2, {ok, facet(5)}}, {installed, 9, 1}, {installed, 10, 2}],
                      session_minting()),
     State.
 
 session_ready_installs_test() ->
-    {Actions, State} = run([ready(?S, 5, #{data => mint(5)}), {session_ready, ?ROWS, 9, none}, {introduced, 1, ok},
+    {Actions, State} = run([ready(?S, 5, #{data => mint(5)}), {session_ready, ?ROWS, 9, node_of(9), none, #{}}, {introduced, 1, ok},
                             {minted, 5, 1, {ok, facet(5)}}, {installed, 9, 1}], sessions()),
     ?assertEqual([[],
                   [{arm, 1, 10000}, {introduce, 1, 5, 9}],
@@ -436,7 +437,7 @@ files_sessions() -> erx_domain_mints:new((config([{template, 0}]))#{files => [da
 in_place(Starting, State) -> erx_domain_mints:in_place({session, 9}, Starting, State).
 
 namespace_waits_for_its_files_grants_test() ->
-    {_, Idle} = run([{session_ready, ?ROWS, 9, none}], files_sessions()),
+    {_, Idle} = run([{session_ready, ?ROWS, 9, node_of(9), none, #{}}], files_sessions()),
     %% No operation: the session waits while its server is starting, and not once it
     %% has ended or never started, when /data answers I/O error.
     ?assertNot(in_place([?S], Idle)),
@@ -455,13 +456,13 @@ namespace_waits_for_its_files_grants_test() ->
     ?assert(in_place([], Unprovided)).
 
 namespace_waits_for_no_other_grant_test() ->
-    {_, Minting} = run([ready(?S, 5, #{data => mint(5)}), {session_ready, ?ROWS, 9, none}, {introduced, 1, ok}], sessions()),
+    {_, Minting} = run([ready(?S, 5, #{data => mint(5)}), {session_ready, ?ROWS, 9, node_of(9), none, #{}}, {introduced, 1, ok}], sessions()),
     ?assert(in_place([?S], Minting)),
     ?assert(erx_domain_mints:in_place({session, 10}, [?S], Minting)),
     ?assert(erx_domain_mints:in_place({session, 10}, [?S], files_sessions())).
 
 session_before_its_server_waits_test() ->
-    {Actions, State} = run([{session_ready, ?ROWS, 9, none}, ready(?S, 5, #{data => mint(5)})], sessions()),
+    {Actions, State} = run([{session_ready, ?ROWS, 9, node_of(9), none, #{}}, ready(?S, 5, #{data => mint(5)})], sessions()),
     ?assertEqual([[], [{arm, 1, 10000}, {introduce, 1, 5, 9}]], Actions),
     ?assertEqual(#{{{session, 9}, data} => {introducing, {5, 9}, 1}}, session_grants(State)).
 
@@ -473,7 +474,7 @@ session_end_cancels_and_drops_its_late_replies_test() ->
     ?assertEqual(#{}, session_grants(State)).
 
 two_sessions_get_two_grants_test() ->
-    {Actions, State} = run([{session_ready, ?ROWS, 10, none}, {introduced, 2, ok}, {minted, 5, 1, {ok, facet(5)}},
+    {Actions, State} = run([{session_ready, ?ROWS, 10, node_of(10), none, #{}}, {introduced, 2, ok}, {minted, 5, 1, {ok, facet(5)}},
                             {minted, 5, 2, {ok, facet(5)}}, {installed, 10, 1}, {installed, 9, 2},
                             {installed, 9, 1}, {installed, 10, 2}], session_minting()),
     ?assertEqual([[{arm, 2, 10000}, {introduce, 2, 5, 10}],
@@ -499,12 +500,12 @@ server_restart_regrants_every_live_session_test() ->
                    {{session, 10}, data} => {introducing, {8, 10}, 4}}, session_grants(State)).
 
 second_report_of_a_live_session_is_refused_test() ->
-    {Actions, State} = run([{session_ready, ?ROWS, 9, none}, {session_ended, 77}], session_minting()),
+    {Actions, State} = run([{session_ready, ?ROWS, 9, node_of(9), none, #{}}, {session_ended, 77}], session_minting()),
     ?assertEqual([[{refused, stale_report, {session, 9}}], []], Actions),
     ?assertEqual(#{{{session, 9}, data} => {minting, {5, 9}, 1}}, session_grants(State)).
 
 session_of_no_rows_holds_nothing_test() ->
-    {Actions, State} = run([{session_ready, [], 11, none}, {session_ended, 11}], session_minting()),
+    {Actions, State} = run([{session_ready, [], 11, node_of(11), none, #{}}, {session_ended, 11}], session_minting()),
     ?assertEqual([[], []], Actions),
     ?assertEqual(#{{{session, 9}, data} => {minting, {5, 9}, 1}}, session_grants(State)).
 
@@ -514,7 +515,7 @@ repeated_sessions_leave_no_entry_test() ->
     {_, Ready} = run([ready(?S, 5, #{data => mint(5)})], sessions()),
     Cycle = fun(Id, State) ->
                     {[_, [{arm, Tag, _}, _] | _], Next} =
-                        run([{session_ended, Id - 1}, {session_ready, ?ROWS, Id, none}], State),
+                        run([{session_ended, Id - 1}, {session_ready, ?ROWS, Id, node_of(Id), none, #{}}], State),
                     {_, Done} = run([{introduced, Tag, ok}, {minted, 5, Tag, {ok, facet(5)}}, {installed, Id, Tag}], Next),
                     Done
             end,
@@ -543,8 +544,8 @@ session_mark_test() ->
     %% Session 9 is data's display session; session 10 and session 11, which names a
     %% display its template is not granted, are not, and row G's limits lose session.
     {First, Minting} = minted_limits([ready(?S, 5, #{data => mint(5)}), ready(?T, 6, #{other => mint(6)}),
-                                      ready(?G, 7, #{}), {session_ready, marked_rows(), 9, {display, data}},
-                                      {session_ready, marked_rows(), 10, none}, {session_ready, marked_rows(), 11, {display, log}}],
+                                      ready(?G, 7, #{}), {session_ready, marked_rows(), 9, node_of(9), {display, data}, #{}},
+                                      {session_ready, marked_rows(), 10, node_of(10), none, #{}}, {session_ready, marked_rows(), 11, node_of(11), {display, log}, #{}}],
                                      marked()),
     ?assertEqual(#{{7, data} => ?LIMITS,
                    {9, data} => ?MARKED_LIMITS, {9, other} => ?LIMITS,
@@ -564,8 +565,8 @@ marked_rows() -> [{data, ?S, ?LIMITS}, {other, ?T, ?LIMITS}].
 %% grants end with it alone.
 session_holds_only_its_rows_test() ->
     {Minted, State} = minted_limits([ready(?S, 5, #{data => mint(5)}), ready(?T, 6, #{other => mint(6)}),
-                                     {session_ready, marked_rows(), 10, none},
-                                     {session_ready, [{data, ?S, ?LIMITS}], 12, none}],
+                                     {session_ready, marked_rows(), 10, node_of(10), none, #{}},
+                                     {session_ready, [{data, ?S, ?LIMITS}], 12, node_of(12), none, #{}}],
                                     marked()),
     ?assertEqual(#{{10, data} => ?LIMITS, {10, other} => ?LIMITS, {12, data} => ?LIMITS}, Minted),
     ?assertEqual([{?G, data}, {{session, 10}, data}, {{session, 10}, other}, {{session, 12}, data}],
@@ -822,7 +823,7 @@ provides(?T, Id, honest) -> #{data => mint(Id)}.
 session_moves(#{sessions := Sessions, session_starts := Left, next_id := Id, reqs := Reqs} = Env) ->
     [{{session_start, Id}, none, Env#{sessions := Sessions#{Id => running}, session_starts := Left - 1, next_id := Id + 1}}
      || Left > 0] ++
-    [{{session_report, S}, {session_ready, rows(S), S, mark(S)}, Env#{sessions := Sessions#{S := ready}}} || S := running <- Sessions] ++
+    [{{session_report, S}, {session_ready, rows(S), S, node_of(S), mark(S), #{}}, Env#{sessions := Sessions#{S := ready}}} || S := running <- Sessions] ++
     [{{session_end, S}, {session_ended, S},
       Env#{sessions := maps:remove(S, Sessions), reqs := [Req || Req <- Reqs, party(Req) =/= S]}}
      || S := _ <- Sessions].
@@ -901,3 +902,96 @@ trace(Node, Seen) ->
         root -> [];
         {Parent, Label} -> [Label | trace(Parent, Seen)]
     end.
+
+%% A session's lines (docs/design-system.md, "A session's lines"): session 9 provides
+%% web_line and ssh_line; the web domain, configured row ?G, is incarnation 6; the
+%% opening is a process of the system domain.
+-define(SESSION, 9).
+-define(PEER, 6).
+-define(OPENING, pid(node_of(4), 4, 7)).
+
+line_ready(Provides) ->
+    {session_ready, [], ?SESSION, node_of(?SESSION), none, Provides}.
+
+line_mints() -> #{web_line => mint(?SESSION), ssh_line => pid(node_of(?SESSION), ?SESSION, 3)}.
+
+line_request(Asker) -> {line, Asker, web_line, ?SESSION, ?PEER, ?OPENING}.
+
+%% The web line's mint request carries ?ERX_LINES's quantities and the opening.
+line_limits() -> (maps:get(web_line, ?ERX_LINES))#{opening => ?OPENING}.
+
+lines_started() ->
+    {_, State} = run([ready(?G, ?PEER, #{}), line_ready(line_mints())], new()),
+    State.
+
+answers(Actions) -> [Reply || {answer, asker, Reply} <- lists:append(Actions)].
+
+line_mints_and_answers_test() ->
+    {Actions, _} = run([line_request(asker), {introduced, 1, ok}, {minted, ?SESSION, 1, {ok, facet(?SESSION)}}],
+                       lines_started()),
+    ?assertEqual([[{arm, 1, 10000}, {introduce, 1, ?SESSION, ?PEER}],
+                  [{mint, 1, mint(?SESSION), web_line, ?PEER, line_limits()}],
+                  [{disarm, 1}, {answer, asker, {ok, facet(?SESSION)}}]], Actions).
+
+%% The session providers: a pid of another node refuses its entry alone, a name outside
+%% ?ERX_LINES the map whole, and a refused line answers no_line.
+session_line_providers_test() ->
+    Foreign = (line_mints())#{ssh_line := forged(?SESSION)},
+    {[Refused], One} = run([line_ready(Foreign)], new()),
+    ?assertEqual([{refused, foreign_mint, {session, ?SESSION, ssh_line}}], Refused),
+    ?assertMatch({[[{arm, 1, _}, _]], _}, run([line_request(asker)], One)),
+    ?assertEqual([{error, no_line}],
+                 answers(element(1, run([{line, asker, ssh_line, ?SESSION, ?PEER, ?OPENING}], One)))),
+    {[Whole], None} = run([line_ready((line_mints())#{data => mint(?SESSION)})], new()),
+    ?assertEqual([{refused, undeclared, {session, ?SESSION}}], Whole),
+    ?assertEqual([{error, no_line}], answers(element(1, run([line_request(asker)], None)))),
+    ?assertEqual([{error, no_line}],
+                 answers(element(1, run([{line, asker, data, ?SESSION, ?PEER, ?OPENING}], lines_started())))).
+
+%% A second request while one is pending answers busy and sends no second mint request.
+line_busy_test() ->
+    {Actions, _} = run([line_request(first), line_request(second), {introduced, 1, ok}], lines_started()),
+    ?assertEqual([[{answer, second, {error, busy}}],
+                  [{mint, 1, mint(?SESSION), web_line, ?PEER, line_limits()}]], tl(Actions)).
+
+%% Replies: another domain's or another tag's are dropped and counted; the session's
+%% naming a pid of another node or domain, or of another shape, answers refused at once.
+line_replies_test() ->
+    {_, Minting} = run([line_request(asker), {introduced, 1, ok}], lines_started()),
+    ?assertMatch({_, [{dropped, wrong_domain, {minted, ?PEER}}]},
+                 erx_domain_mints:step({minted, ?PEER, 1, {ok, facet(?PEER)}}, Minting)),
+    ?assertMatch({_, [{dropped, unknown_tag, {minted, ?SESSION}}]},
+                 erx_domain_mints:step({minted, ?SESSION, 2, {ok, facet(?SESSION)}}, Minting)),
+    [?assertEqual({error, refused}, lists:last(answers([element(2, erx_domain_mints:step({minted, ?SESSION, 1, Reply},
+                                                                                           Minting))])))
+     || Reply <- [{ok, forged(?SESSION)}, {ok, facet(?PEER)}, {error, refused}, ok, {ok, self()}]].
+
+%% Every order of the events that can follow a request: the introduction, the mint
+%% reply, the session's end, the peer's end and the deadline. Whatever the order, the
+%% asker is answered exactly once, by the first event that settles the operation, a
+%% late or second event answers nothing, and no operation is left.
+line_event_orders_test() ->
+    Events = [{introduced, 1, ok}, {minted, ?SESSION, 1, {ok, facet(?SESSION)}}, {session_ended, ?SESSION},
+              {ended, ?G, ?PEER}, {deadline, 1}],
+    [begin
+         {Actions, State} = run([line_request(asker) | Order], lines_started()),
+         Answers = answers(Actions),
+         ?assertEqual({Order, [expected_answer(Order)]}, {Order, Answers}),
+         ?assertEqual({Order, #{}}, {Order, maps:get(line_ops, State)})
+     end || Order <- permutations(Events)].
+
+%% The answer of the first event in Order that settles the operation: a mint reply counts
+%% only once the introduction is done.
+expected_answer([{introduced, 1, ok} | Rest]) -> after_introduction(Rest);
+expected_answer([{minted, _, _, _} | Rest]) -> expected_answer(Rest);
+expected_answer([Event | _]) -> ending_answer(Event).
+
+after_introduction([{minted, _, _, Reply} | _]) -> Reply;
+after_introduction([Event | _]) -> ending_answer(Event).
+
+ending_answer({session_ended, _}) -> {error, no_line};
+ending_answer({ended, _, _}) -> {error, ended};
+ending_answer({deadline, _}) -> {error, unavailable}.
+
+permutations([]) -> [[]];
+permutations(List) -> [[X | Rest] || X <- List, Rest <- permutations(List -- [X])].

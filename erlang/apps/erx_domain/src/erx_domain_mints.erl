@@ -131,6 +131,31 @@ decisions above, namespace by in_place/3 for the system domain, {server, Name}
 by server_settled/3 and {grant, Name, Id} by system_grant/4, or answers wait,
 so the domain service keeps every waiter in one list and asks it again after
 each change of the grants or the starting rows.
+
+A session's lines (docs/design-system.md, "A session's lines"). A session's
+ready report also carries its node and its provides, the mints of its lines,
+each under a name of ?ERX_LINES. A name outside them refuses the map whole; a
+value that is no pid the session owns refuses its entry alone, and the other
+lines stand. Beside its grants the core keeps one line operation for each
+session and line name it was asked for and has not answered:
+
+    {introducing, Pair, Tag} | {minting, Pair, Tag}
+
+Pair is {SessionId, PeerId}, fixed when the request makes the operation and
+never reconciled. A request {line, Asker, Name, Session, Peer, Opening} is
+answered at once with no_line when the session is not ready or has no accepted
+mint under Name, and with busy while an operation for the session's Name is
+pending; otherwise it arms the deadline and introduces the two domains, which
+is skipped for the system domain as peer, as for a grant. Once introduced, the
+mint request goes to the session's mint of Name with the quantities ?ERX_LINES
+gives Name and the opening, so no facet row can set either. A mint reply
+counts only from the session, with the operation's tag, and settles it at
+once: {ok, Facet} with Facet a pid the session owns answers {ok, Facet}, and
+any other reply refused. The session's end answers no_line, the peer's end,
+as a configured row's or a session's, ended, a refused introduction its
+reason and the deadline unavailable. Each answer is the action {answer,
+Asker, Reply}, its deadline disarmed unless the deadline answered, and nothing
+of the operation is kept after it.
 """.
 
 -export([new/1, step/2, grants/1, granted/3, granted_names/2, granted_services/2, in_place/3, settled/3,
@@ -174,7 +199,8 @@ each change of the grants or the starting rows.
 %% untrusted events' fields are any term a domain sent.
 -type event() :: {ready, row(), id(), node(), Provides :: term()}
                | {ended, row(), id()}
-               | {session_ready, [{name(), row(), map()}], id(), marked()}
+               | {session_ready, [{name(), row(), map()}], id(), node(), marked(), Provides :: term()}
+               | {line, Asker :: term(), name(), Session :: id(), Peer :: id(), Opening :: pid()}
                | {session_ended, id()}
                | {introduced, tag(), ok | {error, term()}}
                | {minted, Origin :: non_neg_integer(), Tag :: term(), Reply :: term()}
@@ -187,13 +213,20 @@ each change of the grants or the starting rows.
                 | {disarm, tag()}
                 | {refused, atom(), Detail :: tuple()}
                 | {dropped, atom(), Detail :: tuple()}
-                | {failed, key(), pair(), reason()}.
+                | {failed, key(), pair(), reason()}
+                | {answer, Asker :: term(), line_reply()}.
+%% A line operation's answer (erx_domain:line/4).
+-type line_reply() :: {ok, pid()} | {error, no_line | busy | ended | refused | unavailable | term()}.
+%% A pending line operation, keyed by its session and line name.
+-type line_op() :: #{state := {introducing | minting, pair(), tag()}, asker := term(), opening := pid()}.
 -type incarnation() :: {id(), ready, node(), Providers :: #{name() => pid()}} | {id(), ended}.
 -opaque state() :: #{declared := #{row() => [name()]},
                      grants := #{key() => #{server := row(), limits := map(), mark := boolean(),
                                             state := grant()}},
                      rows := #{row() => incarnation()},
                      sessions := sets:set(id()),
+                     lines := #{id() => {node(), #{name() => pid()}}},
+                     line_ops := #{{id(), name()} => line_op()},
                      next_tag := tag(),
                      owner := fun((pid()) -> non_neg_integer()),
                      files := [name()],
@@ -241,6 +274,7 @@ new(#{services := Services, grants := Grants, owner := Owner} = Config) when is_
                               || {Grantee, Name, Server, Limits} <- Grants, not is_template(Grantee)]),
     Windows = maps:get(windows, Config, []),
     #{declared => Declared, grants => Entries, rows => #{}, sessions => sets:new([{version, 2}]),
+          lines => #{}, line_ops => #{},
           next_tag => 1, owner => Owner, files => maps:get(files, Config, []), windows => Windows,
           inputs => maps:get(inputs, Config, []),
           areas => areas(Windows, Grants), deadline => maps:get(deadline, Config, ?DEADLINE)}.
@@ -399,38 +433,54 @@ on_event({ready, Row, Id, Node, Provides}, #{rows := Rows} = State) ->
 on_event({ended, Row, Id}, #{rows := Rows} = State) ->
     case Rows of
         #{Row := Newest} when Id < element(1, Newest) ->
-            {[], State};
+            end_lines(Id, State);
         #{} ->
-            reconcile(State#{rows := Rows#{Row => {Id, ended}}})
+            {Actions, Next} = reconcile(State#{rows := Rows#{Row => {Id, ended}}}),
+            {Ended, Last} = end_lines(Id, Next),
+            {Actions ++ Ended, Last}
     end;
-on_event({session_ready, Rows, Id, Marked}, #{sessions := Sessions, grants := Grants} = State) ->
+on_event({session_ready, Rows, Id, Node, Marked, Provides},
+         #{sessions := Sessions, grants := Grants, lines := Lines} = State) ->
     case sets:is_element(Id, Sessions) of
         true ->
             {[{refused, stale_report, {session, Id}}], State};
         false ->
             Added = maps:from_list([{{{session, Id}, Name}, entry(Server, Limits, {display, Name} =:= Marked)}
                                     || {Name, Server, Limits} <- Rows]),
-            reconcile(State#{sessions := sets:add_element(Id, Sessions), grants := maps:merge(Grants, Added)})
+            {Refusals, Accepted} = session_lines(Id, Node, Provides, State),
+            {Actions, Next} = reconcile(State#{sessions := sets:add_element(Id, Sessions),
+                                               grants := maps:merge(Grants, Added),
+                                               lines := Lines#{Id => {Node, Accepted}}}),
+            {[{refused, Reason, Detail} || {Reason, Detail} <- Refusals] ++ Actions, Next}
     end;
 on_event({session_ended, Id}, #{sessions := Sessions} = State) ->
     case sets:is_element(Id, Sessions) of
         true ->
             %% With the session gone its grants have no pair, so reconcile cancels
-            %% their operations; then nothing of the session is kept.
+            %% their operations, and its line operations are answered; then nothing
+            %% of the session is kept.
             Rest = sets:del_element(Id, Sessions),
             {Actions, #{grants := Grants} = Next} = reconcile(State#{sessions := Rest}),
-            {Actions, Next#{grants := maps:filter(fun({Grantee, _}, _) -> Grantee =/= {session, Id} end, Grants)}};
+            {Ended, #{lines := Lines} = Last} = end_lines(Id, Next),
+            {Actions ++ Ended,
+             Last#{grants := maps:filter(fun({Grantee, _}, _) -> Grantee =/= {session, Id} end, Grants),
+                   lines := maps:remove(Id, Lines)}};
         false ->
-            {[], State}
+            %% A session the core never heard ready may still be a line's peer.
+            end_lines(Id, State)
     end;
+on_event({line, Asker, Name, Session, Peer, Opening}, State) ->
+    request_line(Asker, Name, Session, Peer, Opening, State);
 on_event({introduced, Tag, Result}, State) ->
     case find(Tag, State) of
         {Key, {introducing, Pair, Tag}} when Result =:= ok ->
             {[mint_request(Key, Pair, Tag, State)], set_grant(Key, {minting, Pair, Tag}, State)};
         {Key, {introducing, Pair, Tag}} ->
             fail_pending(Key, Pair, Tag, {introduce, Result}, State);
-        _ ->
-            {[], State}
+        {_Key, _Other} ->
+            {[], State};
+        none ->
+            line_introduced(Tag, Result, State)
     end;
 on_event({minted, Origin, Tag, Reply}, State) ->
     case find(Tag, State) of
@@ -449,7 +499,7 @@ on_event({minted, Origin, Tag, Reply}, State) ->
         {_Key, _Other} ->
             drop(unexpected, {minted, Origin}, State);
         none ->
-            drop(unknown_tag, {minted, Origin}, State)
+            line_minted(Origin, Tag, Reply, State)
     end;
 on_event({installed, Origin, Tag}, State) ->
     case find(Tag, State) of
@@ -468,8 +518,129 @@ on_event({deadline, Tag}, State) ->
         {Key, Pending} ->
             fail_at_deadline(Key, carried_pair(Pending), {deadline, element(1, Pending)}, State);
         none ->
+            line_deadline(Tag, State)
+    end.
+
+%% A request for session Session's line Name with Peer its grantee, within the life of
+%% Opening: answered at once when the session has no such line or one is pending,
+%% started otherwise.
+request_line(Asker, Name, Session, Peer, Opening,
+             #{lines := Lines, line_ops := Ops, next_tag := Tag, deadline := Deadline} = State) ->
+    Key = {Session, Name},
+    case {Lines, Ops} of
+        {_, #{Key := _}} ->
+            {[{answer, Asker, {error, busy}}], State};
+        {#{Session := {_Node, #{Name := _}}}, _} ->
+            Pair = {Session, Peer},
+            Armed = State#{next_tag := Tag + 1},
+            Op = #{asker => Asker, opening => Opening},
+            case Peer of
+                ?SYSTEM_ID ->
+                    {[{arm, Tag, Deadline}, line_mint(Key, Peer, Tag, Opening, State)],
+                     Armed#{line_ops := Ops#{Key => Op#{state => {minting, Pair, Tag}}}}};
+                _ ->
+                    {[{arm, Tag, Deadline}, {introduce, Tag, Session, Peer}],
+                     Armed#{line_ops := Ops#{Key => Op#{state => {introducing, Pair, Tag}}}}}
+            end;
+        _ ->
+            {[{answer, Asker, {error, no_line}}], State}
+    end.
+
+%% The mint request for session Session's line Name, to its accepted mint, with the
+%% grant's quantities ?ERX_LINES gives Name and the opening, which no facet row states.
+line_mint({Session, Name}, Peer, Tag, Opening, #{lines := Lines}) ->
+    #{Session := {_Node, #{Name := Mint}}} = Lines,
+    {mint, Tag, Mint, Name, Peer, (maps:get(Name, ?ERX_LINES))#{opening => Opening}}.
+
+line_introduced(Tag, Result, State) ->
+    case find_line(Tag, State) of
+        {Key, #{state := {introducing, {_Session, Peer} = Pair, Tag}, opening := Opening} = Op} when Result =:= ok ->
+            {[line_mint(Key, Peer, Tag, Opening, State)], set_line(Key, Op#{state := {minting, Pair, Tag}}, State)};
+        {Key, #{state := {introducing, _Pair, Tag}}} ->
+            answer_line(Key, Result, [{disarm, Tag}], State);
+        _ ->
             {[], State}
     end.
+
+%% A mint reply counts only from the session, for the operation in minting with its tag.
+line_minted(Origin, Tag, Reply, State) ->
+    case find_line(Tag, State) of
+        {{Origin, _Name} = Key, #{state := {minting, _Pair, Tag}}} ->
+            answer_line(Key, line_reply(Origin, Reply, State), [{disarm, Tag}], State);
+        {_Key, #{state := {minting, _Pair, Tag}}} ->
+            drop(wrong_domain, {minted, Origin}, State);
+        {_Key, _Introducing} ->
+            drop(unexpected, {minted, Origin}, State);
+        none ->
+            drop(unknown_tag, {minted, Origin}, State)
+    end.
+
+%% The session's reply as the asker hears it: {ok, Facet} for a facet the session owns,
+%% node and creation both, and refused for anything else.
+line_reply(Session, {ok, Facet}, #{lines := Lines} = State) when is_pid(Facet) ->
+    #{Session := {Node, _Mints}} = Lines,
+    case is_owned(Facet, {Session, Node}, State) of
+        true -> {ok, Facet};
+        false -> {error, refused}
+    end;
+line_reply(_Session, _Reply, _State) ->
+    {error, refused}.
+
+%% A line operation's deadline answers it; one already answered was disarmed with its
+%% message on the way.
+line_deadline(Tag, State) ->
+    case find_line(Tag, State) of
+        {Key, _Op} -> answer_line(Key, {error, unavailable}, [], State);
+        none -> {[], State}
+    end.
+
+%% The end of domain Id answers each line operation of a session Id with no_line and
+%% each for a peer Id with ended.
+end_lines(Id, #{line_ops := Ops} = State) ->
+    Ended = lists:sort([{Key, Tag, Reply} || Key := #{state := {_, {Session, Peer}, Tag}} <- Ops,
+                                             Reply <- ended_reply(Id, Session, Peer)]),
+    lists:foldl(fun({Key, Tag, Reply}, {Actions, Acc}) ->
+                        {More, Next} = answer_line(Key, Reply, [{disarm, Tag}], Acc),
+                        {Actions ++ More, Next}
+                end, {[], State}, Ended).
+
+ended_reply(Id, Id, _Peer) -> [{error, no_line}];
+ended_reply(Id, _Session, Id) -> [{error, ended}];
+ended_reply(_Id, _Session, _Peer) -> [].
+
+%% The answer Reply to line operation Key, after Disarm, and the operation deleted.
+answer_line(Key, Reply, Disarm, #{line_ops := Ops} = State) ->
+    #{Key := #{asker := Asker}} = Ops,
+    {Disarm ++ [{answer, Asker, Reply}], State#{line_ops := maps:remove(Key, Ops)}}.
+
+%% The line operation with tag Tag, and its record, or none. Tag may be any term a
+%% domain sent.
+find_line(Tag, #{line_ops := Ops}) ->
+    case [{Key, Op} || Key := #{state := {_, _, OpTag}} = Op <- Ops, OpTag =:= Tag] of
+        [Found] -> Found;
+        [] -> none
+    end.
+
+set_line(Key, Op, #{line_ops := Ops} = State) ->
+    State#{line_ops := Ops#{Key := Op}}.
+
+%% The mints session Id's ready report names for its lines, at its node Node:
+%% {Refusals, Accepted}. A name outside ?ERX_LINES refuses the map whole; a value
+%% that is no pid the session owns refuses its entry alone.
+session_lines(Id, Node, Provides, State) when is_map(Provides) ->
+    case lists:all(fun(Name) -> is_map_key(Name, ?ERX_LINES) end, maps:keys(Provides)) of
+        false ->
+            {[{undeclared, {session, Id}}], #{}};
+        true ->
+            lists:foldl(fun({Name, Mint}, {Refusals, Accepted}) ->
+                                case is_pid(Mint) andalso is_owned(Mint, {Id, Node}, State) of
+                                    true -> {Refusals, Accepted#{Name => Mint}};
+                                    false -> {Refusals ++ [{foreign_mint, {session, Id, Name}}], Accepted}
+                                end
+                        end, {[], #{}}, lists:sort(maps:to_list(Provides)))
+    end;
+session_lines(Id, _Node, _Provides, _State) ->
+    {[{not_a_map, {session, Id}}], #{}}.
 
 %% The providers Row's Incarnation, {Id, Node}, may name: {Refusals, Accepted}, each
 %% refusal a reason and a bounded detail for the log. The name is checked first, so
