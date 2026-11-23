@@ -14,6 +14,9 @@
 -define(O_RDONLY, 0).
 -define(O_WRONLY, 1).
 -define(O_RDWR, 2).
+%% The off and on times of the power line powered/1 gives a line.
+-define(OFF_MS, 60).
+-define(ON_MS, 90).
 
 %% Fixtures --------------------------------------------------------------
 
@@ -22,7 +25,7 @@
 %% model driver reports itself to the test as {driver, Pid} at each start.
 line() ->
     Test = self(),
-    {ok, Line} = erx_line:start_link(fun(L) -> {ok, spawn_link(fun() -> driver(L, Test) end)} end),
+    {ok, Line} = erx_line:start_link(fun(L, grant) -> {ok, spawn_link(fun() -> driver(L, Test) end)} end, none),
     unlink(Line),
     Driver = driver_started(),
     #{line => Line, grant => tree(Line), driver => Driver}.
@@ -47,7 +50,7 @@ tree(Line) ->
 starts(Answers) ->
     Test = self(),
     Starts = spawn_link(fun() -> lists:foreach(fun(Answer) -> receive {next, From} -> From ! {start, Answer} end end, Answers) end),
-    fun(L) ->
+    fun(L, _Flow) ->
         Starts ! {next, self()},
         receive
             {start, ok} -> {ok, spawn_link(fun() -> driver(L, Test) end)};
@@ -259,7 +262,7 @@ a_reset_drops_what_the_old_driver_read_test() ->
 a_driver_that_does_not_start_leaves_the_line_broken_test() ->
     %% A line whose start crashed would take the test with it; trapping makes it a failure.
     Trap = process_flag(trap_exit, true),
-    Started = erx_line:start_link(starts([{error, no_device}, {error, ebusy}, ok])),
+    Started = erx_line:start_link(starts([{error, no_device}, {error, ebusy}, ok]), none),
     process_flag(trap_exit, Trap),
     {ok, Keeper} = Started,
     unlink(Keeper),
@@ -295,7 +298,7 @@ a_driver_s_end_leaves_the_line_broken_until_a_reset_test() ->
 %% ones with no driver to end at once, so none is left waiting.
 resets_queued_behind_a_failed_start_each_run_test() ->
     Trap = process_flag(trap_exit, true),
-    Started = erx_line:start_link(starts([ok, {error, no_device}, {error, no_device}, ok])),
+    Started = erx_line:start_link(starts([ok, {error, no_device}, {error, no_device}, ok]), none),
     process_flag(trap_exit, Trap),
     {ok, Keeper} = Started,
     unlink(Keeper),
@@ -305,6 +308,196 @@ resets_queued_behind_a_failed_start_each_run_test() ->
     ?assertEqual([{error, eio}, {error, eio}, {ok, 5, 0}], [reply_within(Reset, 1000) || Reset <- Resets]),
     _ = driver_started(),
     stop(#{line => Keeper, grant => Grant}).
+
+%% Power cycles (docs/design-bluetooth.md, "A reset", "A reset that fails") -----------
+
+ms() -> erlang:monotonic_time(millisecond).
+
+%% A line with a power line of ?OFF_MS off and ?ON_MS on, over a model device service,
+%% whose starts answer Starts in turn (starts/1). Each start reports {started, Flow, Ms} to
+%% the test before it answers, and each notification {notified, State, Ms, From}, then
+%% waits for the test's answer (notified/0, answer/2). The fixture takes the line's first
+%% start, with the grant's flow.
+powered(Starts) ->
+    Test = self(),
+    Start = starts(Starts),
+    Notify = fun(State) -> Test ! {notified, State, ms(), self()}, receive {answer, Answer} -> Answer end end,
+    {ok, Line} = erx_line:start_link(fun(L, Flow) -> Test ! {started, Flow, ms()}, Start(L, Flow) end,
+                                     #{notify => Notify, off => ?OFF_MS, on => ?ON_MS}),
+    unlink(Line),
+    ?assertMatch({grant, _}, started()),
+    #{line => Line, grant => tree(Line)}.
+
+started() ->
+    receive {started, Flow, Ms} -> {Flow, Ms} after 1000 -> erlang:error(no_start) end.
+
+notified() ->
+    receive {notified, State, Ms, From} -> {State, Ms, From} after 1000 -> erlang:error(no_notification) end.
+
+answer(From, Answer) ->
+    From ! {answer, Answer}.
+
+%% Waits until the line has taken every request sent to the grant before: the grant answers a
+%% readdir after handing those on.
+settled(#{line := Line, grant := Grant}) ->
+    {ok, _} = call(Grant, {readdir, 5, 0, 4096}),
+    _ = sys:get_state(Line),
+    ok.
+
+%% The regression: a reset is a power cycle between two fresh starts. The old driver has
+%% ended when the driver is started with flow none, before the off notification; the off
+%% time passes before the on notification, and the on time before the driver is started
+%% with the grant's flow, once the holding driver has ended; only then does the reset
+%% answer.
+a_reset_power_cycles_between_two_fresh_starts_test() ->
+    #{grant := Grant} = Line = powered([ok, ok, ok]),
+    Old = driver_started(),
+    Reset = send(Grant, {write, 4, 0, <<"reset">>}),
+    {none, Held} = started(),
+    ?assertNot(is_process_alive(Old)),
+    Holding = driver_started(),
+    {off, Off, OffFrom} = notified(),
+    ?assert(Held =< Off),
+    answer(OffFrom, ok),
+    {on, On, OnFrom} = notified(),
+    ?assert(On - Off >= ?OFF_MS),
+    ?assertEqual(none, reply_within(Reset, 0)),
+    answer(OnFrom, ok),
+    {grant, Granted} = started(),
+    ?assert(Granted - On >= ?ON_MS),
+    ?assertNot(is_process_alive(Holding)),
+    Fresh = driver_started(),
+    ?assertEqual({ok, 5, 0}, reply_within(Reset, 1000)),
+    After = send(Grant, {write, 3, 0, <<"cmd">>}),
+    {Ref, <<"cmd">>} = output(Fresh, 1000),
+    Fresh ! {written, Ref},
+    ?assertEqual({ok, 3, 0}, reply_within(After, 1000)),
+    stop(Line).
+
+%% What the controller sends during the power cycle never reaches a reader: a read
+%% during the reset answers eio, and after it the reader gets the fresh driver's bytes
+%% alone.
+a_power_cycle_s_input_never_reaches_a_reader_test() ->
+    #{grant := Grant} = Line = powered([ok, ok, ok]),
+    _ = driver_started(),
+    Reset = send(Grant, {write, 4, 0, <<"reset">>}),
+    {none, _} = started(),
+    Holding = driver_started(),
+    {off, _, OffFrom} = notified(),
+    ok = input(Holding, <<"powering">>),
+    ?assertEqual({error, eio}, call(Grant, {read, 2, 0, 16})),
+    answer(OffFrom, ok),
+    {on, _, OnFrom} = notified(),
+    ok = input(Holding, <<"powered">>),
+    answer(OnFrom, ok),
+    {grant, _} = started(),
+    Fresh = driver_started(),
+    ?assertEqual({ok, 5, 0}, reply_within(Reset, 1000)),
+    ok = input(Fresh, <<"up">>),
+    ?assertEqual({ok, <<"up">>}, call(Grant, {read, 2, 0, 16})),
+    stop(Line).
+
+%% A notification answered with an error, the off one or the on one, fails the reset by
+%% one transition: the reset answers eio before its next step, the holding driver has
+%% ended, the line is broken with no driver, and a write that arrived during the reset
+%% answers eio without reaching the holding driver. The next reset begins with no driver
+%% to stop and mends the line.
+a_failed_notification_fails_the_reset_test_() ->
+    [{atom_to_list(Failing), fun() -> failed_notification(Failing) end} || Failing <- [off, on]].
+
+failed_notification(Failing) ->
+    #{grant := Grant} = Line = powered([ok, ok, ok, ok]),
+    _ = driver_started(),
+    Reset = send(Grant, {write, 4, 0, <<"reset">>}),
+    {none, _} = started(),
+    Holding = driver_started(),
+    Write = send(Grant, {write, 3, 0, <<"cmd">>}),
+    ok = settled(Line),
+    ?assertEqual(none, reply_within(Write, 0)),
+    {off, _, OffFrom} = notified(),
+    case Failing of
+        off ->
+            answer(OffFrom, {error, enotsup});
+        on ->
+            answer(OffFrom, ok),
+            {on, _, OnFrom} = notified(),
+            answer(OnFrom, {error, enotsup})
+    end,
+    ?assertEqual({error, eio}, reply_within(Reset, 1000)),
+    ?assertNot(is_process_alive(Holding)),
+    ?assertEqual({error, eio}, reply_within(Write, 1000)),
+    ?assertEqual(none, output(Holding, 0)),
+    ?assertEqual(none, receive {notified, _, _, _} = Next -> Next after 100 -> none end),
+    ?assertEqual(none, receive {started, _, _} = Next -> Next after 0 -> none end),
+    ?assertEqual({error, eio}, call(Grant, {read, 2, 0, 16})),
+    ?assertEqual({error, eio}, call(Grant, {write, 3, 0, <<"cmd">>})),
+    Again = send(Grant, {write, 4, 0, <<"reset">>}),
+    {none, _} = started(),
+    _ = driver_started(),
+    {off, _, Off} = notified(),
+    answer(Off, ok),
+    {on, _, On} = notified(),
+    answer(On, ok),
+    {grant, _} = started(),
+    Fresh = driver_started(),
+    ?assertEqual({ok, 5, 0}, reply_within(Again, 1000)),
+    ok = input(Fresh, <<"up">>),
+    ?assertEqual({ok, <<"up">>}, call(Grant, {read, 2, 0, 16})),
+    stop(Line).
+
+%% A holding start that fails ends the reset there: it answers eio, no notification is
+%% asked, and the line is broken with no driver.
+a_holding_start_that_fails_fails_the_reset_test() ->
+    #{grant := Grant} = Line = powered([ok, {error, no_device}]),
+    _ = driver_started(),
+    ?assertEqual({error, eio}, call(Grant, {write, 4, 0, <<"reset">>})),
+    {none, _} = started(),
+    ?assertEqual(none, receive {notified, _, _, _} = Next -> Next after 100 -> none end),
+    ?assertEqual({error, eio}, call(Grant, {read, 2, 0, 16})),
+    ?assertEqual({error, eio}, call(Grant, {write, 3, 0, <<"cmd">>})),
+    stop(Line).
+
+%% A start with the grant's flow that fails after a power cycle fails the reset: it
+%% answers eio within 1 s, the keeper goes on answering, and the line is broken with no
+%% driver.
+a_fresh_start_that_fails_after_the_power_cycle_fails_the_reset_test() ->
+    #{grant := Grant} = Line = powered([ok, ok, {error, no_device}]),
+    _ = driver_started(),
+    Reset = send(Grant, {write, 4, 0, <<"reset">>}),
+    {none, _} = started(),
+    Holding = driver_started(),
+    {off, _, Off} = notified(),
+    answer(Off, ok),
+    {on, _, On} = notified(),
+    answer(On, ok),
+    {grant, _} = started(),
+    ?assertEqual({error, eio}, reply_within(Reset, 1000)),
+    ?assertNot(is_process_alive(Holding)),
+    ?assertEqual({error, eio}, call(Grant, {read, 2, 0, 16})),
+    ?assertEqual({error, eio}, call(Grant, {write, 3, 0, <<"cmd">>})),
+    stop(Line).
+
+%% A holding driver that ends during the power cycle is not a failure: the power cycle
+%% goes on, and the driver is started with the grant's flow after the on time.
+a_holding_driver_that_ends_early_leaves_the_power_cycle_going_test() ->
+    #{grant := Grant} = Line = powered([ok, ok, ok]),
+    _ = driver_started(),
+    Reset = send(Grant, {write, 4, 0, <<"reset">>}),
+    {none, _} = started(),
+    Holding = driver_started(),
+    {off, _, Off} = notified(),
+    Monitor = monitor(process, Holding),
+    exit(Holding, ended),
+    receive {'DOWN', Monitor, process, Holding, _} -> ok end,
+    answer(Off, ok),
+    {on, _, On} = notified(),
+    answer(On, ok),
+    {grant, _} = started(),
+    Fresh = driver_started(),
+    ?assertEqual({ok, 5, 0}, reply_within(Reset, 1000)),
+    ok = input(Fresh, <<"up">>),
+    ?assertEqual({ok, <<"up">>}, call(Grant, {read, 2, 0, 16})),
+    stop(Line).
 
 %% ctl takes reset alone; anything else is einval, and ctl does not open for reading.
 ctl_takes_reset_alone_test() ->

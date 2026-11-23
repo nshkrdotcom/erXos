@@ -126,8 +126,12 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   UART or, on QEMU `virt`, `erx_virtio_console` over the line unit's `/virtio_mmio@a000e00`, and the Bluetooth suite runs the
   domain over it against Bumble. Still open: the one name `line` as a generated fact (`abi/services/line.txt`, as
   `packages_service` is in `abi/manifest.txt`; today a literal in the manifest check, the serve call, the facet-names check,
-  `check_line_grants` and the grantee's mount `erx_ns:place/1`); the power line's steps 2 and 4 of a reset, which `erx_line`
-  does not run, as on a platform with no power line; the one-grant limit (`check_line_grants` in `tools/lib/erx/manifest.rb`
+  `check_line_grants` and the grantee's mount `erx_ns:place/1`); the power line's two ends, which `erx_line` and
+  `erx_uart_sup` call but nothing provides yet, so every line runs a reset's steps 1 and 5 alone, as on a platform with no
+  power line: the off and on times in the line's physical record (`boot_manifest.c` writing them from the power row,
+  `erx_device_record` reading them as `power => {Off, On}`), and the device service's `erx_devices:power/2` over
+  `erx_domain_lib:device_notify/2` through the firmware worker (docs/design-bluetooth.md "The power line", "Authority");
+  the one-grant limit (`check_line_grants` in `tools/lib/erx/manifest.rb`
   accepts at most one `line` facet, since the design leaves open how the one process `erx_facet:serve/2` names reaches the
   tree of each grant when several grants name different UARTs; settle that and lift the limit); the root's names, which still
   say `line_uart` (`boot_manifest.c`) for what is now any line device's row; the driver's played-device cases (add cases over
@@ -164,7 +168,7 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   than an exhaustive exploration of reads, writes, resets, input, flushes and ends; split it into a pure core that
   returns actions, as `erx_bt_hci_core` is, and explore it. With it: the reset waits for the old driver through the
   link the start makes rather than a monitor it takes, the fresh driver's start blocks the keeper while it programs
-  the UART, and the heap bound's slack (`start_link/1`) is a round number, not derived from the grant's largest write.
+  the UART, and the heap bound's slack (`start_link/2`) is a round number, not derived from the grant's largest write.
 * [Medium] bluetooth, `erx_bt_sup`'s restart intensity (`erlang/apps/erx_bt/src/erx_bt_sup.erl`;
   docs/design-bluetooth.md "Concurrency" and "Failure handling"): the design gives none, so OTP's default of
   one restart in 5 s applies; a controller group that exhausts its own 5 restarts in 60 s about every 30 s is

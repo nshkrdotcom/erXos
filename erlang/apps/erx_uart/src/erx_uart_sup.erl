@@ -163,12 +163,26 @@ service({hostlink, Spec}) ->
       modules => [erx_hostlink]};
 service({line, Spec}) ->
     #{id => {line_tree, maps:get(path, Spec)},
-      start => {erx_line, start_link, [fun(Line) -> driver(Spec, Line) end]},
+      start => {erx_line, start_link, [fun(Line, Flow) -> driver(Spec, Line, Flow) end, power(Spec)]},
       restart => permanent,
       shutdown => 2000,
       type => worker,
       modules => [erx_line]}.
 
-%% The line's driver, by its record's peripheral.
-driver(#{peripheral := pl011} = Spec, Line) -> erx_pl011:start_link(Spec, Line);
-driver(#{peripheral := virtio_mmio} = Spec, Line) -> erx_virtio_console:start_link(Spec, Line).
+%% The line's driver, by its record's peripheral: with the grant's flow, the record's, or
+%% with flow none, holding the UART's RTS deasserted (docs/design-bluetooth.md, "A
+%% reset"). A virtio port has no flow and its device no power line, so its driver starts
+%% only with the grant's.
+driver(#{peripheral := pl011} = Spec, Line, grant) -> erx_pl011:start_link(Spec, Line);
+driver(#{peripheral := pl011} = Spec, Line, none) -> erx_pl011:start_link(Spec#{flow => none}, Line);
+driver(#{peripheral := virtio_mmio} = Spec, Line, grant) -> erx_virtio_console:start_link(Spec, Line).
+
+%% The power line of the line's device (docs/design-bluetooth.md, "The power line"): a
+%% line's record carries the off and on times, in milliseconds, when the platform names a
+%% power line for its device, and the device service makes its notifications; a record
+%% without them, as QEMU virt's, names none. Only a UART's record has a power line, since only
+%% its driver starts with flow none.
+power(#{peripheral := pl011, power := {Off, On}, path := Path}) ->
+    #{notify => fun(Phase) -> erx_devices:power(Path, Phase) end, off => Off, on => On};
+power(#{}) ->
+    none.
