@@ -256,7 +256,8 @@ half-width is more than a tenth of the cell's median. The host holds a
 end, and refuses one whose `uncertainty` exceeds it. A boot whose
 `BENCH` lines arrive without exactly one valid `CLOCK` line has no
 calibration, and its cells are `rejected`; so is a cell whose frequency
-is not its `CLOCK` line's.
+is not its `CLOCK` line's. A `failed` cell stays `failed` in both: a
+wrong result (a lost wake, a wrong status) does not depend on the clock.
 
 ### The histogram
 
@@ -442,7 +443,7 @@ A cell's status is one of:
 | `timed_out` | the guest's deadline passed before the operation reported | none |
 | `unsupported` | the call answered `ERX_ENOTSUP`, the environment lacks what the operation needs (a second CPU, a readable cycle counter), or calibration could not bound its counters; the reporter is named | none |
 | `failed` | a result was wrong: a lost wake, an early return, a reply with the wrong status | the samples before the failure, and the failure |
-| `rejected` | the guest's line failed validation | none, and the reason |
+| `rejected` | the guest's line failed validation, or a cell that did not fail came from a boot without exactly one valid `CLOCK` line or with a frequency not its `CLOCK` line's | none, and the reason |
 | `not_run` | expected and never reported | none |
 
 A file is at most 1 MiB, a log at most 64 MiB, and a run directory is

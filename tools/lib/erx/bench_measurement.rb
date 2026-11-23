@@ -86,9 +86,10 @@ module Erx
 
     # A boot's clock group and cells from the guest lines it printed, each a BENCH or a
     # CLOCK line (docs/design-bench.md, "A benchmark"). Without exactly one valid CLOCK
-    # line the boot has no calibration and every cell is rejected, and so is a cell whose
-    # frequency is not the CLOCK line's. Each refused line's reason is returned in
-    # refused, never its text, for the runner to give the cells it expected.
+    # line the boot has no calibration and its cells are rejected, and so is a cell whose
+    # frequency is not the CLOCK line's; a failed cell stays failed, since a wrong result
+    # does not depend on the clock. Each refused line's reason is returned in refused,
+    # never its text, for the runner to give the cells it expected.
     def boot(lines, benchmark:, profiles:)
       clocks, benches = lines.partition { |text| text.is_a?(String) && text.b.start_with?('CLOCK ') }
       cells, refused = benches.map { |text| judged { cell(text, benchmark: benchmark, profiles: profiles) } }
@@ -106,6 +107,7 @@ module Erx
     end
 
     def verdict(cell, group)
+      return cell if cell.status == 'failed'
       return rejected(cell, 'no valid CLOCK line in the boot') if group.nil?
       return rejected(cell, 'frequency differs from the CLOCK line') if
         cell.detail['frequency_hz'] != group.fetch('frequency_hz')
