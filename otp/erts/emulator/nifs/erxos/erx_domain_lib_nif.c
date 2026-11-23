@@ -190,10 +190,12 @@ read_u32_or_zero(map_reader_t *reader, const char *key, uint32_t *value)
 }
 
 /*
- * A required grant: a map of quota_ns and cpuset, and period_ns and
- * capacity_mcpu (each 0 when absent), and nothing else. The library's fit
- * rule takes a capped grant only with a period in range, so a period left
- * out leaves the grant uncapped or refused, never wider.
+ * A required grant: a map of quota_ns, cpuset and slice_us, and period_ns
+ * and capacity_mcpu (each 0 when absent), and nothing else. The library's
+ * fit rule takes a capped grant only with a period in range, so a period
+ * left out leaves the grant uncapped or refused, never wider; the slice is
+ * the quantum of the domain's threads, which the same rule holds to its
+ * range.
  */
 static bool
 read_grant(map_reader_t *reader, const char *key, erx_grant_t *grant)
@@ -201,15 +203,15 @@ read_grant(map_reader_t *reader, const char *key, erx_grant_t *grant)
 	map_reader_t inner;
 	ERL_NIF_TERM term;
 	uint64_t quota, period, cpuset;
-	uint32_t capacity;
+	uint32_t capacity, slice;
 
 	if (!reader_take(reader, key, &term) || !reader_open(reader->env, term, &inner) ||
 	    !read_u64(&inner, "quota_ns", &quota) || !read_u64_or_zero(&inner, "period_ns", &period) ||
 	    !read_u64(&inner, "cpuset", &cpuset) || !read_u32_or_zero(&inner, "capacity_mcpu", &capacity) ||
-	    !reader_done(&inner))
+	    !read_u32(&inner, "slice_us", &slice) || !reader_done(&inner))
 		return (false);
 	*grant = (erx_grant_t){ .quota_ns = quota, .period_ns = period, .cpuset = cpuset,
-		.capacity_mcpu = capacity };
+		.capacity_mcpu = capacity, .slice_us = slice };
 	return (true);
 }
 

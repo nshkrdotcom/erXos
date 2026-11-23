@@ -60,11 +60,13 @@ notification or a power line's phase, whose caller is the device service.
               pci_catalogue/0, pci_layout/0]).
 
 -type error() :: {error, atom() | {status, integer()}}.
-%% A group's grant (erx_grant_t): its quota_ns and cpuset, and its period_ns and
-%% capacity_mcpu, each 0 when left out, so a capped grant (a quota other than
-%% ERX_QUOTA_NONE) names its period. The library admits it as design-system.md's
-%% "A grant fits its parent" states.
+%% A group's grant (erx_grant_t): its quota_ns, cpuset and slice_us, and its
+%% period_ns and capacity_mcpu, each 0 when left out, so a capped grant (a quota
+%% other than ERX_QUOTA_NONE) names its period. The slice is the quantum of the
+%% group's threads, ERX_SLICE_MIN_US .. ERX_SLICE_MAX_US. The library admits it as
+%% design-system.md's "A grant fits its parent" states.
 -type grant() :: #{quota_ns := non_neg_integer(), cpuset := non_neg_integer(),
+                   slice_us := non_neg_integer(),
                    period_ns => non_neg_integer(), capacity_mcpu => non_neg_integer()}.
 -type limits() :: #{max_frame => non_neg_integer(), max_message_heap => non_neg_integer(),
                     funnel_depth => non_neg_integer(), exports => non_neg_integer(),

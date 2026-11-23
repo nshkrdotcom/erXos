@@ -62,6 +62,7 @@ fuzz_grant(uint64_t quota, uint64_t cpuset)
 	grant.quota_ns = quota;
 	grant.period_ns = quota == ERX_QUOTA_NONE ? 0 : UINT64_C(10000000);
 	grant.cpuset = cpuset;
+	grant.slice_us = ERX_SLICE_MIN_US;
 	grant.ceiling.raw = 40;
 	return (grant);
 }

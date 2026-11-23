@@ -67,11 +67,6 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   root's row should hold every CPU rather than 0; moving `space_band`, `cpuset` and `slice_us`, which
   `service_sched_param` likewise reads through `domain`, into a record only domain rows have would make the
   wrong read unwritable ([design-fiasco.md](design-fiasco.md#bands)).
-* [Medium] 0.2 on Fiasco, `liberx/system/dom_core.c`: a requested domain's grant has its slice checked only when
-  the plan is applied: `dom_grant_fits` checks the CPU set, rate and ceiling but not `slice_us` (nor `grace_us`), so a
-  slice outside `ERX_SLICE_MIN_US`..`ERX_SLICE_MAX_US` passes `erx_dom_plan` and is refused with `ERX_EINVAL` by the
-  root's `erx_fiasco_band_domain` at the space step, after the carve steps ran. Checking it in the planner's grant
-  validator refuses it before anything is applied; the root's check then guards only the root's own request.
 * [Medium] 0.2 on Fiasco, `liberx/backend/fiasco`: every thread start reads the band table only because each
   `l4_scheduler_run_thread` site (`service.c`, `watchdog_thread.c`) calls `erx_fiasco_band_levels`; a new
   site with its own `l4_sched_param` builds. Make `band.c` the one producer of the scheduling parameters,

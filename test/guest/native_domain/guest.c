@@ -263,7 +263,7 @@ library_up(void)
 	/* Every CPU, so that a BeamAsm domain can run on each. */
 	const uint64_t cpus = erx_fiasco_cpus_online();
 	const erx_grant_t share = { .quota_ns = ERX_QUOTA_NONE, .cpuset = cpus,
-	    .capacity_mcpu = 1000 * (uint32_t)__builtin_popcountll(cpus) };
+	    .capacity_mcpu = 1000 * (uint32_t)__builtin_popcountll(cpus), .slice_us = ERX_SLICE_MIN_US };
 	uint64_t budget;
 
 	principals[0] = (erx_dom_principal_t){ .number = PRINCIPAL, .memory = LIBRARY_MEMORY, .domains_max = DOMAINS,
@@ -315,7 +315,8 @@ request_for(const char *word, uint32_t program, uint32_t connections)
 	request.connections = connections;
 	request.memory = 2 * MIB;
 	request.outer = MIB;
-	request.grant = (erx_grant_t){ .quota_ns = ERX_QUOTA_NONE, .cpuset = 1, .capacity_mcpu = 1000 };
+	request.grant = (erx_grant_t){ .quota_ns = ERX_QUOTA_NONE, .cpuset = 1, .capacity_mcpu = 1000,
+	    .slice_us = ERX_SLICE_MIN_US };
 	request.lane = ERX_LANE_MIN;
 	memcpy(request.strings, word, length);
 	request.args_len = (uint32_t)length;
@@ -381,7 +382,7 @@ jit_request(uint32_t runtime, const char *args, size_t args_len)
 
 	(void)args_request(runtime, args, args_len);
 	request.grant = (erx_grant_t){ .quota_ns = ERX_QUOTA_NONE, .cpuset = cpus,
-	    .capacity_mcpu = 1000 * (uint32_t)__builtin_popcountll(cpus) };
+	    .capacity_mcpu = 1000 * (uint32_t)__builtin_popcountll(cpus), .slice_us = ERX_SLICE_MIN_US };
 	return (&request);
 }
 
@@ -2430,7 +2431,7 @@ given_view(uint32_t program)
 	 * and meets the give.
 	 */
 	const erx_grant_t grant = { .quota_ns = ERX_PERIOD_MIN, .period_ns = 10 * ERX_PERIOD_MIN, .cpuset = 1,
-	    .capacity_mcpu = 100 };
+	    .capacity_mcpu = 100, .slice_us = ERX_SLICE_MIN_US };
 
 	configured[0] = (erx_dom_configured_t){ .principal = PRINCIPAL, .release = release, .release_files = 1,
 	    .runtime = program, .memory = 2 * MIB, .outer = MIB, .grant = grant, .runtime_limits = limits_default(),

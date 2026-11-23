@@ -37,7 +37,7 @@ class DomCoreTest < Minitest::Test
   # What the outer budget pays for (design-system.md, "Where each object is charged").
   OUTER_KEEPS = %w[OUTER CRASH SYS_BUDGET SYS_SIDE DOM_SIDE SYS_BELL DOM_BELL].freeze
 
-  OK_CASES = %w[ok_request ok_configured ok_partial partial_connections_full env_ok spaces_ok
+  OK_CASES = %w[ok_request ok_configured ok_partial partial_connections_full env_ok spaces_ok grant_slice_min spaces_slice_max
                 services_room services_request narrow_share_configured limits_reserved_cleared
                 ok_session].freeze
   OTHER_CASES = { 'quota_full' => ELIMIT, 'table_full' => ELIMIT, 'connections_full' => ELIMIT,
@@ -49,7 +49,8 @@ class DomCoreTest < Minitest::Test
                     memory_zero memory_unaligned outer_small lane_small lane_large connections_over
                     strings_long strings_wrap args_no_nul env_no_nul limits_ceiling
                     limits_frame_zero grant_cpus grant_empty grant_rate grant_ceiling grant_period grant_quota
-                    grant_padding spaces_no_flag spaces_over services_over services_outside
+                    grant_padding grant_slice_zero grant_slice_low grant_slice_high spaces_slice
+                    spaces_no_flag spaces_over services_over services_outside
                     narrow_share_request configured_outside configured_ceiling configured_flags
                     session_no_spaces session_ceiling session_template_at session_template_past].freeze
 

@@ -212,7 +212,10 @@ dom_grant_rate(const erx_grant_t *grant, uint64_t *rate)
 }
 
 /*
- * A child grant fits a parent when it asks for no CPU, urgency, rate or
+ * A child grant fits a parent when its slice is one its threads can take
+ * as their quantum, ERX_SLICE_MIN_US .. ERX_SLICE_MAX_US, whatever the
+ * parent's (a share of the manifest holds it by the reader's range rules,
+ * a request only by this check), and it asks for no CPU, urgency, rate or
  * group feature the parent lacks.
  */
 static bool
@@ -220,7 +223,9 @@ dom_grant_fits(const erx_grant_t *child, const erx_grant_t *parent)
 {
 	uint64_t child_rate, parent_rate;
 
-	if (!dom_grant_rate(child, &child_rate) ||
+	if (child->slice_us < ERX_SLICE_MIN_US ||
+	    child->slice_us > ERX_SLICE_MAX_US ||
+	    !dom_grant_rate(child, &child_rate) ||
 	    !dom_grant_rate(parent, &parent_rate))
 		return (false);
 	return ((child->cpuset & ~parent->cpuset) == 0 &&

@@ -1883,7 +1883,7 @@ module Erx
                         'service network_ctl', 'facet network_ctl'].freeze
 
       # share, a capped share record, narrowed to those of its CPUs cpuset names: its
-      # period, its quota_ns capped at period_ns per CPU kept and its capacity_mcpu at 1000
+      # period and slice, its quota_ns capped at period_ns per CPU kept and its capacity_mcpu at 1000
       # per CPU kept, since the library gives a grant whose quota its cpuset cannot spend
       # no rate, and admits nothing under it. A share left no CPU is refused: cpuset 0
       # would mean every CPU. An uncapped share's quota is no number, and is refused.
@@ -1894,13 +1894,13 @@ module Erx
         cpus = kept.to_s(2).count('1')
         period = share.decimal('period_ns')
         { quota_ns: [share.decimal('quota_ns'), period * cpus].min, period_ns: period, cpuset: kept,
-          capacity_mcpu: [share.decimal('capacity_mcpu'), cpus * 1000].min }
+          capacity_mcpu: [share.decimal('capacity_mcpu'), cpus * 1000].min, slice_us: share.decimal('slice_us') }
       end
 
       # What the narrow manifest sets in share, one of its share records
       # (Manifest::Edit.set): share narrowed to NARROW_CPUSET's CPUs.
       def self.narrow_share(share)
-        narrowed(share, cpuset: NARROW_CPUSET).except(:period_ns).to_h { |field, value| [[share.header, field.to_s], value] }
+        narrowed(share, cpuset: NARROW_CPUSET).except(:period_ns, :slice_us).to_h { |field, value| [[share.header, field.to_s], value] }
       end
 
       def boot_narrow(accel, count, built)

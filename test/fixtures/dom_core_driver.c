@@ -92,6 +92,7 @@ grant(uint64_t quota, uint64_t cpuset, uint8_t ceiling)
 	g.quota_ns = quota;
 	g.period_ns = quota == ERX_QUOTA_NONE ? 0 : UINT64_C(10000000);
 	g.cpuset = cpuset;
+	g.slice_us = 1000;
 	g.ceiling.raw = ceiling;
 	return (g);
 }
@@ -517,6 +518,14 @@ MUTATION(m_grant_ceiling, s->grant.ceiling.raw = 41)
 MUTATION(m_grant_period, s->grant.period_ns = ERX_PERIOD_MIN - 1)
 MUTATION(m_grant_quota, s->grant.quota_ns = UINT64_C(30000000))
 MUTATION(m_grant_padding, s->grant.padding_0[1] = 1)
+MUTATION(m_grant_slice_zero, s->grant.slice_us = 0)
+MUTATION(m_grant_slice_low, s->grant.slice_us = ERX_SLICE_MIN_US - 1)
+MUTATION(m_grant_slice_high, s->grant.slice_us = ERX_SLICE_MAX_US + 1)
+MUTATION(m_grant_slice_min, s->grant.slice_us = ERX_SLICE_MIN_US)
+MUTATION(m_spaces_slice_max, (s->flags |= ERX_DOM_SPACES, s->spaces = grant(UINT64_C(5000000), 0x1, 1),
+    s->spaces.slice_us = ERX_SLICE_MAX_US))
+MUTATION(m_spaces_slice, (s->flags |= ERX_DOM_SPACES, s->spaces = grant(UINT64_C(5000000), 0x1, 1),
+    s->spaces.slice_us = 0))
 MUTATION(m_spaces_no_flag, s->spaces = grant(UINT64_C(1000000), 0x1, 1))
 MUTATION(m_spaces_over, (s->flags |= ERX_DOM_SPACES, s->spaces = grant(UINT64_C(20000000), 0x3, 1)))
 MUTATION(m_spaces_ok, (s->flags |= ERX_DOM_SPACES, s->spaces = grant(UINT64_C(5000000), 0x1, 1)))
@@ -602,6 +611,12 @@ cases(void)
 	run_case("grant_period", PICK_REQUEST, m_grant_period);
 	run_case("grant_quota", PICK_REQUEST, m_grant_quota);
 	run_case("grant_padding", PICK_REQUEST, m_grant_padding);
+	run_case("grant_slice_zero", PICK_REQUEST, m_grant_slice_zero);
+	run_case("grant_slice_low", PICK_REQUEST, m_grant_slice_low);
+	run_case("grant_slice_high", PICK_REQUEST, m_grant_slice_high);
+	run_case("grant_slice_min", PICK_REQUEST, m_grant_slice_min);
+	run_case("spaces_slice_max", PICK_REQUEST, m_spaces_slice_max);
+	run_case("spaces_slice", PICK_REQUEST, m_spaces_slice);
 	run_case("spaces_no_flag", PICK_REQUEST, m_spaces_no_flag);
 	run_case("spaces_over", PICK_REQUEST, m_spaces_over);
 	run_case("spaces_ok", PICK_REQUEST, m_spaces_ok);

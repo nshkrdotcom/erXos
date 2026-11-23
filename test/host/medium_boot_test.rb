@@ -205,8 +205,8 @@ class MediumBootTest < Minitest::Test
   # erx_domain:create charges every domain a harness creates to the system principal, so
   # the grant each create map asks must fit that principal's share as the domain
   # library's rule has it (liberx/system/dom_core.c, dom_grant_fits): its CPUs among the
-  # share's, its period the share's, which the manifest check bounds as the library
-  # does, and its rate, quota over period in thousandths of a CPU rounded up, no more
+  # share's, its period and slice the share's, which the manifest check bounds as the
+  # library does, and its rate, quota over period in thousandths of a CPU rounded up, no more
   # than the share's. The rate is restated here: the library has no host binding that
   # judges a create map against a manifest.
   def test_every_created_grant_fits_the_system_principals_share
@@ -226,6 +226,7 @@ class MediumBootTest < Minitest::Test
       asked = grant_in(expression)
       assert_equal 0, asked.fetch('cpuset') & ~share.decimal('cpuset'), "#{name}: CPUs outside the share"
       assert_equal share.decimal('period_ns'), asked['period_ns'], "#{name}: a period other than the share's"
+      assert_equal share.decimal('slice_us'), asked['slice_us'], "#{name}: a slice other than the share's"
       assert_operator rate(asked.fetch('quota_ns'), asked.fetch('period_ns'), asked.fetch('cpuset')), :<=, share_rate,
                       "#{name}: #{asked} asks more than the share's #{share_rate} mcpu"
     end

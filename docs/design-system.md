@@ -1405,9 +1405,11 @@ manifest authority. The planner checks the origin's range; the
 specification's static fields are the row's by construction, and origin
 metadata does not bypass the ordinary whole-plan checks.
 
-**A grant fits its parent** when it asks for nothing the parent lacks:
-its cpuset is within the parent's, its flags within the parent's, its
-urgency ceiling at most the parent's, and its rate at most the parent's.
+**A grant fits its parent** when its slice, the quantum of its threads,
+is within the ABI's `slice_min_us` .. `slice_max_us`, and it asks for
+nothing the parent lacks: its cpuset is within the parent's, its flags
+within the parent's, its urgency ceiling at most the parent's, and its
+rate at most the parent's.
 A grant's rate is in thousandths of a CPU: an uncapped grant's is the
 size of its cpuset times 1,000, and a capped one's its quota times 1,000
 over its period, rounded up. A grant whose rate cannot be stated (an
