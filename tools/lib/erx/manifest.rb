@@ -3267,7 +3267,8 @@ module Erx
       # media, is named by nothing but its drive windows, its log facets and that service:
       # its drives' grants come through the windows, by introduction. The holder of a block
       # device's drive, a configured domain, is named by nothing but the unit that places
-      # that device alone and its log facets. That every drive window is the media
+      # that device alone, its driver-control service, its pci facet and its log facets
+      # (check_block_drive_holder). That every drive window is the media
       # domain's, and that a manifest with one holds one media service, is
       # check_window_services'.
       def check_drive_domains(tables)
@@ -3288,7 +3289,15 @@ module Erx
       end
 
       # The holder of a block device's drive (check_drive_domains); a drive window on a USB
-      # controller is the USB domain's, whose drives check_drives counts.
+      # controller is the USB domain's, whose drives check_drives counts. Besides its
+      # device's unit and its log facets, the holder serves one driver-control service,
+      # the one every unit holder serves (docs/design-system.md, "The holder's
+      # driver-control facet"), whose facets only the system domain holds
+      # (normalize_facets), and holds a pci facet, of the system domain's service pci
+      # (check_pcie_parties). That check admits a pci facet exactly when its grantee's
+      # units hold a PCIe function, and this holder's units hold the drive's device
+      # alone, so it holds one only when that device is a PCIe function, as an NVMe or a
+      # virtio-blk-pci drive is.
       def check_block_drive_holder(window, tables)
         devices = tables.fetch('devices')
         device = devices.fetch(window.fetch('device'))
@@ -3297,13 +3306,16 @@ module Erx
         label = "drive disk#{window.fetch('drive')}"
         holder = device_holder(tables, window.fetch('device'))
         invalid("the device of #{label} is held by a configured domain", 'unit.holder') if holder == @codec.constant('mf_none')
-        what = "the holder of #{label}, #{domain_name(tables, holder)}, holds nothing but its device's unit and log facets"
+        control = fetch_interface('driver_control')
+        controls = tables.fetch('services').select { |service| service.fetch('server') == holder && service.fetch('interface') == control }
+        what = "the holder of #{label}, #{domain_name(tables, holder)}, holds nothing but its device's unit, " \
+               'one driver-control service, a pci facet and log facets'
         holds_only(tables, holder, what) do |scope, row|
-          if scope == 'units'
-            placed = unit_devices(devices, row)
-            placed.size == 1 && placed.first.equal?(device)
-          else
-            drive_domain_reference?(scope, row, tables)
+          case scope
+          when 'units' then unit_devices(devices, row) == [device]
+          when 'services' then row.equal?(controls.first)
+          when 'facets' then facets_of([row], 'pci', tables).any? || drive_domain_reference?(scope, row, tables)
+          else drive_domain_reference?(scope, row, tables)
           end
         end
       end

@@ -660,11 +660,11 @@ class ManifestCheckTest < Minitest::Test
 
   # media_source with a block device's drive, disk0, whose device's unit holder holds
   # (by default disk, a copy of the development manifest's usb domain, which holds
-  # nothing else), and the platform that places the device.
-  def block_drive_source(holder: '@domain.disk', holders: USB_HOLDERS)
+  # nothing else), and the platform that places the device: block, which path names.
+  def block_drive_source(holder: '@domain.disk', holders: USB_HOLDERS, block: extra_block_row, path: '/extra@0')
     disk = @source[/^domain usb\n(?:  .*\n)*/].sub("domain usb\n", "domain disk\n")
-    [media_source(holders) + SPARE_UNIT + disk + "unit extra\n  placement \"extra\"\n  holder #{holder}\n" + drive_window('disk0', device: '/extra@0'),
-     context(platform: usb_platform(extra: [extra_block_row], spare: [spare_block_row]))]
+    [media_source(holders) + SPARE_UNIT + disk + "unit extra\n  placement \"extra\"\n  holder #{holder}\n" + drive_window('disk0', device: path),
+     context(platform: usb_platform(extra: [block], spare: [spare_block_row]))]
   end
 
   # A second block device, /spare@0, its unit held by the storage domain, so a seed can
@@ -690,9 +690,10 @@ class ManifestCheckTest < Minitest::Test
 
   # The domain that holds a block device's drive holds that device and nothing else
   # (docs/design-drives.md, "A drive and its medium"): no other unit, no window, no
-  # service and no facet but the log's, and it is a configured domain.
+  # service but its driver control, no facet but a pci and the log's, and it is a
+  # configured domain.
   def test_a_block_drive_s_holder_holding_anything_else_is_refused
-    message = ->(scope) { /the holder of drive disk0, disk, holds nothing but its device's unit and log facets, and its #{scope} row names it/ }
+    message = ->(scope) { /the holder of drive disk0, disk, holds nothing but its device's unit, one driver-control service, a pci facet and log facets, and its #{scope} row names it/ }
     source, against = block_drive_source
     units, = block_drive_source(holders: USB_HOLDERS.merge('stick' => '@domain.disk'))
     refused(Erx::Manifest::Invalid, 'units', units, against, message: message.call('units'))
@@ -708,6 +709,38 @@ class ManifestCheckTest < Minitest::Test
     held, = block_drive_source(holder: 'system')
     refused(Erx::Manifest::Invalid, 'unit.holder', held, against,
             message: /the device of drive disk0 is held by a configured domain/)
+  end
+
+  # The driver-control service a block drive's holder serves the system domain, as every
+  # unit holder does (docs/design-system.md, "The holder's driver-control facet"), and
+  # its facet row granted to the system domain.
+  def driver_control_rows(name)
+    "service #{name}\n  server @domain.disk\n  interface driver_control\nfacet #{name}\n  grantee system\n" \
+      "  service @service.#{name}\n  operations none\n  max_request 256\n  in_flight 1\n  reductions 100000\n" \
+      "  period_ns 1000000000\n  max_heap_size 65536\n"
+  end
+
+  # A block drive's holder serves one driver-control service (docs/design-drives.md,
+  # "Manifest rows"); a second, as if for another unit, is refused.
+  def test_a_block_drive_s_holder_serves_one_driver_control_service
+    source, against = block_drive_source
+    admit(source + log_facet('@domain.disk') + driver_control_rows('disk_ctl'), against)
+    refused(Erx::Manifest::Invalid, 'services', source + driver_control_rows('disk_ctl') + driver_control_rows('other_ctl'),
+            against, message: /the holder of drive disk0, disk, holds nothing but .*, and its services row names it/)
+  end
+
+  # A block drive whose device is a PCIe function, as an NVMe or a virtio-blk-pci drive is:
+  # its holder holds the function's pci facet (docs/design-drives.md, "Manifest rows"). A
+  # pci facet of the holder of a device-tree block device is refused, since check_pcie
+  # admits a pci facet only to the holder of a PCIe function.
+  def test_a_block_drive_s_holder_holds_a_pci_facet_only_for_a_pcie_function
+    function = extra_block_row.merge('selector' => 'pci', 'path' => '', 'bridge' => BRIDGE, 'device' => 3, 'base' => 0,
+                                     'size' => 0, 'line' => 0, 'dma' => 'unconfined', 'dma_memory' => 1 << 20)
+    source, against = block_drive_source(block: function, path: "#{BRIDGE}:0:3:0")
+    admit(source + pcie_facet('pci', '@domain.disk', name: 'pci_disk'), against)
+    tree, against = block_drive_source
+    refused(Erx::Manifest::Invalid, 'facet.grantee', tree + pcie_facet('pci', '@domain.disk', name: 'pci_disk'),
+            against, message: /a configured domain holds a pci facet exactly when it holds a pci device/)
   end
 
   # Who holds drive windows (docs/design-drives.md, "Manifest rows"): the media domain, the

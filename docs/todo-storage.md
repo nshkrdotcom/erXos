@@ -115,12 +115,6 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
 
 ## Bugs by subsystem
 
-* [Medium] storage, manifest check, a block drive holder's allow-list (`tools/lib/erx/manifest.rb`,
-  `check_block_drive_holder`; [design-drives.md](design-drives.md#manifest-rows)): it admits only the
-  device's unit and log facets, so it refuses the driver-control service every unit holder serves the
-  system domain ([design-system.md](design-system.md)) and the `pci` facet a PCIe-function block
-  device needs, which keeps NVMe and virtio-blk-pci from being drives. It fails safe; whether the list
-  admits the two, or block drives go without them, is an open question for the design.
 * [Medium] storage and images, the development boot image is 68 MB (`kernel8.img` on the Pi 4 boot
   partition, 68,202,496 bytes) and stays in RAM for the whole boot; it also weighs on the Pi 4 secure-boot
   check item below. Three shrinks are open: 12.2 MB are byte-identical OTP files in both `system/lib` and

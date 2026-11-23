@@ -373,9 +373,9 @@ that drives its medium's transport:
   the device's driver runs. The domain that holds the device runs
   `erx_blk` with that device's transport and serves its medium as the
   drive instead of reading the boot medium's layout. Such a domain holds
-  that device's unit and nothing else but its log facets (the list of
-  [Manifest rows](#manifest-rows)), so property 9 of
-  [design-system.md](design-system.md#the-manifest) holds for an
+  that device's unit, no other unit and no window, and nothing else but
+  what the list of [Manifest rows](#manifest-rows) admits, so property 9
+  of [design-system.md](design-system.md#the-manifest) holds for an
   unconfined one.
 
 For each medium, the serving domain runs the transport the storage
@@ -465,12 +465,19 @@ the manifest gains later names it only once its list admits it.
   ([design-usb.md](design-usb.md#media-and-drives)), never through a
   facet row.
 * **A block drive holder's list:** the one unit that places the drive's
-  device and no other device, its facets of the system domain's `log`,
-  and its
-  place in the boot order. It is a configured domain, and it holds no
-  window and serves no service, so the domain that drives the device
-  parses nothing a medium holds and nothing else of the machine sits
-  with the device ([A drive and its medium](#a-drive-and-its-medium)).
+  device and no other device; the one driver-control service it serves
+  the system domain, as every unit's holder does
+  ([design-system.md](design-system.md#the-holders-driver-control-facet)),
+  whose facets only the system domain holds; its `pci` facet, of the
+  system domain's service `pci` ([design-pcie.md](design-pcie.md#facets)),
+  which the manifest check admits exactly when the holder's units hold a
+  PCIe function, so only when the drive's device is one, as an NVMe or a
+  virtio-blk-pci drive's is; its facets of the system domain's `log`;
+  and its place in the boot order. It is a configured domain, and it
+  holds no window and serves no other service, so the domain that
+  drives the device parses nothing a medium holds and nothing else of
+  the machine sits with the device
+  ([A drive and its medium](#a-drive-and-its-medium)).
 
 The manifest check refuses:
 
