@@ -57,47 +57,25 @@ Fiasco's original `kobject_rpc.h` or `jdb_object.cpp`, which no erXos document o
 
 ## Contract
 
-The rules, verbatim:
+The policy:
 
-> Phase 1 -- bring up the system on Fiasco maybe with small modifications.
-> Get it to boot, basic filesystems work, services, shell, etc. Ignore
-> security, robustness, scheduling eficiency, etc. Just needs to sorta work
->
-> Phase 2 -- make our own kernel with all the guarantees
-
-> In general we should not be plugging gaps in Fiasco that will go away with
-> our kernel -- that's waster work and time
-
-> So don't work around fiasco weakness unless cheap/easy/needed for our own
-> kernel anyway
-
-> whenever we keep hitting issues in the design, we should look how Fiasco, L4,
-> Zircon etc solvedd it to see if we departed from a proven solution for no
-> reason
-
-> nothing gets shipped until I say so. So we just need to know where the
-> gaps are, not necessarily fix them
-
-> yeah let's front-load user facing stuff
-
-> The reason I'm asking is that kernel takes a lot of time to build and harden, and maybe we can
-> ship the first version of OS on Fiasco with all the user features on it before rewriting the
-> kernel
-
-> yeah why don't we just use fiasco capabilites and lose generation assurances when we are on
-> fiasco vs our own kernel?
-
-> That is why don't we reframe fiasco limits as just downsides of running on fiasco versus ours
-> rather than trying to work around these issues?
-
-> What I propose is to ship the OS on Fiasco. So with this change it becomes a shippable release
-
-and, on the scheduler:
-
-> So a first release on Fiasco could ship with the cooperation pieces, and add guaranteed shares
-> later as a Fiasco scheduler variant over our own core, or wait for our kernel. -- sounds good.
-> I'd defer cooperation pieces too after everything else works. It does not seem urgent and more
-> of an optimization
+* Phase 1 brings the system up on a near-stock Fiasco, with the few patches
+  this document lists: it boots, its file systems, services and shell work, and
+  its user-facing features are built first. Phase 1 does not wait for erXos's
+  kernel; the first release, 0.2, ships on Fiasco.
+* Fiasco's bugs and gaps are fixed, in the fork or in the backend, unless a fix
+  would rebuild erXos's kernel design inside Fiasco.
+* What [track F of plan.md](plan.md#track-f-fiasco-improved-to-the-decision)
+  does not close is a published downside of running on Fiasco against erXos's
+  kernel ([Downsides](#downsides-against-erxoss-kernel)), not a problem to work
+  around.
+* Whether erXos's own kernel replaces Fiasco is the decision of gate GF in
+  [plan.md](plan.md#decision-gates). Until GF decides, Fiasco is the kernel.
+* When a design keeps hitting issues, the first step is to read how Fiasco, L4
+  and Zircon solved the problem, and a departure from a proven solution that
+  has no recorded reason is reversed.
+* Nothing ships until it is approved, so every gap is recorded accurately, as a
+  downside or a residual.
 
 **Phase 1** in this document includes Phase 1b of [plan.md](plan.md) and 0.2, the first release:
 the user-facing system carried further on the same backend, behind the same interface. Its
