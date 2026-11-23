@@ -34,12 +34,12 @@ class ProgChannelTest < Minitest::Test
     thread: ['-fsanitize=thread']
   }.freeze
   COMPILER = ENV.fetch('ERX_CLANG', 'clang')
-  CASES = %w[whole first wait waiters two large kill probe local slots keep].freeze
-  THREADED = %w[wait waiters two kill probe slots keep].freeze
+  CASES = %w[whole first wait cut waiters two large kill probe local slots keep].freeze
+  THREADED = %w[wait cut waiters two kill probe slots keep].freeze
 
   # A seeded fault, the case that catches it, and the edit that plants it.
   MUTANTS = {
-    'the lock is let go of inside a frame' => ['two', '.whole = true', '.whole = false'],
+    'the lock is let go of inside a frame' => ['cut', '.whole = true', '.whole = false'],
     'a woken send does not look at the room again' => ['wait', 'while (status == ERX_LANE_PUT_SHORT) {',
                                                        'if (status == ERX_LANE_PUT_SHORT) {'],
     'a sender that leaves does not wake those still waiting' =>

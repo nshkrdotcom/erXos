@@ -20,6 +20,9 @@
  *		arrives whole
  *   two	two senders' frames, of sizes up to most of the ring, arrive
  *		whole and in each sender's order, never interleaved
+ *   cut	a sender sleeping for room has written nothing of its frame, so
+ *		another sender's smaller frame that fits meanwhile arrives
+ *		whole and before it, and its own after it, whole
  *   waiters	two senders wait, the smaller frame's need published last;
  *		its crossing wakes both, the larger sender publishes its need
  *		again and sleeps, then the smaller one publishes its own, takes
@@ -416,6 +419,61 @@ case_waiters(void)
 	pthread_join(small, NULL);
 }
 
+static _Atomic bool cutter_done;
+
+static void *
+cutting_sender(void *unused)
+{
+	(void)unused;
+	if (send_one(3, 1, SMALL_FRAME) != ERX_OK)
+		fail("the smaller send failed");
+	atomic_store(&cutter_done, true);
+	return (NULL);
+}
+
+static void
+case_cut(void)
+{
+	static unsigned char buf[ERX_PROGRAM_LANE];
+	static const struct {
+		unsigned	sender, seq;
+		size_t		len;
+	} order[] = {
+		{ 1, 2, WAIT_FRAME }, { 1, 3, WAIT_FRAME }, { 3, 1, SMALL_FRAME }, { 2, 1, BIG_FRAME },
+	};
+	pthread_t big, small;
+	uint32_t len;
+
+	for (unsigned seq = 1; seq <= 3; seq++) {
+		if (send_one(1, seq, WAIT_FRAME) != ERX_OK)
+			fail("a send into room failed");
+	}
+	/* The larger frame finds too little room and its sender sleeps. */
+	pthread_create(&big, NULL, big_sender, NULL);
+	sleeps_reach(1);
+	/* The first frame's read frees room for the smaller frame but not the larger, so no ring wakes the sleeper. */
+	if (!record_read(buf, sizeof(buf), sizeof(buf), &len))
+		fail("a written frame is missing");
+	check_frame(buf, len, 1, 1, WAIT_FRAME);
+	/* The smaller frame fits beside a sleeping sender, which must have left nothing of its own frame behind. */
+	pthread_create(&small, NULL, cutting_sender, NULL);
+	for (unsigned tries = 0; !atomic_load(&cutter_done); tries++) {
+		if (tries == 50000)
+			fail("the smaller send never finished");
+		pause_briefly();
+	}
+	for (size_t at = 0; at < sizeof(order) / sizeof(order[0]); at++) {
+		for (unsigned idle = 0; !record_read(buf, sizeof(buf), 512, &len); idle++) {
+			if (idle == 50000)
+				fail("a waiting sender was never woken");
+			pause_briefly();
+		}
+		check_frame(buf, len, order[at].sender, order[at].seq, order[at].len);
+	}
+	pthread_join(big, NULL);
+	pthread_join(small, NULL);
+}
+
 /* The size of frame seq of sender: up to three quarters of the ring, so senders often wait. */
 static size_t
 two_size(unsigned sender, unsigned seq)
@@ -760,7 +818,7 @@ main(int argc, char **argv)
 		void		(*run)(void);
 	} cases[] = {
 		{ "whole", case_whole }, { "first", case_first }, { "wait", case_wait }, { "waiters", case_waiters },
-		{ "two", case_two }, { "large", case_large }, { "kill", case_kill },
+		{ "cut", case_cut }, { "two", case_two }, { "large", case_large }, { "kill", case_kill },
 		{ "probe", case_probe }, { "local", case_local }, { "slots", case_slots },
 		{ "keep", case_keep },
 	};
