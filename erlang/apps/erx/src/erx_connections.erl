@@ -207,9 +207,8 @@ claim(_Caller, #{} = Env) -> {{error, badarg}, Env}.
 %% then {open, Service}, the process that made the call, the domain service. The answer
 %% waits for the entry, so the export to the domain that follows it finds the connection
 %% (open_side/2); a side that ends before then answers noconnection and was never open.
-%% The service's three calls, open_side/2, close_side/2 and grant/1, are taken only from
-%% Env's installer, so no close comes while a side is opening: the installer waits in
-%% open_side then.
+%% No close comes while a side is opening, since the installer, the one caller of the
+%% service's three calls (below), waits in open_side then.
 %% A side's port ends with its owner (erx_dist), each linked to the other, so its monitor
 %% fires on every end of either: the agent then tells the service, which stops the domain
 %% (docs/design-system.md, "A lost system connection ends the domain"). A side the

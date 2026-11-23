@@ -159,7 +159,7 @@ class ErxWinfsTest < Minitest::Test
   def test_a_follower_that_keeps_an_ended_grant_s_readers_fails_the_follower_case
     text, status = eunit(FOLLOWER_CASE, replaced: { FOLLOWER => seeded(FOLLOWER, STOP_READERS, KEEP_READERS) })
     refute status.success?, text
-    assert_match(/a grant's return/, text)
+    assert_match(/\(a grant's return\)\.\.\.\*failed\*/, text)
   end
 
   # A follower that lists a tree in its own process waits on a server that never answers,
@@ -167,7 +167,7 @@ class ErxWinfsTest < Minitest::Test
   def test_a_follower_that_lists_in_its_own_process_fails_the_follower_case
     text, status = eunit(FOLLOWER_CASE, replaced: { FOLLOWER => seeded(FOLLOWER, LISTER, LIST_INLINE) })
     refute status.success?, text
-    assert_match(/two trees/, text)
+    assert_match(/\(two trees\)\.\.\.\*failed\*/, text)
   end
 
   # A follower that forgets the facet it last followed when its grant ends lists the ended
@@ -175,7 +175,7 @@ class ErxWinfsTest < Minitest::Test
   def test_a_follower_that_forgets_an_ended_facet_fails_the_follower_case
     text, status = eunit(FOLLOWER_CASE, replaced: { FOLLOWER => seeded(FOLLOWER, ENDED, FORGET_ENDED) })
     refute status.success?, text
-    assert_match(/an ended facet/, text)
+    assert_match(/\(an ended facet\)\.\.\.\*failed\*/, text)
   end
 
   # A follower that reads the granted names before the generation names a generation
@@ -183,7 +183,7 @@ class ErxWinfsTest < Minitest::Test
   def test_a_follower_that_reads_the_names_first_fails_the_follower_case
     text, status = eunit(FOLLOWER_CASE, replaced: { FOLLOWER => seeded(FOLLOWER, READ_ORDER, NAMES_FIRST) })
     refute status.success?, text
-    assert_match(/the ready answer between reads/, text)
+    assert_match(/\(the ready answer between reads\)\.\.\.\*failed\*/, text)
   end
 
   private

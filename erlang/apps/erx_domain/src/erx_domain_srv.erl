@@ -1692,7 +1692,9 @@ close_side(Id, _Connection, Reason, #{agent := Agent, node := Node}) ->
     case {Agent:close_side(Id, Reason), Node} of
         {ok, _} -> ok;
         {{error, noproc}, false} -> ok;
-        {{error, noproc}, true} -> error({connection_agent, noproc})
+        {{error, noproc}, true} -> error({connection_agent, noproc});
+        %% Not reached: a claim another process made first ends the service's start (become_installer/1).
+        {{error, badarg}, _} -> error({connection_agent, not_installer})
     end.
 
 disconnect(_Lib, 0) -> ok;

@@ -426,8 +426,12 @@ open_side() ->
                   forward(Test)
           end).
 
+%% Passes what the agent sends to the test, and closes the side when the test asks.
 forward(Test) ->
-    receive Msg -> Test ! {side, Msg}, forward(Test) end.
+    receive
+        {close, Reason} -> Test ! {side, erx_connections:close_side(?PEER, Reason)}, forward(Test);
+        Msg -> Test ! {side, Msg}, forward(Test)
+    end.
 
 side_answer(Ms) ->
     receive {side, Answer} -> Answer after Ms -> none end.
@@ -468,10 +472,11 @@ sides_only_from_service(Agent) ->
     %% The system domain's agent opens and closes a side only for its installer, as it
     %% installs: open_side/2 and close_side/2 from any other process of its runtime are
     %% answered badarg, before any process is the installer and while one is, and open
-    %% or end nothing, so no slip ends a domain's system connection.
+    %% or end nothing, so no slip ends a domain's system connection. The installer's own
+    %% close ends the side.
     ?assertEqual({error, badarg}, erx_connections:open_side(?PEER, side_values())),
     ?assertEqual(none, receive {opened, _, _} = Opened -> Opened after 200 -> none end),
-    open_side(),
+    Service = open_side(),
     {_Command, Port} = opened(),
     {Port, _Owner} = accept(Agent, owner),
     Agent ! {erx_connection_inserted, ?PEER, Port},
@@ -479,7 +484,10 @@ sides_only_from_service(Agent) ->
     ?assertEqual({error, badarg}, erx_connections:close_side(?PEER, stopped)),
     ?assertEqual({error, badarg}, erx_connections:open_side(?PEER + 1, side_values())),
     ?assertEqual(none, side_answer(200)),
-    ?assertNotEqual(undefined, erlang:port_info(Port)).
+    ?assertNotEqual(undefined, erlang:port_info(Port)),
+    Service ! {close, stopped},
+    ?assertEqual(ok, side_answer(2000)),
+    ?assertEqual(undefined, erlang:port_info(Port)).
 
 malformed_calls(Agent) ->
     %% A call whose From is no pair is no call the agent takes, whatever it asks: it is

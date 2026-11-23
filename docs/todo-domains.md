@@ -609,15 +609,8 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   fixtures, oracles and stand-ins that build a changed representation changed in the same step; every
   landing, of one step or of the batch, runs the landing gate once: `make check` and the QEMU suites the
   step names. Each step's host cases are the design's verification rows for it, each with its seeded fault.
-  1. The two polls. `erlang/apps/erx_session/src/erx_ssh_dev.erl:90-93,121-158`: `start_when_granted/2`
-     becomes `await/3` on `net` and `data` within ten minutes of the boot, and the import's `home` and
-     `login_keys` likewise within ten minutes of the daemon's start, each one `{abs, Deadline}`; the retry
-     of `eagain` and `eio` stays, within the import's deadline. `erlang/apps/erx_display/src/erx_input_follower.erl`:
-     the `look` timer (:52-56 `look_ms`, :65-71, :89-91) goes; the environment gains `generation` and
-     `changed`, read in the design's order (generation, granted names, facets) with the request naming the
-     generation read first; a tree's entry keeps the facet last followed; a failed listing retries after a
-     second on the same grant with its monitor kept, and a retry for a grant that ended or was replaced
-     is dropped. `tools/lib/erx/usb_boot.rb` gains a cell whose manifest allows the USB domain one restart
+  1. The two polls: the modules are built (`erx_ssh_dev`, `erx_input_follower`); what remains is the QEMU
+     cell. `tools/lib/erx/usb_boot.rb` gains a cell whose manifest allows the USB domain one restart
      (:43 sets 0 for the others): after the first key it kills the domain's first incarnation, waits for
      the display to follow the new input facet and types a second key that must arrive. Suites: `usb`,
      `net_device`.

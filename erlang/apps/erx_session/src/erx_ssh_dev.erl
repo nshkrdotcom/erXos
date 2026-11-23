@@ -40,7 +40,7 @@ there, whatever it holds, is never read for the import or replaced, so
 deleting it imports the medium's keys again at the next boot. With no home
 copy it reads `root` for at most MEDIUM_READ bytes, one past the blobs of
 ssh_authorized_keys_max (abi/formats/ssh.txt) keys, once the session holds
-its `home` and `login_keys` facets; a read that fails with `eagain`, while
+its `home` and `login_keys` facets; a step that fails with `eagain`, while
 the storage domain's reader runs, or `eio` writes nothing and is tried again
 within ten minutes of the daemon's start, any other failure writes nothing
 and ends the import, and an answer of no key, of no whole
@@ -139,7 +139,7 @@ boot(Port, Start) ->
     ok.
 
 start_when_granted(Port, Start, Deadline) ->
-    case granted([net, data], Deadline) of
+    case installed([net, data], Deadline) of
         ok -> Start(Port);
         {error, _} = Missing -> Missing
     end.
@@ -157,12 +157,12 @@ deadline() ->
 
 %% ok once the registry holds a facet of each of Names, or the first name it holds none
 %% of when Deadline passes, or when the runtime is no node and no agent writes it.
--spec granted([atom()], deadline()) -> ok | {error, {no_grant, atom()}}.
-granted([], _Deadline) ->
+-spec installed([atom()], deadline()) -> ok | {error, {no_grant, atom()}}.
+installed([], _Deadline) ->
     ok;
-granted([Name | Names], Deadline) ->
+installed([Name | Names], Deadline) ->
     case erx_facets:await(Name, none, Deadline) of
-        {ok, _Facet} -> granted(Names, Deadline);
+        {ok, _Facet} -> installed(Names, Deadline);
         Missing when Missing =:= timeout; Missing =:= {error, noproc} -> {error, {no_grant, Name}}
     end.
 
@@ -171,16 +171,19 @@ granted([Name | Names], Deadline) ->
 %% medium's answer.
 -spec import_when_ready(deadline()) -> import().
 import_when_ready(Deadline) ->
-    case granted([home, login_keys], Deadline) of
-        ok -> import_until(Deadline);
+    case installed([home, login_keys], Deadline) of
+        ok -> import_by(Deadline);
         {error, Reason} -> {retry, Reason}
     end.
 
-import_until({abs, At} = Deadline) ->
+%% One import, tried again every MEDIUM_RETRY_MS while a step of it fails with eagain or
+%% eio, the medium's reader not yet answering, until Deadline.
+-spec import_by(deadline()) -> import().
+import_by({abs, At} = Deadline) ->
     case import(?HOME_KEYS, fun medium_file/0) of
         {retry, Reason} when Reason =:= eagain; Reason =:= eio ->
             case erlang:monotonic_time(millisecond) + ?MEDIUM_RETRY_MS < At of
-                true -> timer:sleep(?MEDIUM_RETRY_MS), import_until(Deadline);
+                true -> timer:sleep(?MEDIUM_RETRY_MS), import_by(Deadline);
                 false -> {retry, {Reason, "no answer within ten minutes"}}
             end;
         Done ->

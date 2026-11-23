@@ -41,7 +41,7 @@ class ErxSshDevTest < Minitest::Test
   Fault = Data.define(:name, :source, :from, :to)
   FAULTS = [
     Fault.new(name: 'the wait for data dropped', source: DEV,
-              from: 'granted([net, data], Deadline)', to: 'granted([net], Deadline)'),
+              from: 'installed([net, data], Deadline)', to: 'installed([net], Deadline)'),
     Fault.new(name: 'a callback for every user name', source: DEV,
               from: 'is_auth_key(Key, ?USER, Options) ->', to: 'is_auth_key(Key, _, Options) ->'),
     Fault.new(name: 'the home copy imported again', source: DEV,

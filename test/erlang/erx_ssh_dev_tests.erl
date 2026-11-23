@@ -513,7 +513,14 @@ with_model_agent(Case) ->
     Clear(),
     Agent = spawn(fun() -> model_agent([]) end),
     true = register(erx_connections, Agent),
-    try Case(Agent) after exit(Agent, kill), Clear() end.
+    try Case(Agent)
+    after
+        %% The name is free again once the agent has ended, for the next case's agent.
+        Ended = monitor(process, Agent),
+        exit(Agent, kill),
+        receive {'DOWN', Ended, process, Agent, _} -> ok end,
+        Clear()
+    end.
 
 %% Installs a facet of a process of its own under Name, through the agent.
 model_install(Agent, Name) ->
