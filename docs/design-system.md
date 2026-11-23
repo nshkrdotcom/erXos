@@ -3246,12 +3246,12 @@ offers each only to such a row and refuses any other with `enotsup`.
 Those entries are dirty I/O NIFs, since the kernel call waits and an executor's would
 answer `ERX_EWOULDBLOCK`. So two requests never meet in the kernel,
 and the device service answers the watchdog's liveness call ([Boot](#boot)) and every
-other call while a request waits. Each entry takes the
-library's lock to read the device's resource before the kernel call and
-to mark a bridge `firmware_lost` after an `ERX_ETIMEDOUT`
-([design-pcie.md](design-pcie.md#the-catalogue-and-gives)), never
-across the wait, so no other entry, and no other service, waits on the
-mailbox. The library's intake takes every function of a marked bridge
+other call while a request waits. Each entry runs outside the
+library's lock and reads only records the view wrote as it was built;
+a bridge's status then goes to its catalogue under the lock, where an
+`ERX_ETIMEDOUT` marks the bridge `firmware_lost`
+([design-pcie.md](design-pcie.md#the-catalogue-and-gives)), so no
+other entry, and no other service, waits on the mailbox. The library's intake takes every function of a marked bridge
 as `not_ready`, so a bridge whose notification timed out gives none of
 its functions for the rest of the boot, whatever a late answer or a
 later start of the PCIe domain finds. The queue holds at most one
