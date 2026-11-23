@@ -36,8 +36,8 @@ Decisions every reader needs:
 * **No bus driver asks for its pins.** The firmware sets the header's
   bus pins from the map's `gpio=` lines before the kernel runs, and the
   system domain's pin driver puts each bus's pins in the table's setting
-  before any configured domain starts, and a bus whose pins could not be
-  set is given to no domain
+  before any configured domain starts, or fails its start, and then no
+  configured domain is created
   ([design-pinctrl.md](design-pinctrl.md#at-start)). So I2C, SPI and
   the vault's TPM depend on no domain but the system domain.
 * **The pin driver sets the on-board pins.** Pins off the header that
@@ -372,9 +372,8 @@ What follows from the rows:
   other device that has one state, before the line service opens UART0
   and before any configured domain starts
   ([design-pinctrl.md](design-pinctrl.md#at-start)). They give no
-  `config.txt` line. A boot whose pins are not set goes on without the
-  devices on those pins: a device whose pins could not be set is given
-  to no domain and started by no driver.
+  `config.txt` line. A pin driver that cannot set one of them fails its
+  start, and the system release does not boot.
 * **One table, one writer.** An on-board pin and a header pin differ
   only in where the board wires them: both are rows, and the pin
   driver alone writes either. The root's boot write of the on-board

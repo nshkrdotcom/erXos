@@ -659,9 +659,10 @@ the registers, and a pure function returns the writes that put every
 device with one setting in it, or refuses the whole plan. The driver
 applies the plan, reads the registers again and plans again: a pin
 the second plan would still write is reported as not set. A pin that
-is already right costs no write. No driver asks for its pins: a
-device is given to its driver with them set, and a device whose pins
-could not be set is not given at all.
+is already right costs no write. The driver of a device with one
+setting never asks for its pins: the pin driver's start has set them,
+or it has failed, and then nothing that drives the device starts. A
+device with more settings is set by its own driver's first select.
 
 After its start the pin driver writes for two kinds of request only.
 One is a line written to `/dev/gpio`, for a plain GPIO pin that a

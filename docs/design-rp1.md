@@ -289,13 +289,14 @@ selects states, so the PHY's reset line moves only when the GEM's driver
 moves it. The end of `erx_rp1` ends every part's driver and starts the
 unit again from step 1. A part's driver that keeps failing before its
 call ends its supervisor within that supervisor's intensity, and with it
-the unit. A part the pin driver reports not ready
-([design-pinctrl.md](design-pinctrl.md#at-start)) is such a part: its
-driver's start fails before it touches the device, so the function
-never masters beside a device that was not reset, and the unit ends by
-the same rule. The unit supervisor's own end ends the domain,
-whose restart the domain service runs within the row's intensity; the
-holder's end sets the function `off`.
+the unit. A start of `erx_pins` that cannot set a pin of a part with
+one state fails
+([design-pinctrl.md](design-pinctrl.md#at-start)): the unit supervisor
+then starts no part's driver, so the function never masters, and the
+unit ends within its intensity as for a failed start of `erx_rp1`. The
+unit supervisor's own end ends the domain, whose restart the domain
+service runs within the row's intensity; the holder's end sets the
+function `off`.
 
 ### Interrupts
 
@@ -391,8 +392,8 @@ the blocks its rows need: `io_bank1` (`0xd4000`) and `pads_bank1`
 (`0xf8000`) for GPIO 42 and 43. The header's bank joins them with the
 first driver of a header pin. The unit supervisor starts `erx_pins`
 after `erx_rp1` answers and before the parts' drivers, so a part with
-one state finds its pins in it, or is not started, and a part with more
-selects its own as its driver starts.
+one state finds its pins in it, and a part with more selects its own as
+its driver starts.
 
 The table's rows on RP1, of kind `rp1`:
 
@@ -468,7 +469,7 @@ firmware's: `INOVER`, as above, and the pads' pull bits, since which pin
 is the input is not known and the rows name no pull. The board check
 records both, and a row gains a pull if the reading shows the input
 needs one. `usb0` has `default` alone, so its pins are set at the pin
-driver's start, and its driver is not started when they differ.
+driver's start, which fails when they differ.
 
 ## The Ethernet controller
 

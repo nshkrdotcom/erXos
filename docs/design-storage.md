@@ -1262,7 +1262,10 @@ data in the platform record
   ([design-pinctrl.md](design-pinctrl.md#states-at-run-time)). A state
   stays until the driver selects another, so the driver's start selects
   the arrangement it needs, and a restart of the pin driver moves
-  neither line. With those rows the bank itself, `gio_aon`, one 64-byte
+  neither line. The grant comes with the domain's ready answer, so the
+  driver's start of the controller then runs after it, from the row's
+  `-eval`, and the block device serves no request before the first
+  select answers `ok`. With those rows the bank itself, `gio_aon`, one 64-byte
   block, joins the always-on pin controller's entry and so its unit,
   which the system domain holds, its register layout taken into a facts
   record with that change.
