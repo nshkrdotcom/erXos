@@ -11,6 +11,7 @@
 #include <stdbool.h>
 #include <stdio.h>
 
+#include "bench_clock.h"
 #include "bench_hist.h"
 #include "bench_periodic.h"
 
@@ -127,6 +128,55 @@ tick_case(void)
 	    result.excess.count[erx_bench_hist_index(7)] == 1 && result.excess.count[0] == n - 1);
 }
 
+/*
+ * Rounds with B's counter offset by true_offset from A's and every transfer taking
+ * transfer ticks, A's first stamp at start.
+ */
+static erx_bench_offset_t
+calibrate(int64_t true_offset, uint64_t transfer, uint64_t start)
+{
+	static erx_bench_round_t rounds[1000];
+
+	for (size_t i = 0; i < sizeof(rounds) / sizeof(rounds[0]); i++) {
+		uint64_t a = start + i * 1000;
+
+		rounds[i] = (erx_bench_round_t){ .a = a,
+		    .b = (uint64_t)((int64_t)(a + transfer) + true_offset), .c = a + 2 * transfer };
+	}
+	return (erx_bench_offset(rounds, sizeof(rounds) / sizeof(rounds[0]), 1));
+}
+
+/* A 50-tick offset inside 100-tick transfers, widened by one tick: [-51, 151]. */
+static bool
+offset_case(void)
+{
+	erx_bench_offset_t offset = calibrate(50, 100, 1000000);
+
+	return (!offset.empty && offset.low == -51 && offset.high == 151 &&
+	    erx_bench_offset_half_width(offset) == 101);
+}
+
+/* Half-width 101: a median of 1,010 ticks is accepted, 1,009 refused. */
+static bool
+cell_case(void)
+{
+	erx_bench_offset_t offset = calibrate(50, 100, 1000000);
+
+	return (erx_bench_cell_bounded(true, offset, offset, 1010) &&
+	    !erx_bench_cell_bounded(true, offset, offset, 1009) &&
+	    erx_bench_cell_bounded(false, offset, offset, 1));
+}
+
+/* An offset that moves by 300 ticks between the calibrations refuses the cells. */
+static bool
+drift_case(void)
+{
+	erx_bench_offset_t before = calibrate(50, 100, 1000000);
+	erx_bench_offset_t after = calibrate(350, 100, 5000000);
+
+	return (!after.empty && !erx_bench_cell_bounded(true, before, after, UINT64_MAX / 16));
+}
+
 int
 main(void)
 {
@@ -135,7 +185,8 @@ main(void)
 		bool (*run)(void);
 	} cases[] = {
 		{ "hist", hist_case }, { "stall", stall_case }, { "early", early_case },
-		{ "sweep", sweep_case }, { "tick", tick_case },
+		{ "sweep", sweep_case }, { "tick", tick_case }, { "offset", offset_case },
+		{ "cell", cell_case }, { "drift", drift_case },
 	};
 
 	for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++)

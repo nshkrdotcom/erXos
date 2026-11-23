@@ -9,16 +9,19 @@ require 'tmpdir'
 require 'fileutils'
 
 # The guest bench library's pure cores on the host (docs/design-bench.md, "The histogram",
-# "Profiles", "Verification"), through test/fixtures/bench_periodic_driver.c: the
+# "Profiles", "Verification"), through test/fixtures/bench_cores_driver.c: the
 # histogram's buckets hold their samples and are at most 1/64 of their lower bound wide;
 # a periodic schedule never moves a deadline, so a stall shows as missed periods and
 # lateness, and a return before its deadline is early; the phase sweep visits sixteen
 # phases, and a timer that fires only on ticks shows as a per-phase minimum that varies by
-# about a tick. Seeded faults must each fail a check.
+# about a tick; the cross-CPU offset is the causal interval of the calibration's rounds,
+# and a cell across CPUs reports only when it is narrow and did not move. Seeded faults
+# must each fail a check.
 class BenchPeriodicTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
-  SOURCES = %w[test/guest/bench/bench_hist.c test/guest/bench/bench_periodic.c test/fixtures/bench_periodic_driver.c].freeze
-  EXPECTED = ['hist ok', 'stall ok', 'early ok', 'sweep ok', 'tick ok'].freeze
+  SOURCES = %w[test/guest/bench/bench_hist.c test/guest/bench/bench_periodic.c test/guest/bench/bench_clock.c
+               test/fixtures/bench_cores_driver.c].freeze
+  EXPECTED = ['hist ok', 'stall ok', 'early ok', 'sweep ok', 'tick ok', 'offset ok', 'cell ok', 'drift ok'].freeze
 
   # name => [file, original, replacement]; each must turn a line of EXPECTED into a failure.
   MUTANTS = {
@@ -31,7 +34,11 @@ class BenchPeriodicTest < Minitest::Test
       ['test/guest/bench/bench_periodic.c', 'stamps[i].returned < deadline', 'stamps[i].returned <= deadline'],
     'the phase term dropped' =>
       ['test/guest/bench/bench_periodic.c', '(uint64_t)erx_bench_periodic_phase(k) * period / ERX_BENCH_PHASES',
-       '0']
+       '0'],
+    'the stamps ordering test instead of the causal interval' =>
+      ['test/guest/bench/bench_clock.c',
+       "\t*low = (int64_t)round->b - (int64_t)round->c;\n\t*high = (int64_t)round->b - (int64_t)round->a;\n",
+       "\t*low = 0;\n\t*high = 0;\n"]
   }.freeze
 
   def setup
