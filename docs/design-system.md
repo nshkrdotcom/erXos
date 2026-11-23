@@ -2631,7 +2631,12 @@ a state change, so a silent or slow mint holds one record until its
 deadline and no more, and the domain service goes on handling ends and
 restarts meanwhile. The server's mint starts each facet with
 `erx_facet:start/3`, which exports it to the grantee before the reply
-names it. A facet whose operation was cancelled or failed after the
+names it, and answers a failure only once the process it spawned has
+ended: when that process's init does not report within the start's
+deadline of five seconds, `start/3` kills it and takes its `'DOWN'`,
+keeping its monitor until then, before it answers `{error, timeout}`. So
+a failed start leaves no facet behind, and a caller that starts another
+next never runs two. A facet whose operation was cancelled or failed after the
 server minted it is never installed; it ends with its grantee through its
 `ends_with`, or, for the system domain as grantee, with the server. There
 is at most one such facet per pair, since a pair runs one operation.
@@ -2799,18 +2804,27 @@ with what its grant names. The pieces:
   carries ([design-abi.md](design-abi.md#services-facets-and-their-parameter-schemas)),
   each required of a `served_by session` interface:
   * `max_request` is derived from every argument variant the line
-    serves, as the facet measures a request: `erlang:external_size/1` of
-    the call `{'$gen_call', From, Request}`, the envelope left out, with
-    the caller's pid and alias and every pid in `Request` of a node name
-    at its 255-character bound. It is the smallest power of two not
-    below the largest such encoding, so an encoding that grows a little
-    between OTP releases still fits, and a variant that enters the
-    interface derives it again. A host test builds the largest request of
-    each variant and checks it fits. For `ssh_line` the largest is an
+    serves, under both measures a request meets: the decoded size that
+    the facet contract's funnel checks before a message is queued
+    ([design-domains.md](design-domains.md#facets)), read here as the
+    term's heap words times the word size plus the bytes of every binary
+    it references, and the encoded size `erx_facet` checks, which stands
+    in for the funnel's check while that is a residual of
+    [todo-domains.md](todo-domains.md): `erlang:external_size/1` of the
+    call `{'$gen_call', From, Request}`, the envelope left out. Each is
+    taken with the caller's pid and alias and every pid in `Request` of a
+    node name at its 255-character bound, and the bound is the smallest
+    power of two not below the larger of the two for the largest
+    request, so a request that grows a little between OTP releases still
+    fits, and a variant that enters the interface derives it again. A
+    host test builds the largest request of each variant and checks both
+    measures against it. For `ssh_line` the largest is an
     `open_tty` of `{exec, Command}` with a 32 KiB command and a 64-byte
-    `TERM`, about 33 KiB by the external term format's sizes, so 65,536;
-    for `web_line` an `open` of a `path` of 16 segments of 256 bytes,
-    about 5 KiB, so 8,192. A `trace` target's selection, up to 16
+    `TERM`, about 33 KiB under either measure, since the command's bytes
+    dominate both, so 65,536; for `web_line` an `open` of a `path` of 16
+    segments of 256 bytes, about 5 KiB under either, so 8,192. These
+    sizes are worked from the external term format and the heap layout,
+    not measured; the host test measures them. A `trace` target's selection, up to 16
     presentations of up to 4 KiB of text, enters `open` with the trace
     view and raises `web_line`'s to 131,072.
   * `in_flight` is how many of the grantee's requests the line serves at
@@ -2846,7 +2860,10 @@ with what its grant names. The pieces:
   `erx_facet:start/3`, bound to `Grantee`, within `Limits`, and ending
   with the session's connection to `Grantee`
   (`erx_connections:connection/1`), with the line process and with the
-  opening that `Limits` names. Last it replies with
+  opening that `Limits` names; `start/3` answers a failure only once the
+  process it spawned has ended, a timed-out one killed and its `'DOWN'`
+  taken ([Failure](#facets-a-configured-domain-serves), above), so no
+  failed start overlaps the next. Last it replies with
   `erx_facet:minted/2`: `{ok, Facet}`, or a refusal when the start
   failed, after which the line holds no facet until the next request.
   Every other message in an envelope is dropped. So a line has one facet
@@ -2871,11 +2888,18 @@ with what its grant names. The pieces:
 * **What the session sends a front end.** The line process sends a front
   end nothing, since every send to another domain exports its sender
   ([design-domains.md](design-domains.md#exports)). Its answers go
-  through the facet. A tty sends its channel the console messages and,
-  as its last message, the ending of what ran on it, `{exited, Status}`
-  or `{signaled, Signal}`; a job's relay sends its channel the job's
-  messages and its ending; a web view sends its own updates. Each of
-  these is a name the front end was already handed.
+  through the facet. A tty is two processes of the session, a console
+  that drives its shells and a terminal relay that speaks to its master
+  ([design-shell.md](design-shell.md#the-terminal-relays-protocol)), and
+  only the relay sends the channel anything: the console messages, which
+  it opens with `{tty_open, Relay}`, and, as its last message before it
+  ends, the ending of what ran on the tty, `{exited, Status}` or
+  `{signaled, Signal}`, which the console hands it once the shell has
+  ended and the channel has taken the last output. A job's relay sends
+  its channel the job's messages and its ending; a web view sends its own
+  updates. So every sender is a name the front end was already handed,
+  the tty's relay, the job's relay or the view, and the console, like the
+  line process, is exported to no front end.
 * **The opening.** `erx_domain:line(Name, Session, Peer, Opening)` names
   the opening, a process of the system domain: the host link's `web`
   facet process, which asks for root's line as it opens, or, for a
@@ -2896,19 +2920,41 @@ with what its grant names. The pieces:
   ([design-web.md](design-web.md#views-on-the-line)): it takes, in its
   grantee's envelope alone, `next`, `stop` and, for a UI view, the
   events of `abi/protocols/web.txt`'s grammar within its bounds, and
-  drops and counts everything else; it charges its facet's account for
-  its work, and its queue and heap are held by the session runtime's
-  queue quota and its own `max_heap_size`; and it ends at `stop`, with
-  the grantee's caller that opened it, with the session, and with the
-  facet through which it was opened, which it monitors. So the host's
+  drops and counts everything else; and it charges its facet's account
+  for its work. It runs with the heap limit its interface declares for
+  it, as such a process does, `web_line_view_heap_max` in
+  `abi/services/web.txt`, 262,144 words, set when the line spawns it with
+  `max_heap_size` killing at the limit and counting the binaries it
+  references, and with its message queue on its heap, so what waits
+  unread counts toward the same limit, the session runtime setting no
+  queue quota by default
+  ([design-domains.md](design-domains.md#flow-control)). The value holds
+  a view's last projection, at most one 64 KiB update, beside the
+  inspector's largest record before projection, a listing page of 1,000
+  children, with room to spare; it is chosen, not measured, and the
+  view's heap test measures a view over that page and confirms, on OTP
+  29.1.2, that a flood of unread messages ends the view at the limit. A view ends at
+  `stop`, with the grantee's caller that opened it, with the session,
+  and with the facet through which it was opened, which it monitors;
+  that monitor's `'DOWN'` reaches it even while its share is spent,
+  since a paused process takes the `'DOWN'` of its facet beside the
+  facet's resume message
+  ([design-domains.md](design-domains.md#facets)). So the host's
   closing of its `web` facet ends every root view opened under it,
-  while root's session and its UIs stay, and a replaced facet's views
-  end and are never bound to the new grantee. The line's table bounds
-  the views that live at once, 64; a connection's `web_views_max` bounds
-  its own. A tty is the console's
-  ([design-live.md](design-live.md#paths)): it takes the console
-  messages from its master alone and ends at `tty_hangup`, with its
-  master's end and with the session.
+  paused or not, while root's session and its UIs stay; a replaced
+  facet's views end and are never bound to the new grantee; and each
+  ended view leaves the line's table, which bounds the views that live
+  at once to 64, as a connection's `web_views_max` bounds its own.
+  A tty is the one name a line hands out that does not end with its
+  facet. It is the console's
+  ([design-live.md](design-live.md#paths)): its relay takes the console
+  messages from its master alone, and the tty ends at `tty_hangup`, with
+  its master's end and with the session, as a terminal ends with its
+  line, so a shell is never killed under a channel that is still open.
+  An SSH line's facet is replaced only by another login into the same
+  session, which [Logging in](design-ssh.md#logging-in) never makes,
+  and its opening, the login facet, ends only with the SSH domain, whose
+  end ends the session and every tty in it.
 * **Calls of the session's own.** A process of the session reaches the
   line process directly, without an envelope, since it acts with the
   session's authority anyway; the browser renderer hands the web line a
@@ -2958,9 +3004,9 @@ whose `ends_with` names a process that has ended.
 | **L1.** No domain but the system domain chooses who reaches a session's line, and no front end holds the line process's name | the line process acts on no message from another domain but the mint request in the system domain's envelope, which the domain service sends only on an `erx_domain:line/4` of the system domain's own processes; the system domain learns the line process's name from the ready report, as it learns every mint's; the line process sends a front end nothing, so no export of it reaches one, and a front end reaches it only through a facet minted for it |
 | **L2.** A front end reaches a line only within a facet's bounds | the line is an `erx_facet`, whose admission, limits and counts are the behaviour's ([design-domains.md](design-domains.md#facets)) |
 | **L3.** A line's facet ends with its session, with its grantee's connection and with its opening | its `ends_with` names the session's connection to the grantee, the line process and the opening; the line process is its application's one process, started permanent, so its end ends the session domain and the session's end ends it |
-| **L4.** A line has at most one facet | the mint starts a facet only after it has taken the `'DOWN'` of the one before |
+| **L4.** A line has at most one facet | the mint starts a facet only after it has taken the `'DOWN'` of the one before, and `erx_facet:start/3` answers a failure only after the process it spawned has ended |
 | **L5.** No facet of an ended session or for an ended peer is handed out | a line operation is bound to its pair: the end of either domain answers it and deletes it, and a reply after that matches nothing |
-| **L6.** What a front end was handed through a line ends with the facet it came through | a view monitors the facet through which it was opened and ends with it, and a tty ends with its master |
+| **L6.** A view a line handed out ends with the facet it came through | a view monitors the facet through which it was opened and takes that monitor's `'DOWN'` paused or not; a tty is the one exception, ending with its master and its session (Views and ttys, above) |
 | **L7.** Which services are lines is one fact | `served_by session` in `abi/services`, from which `?ERX_LINES`, the facet-name check and the manifest check's refusal are derived |
 
 L1 binds other domains. A process of the session itself acts with the
@@ -2973,8 +3019,8 @@ past the session.
 **Authority.** The facet carries the grant to call the line's operations
 and nothing more, for as long as its opening, its session and its
 grantee's connection last. A reply may hand out a further name, exported
-to the grantee with `send` alone, as every facet's reply may; the line
-binds each such name to the facet it came through (L6). The line holds
+to the grantee with `send` alone, as every facet's reply may; a view
+ends with the facet it came through (L6), and a tty with its master. The line holds
 no authority beyond the session's: its views read through the session's
 inspect facet at that facet's scope, and its ttys run the session's
 shell.
@@ -2987,7 +3033,8 @@ shell.
 | the peer ends during the operation | the asker gets `ended`; a facet already minted ends with the connection |
 | the session's mint is silent | the deadline answers `unavailable`; a facet it mints afterwards is handed to no one and ends at the line's next mint, with the session, with the connection or with its opening, so a line has at most one such facet |
 | the new facet does not start at a replacement | the line holds no facet, and the asker gets `refused`; the old grantee's facet has ended, and a new grant needs a new request |
-| the opening ends | the facet ends, and every view opened through it; the session, its UIs and its ttys' shells stay |
+| the opening ends | the facet ends, and every view opened through it, paused ones included, each leaving the line's table; the session, its UIs and its ttys' shells stay |
+| a facet's start times out | `start/3` kills the facet and takes its `'DOWN'` before it answers `{error, timeout}`; the line holds no facet and the asker gets `refused` |
 | the line process ends | its application is permanent, so the session domain ends, and every facet of the line with it |
 | the grantee restarts | the facet ends with the connection; the new incarnation gets a line only by a new request: a login, or the host link's `web` facet opening again |
 | a session's ready report provides a line under a pid the session does not own | that entry is refused, logged and counted, as a configured domain's entry is, and the report's other providers stand; `erx_domain:line/4` for it answers `no_line` |
@@ -3002,11 +3049,12 @@ shell.
 | mint core, a second request (host) | a request while one is pending for the same session and line is answered `busy`, and one mint request is sent | a second operation started beside the first |
 | session providers (host) | a session providing `web_line` and `ssh_line` under pids it owns has both; a pid of another node refuses that entry alone and the other line stays; a map naming `data` is refused whole; each refusal is counted, and `line/4` answers `no_line` for a refused line | the name check against `?ERX_LINES` dropped |
 | the line's mint (host, `erx_session_line`) | the mint request in the system domain's envelope starts a facet bound to the grantee, exported to it with `send`, and answers `minted`; the same request in the grantee's envelope, or naming the system domain as grantee, starts none | the envelope's origin not compared with the system domain's id |
-| replacement (host) | at a second mint the stand-in export table records the new facet's export only after the old facet's `'DOWN'`; a request the old facet forwarded before its end is served at the line, while a call to the old facet after its end is admitted nowhere; a new facet that fails to start leaves the line with none and answers a refusal | the new facet started before the old one ends, so two live facets are observed |
+| replacement (host) | at a second mint the stand-in export table records the new facet's export only after the old facet's `'DOWN'`; a request the old facet forwarded before its end is served at the line, while a call to the old facet after its end is admitted nowhere; a new facet that fails to start, by a refused init or by a stand-in init that never reports, leaves the line with none and answers a refusal, the timed-out one's `'DOWN'` taken before the refusal | the new facet started before the old one ends, so two live facets are observed; and `start/3` answering `timeout` before the killed child's `'DOWN'`, so the stand-in sees it alive after the refusal |
 | the facet's lifetime (host) | closing the stand-in connection ends the facet, and so do the line process's end and the stand-in opening's | the opening left out of `ends_with` |
-| no door beside the facet (host) | after an `open_tty` and the ending of what ran on its tty, the stand-in export table holds no export of the line process toward the SSH domain, and a call sent to the line process in the grantee's envelope reaches no callback | the line process sending a tty's ending to the channel itself |
+| no door beside the facet (host) | after an `open_tty` and the ending of what ran on its tty, the stand-in export table holds no export of the line process or of the tty's console toward the SSH domain, the ending having come from the tty's relay, and a call sent to the line process in the grantee's envelope reaches no callback | the line process sending a tty's ending to the channel itself |
 | request bounds (host) | the largest request of each implemented variant, with node names at their bound, encodes within its line's `max_request`; an `open_tty` with a 32 KiB `exec` command is admitted, one past `max_request` is dropped and counted, and the eleventh channel is answered `limited` | `ssh_line`'s `max_request` left at the facet's default of 4 KiB, which refuses the 32 KiB command |
-| the web line's views (host) | an `open` through the facet starts a view that answers the grantee's caller and takes `next` and `stop` in the grantee's envelope alone, dropping and counting any other message; the view ends with its facet, at a replacement or at its opening's end, and never answers the new grantee | the view not monitoring its facet, so it outlives the host's closing |
+| the web line's views (host) | an `open` through the facet starts a view that answers the grantee's caller and takes `next` and `stop` in the grantee's envelope alone, dropping and counting any other message; the view ends with its facet, at a replacement or at its opening's end, and never answers the new grantee; a view paused with its share spent ends at its facet's end all the same and its table entry is freed, so a 65th open after 64 such ends succeeds | the view not monitoring its facet, so it outlives the host's closing; and a paused receive that takes only the resume message, so a paused view outlives its facet |
+| a view's heap (host) | a view over a 1,000-child listing page stays within `web_line_view_heap_max`; a flood of unread messages from the grantee ends that view alone at the limit | the view spawned without `max_heap_size`, so the flood grows it past the limit |
 | the line names (build check) | a source that provides `web_line` passes the facet-name check; one that provides a name no manifest row and no `served_by session` interface declares fails it; a manifest `facet` row of `ssh_line` is refused | `served_by session` removed from `web_line`'s declaration |
 | the host link's web views (QEMU) | in a development build, opening the host link's `web` facet gives the web domain root's line, a browser's record view equals the read from root's console, and closing the facet ends the view | a test build whose line mint refuses every request, so the view ends `unsupported` |
 

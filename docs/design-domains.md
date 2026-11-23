@@ -2338,18 +2338,20 @@ holding the reductions spent in the period and the period's number. The
 process adds the reductions of each of its steps as soon as the step
 ends, and before it takes its next message compares the account with
 the share. While the share is spent it tells the facet it has paused and
-takes only the facet's resume message and the exits of its links, by a
-selective receive, until the period turns. At each turn the facet
+takes only the facet's resume message, the exits of its links and the
+`'DOWN'` of its monitor on the facet, by a selective receive, until the
+period turns, so a facet's end ends a paused process too. At each turn the facet
 subtracts the share from the spent count, never below zero, so an
 overrun is a debt carried into the next period, and resumes every
 process that paused; a pause reported after a turn it missed is resumed
 at once. Each process checks before a step and charges after it, so the
 account exceeds the share by at most one step per such process, which
 the grant's limit on them bounds, and the debt repays it.
-In the system domain each such process runs with the heap limit its
-interface declares for it and ends with the facet, which it monitors,
-so the grant's limit on them times that heap limit is a term of
-what the grantee can make the system domain hold ([Flow
+Each such process runs with the heap limit its interface declares for
+it and ends with the facet, which it monitors, as a session line's
+views do ([design-system.md](design-system.md#a-sessions-lines)); in
+the system domain the grant's limit on them times that heap limit is a
+term of what the grantee can make the system domain hold ([Flow
 control](#flow-control)).
 
 **Who asks.**

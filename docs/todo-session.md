@@ -355,12 +355,15 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   4. Domain service: `erx_domain:line/4` with its opening becomes one call answered by the core, the opening
      carried in the mint's limits as a computed parameter; delete `lines`, `keep_lines/4`, the
      `{line, Name, Id}` call and `export_line/2`, and the `keep_lines/4` item of [todo-runtime.md](todo-runtime.md).
-  5. `erx_session_line`: the mint (system domain's mint request alone; end the facet before and take its
+  5. `erx_facet:start/3` keeps its monitor on a timed-out child, kills it and takes its `'DOWN'` before it
+     answers `{error, timeout}`. `erx_session_line`: the mint (system domain's mint request alone; end the facet before and take its
      `'DOWN'`, then start the new one, none if that fails; `ends_with` the connection, the line and the opening)
      and the facet callback that forwards with the grantee, its caller and the facet; delete the peer's call
      clause and `{export, Peer}`. `erx_web_line` and `erx_ssh_line` take the caller, peer and facet from the
-     forward; a web view monitors its facet. The tty sends its channel its ending itself
-     (`erx_console:shell_ending/1`'s caller), and `erx_ssh_line` sends a front end nothing; `erx_facet`'s
+     forward; a web view monitors its facet, runs with `web_line_view_heap_max` (262144 words, declared in
+     `abi/services/web.txt`) and its queue on its heap, and takes its facet's `'DOWN'` while paused. The tty's
+     console hands its ending to the tty's relay (`erx_session_relay`), which sends it to the channel as its last
+     message, and `erx_ssh_line` sends a front end nothing; `erx_facet`'s
      moduledoc on lines and `erx_ssh_line`'s naming of a signal set `ssh_line` (the set is `tty_master`) follow.
   6. Callers: `erx_hostlink_web`'s facet process asks for root's line in its own init, naming itself the
      opening, and takes the facet as the line; the host tests of both lines, the domain service and the

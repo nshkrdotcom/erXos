@@ -943,7 +943,8 @@ open question "How a job's messages reach their job"
 signal that ends an exec on a tty. A tty's ending has only these two
 shapes, with `Status` from 0 to 255 and `Signal` in that set, because
 the console that makes it maps any other end to status 1
-(`erx_console:shell_ending/1`) and sends it to the channel itself;
+(`erx_console:shell_ending/1`) and hands it to the tty's relay, the
+process the channel holds as the tty, which sends it as its last message;
 the channel checks it against that set and closes on any other. FreeBSD's `sh -c` dies of the SIGINT
 that ends its command (`onint` in `bin/sh/error.c` of FreeBSD 14.2,
 lines 117-123), rather than exiting 130, the `$?` a parent shell gives
@@ -953,8 +954,8 @@ and OpenSSH's `sshd` sends `exit-signal` for a command a signal ended
 not an exit, on both systems. A hangup needs no ending, since the
 channel is gone by then.
 
-The tty, or the job's relay, sends its channel one ending, as its last
-message, once what it started on the channel, the
+The tty's relay, or the job's relay, sends its channel one ending, as
+its last message, once what it started on the channel, the
 shell on the tty or the job, has ended, every process it started has
 ended with it, and its last output has been taken, by `tty_taken` or
 `job_sent`, so the ending arrives after every byte of output. The
