@@ -512,7 +512,9 @@ The rule that keeps the design safe is that everything a medium's
 bytes reach belongs to that medium. The reader, the volume processes
 and littlefs's sub-spaces are children of one supervisor per medium,
 which ends when the medium's window does, and each runs under a memory
-bound the media domain's budget covers. A crafted volume therefore
+bound; only volumes that together exhaust the media domain's memory
+end more than their own mounts, and the domain's restart recovers
+them. A crafted volume therefore
 ends at most its own mount, and a crafted table its own stick's; a
 pulled stick ends its volumes, and an open file on it answers `eio`;
 the next stick in the same drive meets nothing the last one left; and
@@ -520,9 +522,10 @@ no stick is mounted twice at once, since asking for its window again
 restarts its block service first.
 `eject`, and the machine's orderly shutdown, give each volume a last
 request that closes it to anything later, writes what it holds and
-flushes, so nothing it acknowledged is lost on a stick that flushes. A volume is written only when one
-format alone claims it, the medium can flush and the format allows
-it, so a stick formatted twice is never written as the wrong format.
+flushes, so nothing it acknowledged is lost on a stick that flushes. A volume is written only when its
+format is one erXos writes, the probe finds on it no second format the
+system writes, the medium can flush and the format allows it, so a
+stick formatted twice is never written as the wrong format.
 
 An EROFS image on a stick has no hash tree the boot image vouches
 for, so the media domain reads it unauthenticated. The EROFS decoder

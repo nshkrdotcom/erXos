@@ -1648,7 +1648,7 @@ server's statfs at the entry's root (`erx_file_remote:statfs/2`), whose
 `type` is the number the server chose, a member of the `p9_magic` enum of
 `abi/protocols/9p.txt` for erXos's servers. `mount` prints a member's
 name, which the ABI file gives as FreeBSD's name where FreeBSD has the
-file system (`tmpfs`, `procfs`, `devfs`, `msdosfs`), the project's own otherwise
+file system (`tmpfs`, `procfs`, `devfs`), the project's own otherwise
 (`littlefs`, `erofs`, and `media`, the drives' tree), and `ramfs` for the made trees with no type of
 their own (the start service's tree, `/machine` and a display's window
 tree), after

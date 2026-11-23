@@ -11,14 +11,14 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   names, landing in this order:
   1. `abi/manifest.txt` and the manifest check: the window role `fat` becomes `drive`, which names no
      partition and is held only by the media domain; the rules of design-drives.md's "Manifest rows",
-     each with a seeded manifest, the media domain's budget rule among them; `media_volumes_max` and
-     `media_volume_bytes` as limits; the 9P statfs types `msdosfs` and `media` in
-     `abi/protocols/9p.txt`; the `media` service, its mount point in `erx_ns`, and its durability facet
+     each with a seeded manifest; `media_volumes_max` and `media_volume_bytes` as limits; the 9P
+     statfs type `media` in `abi/protocols/9p.txt`; the `media` service, its mount point in `erx_ns`, and its durability facet
      to the system domain in the facet table.
   2. The whole-medium window: `erx_usb_bot`'s block service with one window over the medium and
      `erx_blk_drive`, the drive grant, which, asked again for a window it answered, ends and restarts
-     the medium's block service first (on USB as UNIT ATTENTION ends a medium; on a block device by a
-     restart request of `erx_blk`'s device process, behind the earlier window's requests); `erx_blk`
+     the medium's block service first through the medium reference the issuing process checks (on USB the
+     engine's, as UNIT ATTENTION ends a medium; on a block device one `erx_blk`'s device process gains,
+     USB's rule), answering the new window only after the old reference's issued requests finish; `erx_blk`
      serving a `block` device's medium as a drive. Its moduledoc's "not started yet" goes.
   3. `erx_media_table` (MBR, GPT with both copies and the metadata rule, none, whole-table refusal,
      `place/3`) and `erx_media_probe` with `abi/formats/probe.txt`, pure, with their fuzz targets and
