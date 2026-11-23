@@ -193,11 +193,25 @@ init(Opts) ->
     ok = watch_release(),
     case principals(Lib, Opts) of
         {ok, Principals} ->
-            {ok, booted(state(Lib, Principals, Opts)), {continue, boot}};
+            State = state(Lib, Principals, Opts),
+            ok = become_installer(State),
+            {ok, booted(State), {continue, boot}};
         {error, Reason} ->
             logger:error("erx_domain_srv: cannot read the principals of the system manifest "
                          "(/manifest), which the domain library booted from: ~0p", [Reason]),
             {stop, {system_manifest, Reason}}
+    end.
+
+%% The service makes itself the system domain's agent's installer, the one process whose
+%% installations the agent takes (erx_connections:become_installer/0), before it grants
+%% anything. Where the runtime is no node no agent runs, and the system domain is granted
+%% nothing (mint_act/2). A refusal, another process having claimed first, ends the start,
+%% and with it the system domain, since the service is never restarted.
+become_installer(#{agent := Agent}) ->
+    case Agent:become_installer() of
+        ok -> ok;
+        {error, noproc} -> ok;
+        {error, badarg} -> error({connection_agent, installer_claimed})
     end.
 
 %% The service's state as it starts, with Lib its library and Principals the manifest's.

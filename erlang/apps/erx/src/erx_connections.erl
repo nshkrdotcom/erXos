@@ -23,7 +23,7 @@
 -module(erx_connections).
 -moduledoc false.
 
--export([start/2, open_side/2, close_side/2, grant/1, dropped/0, connection/1, area/1, app/0,
+-export([start/2, open_side/2, close_side/2, become_installer/0, grant/1, dropped/0, connection/1, area/1, app/0,
          app_held/0]).
 %% A domain's agent past its system connection's hand-over, and the system domain's agent,
 %% which start/2 runs and the host test (test/erlang/erx_connections_tests.erl) runs with
@@ -74,12 +74,22 @@ close_side(Id, Reason) when Reason =/= normal ->
 %% erx_facets:install/1 does, answers every process waiting for an installation
 %% (erx_facets:changed/1), and then answers ok, so the agent is the registry's one writer
 %% in every domain and no installation goes unanswered (docs/design-system.md, "Waiting
-%% for a grant"). The domain service alone calls it, which the build's
-%% facet-install-callers chokepoint holds. {error, badarg} asked of a domain's agent,
-%% whose installations come from the system domain over its connection.
+%% for a grant"). The agent takes it only from its installer (become_installer/0);
+%% {error, badarg} asked by any other process, and asked of a domain's agent, whose
+%% installations come from the system domain over its connection.
 -spec grant(#{atom() => erx_facets:facet()}) -> ok | {error, noproc | badarg}.
 grant(Facets) when is_map(Facets) ->
     call({grant, Facets}).
+
+%% In the system domain: makes the caller the agent's installer, the one process whose
+%% grant/1 it takes, for the runtime's life. The domain service calls it as it starts,
+%% and installs only the grants the manifest gives; it is never restarted, its end ending
+%% the system domain, so the first claim is the only one. ok when no process is the
+%% installer, or the caller is; {error, badarg} when another process is or was, and
+%% asked of a domain's agent.
+-spec become_installer() -> ok | {error, noproc | badarg}.
+become_installer() ->
+    call(become_installer).
 
 %% How many messages this runtime's agent has dropped, each one it does not act on:
 %% in a domain, a record that did not come from the system connection among them
@@ -181,7 +191,13 @@ lane_open(Command) ->
 %% opens from its open command.
 -spec system_sides(pid(), fun((string()) -> port())) -> no_return().
 system_sides(Kernel, Open) ->
-    sides(#{kernel => Kernel, open => Open, waiters => #{}}, #{}, 0).
+    sides(#{kernel => Kernel, open => Open, waiters => #{}, installer => none}, #{}, 0).
+
+%% The installer claimed by Caller: taken when none is, kept when Caller is it, and
+%% refused when another process is or was.
+claim(Caller, #{installer := none} = Env) -> {ok, Env#{installer := Caller}};
+claim(Caller, #{installer := Caller} = Env) -> {ok, Env};
+claim(_Caller, #{} = Env) -> {{error, badarg}, Env}.
 
 %% The system domain's agent: the domain service's calls, with each side by domain id
 %% as {Port, Monitor, Phase}: its port, the monitor on it, and {opening, From}, the
@@ -197,7 +213,13 @@ system_sides(Kernel, Open) ->
 %% service closes is no longer monitored, so its ordered end tells no one. The owner's
 %% word for a side no longer opening, one closed or ended first, is ignored, and anything
 %% else dropped and counted in Dropped. The service's installations in the system domain's
-%% registry (grant/1) and the waits for them (asked/3) are served as in records/3.
+%% registry (grant/1) and the waits for them (asked/3) are served as in records/3; an
+%% installation is taken only from Env's installer, none or the pid of the process that
+%% made itself the installer (become_installer/0), so no slip of another process installs
+%% a facet whose rights the manifest did not give, and a slip's claim before the domain
+%% service's ends the service's start. The caller's pid is what its
+%% call says it is: a message forged with the installer's pid installs, as a direct write
+%% of the registry would, and neither is a slip.
 sides(#{kernel := Kernel, open := Open} = Env, Sides, Dropped) ->
     receive
         {'$gen_call', From, {open_side, Id, Values}} when not is_map_key(Id, Sides) ->
@@ -229,9 +251,20 @@ sides(#{kernel := Kernel, open := Open} = Env, Sides, Dropped) ->
                     gen:reply(From, ok),
                     sides(Env, Sides, Dropped)
             end;
-        {'$gen_call', From, {grant, Facets}} when is_map(Facets) ->
-            Next = write(Facets, Env),
-            gen:reply(From, ok),
+        %% A caller that is no pid, none among them, is never the installer.
+        {'$gen_call', {Caller, _} = From, {grant, Facets}} when is_pid(Caller), is_map(Facets) ->
+            case Env of
+                #{installer := Caller} ->
+                    Next = write(Facets, Env),
+                    gen:reply(From, ok),
+                    sides(Next, Sides, Dropped);
+                #{} ->
+                    gen:reply(From, {error, badarg}),
+                    sides(Env, Sides, Dropped)
+            end;
+        {'$gen_call', {Caller, _} = From, become_installer} when is_pid(Caller) ->
+            {Reply, Next} = claim(Caller, Env),
+            gen:reply(From, Reply),
             sides(Next, Sides, Dropped);
         {'$gen_call', {Pid, _} = From, {changed, Seen}} when is_pid(Pid), is_integer(Seen), Seen >= 0 ->
             sides(asked(From, Seen, Env), Sides, Dropped);

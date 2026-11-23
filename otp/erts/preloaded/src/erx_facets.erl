@@ -14,7 +14,7 @@ install/1 is the one writer, and the domain's connection agent
 (erx_connections) its one caller, in every domain: in the system domain the
 domain service installs through the agent (erx_connections:grant/1). The
 `facet-registry-writers` chokepoint refuses any other caller of install/1,
-and `facet-install-callers` any caller of erx_connections:grant/1 but the
+and the system domain's agent takes erx_connections:grant/1 only from the
 domain service.
 
 The registry's value carries a generation, a count that each installation

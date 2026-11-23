@@ -567,12 +567,21 @@ wait_test_() ->
             {await_timeout, fun await_timeout/2}],
     [{atom_to_list(Name), fun() -> with_registry(fun() -> with_agent(fun(A) -> Case(A, domain_install(A)) end) end) end}
      || {Name, Case} <- Both]
-    ++ [{"system_" ++ atom_to_list(Name), fun() -> with_registry(fun() -> with_sides(fun(A) -> Case(A, fun system_install/2) end) end) end}
+    ++ [{"system_" ++ atom_to_list(Name), fun() -> with_registry(fun() -> with_service(fun(A) -> Case(A, fun system_install/2) end) end) end}
         || {Name, Case} <- Both]
     ++ [{"granted_before_wake", fun() -> with_registry(fun() -> with_agent(fun granted_before_wake/1) end) end},
         {"empty_answer_raises", fun() -> with_registry(fun() -> with_agent(fun empty_answer_raises/1) end) end},
         {"install_refused_in_a_domain", fun() -> with_registry(fun() -> with_agent(fun install_refused/1) end) end},
-        {"install_only_from_own_runtime", fun() -> with_registry(fun() -> with_sides(fun install_own_runtime/1) end) end}].
+        {"install_enveloped_refused", fun() -> with_registry(fun() -> with_service(fun install_enveloped_refused/1) end) end},
+        {"install_only_from_domain_service", fun() -> with_registry(fun() -> with_sides(fun install_only_from_service/1) end) end}].
+
+%% The system domain's agent, with the test process playing the domain service, the
+%% agent's installer (erx_connections:become_installer/0).
+with_service(Case) ->
+    with_sides(fun(Agent) ->
+                       ?assertEqual(ok, erx_connections:become_installer()),
+                       Case(Agent)
+               end).
 
 with_registry(Case) ->
     Clear = fun() -> [persistent_term:erase(Key) || Key <- [{erx, facets}, {erx, granted}]] end,
@@ -739,15 +748,17 @@ empty_answer_raises(Agent) ->
 
 install_refused(_Agent) ->
     %% A domain's installations come from the system domain over its connection, so its
-    %% agent answers grant/1 badarg and installs nothing.
+    %% agent answers grant/1, and the claim to be its installer, badarg and installs
+    %% nothing.
     Facet = facet(),
+    ?assertEqual({error, badarg}, erx_connections:become_installer()),
     ?assertEqual({error, badarg}, erx_connections:grant(#{forged => Facet})),
     ?assertEqual(undefined, erx_facets:find(forged)),
     ?assertEqual(0, erx_facets:generation()),
     exit(Facet, kill).
 
-install_own_runtime(Agent) ->
-    %% The system domain's agent installs what its own runtime asks and answers after;
+install_enveloped_refused(Agent) ->
+    %% The system domain's agent installs what the domain service asks and answers after;
     %% the same request, and a request to hear of an installation, in another domain's
     %% envelope are no calls it takes: dropped and counted, installing and answering
     %% nothing. A generation that is no non-negative integer is answered badarg.
@@ -763,4 +774,38 @@ install_own_runtime(Agent) ->
     ?assertEqual({messages, []}, process_info(self(), messages)),
     ?assertEqual({reply, {error, badarg}}, gen:receive_response(erx_facets:changed(-1), 1000)),
     ?assertEqual({reply, {error, badarg}}, gen:receive_response(erx_facets:changed(none), 1000)),
+    exit(Facet, kill).
+
+install_only_from_service(Agent) ->
+    %% The system domain's agent installs only what its installer asks: grant/1 from any
+    %% other process of its runtime, the raw call and one naming no pid included, is
+    %% answered badarg and installs nothing, before any process is the installer and while
+    %% one is. No second process becomes the installer, while the first lives or after
+    %% it has ended, since the domain service is never restarted.
+    Facet = facet(),
+    Refused = fun() ->
+                      ?assertEqual({error, badarg}, erx_connections:grant(#{forged => Facet})),
+                      Tag = make_ref(),
+                      Agent ! {'$gen_call', {self(), Tag}, {install, #{forged => Facet}}},
+                      receive {Tag, Reply} -> ?assertEqual({error, badarg}, Reply) end
+              end,
+    Refused(),
+    Agent ! {'$gen_call', {undefined, make_ref()}, {install, #{forged => Facet}}},
+    Test = self(),
+    {Service, Ended} = spawn_monitor(fun() ->
+                                             ok = erx_connections:become_installer(),
+                                             Test ! {service, self()},
+                                             receive install -> Test ! {installed, erx_connections:grant(#{echo => Facet})} end
+                                     end),
+    receive {service, Service} -> ok end,
+    ?assertEqual({error, badarg}, erx_connections:become_installer()),
+    Refused(),
+    ?assertEqual(undefined, erx_facets:find(forged)),
+    ?assertEqual(0, erx_facets:generation()),
+    Service ! install,
+    receive {installed, Installed} -> ?assertEqual(ok, Installed) end,
+    ?assertEqual(Facet, erx_facets:find(echo)),
+    receive {'DOWN', Ended, process, Service, normal} -> ok end,
+    ?assertEqual({error, badarg}, erx_connections:become_installer()),
+    Refused(),
     exit(Facet, kill).

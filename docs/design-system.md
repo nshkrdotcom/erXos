@@ -3162,17 +3162,27 @@ The agent writes every installation, the system domain's included
 installation is followed by its answers with no second party to tell.
 In the system domain the domain service installs with
 `erx_connections:grant/1`, which the system domain's agent takes only
-as a call from its own runtime: a message from another domain arrives
-in its `{erx_origin, D, Msg}` envelope, which is no call the agent takes
+as a call from its installer: the process that made itself the
+installer with `erx_connections:become_installer/0`, which the domain
+service does as it starts, before it grants anything. The first claim
+is the only one: the service is never restarted, its end ending the
+system domain, so a slip that claims before it ends the service's start
+rather than installing in its place, and the agent, in the base runtime,
+names nothing of the domain service. Any other process of its runtime is answered `badarg`; a message from another domain arrives in its
+`{erx_origin, D, Msg}` envelope, which is no call the agent takes
 (`erx_connections:serve/2`), and a domain's agent answers `grant`
 `badarg`, as any call it does not take, since a domain's installations
-come from the system domain over its connection. The build check
-`facet-install-callers` refuses a call of `erx_connections:grant/1`
-outside the domain service, as `facet-registry-writers` refuses one of
-`erx_facets:install/1` outside the agent, each with a seeded violation,
-so no other code of the system domain installs a facet whose rights the
-manifest did not give. The agent makes no call to the domain service,
-which calls it to install, so neither waits on the other.
+come from the system domain over its connection. With the build check
+`facet-registry-writers`, which refuses a call of `erx_facets:install/1`
+outside the agent, no slip of another process of the system domain
+installs a facet whose rights the manifest did not give. Code that runs
+in the domain service's own process is the service's, and the cores it
+calls return actions rather than install. The check is against a slip,
+not a forgery: a call names its caller's pid itself, so a message
+forged with the installer's pid installs, as a direct write of the
+registry would, and the system domain runs only trusted code. The agent
+makes no call to the domain service, which calls it to install, so
+neither waits on the other.
 
 A restart changes nothing the waiter relies on. The agent is never
 restarted: its end ends the runtime (`erx_dist.erl:146`), so no waiter
@@ -3302,7 +3312,8 @@ decision.
 | `changed/1` | `{error, badarg}` | the generation is no non-negative integer, as for any call the agent does not take |
 | settlement queries | as the query table | a query outside the closed set is answered `{error, badarg}` |
 | `erx_devices:held_at_boot/1` | a call that fails | the domain service holds nothing and logs the reason |
-| `erx_connections:grant/1` | `{error, badarg}` | asked of a domain's agent, whose installations come from the system domain only |
+| `erx_connections:grant/1` | `{error, badarg}` | asked of a domain's agent, whose installations come from the system domain only, or of the system domain's agent by any process but its installer |
+| `erx_connections:become_installer/0` | `{error, badarg}` | another process claimed first, which ends the domain service's start; asked of a domain's agent |
 | `changed/1`, `grant/1`, a settlement query, `release_held/0` | not acted on | sent from another domain: it arrives in its `{erx_origin, D, Msg}` envelope, which neither the agent nor the domain service takes as a call or a cast; the agent counts it in `dropped/0` |
 
 **Verification.** Each case runs on the host; each seeded fault must
@@ -3314,12 +3325,12 @@ fail its case.
 | same | an installation between the waiter's read and its request answers the request at once | the agent holds every request whatever its generation: the request waits for a second installation |
 | same | a second request from one pid answers the first at once | the older entry overwritten unanswered: the first request is never answered |
 | same | the agent monitors a waiting asker (`erlang:process_info(Agent, monitors)`) and no longer once it has answered it; an asker's end is taken, not counted in `dropped/0` | the asker not monitored: the agent's monitors lack it while it waits |
-| same | `grant/1` from the system domain's runtime installs and is answered; the same request enveloped as from another domain, and `grant/1` asked of a domain's agent, install nothing | the system agent's clause matching the enveloped form: the peer's facet is installed |
+| same | `grant/1` from the domain service installs and is answered; the same request enveloped as from another domain, and `grant/1` asked of a domain's agent, install nothing | the system agent's clause matching the enveloped form: the peer's facet is installed |
+| same | `grant/1`, the raw `{'$gen_call', From, {grant, Facets}}` and one whose `From` names no pid, from a process of the system domain's runtime that is not the installer, are answered `badarg` and install nothing, before any process is the installer and while one is; a second `become_installer/0` is refused, while the installer lives and after it has ended | the agent's check of its caller removed: the other process's facet is installed |
 | `erx_facets` cases in the same suite | `await(Name, Old, T)` is not answered while the registry holds `Old`, and is answered with the successor's facet | the facet compared by presence alone: `await` answers with `Old` |
 | same | `await(Name, none, 50)` answers `timeout`, and an installation after it leaves nothing in the caller's mailbox | the reply taken with a plain `receive` after a timer instead of `gen_server:receive_response/2`: the late `ok` lands in the mailbox |
 | same | `{erx, granted}` holds the ready answer's names when its installation wakes a waiter | the names written after the installation: the woken waiter reads none and waits on |
 | same | a ready answer that installs no facet still raises the generation | the generation raised only by a non-empty installation: a waiter on the names alone is never woken |
-| `facet_registry_chokepoints_test` | `facet-install-callers` passes the tree | its seeded call of `erx_connections:grant/1` outside the domain service passes: the rule catches nothing |
 | `erx_domain_mints_tests` | `settled/3` answers each query as `in_place/3`, `server_settled/3` and `system_grant/3` decide | the `{grant, Name, Id}` query matched by name alone: a predecessor's facet answers it |
 | `erx_domain_mints_srv_tests` | three askers, one of each query, are each answered at the step that settles their own query; the system domain's installation is acknowledged only after the agent's answer | every asker answered when any query settles: the `{grant, ...}` asker is answered before its incarnation's installation |
 | same | a `{server, Name}` asker is answered at its row's end, before the row's restart starts | the list evaluated after the successor starts: the asker waits through the successor's boot |
