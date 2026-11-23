@@ -49,11 +49,12 @@ class SetupTest < Minitest::Test
     assert_match(/no step oracle-emu-typo/, error.message)
   end
 
-  # Every pinned source is fetched by setup or skipped with its reason, and a
-  # skip names a source deps.lock still pins.
+  # Every pinned source is fetched by setup, skipped with its reason or an OCI
+  # image, and a skip names a source deps.lock still pins.
   def test_every_pinned_source_is_fetched_or_skipped_with_a_reason
     fetched = NAMES.filter_map { |name| name.delete_prefix('source-') if name.start_with?('source-') }
-    assert_equal PINNED.sort, (fetched + Erx::Setup::SKIPPED_SOURCES.keys).sort
+    images = LOCK.select { |source| source.fetch('kind') == 'oci' }.map { |source| source.fetch('id') }
+    assert_equal PINNED.sort, (fetched + Erx::Setup::SKIPPED_SOURCES.keys + images).sort
     assert_empty fetched & Erx::Setup::SKIPPED_SOURCES.keys
     Erx::Setup::SKIPPED_SOURCES.each_value { |reason| refute_empty reason.strip }
   end
@@ -61,7 +62,7 @@ class SetupTest < Minitest::Test
   # Setup obtains a source offline from a downloaded archive, which an OCI
   # image is not.
   def test_every_fetched_source_is_of_a_kind_setup_obtains_offline
-    fetched = LOCK.reject { |source| Erx::Setup::SKIPPED_SOURCES.key?(source.fetch('id')) }
+    fetched = LOCK.select { |source| NAMES.include?("source-#{source.fetch('id')}") }
     assert_empty fetched.map { |source| source.fetch('kind') } - %w[tar zip git file]
   end
 

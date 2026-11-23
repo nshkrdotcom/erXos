@@ -23,15 +23,14 @@ module Erx
   # The decision of what to run (Setup.plan) is a pure function of what exists;
   # Setup#call gathers that and performs the steps in order.
   class Setup
-    # Setup fetches every source deps.lock pins except these, which only a
-    # gate or tool of their own uses; each says which. A tar, zip, git or file source
-    # deps.lock gains is fetched by setup without an edit here; setup cannot
-    # obtain an OCI image offline, so one must be named here.
+    # Setup fetches every tar, zip, git and file source deps.lock pins except
+    # these, each with the one gate or tool that uses it, and skips the OCI images
+    # by kind: setup cannot obtain one offline. A source deps.lock gains is
+    # fetched by setup without an edit here.
     SKIPPED_SOURCES = {
       'arm-registers' => 'only `tools/erx sysreg refresh` reads it',
       'tla-tools' => 'only `make check-tla` runs TLC',
-      'herdtools7' => 'only `make check-litmus` builds herd7 from it',
-      'oracle-toolchain' => 'the OCI oracle image, which the native oracle does not use'
+      'herdtools7' => 'only `make check-litmus` builds herd7 from it'
     }.freeze
 
     Step = Data.define(:name, :kind, :argv, :deadline)
@@ -71,7 +70,8 @@ module Erx
     # builds only on macOS (Runtime#build), so elsewhere its step is left
     # out and the tests that need it skip, saying so.
     def self.steps(sources, hosted_runtime: HostOs::MACOS)
-      fetched = sources.map { |source| source.fetch('id') }.reject { |id| SKIPPED_SOURCES.key?(id) }
+      fetched = sources.reject { |source| source.fetch('kind') == 'oci' || SKIPPED_SOURCES.key?(source.fetch('id')) }
+                       .map { |source| source.fetch('id') }
       builds = COMMAND_STEPS.reject { |step| step.name == 'runtime' && !hosted_runtime }
       fetched.map { |id| Step.new(name: "source-#{id}", kind: :source, argv: [id], deadline: 300) } +
         [WEB_MODULES] + builds + [DEV_KEY]

@@ -2,7 +2,7 @@
 
 The full stock OTP oracle runs in a task-owned Linux container with no
 external network interface. Docker supplies the isolation boundary; on
-macOS, a local provider such as OrbStack supplies its Linux VM. Native
+macOS, a local provider such as OrbStack or colima supplies its Linux VM. Native
 macOS OTP builds remain separate inputs to bootstrap compilation and native
 performance measurements. A Linux suite result never claims macOS behavior,
 and container timing is not compared with native macOS latency.
@@ -11,12 +11,23 @@ and container timing is not compared with native macOS latency.
 
 The oracle uses the pinned OTP 29.1.2 archive, never the modified `otp/`
 tree. Its toolchain comes from an immutable OCI image already present in
-the selected engine. `deps.lock` records the image repository, version label,
-platform-specific manifest SHA-256, platform, license inventory and status.
-The version label is descriptive; the manifest digest selects the bytes.
-An image's configuration digest and its manifest digest are different
-identities and are recorded as such. Only the explicit fetch step may pull
-the pinned image. Docker supports [pulling by digest](https://docs.docker.com/reference/cli/docker/image/pull/#pull-an-image-by-digest-immutable-identifier).
+the selected engine. `deps.lock` pins one such image per platform it
+supports, `linux/arm64` and `linux/amd64`, each as its own source
+(`oracle-toolchain-arm64`, `oracle-toolchain-amd64`) recording the image
+repository, version label, platform-specific manifest SHA-256, platform,
+license inventory and status. An invocation runs the pin whose platform
+is the selected engine's architecture, as `docker info` reports it
+(`aarch64` or `x86_64`), and refuses an engine whose architecture has no
+pin, so it never runs an image of another architecture than its engine's.
+Whether the engine's VM is itself emulated, as a VM of the other
+architecture would be, is not checked; the report records the host and
+the engine's architecture, and the VM should match the host's CPU. The
+version label is descriptive; the manifest digest selects the bytes, so
+two platforms' pins of one label may come from different builds of the
+tag and differ in package versions, and a report names the manifest it
+ran. An image's configuration digest and its manifest digest are
+different identities and are recorded as such. Only the explicit fetch
+step may pull a pinned image. Docker supports [pulling by digest](https://docs.docker.com/reference/cli/docker/image/pull/#pull-an-image-by-digest-immutable-identifier).
 
 The image contains Ruby, GNU timeout, the C/C++ toolchain and all build
 prerequisites. A complete official Ruby image based on `buildpack-deps`

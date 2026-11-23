@@ -26,6 +26,10 @@ module Erx
     # only the file's own sha256.
     DECODED_FIELDS = %w[decoded_sha256 decoded_bytes].freeze
     MAX_DECODED_BYTES = 1 << 30
+    # The platforms an OCI image source can pin, each with the architecture a Docker
+    # engine of that platform reports (docker info reports the machine name, as
+    # uname -m prints it).
+    OCI_PLATFORMS = { 'linux/arm64' => 'aarch64', 'linux/amd64' => 'x86_64' }.freeze
     module_function
 
     def parse(bytes)
@@ -92,7 +96,7 @@ module Erx
 
       if source.fetch('kind') == 'oci'
         unless /\A[a-z0-9][a-z0-9.:-]*(?:\/[a-z0-9][a-z0-9._-]*)+\z/.match?(source.fetch('repository')) &&
-               %w[linux/arm64 linux/amd64].include?(source.fetch('platform')) &&
+               OCI_PLATFORMS.key?(source.fetch('platform')) &&
                /\A[0-9a-f]{64}\z/.match?(source.fetch('config_sha256'))
           raise Error, 'invalid pinned OCI image'
         end

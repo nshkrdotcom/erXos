@@ -1681,7 +1681,7 @@ Homebrew's OTP is a different release and cannot cross-build 29.1.2
 into its own directory under `build/third_party/`, unless that directory
 already holds the pin's tree, unchanged by the digest recorded when the same
 extraction code unpacked it; a copied or moved build directory keeps its
-trees. It also pulls the oracle's pinned OCI toolchain image by manifest
+trees. It also pulls the oracle's pinned OCI toolchain images by manifest
 digest. Every other target runs offline. The top-level `Makefile` builds the kernel or Fiasco
 (through Fiasco's `mk`, behind `tools/erx build fiasco`), `liberx`, the
 runtime image (through OTP's machinery, behind `tools/erx build
@@ -1957,7 +1957,7 @@ built out of tree, its own build scripts not run unless the row says so.
 | Host tools: LLVM clang, lld and binary tools (they build Fiasco and L4Re too), GNU make, QEMU, `dtc`, Ruby, Perl, Node.js and pnpm, GNU coreutils, git, host OTP 29.1.2, `b3sum`, herdtools7's `herd7`, Autoconf, Automake, Libtool | building, running and testing; release images are built with exactly LLVM 23.1.3 | various | tools | Homebrew; host OTP and `herd7` from pinned sources, `herd7` built with dune alone; the site workflow takes pnpm, its one executable, from the npm registry's `@pnpm/exe.linux-x64` at a pinned version and SHA-256 |
 | OpenSSH's `ssh` and `ssh-keygen`, the host's own | the development login key and `tools/erx ssh` ([design-ssh.md](design-ssh.md#login-keys)) | OpenSSH's (unverified) | tools | the host's own, not pinned |
 | TLA+ tools | protocol models ([design-verification.md](design-verification.md#model-suite-and-runner)) | MIT | permanent host tool | `deps.lock` |
-| A Docker-compatible engine and the oracle's toolchain image | isolated stock OTP suites ([design-host-oracle.md](design-host-oracle.md)) | Apache-2.0; OrbStack's vendor license | development tools | image by digest in `deps.lock` |
+| A Docker-compatible engine and the oracle's toolchain images | isolated stock OTP suites ([design-host-oracle.md](design-host-oracle.md)) | Apache-2.0; OrbStack's vendor license or colima's MIT | development tools | one image per platform (`linux/arm64`, `linux/amd64`) by digest in `deps.lock` |
 | CBMC; awklog | pilots of bounded checking and relational manifest checks ([plan.md](plan.md#verification-work)) | BSD-4-Clause; BSD-2-Clause | host tools if adopted | Homebrew; `deps.lock` |
 | libvterm; `vttest` | the terminal emulator's oracle and corpus ([design-display.md](design-display.md#the-oracle)) | MIT; MIT-style | test tools | `deps.lock` |
 | musl's `libc-test` | the C library's oracle | MIT | test tool | `deps.lock` |

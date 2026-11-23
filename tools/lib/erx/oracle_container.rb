@@ -56,12 +56,22 @@ module Erx
       'test/oracle/export_job.rb' => 'export_job.rb'
     }.freeze
 
-    def initialize(root:, context:, image: nil, resources: RESOURCES,
+    # The deps.lock source that pins the toolchain image of platform, named for
+    # the platform's architecture: oracle-toolchain-arm64, oracle-toolchain-amd64.
+    def self.toolchain_id(platform) = "oracle-toolchain-#{platform.delete_prefix('linux/')}"
+
+    # images are the toolchain pins to choose from, deps.lock's unless a caller
+    # names them; each invocation runs the one of its engine's platform.
+    def initialize(root:, context:, images: nil, resources: RESOURCES,
                    runner: nil, docker_program: 'docker')
       @root = File.realpath(root)
       @runner = runner || Runner.new(owner_root: @root, log_dir: File.join(@root, 'build/logs'))
       @dependencies = Dependencies.new(root: @root, runner: @runner)
-      @image = image || @dependencies.image_for('oracle-toolchain')
+      ids = DependencySchema::OCI_PLATFORMS.keys.map { |platform| self.class.toolchain_id(platform) }
+      pinned = @dependencies.images.filter_map { |source| source.fetch('id') if ids.include?(source.fetch('id')) }
+      images ||= pinned.map { |id| @dependencies.image_for(id) }
+      raise Error, 'no Linux oracle toolchain image is pinned' unless images.is_a?(Array) && !images.empty? && images.all?(Hash)
+      @images = images.dup.freeze
       @context = context
       @resources = resources.dup.freeze
       @docker = executable(docker_program)
@@ -130,12 +140,14 @@ module Erx
       unless @context.is_a?(String) && /\A[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\z/.match?(@context)
         raise Error, 'an explicit local Docker context is required'
       end
-      reference = @image.fetch('reference')
-      digest = @image.fetch('manifest_sha256')
-      unless /\A[0-9a-f]{64}\z/.match?(digest) && reference.end_with?("@sha256:#{digest}") &&
-             %w[linux/arm64 linux/amd64].include?(@image.fetch('platform')) &&
-             /\A[0-9a-f]{64}\z/.match?(@image.fetch('config_sha256'))
-        raise Error, 'invalid pinned Linux oracle image'
+      @images.each do |image|
+        reference = image.fetch('reference')
+        digest = image.fetch('manifest_sha256')
+        unless /\A[0-9a-f]{64}\z/.match?(digest) && reference.end_with?("@sha256:#{digest}") &&
+               DependencySchema::OCI_PLATFORMS.key?(image.fetch('platform')) &&
+               /\A[0-9a-f]{64}\z/.match?(image.fetch('config_sha256'))
+          raise Error, 'invalid pinned Linux oracle image'
+        end
       end
       unless @resources.keys.sort == RESOURCES.keys.sort &&
              @resources.values.all? { |value| value.is_a?(Integer) && value.positive? } &&
@@ -181,13 +193,13 @@ module Erx
         manifest['host'] = { 'identity' => BoundedFile.read(host.fetch('log'), maximum: 1024 * 1024).strip,
                              'command' => host }
         connection = prepare_context(directory)
-        image = verify_image(connection)
         engine = docker_json(connection, ['info', '--format', '{{json .}}'], name: 'oracle-engine')
         unless engine['OSType'] == 'linux' && engine['NCPU'].is_a?(Integer) &&
                engine['NCPU'] >= @resources.fetch('cpus') &&
                engine['MemTotal'].is_a?(Integer) && engine['MemTotal'] >= @resources.fetch('memory_bytes')
           raise Error, 'local engine does not support the requested Linux oracle resources'
         end
+        image = verify_image(connection, pin_for(engine))
         source, archive = @dependencies.archive_for('otp')
         inputs, workspace, hashes = prepare_files(directory, archive: archive, source: source)
         create_volume(connection, name: volume, owner: ownership)
@@ -199,7 +211,7 @@ module Erx
                  'resources' => @resources, 'artifact_limits' => OracleExport::DEFAULT_LIMITS }
         File.write(File.join(inputs, 'job.json'), JSON.pretty_generate(plan) + "\n")
         hashes['job.json'] = Digest::SHA256.file(File.join(inputs, 'job.json')).hexdigest
-        args = create_arguments(inputs: inputs, volume: volume, cid_path: cid_path,
+        args = create_arguments(image: image, inputs: inputs, volume: volume, cid_path: cid_path,
                                 owner: ownership, deadline: deadline)
         manifest.merge!('endpoint' => connection.fetch('endpoint'), 'image' => image,
                         'engine' => engine.slice('ID', 'Name', 'ServerVersion', 'OperatingSystem', 'KernelVersion', 'Architecture', 'NCPU', 'MemTotal'),
@@ -351,25 +363,41 @@ module Erx
       raise Error, "invalid local Docker context: #{error.message}"
     end
 
-    def verify_image(connection)
-      image = docker_json(connection, ['image', 'inspect', @image.fetch('reference'), '--format', '{{json .}}'],
+    # The pinned toolchain image of the engine's architecture: the engine's value
+    # is only ever a key of the platform table, never part of a reference.
+    def pin_for(engine)
+      platform = DependencySchema::OCI_PLATFORMS.key(engine['Architecture'])
+      id = platform && self.class.toolchain_id(platform)
+      pin = @images.find { |image| image.fetch('id') == id && image.fetch('platform') == platform }
+      return pin if pin
+
+      architecture = engine['Architecture']
+      shown = architecture.is_a?(String) && /\A[a-z0-9_]{1,32}\z/.match?(architecture) ? architecture : 'an invalid value'
+      pinned = @images.map { |image| DependencySchema::OCI_PLATFORMS.fetch(image.fetch('platform')) }.sort.join(', ')
+      raise Error, "no oracle toolchain image is pinned for the Docker engine's architecture #{shown}; " \
+                   "deps.lock pins one for #{pinned}"
+    end
+
+    # The identity of pin as the engine's cache holds it, which must be the pin's own.
+    def verify_image(connection, pin)
+      image = docker_json(connection, ['image', 'inspect', pin.fetch('reference'), '--format', '{{json .}}'],
                           name: 'oracle-image-verify')
-      config_id = "sha256:#{@image.fetch('config_sha256')}"
-      manifest_id = "sha256:#{@image.fetch('manifest_sha256')}"
+      config_id = "sha256:#{pin.fetch('config_sha256')}"
+      manifest_id = "sha256:#{pin.fetch('manifest_sha256')}"
       descriptor = image['Descriptor']
       volumes = image['Config'].is_a?(Hash) ? image.fetch('Config')['Volumes'] : nil
       unless [config_id, manifest_id].include?(image['Id']) &&
-             "#{image['Os']}/#{image['Architecture']}" == @image.fetch('platform') &&
+             "#{image['Os']}/#{image['Architecture']}" == pin.fetch('platform') &&
              image['RepoDigests'].is_a?(Array) &&
              image.fetch('RepoDigests').all? { |value| value.is_a?(String) } &&
-             image.fetch('RepoDigests').any? { |value| value.end_with?("@sha256:#{@image.fetch('manifest_sha256')}") } &&
+             image.fetch('RepoDigests').any? { |value| value.end_with?("@sha256:#{pin.fetch('manifest_sha256')}") } &&
              (descriptor.nil? || (descriptor.is_a?(Hash) && descriptor['digest'] == manifest_id)) &&
              image['Config'].is_a?(Hash) &&
              (volumes.nil? || (volumes.is_a?(Hash) && volumes.empty?))
         raise Error, 'cached oracle image differs from its pinned platform/configuration or declares volumes'
       end
-      { 'reference' => @image.fetch('reference'), 'platform' => @image.fetch('platform'),
-        'manifest_sha256' => @image.fetch('manifest_sha256'), 'configuration_digest' => config_id,
+      { 'reference' => pin.fetch('reference'), 'platform' => pin.fetch('platform'),
+        'manifest_sha256' => pin.fetch('manifest_sha256'), 'configuration_digest' => config_id,
         'engine_image_id' => image.fetch('Id') }
     end
 
@@ -394,14 +422,14 @@ module Erx
       [File.realpath(inputs), File.realpath(workspace), hashes]
     end
 
-    def create_arguments(inputs:, volume:, cid_path:, owner:, deadline:, role: 'workload', artifacts: nil)
+    def create_arguments(image:, inputs:, volume:, cid_path:, owner:, deadline:, role: 'workload', artifacts: nil)
       mounts = if role == 'workload'
                  ['--mount', "type=volume,src=#{volume},dst=/tmp"]
                else
                  ['--mount', "type=volume,src=#{volume},dst=/native,readonly",
                   '--mount', "type=bind,src=#{artifacts},dst=/artifacts,bind-propagation=rprivate"]
                end
-      ['create', '--pull', 'never', '--platform', @image.fetch('platform'), '--cidfile', cid_path,
+      ['create', '--pull', 'never', '--platform', image.fetch('platform'), '--cidfile', cid_path,
        '--label', "#{OWNER_LABEL}=#{owner}", '--label', "#{ROLE_LABEL}=#{role}",
        '--network', 'none', '--init', '--ipc', 'private',
        '--cgroupns', 'private', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges',
@@ -413,7 +441,7 @@ module Erx
        '--mount', "type=bind,src=#{inputs},dst=/inputs,readonly,bind-propagation=rprivate",
        *mounts,
        '--mount', "type=bind,src=#{inputs}/resolv.conf,dst=/etc/resolv.conf,readonly,bind-propagation=rprivate",
-       '--workdir', '/tmp', '--entrypoint', '/usr/bin/env', @image.fetch('reference'), '-i',
+       '--workdir', '/tmp', '--entrypoint', '/usr/bin/env', image.fetch('reference'), '-i',
        *GUEST_ENV.map { |name, value| "#{name}=#{value}" }, '/usr/bin/timeout', '-k', '10',
        deadline.to_s, '/usr/local/bin/ruby', role == 'workload' ? '/inputs/container_job.rb' : '/inputs/export_job.rb']
     end
@@ -454,7 +482,7 @@ module Erx
       security = host.fetch('SecurityOpt')
       valid = value.dig('State', 'Status') == 'created' && value.dig('State', 'Running') == false &&
               value['Image'] == image.fetch('engine_image_id') &&
-              config['Image'] == @image.fetch('reference') &&
+              config['Image'] == image.fetch('reference') &&
               config['User'] == "#{Process.uid}:#{Process.gid}" && config['Hostname'] == 'erx-oracle' &&
               config['WorkingDir'] == '/tmp' && host['PublishAllPorts'] == false &&
               config['Entrypoint'] == ['/usr/bin/env'] && config.dig('Healthcheck', 'Test') == ['NONE'] &&
@@ -548,7 +576,7 @@ module Erx
     def export_artifacts(connection, inputs:, workspace:, volume:, cid_path:, owner:, image:, manifest:)
       manifest.merge!('state' => 'exporting', 'export_started_at' => Time.now.utc.iso8601)
       write_manifest(manifest.fetch('directory'), manifest)
-      arguments = create_arguments(inputs: inputs, volume: volume, cid_path: cid_path, owner: owner,
+      arguments = create_arguments(image: image, inputs: inputs, volume: volume, cid_path: cid_path, owner: owner,
                                    deadline: 600, role: 'export', artifacts: workspace)
       docker(connection, arguments, name: 'oracle-export-create', deadline: 30)
       cid = read_cid(cid_path)

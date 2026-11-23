@@ -76,8 +76,9 @@ class OracleContainerTest < Minitest::Test
       { 'config' => directory, 'endpoint' => 'unix:///owned-test-socket' }
     end
 
-    def verify_image(_connection)
-      { 'engine_image_id' => 'sha256:' + 'b' * 64,
+    def verify_image(_connection, pin)
+      { 'reference' => pin.fetch('reference'), 'platform' => pin.fetch('platform'),
+        'engine_image_id' => 'sha256:' + 'b' * 64,
         'configuration_digest' => 'sha256:' + 'c' * 64 }
     end
 
@@ -96,7 +97,7 @@ class OracleContainerTest < Minitest::Test
                   :attach_state, :recovered_id, :partial_volume, :invalid_volume,
                   :partial_export, :export_failure, :volume_remove_failure
     attr_accessor :export_missing_field, :workload_final_missing, :truncated_guest_result, :empty_cid_file,
-                  :malformed_xml, :malformed_events, :multiple_xml
+                  :malformed_xml, :malformed_events, :multiple_xml, :architecture
 
     def initialize(root)
       @root = root
@@ -115,7 +116,8 @@ class OracleContainerTest < Minitest::Test
       options.fetch(:success).call(path) if name.start_with?('oracle-linux-') && options[:success]
       body = case name
              when 'oracle-engine'
-               JSON.generate('OSType' => 'linux', 'NCPU' => 8, 'MemTotal' => 32 * 1024**3)
+               JSON.generate('OSType' => 'linux', 'Architecture' => architecture || 'aarch64',
+                             'NCPU' => 8, 'MemTotal' => 32 * 1024**3)
              when 'oracle-host'
                "fixture host\n"
              when 'oracle-volume-list'
@@ -271,10 +273,10 @@ class OracleContainerTest < Minitest::Test
     @root = Dir.mktmpdir('erx-container-test-')
     FileUtils.copy_file(File.expand_path('../../deps.lock', __dir__), File.join(@root, 'deps.lock'))
     dependencies = Erx::Dependencies.new(root: @root, runner: nil)
-    @image = dependencies.image_for('oracle-toolchain')
+    @image = dependencies.image_for('oracle-toolchain-arm64')
     @observed = JSON.parse(File.read(File.expand_path('../fixtures/oracle/image-inspect-manifest-id.json', __dir__)))
     @runner = ImageRunner.new(@root, @observed)
-    @adapter = Erx::OracleContainer.new(root: @root, context: 'orbstack', image: @image,
+    @adapter = Erx::OracleContainer.new(root: @root, context: 'orbstack', images: [@image],
                                        runner: @runner, docker_program: '/usr/bin/true')
   end
 
@@ -283,7 +285,7 @@ class OracleContainerTest < Minitest::Test
   end
 
   def test_platform_manifest_id_is_not_misread_as_configuration_digest
-    identity = @adapter.send(:verify_image, 'config' => '/private-config')
+    identity = @adapter.send(:verify_image, { 'config' => '/private-config' }, @image)
     assert_equal @observed.fetch('Id'), identity.fetch('engine_image_id')
     assert_equal "sha256:#{@image.fetch('config_sha256')}", identity.fetch('configuration_digest')
     assert_equal @image.fetch('manifest_sha256'), identity.fetch('manifest_sha256')
@@ -295,7 +297,7 @@ class OracleContainerTest < Minitest::Test
     File.write(target, 'fixture')
     File.chmod(0o755, target)
     File.symlink(target, link)
-    adapter = Erx::OracleContainer.new(root: @root, context: 'orbstack', image: @image,
+    adapter = Erx::OracleContainer.new(root: @root, context: 'orbstack', images: [@image],
                                        runner: @runner, docker_program: link)
     adapter.send(:cli, [], name: 'fixture', deadline: 1)
     assert_includes @runner.calls.last.first, link
@@ -310,7 +312,7 @@ class OracleContainerTest < Minitest::Test
               'Config' => { 'Labels' => { Erx::OracleContainer::OWNER_LABEL => owner,
                                          Erx::OracleContainer::ROLE_LABEL => 'workload' } } }
     runner = ImageRunner.new(@root, value)
-    adapter = Erx::OracleContainer.new(root: @root, context: 'orbstack', image: @image,
+    adapter = Erx::OracleContainer.new(root: @root, context: 'orbstack', images: [@image],
                                        runner: runner, docker_program: '/usr/bin/true')
     record = { 'operation' => 'detached', 'context' => 'orbstack', 'directory' => directory,
                'owner' => owner, 'cid' => cid }
@@ -356,14 +358,51 @@ class OracleContainerTest < Minitest::Test
 
   def test_wrong_platform_or_manifest_descriptor_is_refused
     @observed['Architecture'] = 'amd64'
-    assert_raises(Erx::Error) { @adapter.send(:verify_image, 'config' => '/private-config') }
+    assert_raises(Erx::Error) { @adapter.send(:verify_image, { 'config' => '/private-config' }, @image) }
     @observed['Architecture'] = 'arm64'
     @observed.fetch('Descriptor')['digest'] = 'sha256:' + 'f' * 64
-    assert_raises(Erx::Error) { @adapter.send(:verify_image, 'config' => '/private-config') }
+    assert_raises(Erx::Error) { @adapter.send(:verify_image, { 'config' => '/private-config' }, @image) }
+  end
+
+  # deps.lock pins one toolchain image per platform; the oracle runs the one whose
+  # platform is the engine's architecture and refuses an engine it pins none for.
+  def test_engine_architecture_selects_the_pin_of_its_platform
+    lock = JSON.parse(File.read(File.join(@root, 'deps.lock')))
+    arm64 = lock.fetch('sources').find { |source| source.fetch('id') == 'oracle-toolchain-arm64' }
+    lock.fetch('sources') << arm64.merge('id' => 'oracle-toolchain-amd64', 'platform' => 'linux/amd64',
+                                         'sha256' => 'e' * 64, 'config_sha256' => 'f' * 64)
+    File.write(File.join(@root, 'deps.lock'), JSON.generate(lock))
+    adapter = Erx::OracleContainer.new(root: @root, context: 'orbstack', runner: @runner,
+                                       docker_program: '/usr/bin/true')
+    amd64 = adapter.send(:pin_for, 'Architecture' => 'x86_64')
+    assert_equal ['linux/amd64', 'e' * 64, "docker.io/library/ruby@sha256:#{'e' * 64}"],
+                 amd64.values_at('platform', 'manifest_sha256', 'reference')
+    assert_equal @image, adapter.send(:pin_for, 'Architecture' => 'aarch64')
+    error = assert_raises(Erx::Error) { adapter.send(:pin_for, 'Architecture' => 'riscv64') }
+    assert_match(/architecture riscv64;.*aarch64, x86_64\z/, error.message)
+    error = assert_raises(Erx::Error) { @adapter.send(:pin_for, 'Architecture' => "x86_64\e]0;owned\a") }
+    assert_match(/architecture an invalid value;/, error.message)
+    error = assert_raises(Erx::Error) { @adapter.send(:pin_for, 'Architecture' => 'x86_64') }
+    assert_match(/architecture x86_64;.*aarch64\z/, error.message)
+  end
+
+  # The engine's pin is the image the workload and export containers are created from.
+  def test_an_x86_64_engine_creates_the_container_from_the_amd64_pin
+    amd64 = @image.merge('id' => 'oracle-toolchain-amd64', 'platform' => 'linux/amd64', 'manifest_sha256' => 'e' * 64,
+                         'reference' => "docker.io/library/ruby@sha256:#{'e' * 64}")
+    adapter, runner = lifecycle(images: [@image, amd64])
+    runner.architecture = 'x86_64'
+    assert_equal 'completed', adapter.send(:execute, operation: 'probe', flavour: 'emu', jobs: 1, deadline: 60).fetch('state')
+    %w[oracle-container-create oracle-export-create].each do |step|
+      create = runner.calls.find { |name, _argv| name == step }.last
+      assert_equal 'linux/amd64', create[create.index('--platform') + 1]
+      assert_includes create, amd64.fetch('reference')
+      refute_includes create, @image.fetch('reference')
+    end
   end
 
   def test_create_plan_has_no_implicit_network_or_authority
-    argv = @adapter.send(:create_arguments, inputs: '/inputs-source', volume: 'owned-native-volume',
+    argv = @adapter.send(:create_arguments, image: @image, inputs: '/inputs-source', volume: 'owned-native-volume',
                          cid_path: '/private-cid', owner: 'a' * 64, deadline: 60)
     assert_equal 'never', argv[argv.index('--pull') + 1]
     assert_equal 'none', argv[argv.index('--network') + 1]
@@ -441,9 +480,9 @@ class OracleContainerTest < Minitest::Test
     assert report.fetch('complete')
   end
 
-  def lifecycle
+  def lifecycle(images: [@image])
     runner = LifecycleRunner.new(@root)
-    adapter = LifecycleAdapter.new(root: @root, context: 'orbstack', image: @image,
+    adapter = LifecycleAdapter.new(root: @root, context: 'orbstack', images: images,
                                    runner: runner, docker_program: '/usr/bin/true')
     adapter.instance_variable_set(:@dependencies, SourceFixture.new)
     [adapter, runner]

@@ -94,7 +94,7 @@
       "status": "permanent"
     },
     {
-      "id": "oracle-toolchain",
+      "id": "oracle-toolchain-arm64",
       "kind": "oci",
       "version": "3.4.12-bookworm",
       "repository": "docker.io/library/ruby",
