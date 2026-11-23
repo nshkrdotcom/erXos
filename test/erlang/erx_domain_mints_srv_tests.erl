@@ -30,6 +30,9 @@ mints_test_() ->
      fun(_) -> {inorder, [fun installs/0, {timeout, 20, fun restart/0}, fun grantee_restart/0, fun foreign_mint/0, {timeout, 20, fun last_end/0}]} end}.
 
 %% Template 0's sessions, beside a (5) and b (6), each get a grant of their own.
+lines_test_() ->
+    {setup, fun setup/0, fun cleanup/1, fun(_) -> {timeout, 20, fun lines/0} end}.
+
 sessions_test_() ->
     {setup, fun() -> setup(?ERX_SERVICE_WINDOWS) end, fun cleanup/1, fun(_) -> {timeout, 20, fun sessions/0} end}.
 
@@ -126,6 +129,14 @@ session_call() ->
         _Other -> session_call()
     end.
 
+%% The library's connect call for the pair of A and B, past every other call.
+connect_of(A, B) ->
+    case next_connect() of
+        Call when element(2, Call) =:= A, element(3, Call) =:= B -> Call;
+        timeout -> timeout;
+        _Other -> connect_of(A, B)
+    end.
+
 %% The library's next connect call, past every other call the service makes first.
 next_connect() ->
     case erx_domain_fake_lib:next_call() of
@@ -174,8 +185,7 @@ provide_a(Provides) ->
     persistent_term:put({erx_domain_fake_lib, provides},
                         #{<<"a">> => Provides,
                           <<"root_1">> => fun(Id) -> #{<<"web_line">> => pid('root_1@erxos', Id, 3),
-                                                       <<"ssh_line">> => pid('root_1@erxos', Id, 4),
-                                                       <<"rogue_line">> => pid('root_1@erxos', Id, 6)} end}).
+                                                       <<"ssh_line">> => pid('b@erxos', Id, 4)} end}).
 
 %% The whole path for both grants: b is introduced to a, a's mint is asked, its reply
 %% installs the facet in b's registry through b's domain pid, and b's acknowledgement
@@ -716,21 +726,47 @@ sessions() ->
     Facet = pid('a@erxos', 5, 7),
     PidA ! {erx_origin, 5, {erx_facet_minted, Tag, {ok, Facet}}},
     ?assertEqual(Facet, receive {trace, Pid7, 'receive', {_, install, Tag, echo, F}} -> F after 2000 -> none end),
-    %% The session's ready report named its web and SSH lines, which the service keeps
-    %% for the session until it ends, and a name outside the closed set, which it does not.
-    ?assertEqual({ok, pid('root_1@erxos', 7, 3)}, gen_server:call(erx_domain_srv, {line, web_line, 7})),
-    ?assertEqual({ok, pid('root_1@erxos', 7, 4)}, gen_server:call(erx_domain_srv, {line, ssh_line, 7})),
-    ?assertEqual({error, no_line}, gen_server:call(erx_domain_srv, {line, rogue_line, 7})),
-    ?assertEqual({error, no_line}, gen_server:call(erx_domain_srv, {line, web_line, 5})),
     PidB ! {erx_origin, 6, {erx_facets_installed, Tag}},
     wait_counts(fun(#{{dropped, wrong_domain} := N}) -> N =:= 1 end),
     Pid7 ! {erx_origin, 7, {erx_facets_installed, Tag}},
     wait(fun(#{Key := {installed, {5, 7}, F}}) -> F =:= Facet end),
     ok = erx_domain:stop(Session, kill),
     wait(fun(Grants) -> not is_map_key(Key, Grants) end),
-    ?assertEqual({error, no_line}, gen_server:call(erx_domain_srv, {line, web_line, 7})),
     PidA ! {erx_origin, 5, {erx_facet_minted, Tag, {ok, Facet}}},
     wait_counts(fun(#{{dropped, unknown_tag} := N}) -> N =:= 1 end).
+
+%% A session's line (docs/design-system.md, "A session's lines"): erx_domain:line/4 is
+%% one call the mint core answers. Session 7's report provides web_line under a pid of
+%% its own and ssh_line under one of another node, which refuses that entry alone. A
+%% request for web_line with b (6) as peer introduces the two, then sends the mint
+%% request to the line through the session's domain pid, with ?ERX_LINES's quantities,
+%% the opening and b's user name, and the session's reply with the operation's tag
+%% answers the asker with its facet. A second request while one is pending is busy, a
+%% refused line and a domain that is no session answer no_line, and after the
+%% session's end so does every request.
+lines() ->
+    {ok, {erx_domain, 7, _, _} = Session} = erx_domain:start_session(1, #{}),
+    [PidB, Pid7] = [domain_pid(Id) || Id <- [6, 7]],
+    erlang:trace(Pid7, true, ['receive', {tracer, self()}]),
+    Opening = self(),
+    Asked = gen_server:send_request(erx_domain_srv, {line, web_line, 7, 6, Opening}),
+    ?assertEqual({error, busy}, erx_domain:line(web_line, 7, 6, Opening)),
+    ?assertEqual({error, no_line}, erx_domain:line(ssh_line, 7, 6, Opening)),
+    ?assertEqual({error, no_line}, erx_domain:line(web_line, 5, 6, Opening)),
+    ?assertMatch({connect, 7, 6, _, _}, connect_of(7, 6)),
+    PidB ! {erx_origin, 6, {erx_connection_mapped, 7}},
+    Pid7 ! {erx_origin, 7, {erx_connection_mapped, 6}},
+    Mint = pid('root_1@erxos', 7, 3),
+    Request = receive {trace, Pid7, 'receive', {_, mint, Mint, R}} -> R after 2000 -> none end,
+    ?assertMatch({erx_facet_mint, _, web_line, 6, <<"root">>, #{opening := Opening}}, Request),
+    {erx_facet_mint, Tag, _, _, _, Limits} = Request,
+    ?assertEqual((maps:get(web_line, ?ERX_LINES))#{opening => Opening}, Limits),
+    Facet = pid('root_1@erxos', 7, 9),
+    Pid7 ! {erx_origin, 7, {erx_facet_minted, Tag, {ok, Facet}}},
+    ?assertEqual({reply, {ok, Facet}}, gen_server:wait_response(Asked, 2000)),
+    erlang:trace(Pid7, false, ['receive']),
+    ok = erx_domain:stop(Session, kill),
+    poll(fun() -> erx_domain:line(web_line, 7, 6, Opening) end, fun(Answer) -> Answer =:= {error, no_line} end, 100).
 
 %% Session 7 has reported ready while its echo grant is being made: its start is
 %% answered only once the grant is installed.

@@ -1125,8 +1125,6 @@ model harness drive `erx_device.c` itself. `erx_device_dma_check` and `erx_devic
   * `{erx_foreign_reason, Bin}` carries the reason's whole encoding; system-domain
     code that decodes Bin with `binary_to_term/1` without `[safe]` makes the
     atoms D5 forbids, and no check holds that.
-  * `erx_domain_srv:keep_lines/4` takes a session's provides that are no map
-    without crashing the domain service; no test sends such a session report.
 * [Medium] clock, the approximate start in a release build (`erlang/apps/erx/src/erx_clock_core.erl`,
   `start/2`; [design-time.md](design-time.md#the-approximate-start), open decision 2): a clock without
   a reading starts at the build's date, and certificate validation treats it as set, so until the clock

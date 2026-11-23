@@ -44,7 +44,7 @@ domain. Monitoring the domain pid watches the domain: it ends with
 or stopped.
 """.
 
--export([create/1, start_session/2, start_app/2, info/1, introduce/2, line/3, stop/2, id/1, node/1, pid/1]).
+-export([create/1, start_session/2, start_app/2, info/1, introduce/2, line/4, stop/2, id/1, node/1, pid/1]).
 -export([system_principal/0, system_principal_request/0, system_namespace/0, server_settled/1,
          await_grant/2, release_held/0]).
 -export([inspect_view/1]).
@@ -255,39 +255,23 @@ introduce({erx_domain, A, _, _}, {erx_domain, B, _, _}) ->
     gen_server:call(erx_domain_srv, {introduce, A, B}, infinity).
 
 -doc """
-Session's line Name to the domain Peer it serves: `web_line`, the erx_web_line
-the host link's `web` facet hands the web domain as it opens (docs/design-web.md,
-"Logging in and the line"), or `ssh_line`, the erx_ssh_line a login hands the
-SSH domain (docs/design-ssh.md, "Sessions, ttys and shells"). It is the line the
-session's ready report named under Name, once the service has introduced the two
-domains and the line, asked in the system domain's envelope, has exported itself
-to Peer with send. Each is its own domain's act: the service makes the connection, the
-session's runtime the export, so no domain reaches the line before the facet
-opens. {error, no_line} for a session that named no line under Name or has ended,
-and for a Name outside the closed set of lines, which the service alone holds
-(?ERX_LINES, generated from abi/services), the introduction's refusal
-as introduce/2 answers it, by the service's own deadline, and {error, unavailable}
-when the line did not answer within five seconds, {error, refused} when it refused.
+Session's line Name, minted as a facet for the domain Peer (docs/design-system.md,
+"A session's lines"): `web_line`, the erx_web_line the host link's `web` facet
+hands the web domain as it opens (docs/design-web.md, "Logging in and the
+line"), or `ssh_line`, the erx_ssh_line a login hands the SSH domain
+(docs/design-ssh.md, "Logging in"). Opening, a process of the system domain,
+bounds the grant: the facet ends when it does. One call, answered once by the
+mint core's line operation within its deadline: {ok, Facet}, or {error,
+no_line} when the session is not live or provides no line under Name (a Name
+outside ?ERX_LINES included), busy while a request for the session's Name is
+pending, ended when Peer ended first, the introduction's refusal as
+introduce/2 answers it, refused when the session refused or answered with
+something other than a facet of its own, and unavailable at the deadline.
 """.
--spec line(atom(), pos_integer(), pos_integer()) -> {ok, pid()} | {error, term()}.
-line(Name, Session, Peer) when is_atom(Name), is_integer(Session), Session > 0,
-                                is_integer(Peer), Peer > 0 ->
-    maybe
-        {ok, Line} ?= gen_server:call(erx_domain_srv, {line, Name, Session}),
-        ok ?= gen_server:call(erx_domain_srv, {introduce, Session, Peer}, infinity),
-        ok ?= export_line(Line, Peer),
-        {ok, Line}
-    end.
-
-%% The line's answer, which its session wrote, is taken only as ok; anything else is
-%% refused, so no term of the session's reaches the caller.
-export_line(Line, Web) ->
-    try gen_server:call(Line, {export, Web}, 5000) of
-        ok -> ok;
-        _Refused -> {error, refused}
-    catch
-        exit:_ -> {error, unavailable}
-    end.
+-spec line(atom(), pos_integer(), pos_integer(), pid()) -> {ok, pid()} | {error, term()}.
+line(Name, Session, Peer, Opening) when is_atom(Name), is_integer(Session), Session > 0,
+                                        is_integer(Peer), Peer > 0, is_pid(Opening) ->
+    gen_server:call(erx_domain_srv, {line, Name, Session, Peer, Opening}, infinity).
 
 -doc "exit(pid(Domain), Reason).".
 -spec stop(domain(), term()) -> ok.

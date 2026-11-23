@@ -109,9 +109,11 @@ end before the ended row's successor starts (ended/4).
 
 A session's ready report names its lines among its provides, each under a
 name of the closed set ?ERX_LINES: its line to the web domain, web_line, and to
-the SSH domain, ssh_line. The service keeps each pid until the session ends
-and hands it out only through erx_domain:line/3, to the domain the line
-serves, when that domain asks for the session's line.
+the SSH domain, ssh_line. The mint core keeps them with the session's grants,
+and erx_domain:line/4 is one line operation of the core, answered by the core
+(docs/design-system.md, "A session's lines"): the session mints the line's
+facet for the peer the system domain names, and no pid of a line process
+leaves the service.
 
 Its state, erx_domain_core's and erx_domain_links's, lives in its own heap and nowhere else. The
 service is never restarted: its end, however it comes, ends the system
@@ -257,7 +259,7 @@ state(Lib, Principals, Opts) ->
       device_service => maps:get(device_service, Opts, erx_devices), boot_held => [], fallback => none,
       mint_config => MintConfig, mints => erx_domain_mints:new(MintConfig#{services => [], grants => []}),
       mint_timers => #{}, mint_counts => #{}, mint_log => {erlang:monotonic_time(millisecond), 0, 0},
-      served => #{}, lines => #{},
+      served => #{},
       facet_names => maps:get(facet_names, Opts, ?ERX_FACET_NAMES),
       inspect_policy => inspect_policy(Opts), principals => Principals,
       facet_rows => [], trees => [], interfaces => #{}, app_entries => AppEntries,
@@ -479,11 +481,10 @@ handle_call(system_principal, _From, #{principals := #{system := System}} = Stat
                 _ -> {ok, System}
             end,
     {reply, Reply, State};
-handle_call({line, Name, Id}, _From, #{lines := Lines} = State) ->
-    case Lines of
-        #{Id := #{Name := Line}} -> {reply, {ok, Line}, State};
-        #{} -> {reply, {error, no_line}, State}
-    end;
+%% A line operation (erx_domain:line/4), answered by the mint core's {answer, From,
+%% Reply} action (mint_act/2).
+handle_call({line, Name, Session, Peer, Opening}, From, State) ->
+    {noreply, mints({line, From, Name, Session, Peer, Opening}, State)};
 handle_call({inspect_view, Scope}, _From, #{core := Core} = State)
   when Scope =:= all; is_tuple(Scope), tuple_size(Scope) =:= 2, element(1, Scope) =:= principal ->
     {reply, erx_domain_core:inspect_view(Scope, Core), State};
@@ -1063,7 +1064,8 @@ boot_timer(Id, Timeout) -> _ = erlang:start_timer(Timeout, self(), {boot_timeout
 %% answers its end's error (settle/2). A report for a domain that is ready already, or
 %% that ended stopping for its boot timeout, changes nothing. A configured domain's
 %% report goes to the mint core with the provides it names, at its node, and a session's
-%% with its template and the display its start named, if any (marked/1), after the answer
+%% with its facet rows, the display its start named, if any (marked/1), and its provides,
+%% its lines, at its node, after the answer
 %% to the report, so the answer reaches the domain before any installation the report
 %% starts. Only a running domain's report is taken, so the core hears a session's
 %% report at most once and before its end (unprovide/3).
@@ -1077,7 +1079,7 @@ ready(Id, Ref, Provides, Inspect, #{core := Core, waiting := Waiting} = State) -
             case Origin of
                 {configured, Row} -> mints({ready, Row, Id, Node, Provides}, Answered);
                 {session, _Template} -> mints({session_ready, minted_rows(Domain), Id, Node, marked(Start), Provides},
-                                              keep_lines(Id, Node, Provides, Answered));
+                                              Answered);
                 request -> Answered
             end;
         {_, #{Id := #{ref := Ref, ended := {running, _Info}}}} ->
@@ -1172,9 +1174,8 @@ served_kind(Name, Trees) ->
 %% docs/design-runtime.md), and is read here as the atom of that text where the system
 %% domain has one. A binary it has no atom for stays a binary, and any other key, an
 %% atom included, becomes {not_a_name, Key}: neither is an atom, so no manifest row
-%% declares it and no line is named by it, the mint core refuses it as undeclared and
-%% keep_lines/4 passes it by. A value that is no map passes untouched, for the core to
-%% refuse whole.
+%% declares it and ?ERX_LINES names no line by it, so the mint core refuses it as
+%% undeclared. A value that is no map passes untouched, for the core to refuse whole.
 provided_atoms(Provides) when is_map(Provides) ->
     #{provided_atom(Name) => Mint || Name := Mint <- Provides};
 provided_atoms(Provides) ->
@@ -1186,21 +1187,6 @@ provided_atom(Name) when is_binary(Name) ->
     end;
 provided_atom(Key) ->
     {not_a_name, Key}.
-
-%% A session's lines, which its ready report names among its provides under the names
-%% of ?ERX_LINES, each a process of the session's own node (erx_web_line, erx_ssh_line). The
-%% service keeps them until the session ends, for erx_domain:line/3 to hand to the
-%% domain a line serves; it hands a pid to no one before then. A provide of another
-%% name, or one that is no process of the session, names no line, and a provides that
-%% is no map names none.
-keep_lines(_Id, _Node, Provides, State) when not is_map(Provides) ->
-    State;
-keep_lines(Id, Node, Provides, #{lines := Lines} = State) ->
-    case maps:filter(fun(_Name, Line) -> is_pid(Line) andalso node(Line) =:= Node end,
-                     maps:with(maps:keys(?ERX_LINES), Provides)) of
-        Kept when map_size(Kept) =:= 0 -> State;
-        Kept -> State#{lines := Lines#{Id => Kept}}
-    end.
 
 mint(Id, DomainPid, Name, {tree, Grants, Limits}, Exports) ->
     mint_tree(Id, DomainPid, Name, Limits, fun(Binding) -> erx_fs_grants:grant(Grants, Limits, Binding) end, Exports);
@@ -1696,8 +1682,8 @@ log_end(Level, Name, Id, Info, Where, Then) ->
 %% "A session takes the console": a session does not wait for a restart). A session's end cancels its grants'
 %% operations and deletes the grants.
 unprovide({configured, Row}, Id, State) -> mints({ended, Row, Id}, State);
-unprovide({session, _Template}, Id, #{lines := Lines} = State) ->
-    mints({session_ended, Id}, State#{lines := maps:remove(Id, Lines)});
+unprovide({session, _Template}, Id, State) ->
+    mints({session_ended, Id}, State);
 unprovide(request, _Id, State) -> State.
 
 %%% The facets configured domains serve (docs/design-system.md, "Facets a configured
@@ -1851,6 +1837,9 @@ mint_act({failed, {Grantee, Name}, {ServerId, GranteeId}, Reason}, State) ->
     %% One line per operation, so bounded by the restarts of its two domains.
     logger:warning("erx_domain: facet ~ts of domain ~b for ~0p (domain ~b) failed: ~0p",
                    [Name, ServerId, Grantee, GranteeId, Reason]),
+    State;
+mint_act({answer, Asker, Reply}, State) ->
+    gen_server:reply(Asker, Reply),
     State;
 mint_act({Kind, Reason, Detail}, State) when Kind =:= refused; Kind =:= dropped ->
     note(Kind, Reason, Detail, State).
