@@ -139,6 +139,16 @@ class BenchRecordTest < Minitest::Test
     refute File.exist?(File.join(clone, 'bench'))
   end
 
+  def test_a_clone_on_an_orphan_branch_or_shallow_is_refused
+    orphan = File.join(@scratch, 'orphan')
+    git(@scratch, 'clone', '-q', @erxos, orphan)
+    git(orphan, 'checkout', '-q', '--orphan', 'history')
+    assert_match(/root commit/, assert_raises(Erx::Error) { write(orphan) }.message)
+    shallow = File.join(@scratch, 'shallow')
+    git(@scratch, 'clone', '-q', '--depth', '1', "file://#{@erxos}", shallow)
+    assert_match(/shallow/, assert_raises(Erx::Error) { write(shallow) }.message)
+  end
+
   def test_a_separate_repository_with_its_own_history_is_written
     git(@history, '-c', 'user.name=t', '-c', 'user.email=t@example.invalid', 'commit', '-q', '--allow-empty',
         '-m', 'history')

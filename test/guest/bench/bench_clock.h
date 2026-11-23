@@ -33,14 +33,14 @@ typedef struct {
 	bool empty;
 } erx_bench_offset_t;
 
-/* The interval of n > 0 rounds, widened by increment ticks at each end. */
+/* The interval of n rounds, widened by increment ticks at each end; empty for none. */
 erx_bench_offset_t erx_bench_offset(const erx_bench_round_t *rounds, size_t n,
     uint64_t increment);
 /*
  * Whether a cell may report: one whose stamps are read on one CPU always may; one whose
  * stamps are read on two needs the pair's calibrations before and after its run to be
- * non-empty and to overlap, and their common interval's half-width to be at most a tenth
- * of the cell's median.
+ * non-empty and to overlap, and the half-width of their hull, which holds the offset
+ * however it moved between them, to be at most a tenth of the cell's median.
  */
 bool erx_bench_cell_bounded(bool two_cpus, erx_bench_offset_t before,
     erx_bench_offset_t after, uint64_t median);

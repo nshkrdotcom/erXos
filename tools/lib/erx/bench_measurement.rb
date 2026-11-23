@@ -102,6 +102,9 @@ module Erx
       body = text.b.delete_prefix(LINE_PREFIX)
       need(body.bytesize <= LINE_BYTES, 'is longer than 64 KiB')
       need(body.each_byte.all? { |byte| byte.between?(0x20, 0x7e) }, 'holds a byte that is not printable ASCII')
+      # No field's character set needs an escape, and a decoded \u escape could be invalid
+      # UTF-8; json also reads /* */ comments. Refusing both keeps the bytes the values.
+      need(!body.match?(%r{[\\/]}), 'holds a backslash or a slash')
       fields = JSON.parse(body, max_nesting: 3, allow_nan: false, allow_duplicate_key: false,
                                 create_additions: false)
       need(fields.is_a?(Hash), 'is not a JSON object')

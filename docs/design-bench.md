@@ -284,7 +284,8 @@ in under a second, and records:
   contradict each other and the pair is refused. The construction
   assumes the offset does not change during the run, so calibration runs
   again after the run's cells, and the cells across that pair are
-  refused unless the two intervals overlap;
+  refused unless the two intervals overlap, and are otherwise bounded by
+  their hull, which holds the offset however it moved between them;
 * the rounding of a timed wait (`erx_fiasco_time_wait_us` rounds a
   deadline up to the microsecond, `liberx/backend/fiasco/time_table.c`),
   so lateness under a microsecond is recorded as unresolvable;

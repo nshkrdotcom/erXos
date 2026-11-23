@@ -395,12 +395,14 @@ module Erx
                .map { |tree| File.exist?(tree) ? File.realpath(tree) : File.expand_path(tree) }
       end
 
-      # The root commits of directory's HEAD, none for a repository with no commit yet. A
-      # second clone of erXos has a common git directory of its own but erXos's roots.
+      # The root commits of every ref in directory, none for a repository with no commit
+      # yet. A second clone of erXos has a common git directory of its own but erXos's
+      # roots, on whatever branch it has checked out; a shallow clone hides them, so it is
+      # refused.
       def roots(directory)
-        return [] unless git(directory, 'rev-parse', '--verify', '--quiet', 'HEAD')
+        refuse("is a shallow clone: #{directory}") unless git(directory, 'rev-parse', '--is-shallow-repository') == 'false'
 
-        listing = git(directory, 'rev-list', '--max-parents=0', 'HEAD')
+        listing = git(directory, 'rev-list', '--max-parents=0', '--all')
         refuse("cannot list the root commits at #{directory}") unless listing
         listing.split("\n")
       end

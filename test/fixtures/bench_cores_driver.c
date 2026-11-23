@@ -167,6 +167,8 @@ cell_case(void)
 	    erx_bench_cell_bounded(false, offset, offset, 1));
 }
 
+static const erx_bench_round_t before_rounds_none[1];
+
 /* An offset that moves by 300 ticks between the calibrations refuses the cells. */
 static bool
 drift_case(void)
@@ -174,7 +176,13 @@ drift_case(void)
 	erx_bench_offset_t before = calibrate(50, 100, 1000000);
 	erx_bench_offset_t after = calibrate(350, 100, 5000000);
 
-	return (!after.empty && !erx_bench_cell_bounded(true, before, after, UINT64_MAX / 16));
+	erx_bench_offset_t moved = calibrate(200, 100, 5000000);
+
+	/* A 150-tick move that still overlaps is bounded by the hull, half-width 176. */
+	return (!after.empty && !erx_bench_cell_bounded(true, before, after, UINT64_MAX / 16) &&
+	    !erx_bench_cell_bounded(true, before, moved, 1759) &&
+	    erx_bench_cell_bounded(true, before, moved, 1760) &&
+	    erx_bench_offset(before_rounds_none, 0, 1).empty);
 }
 
 int

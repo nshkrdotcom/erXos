@@ -21,7 +21,7 @@ module Erx
       'trigger-take' => BenchRecord::Profile.new(name: 'expensive', warmup: 10, samples: 20, runs: 1)
     }.freeze
     # JSON's own tokens and a float, inserted where they turn one value into another.
-    TOKENS = ['0', '9', '-', ',', ']', '[', '{', '}', '"', '1e3', '5.0', 'null'].freeze
+    TOKENS = ['0', '9', '-', ',', ']', '[', '{', '}', '"', '1e3', '5.0', 'null', '\udc00', '/*'].freeze
 
     module_function
 
@@ -55,8 +55,6 @@ module Erx
     def mutate(text, random)
       result = text.b.dup
       random.rand(1..3).times do
-        next if result.empty?
-
         next if result.empty?
 
         case random.rand(5)

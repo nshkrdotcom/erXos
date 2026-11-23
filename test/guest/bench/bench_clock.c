@@ -24,6 +24,8 @@ erx_bench_offset(const erx_bench_round_t *rounds, size_t n, uint64_t increment)
 		offset.low = low > offset.low ? low : offset.low;
 		offset.high = high < offset.high ? high : offset.high;
 	}
+	if (n == 0)
+		return ((erx_bench_offset_t){ .empty = true });
 	offset.low -= (int64_t)increment;
 	offset.high += (int64_t)increment;
 	offset.empty = offset.low > offset.high;
@@ -33,21 +35,25 @@ erx_bench_offset(const erx_bench_round_t *rounds, size_t n, uint64_t increment)
 uint64_t
 erx_bench_offset_half_width(erx_bench_offset_t offset)
 {
-	return (((uint64_t)(offset.high - offset.low) + 1) / 2);
+	uint64_t width = (uint64_t)offset.high - (uint64_t)offset.low;
+
+	return (width / 2 + (width & 1));
 }
 
 bool
 erx_bench_cell_bounded(bool two_cpus, erx_bench_offset_t before,
     erx_bench_offset_t after, uint64_t median)
 {
-	erx_bench_offset_t common;
+	erx_bench_offset_t hull;
 
 	if (!two_cpus)
 		return (true);
 	if (before.empty || after.empty)
 		return (false);
-	common.low = before.low > after.low ? before.low : after.low;
-	common.high = before.high < after.high ? before.high : after.high;
-	common.empty = common.low > common.high;
-	return (!common.empty && erx_bench_offset_half_width(common) * 10 <= median);
+	if (before.low > after.high || after.low > before.high)
+		return (false);
+	/* The offset during the run lies between the two: their hull, not their overlap. */
+	hull.low = before.low < after.low ? before.low : after.low;
+	hull.high = before.high > after.high ? before.high : after.high;
+	return (erx_bench_offset_half_width(hull) <= median / 10);
 }
