@@ -847,7 +847,10 @@ The marks are members of a `layout` in `abi/formats`, read by
 resolved every type, and each format file declares its structures:
 
 ```
-target NAME cpu|device        a structure a region may hold, and its writer
+target NAME cpu|device [needs_binding]
+                              a structure a region may hold, and its writer; a cpu
+                              structure marked needs_binding is placed as a ring the
+                              ledger binds to an endpoint
 layout ...
   meaning TARGET              this layout is a meaning of TARGET's records: every table
                               of that structure offers it
@@ -864,6 +867,9 @@ layout ...
                               description states it, or on a report the device
   releases PLACE TARGET [when PLACE ENUM.MEMBER...]
                               on a report: the place names the holding it ends, under those codes
+  reach KIND                  on a command: what its success or failure does to the endpoints
+                              it names, one of address, configure, stop, reset, restart,
+                              disable and evaluate
 ```
 
 A `PLACE` is `FIELD`, a field with no `bits` lines, or `FIELD.BITS`, one
@@ -973,7 +979,10 @@ no selector, an enum member or a value of the same bits two layouts of the file 
 a device address a description would state or the format fix, a
 reference to a place that is no device address, `device_address` on a
 field that has bits or is not one unsigned integer, an unknown target
-or one of another file, a `selects` or `when` member outside its enum
+or one of another file, a target mark other than `needs_binding`, a
+`needs_binding` structure the device writes, a `reach` outside its
+set or on a layout that is not a meaning of a `cpu` structure needing
+no binding, a `selects` or `when` member outside its enum
 or wider than its bits, a `fixed` value wider than its bits or with bits
 below the place's shift, a place the layout does not have, an
 `activates` mark of more than one bit, a place marked twice and a
@@ -1041,7 +1050,7 @@ p. 447; Table 6-8, p. 450); it declares the transfer rings and the
 command ring as `cpu` structures, the transfer ring marked
 `needs_binding`, and the event ring as a `device` one, the nine commands
 as the command ring's meanings (xHCI 1.2, 6.4.3), each with its `reach`
-mark (`address`, `configure`, `stop`, `restart`, `disable`, `evaluate`,
+mark (`address`, `configure`, `stop`, `reset`, `restart`, `disable`, `evaluate`,
 or none for No Op and Enable Slot) and its slot and endpoint
 fields derived, the sequencer's from the publication's reach, and the
 event TRBs as the event ring's. The virtio file holds the

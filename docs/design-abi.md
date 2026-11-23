@@ -98,14 +98,17 @@ The declaration forms are:
 | `signal NAME NUMBER ACTION [alias NAME] "DESCRIPTION"` | a signal of the [signal table](design-programs.md#signal-numbers), in `signals.txt`: its name without `SIG` in lower case, a distinct number 1 through 128, its default action, `terminate`, `ignore`, `stop` or `continue`, or `reserved` for a number the C library keeps, and its description, FreeBSD's `sys_siglist` text, quoted and last, which a reserved one lacks. The table is the one source of the C lookups, musl's `bits/signum.h` (a reserved name only under `_BSD_SOURCE` or `_GNU_SOURCE`, with `_NSIG` 128) and the protocol names of the signals a program may name |
 | `reserved_signal NUMBER` | a distinct number the C library keeps that has no name, as `reserved` on a `signal` line marks one that has: no constant, `erx_sig_name` gives `NULL`, `erx_sig_action` `ERX_SIG_ACTION_RESERVED`, and `erx_sig_valid` refuses it |
 | `realtime FIRST LAST ACTION` | the real-time signals `FIRST` to `LAST`, named as `sig2str` names them: `rtmin`, `rtmin+1` up to the middle of the range, then `rtmax-N` down to `rtmax`; at most one |
+| `signal_set NAME SIGNAL...` | a named set of signals, in `signals.txt`: a distinct set name and at least one member, each a signal a program may name, none twice |
 | `fault KIND SIGNAL` | a row of the fault table, in `erx_abi.txt` beside `exit_kind` ([A program's end](design-programs.md#a-programs-end)): the signal, by its name in `signals.txt`, a program may name, that ends a program whose thread faults with the `fault_kind` `KIND`; every kind but `exit`, which marks an exit record, has exactly one row, or generation fails; C's `erx_fault_signal` and Erlang's `erx_prog:status/1` read a program's end through it, a status 0 to 255 being a halt and `ERX_EXIT_SIGNAL` (256) plus `N` an end by signal `N` |
 | `errno NAME NUMBER [alias NAME]` | an errno of the [errno table](design-programs.md#the-posix-lite-personality), in `errno.txt`: its C name in lower case, `einval`, which is its name in a reply of the program protocol, and its number, distinct and 1 through 4095, FreeBSD's in `sys/sys/errno.h`, against which a test compares the table; an alias is a second C name of the same number, `ewouldblock` of `eagain`, and never a protocol name, so one error has one name in a reply; no name or alias comes twice. musl's generated `bits/errno.h` defines each name and alias, so musl's errno values and its `strerror` table are FreeBSD's |
+| `termios FIELD` | a part of the termios table, in `termios.txt` ([The tty](design-live.md#the-tty)): `iflag`, `oflag`, `cflag` or `lflag` with indented `flag NAME BIT` and `size NAME MASK FIRST` members, `cc COUNT UNNAMED` with `char NAME INDEX` members, or `speed` with `rate SPEED` members, each rate distinct and 32-bit; the file's header states the forms |
 | `right NAME POSITION DESCRIPTION` | a distinct position 0 through 31 within the kernel's 32-bit `erx_rights_t` word |
 | `type NAME INTEGER` | explicit `rights` and `pass` lists, including an explicit empty pass list |
 | `kind NAME INTEGER TYPE` | a creation kind of an object type: its `default` list, within the type's rights, and for a carved kind `carves KIND`, the kind it is carved from, whose default it does not exceed but by `destroy`; `reserved_space` and `reserved_thread` state what the reserved values `cap_self` and `cap_self_thread` carry, and no call creates them |
 | `cap NAME SLOT KIND [optional]` | a well-known root slot and the creation kind its capability is installed as, which fixes its object type and rights; `optional` when the boot may leave the slot null. Slots run from 1 without a gap, and the generator derives the layout `erx_boot_root_extension` from these lines, one `cap` field per slot |
 | `call NAME NUMBER` | the call metadata and members described below |
 | `reader NAME ROOT_LAYOUT MAX_BYTES` | bounded tables and references described below |
+| `target NAME cpu\|device [needs_binding]` | a structure a DMA region may hold and its writer, in a format file of `abi/formats` ([What the formats say](design-device-dma.md#what-the-formats-say)) |
 | `translation NAME SOURCE TARGET` | a directed mapping for one named consumer context, from a closed enum or a base integer type to a closed enum; `erx_abi_translations` gives each as a function of its name from a source value to its target's value, or `none` |
 | `service NAME NUMBER` | a named interface, its operation identifiers and its typed manifest-parameter declarations; callable operations retain the admission contract of the service design |
 | `inspection SCHEMA` | the inspection schema, with its units, value types, backend reporters, kinds and paths as members described in [Inspection schema](#inspection-schema); exactly one, in `inspection.txt` |
@@ -206,8 +209,8 @@ The exact layout metadata forms, at two-space indentation, are:
 | `sequence FIELD terminal VALUE exhaustion STATUS recovery RECOVERY` | FIELD is an atomic unsigned sequence counter; VALUE fits it; STATUS names a declared failure result; RECOVERY is `none`, `new_object` or `new_incarnation` |
 
 A layout that a device reads or writes as a record may also carry the
-DMA marks, `selects`, `fixed`, `refers`, `activates`, `derived`, `states`
-and `releases`, and its format file `target` lines; their forms, checks and
+DMA marks, `meaning`, `selects`, `fixed`, `refers`, `activates`, `derived`,
+`states`, `releases` and `reach`, and its format file `target` lines; their forms, checks and
 the encoders generated from them are in
 [design-device-dma.md](design-device-dma.md#what-the-formats-say).
 
@@ -524,7 +527,8 @@ Reader declarations bind layout members to their containing byte span:
 * `string OFFSET_FIELD LENGTH_FIELD TABLE CLASS MAX_BYTES` references a
   string. Its offset is relative to the named string table. Classes are
   a closed set of separately tested validators: system identifier,
-  device-tree path, namespace path, UTF-8 text, opaque bytes,
+  device-tree path, namespace path, relative path (plain names joined by
+  `/`, so it stays below where it is resolved), UTF-8 text, opaque bytes,
   NUL-separated arguments, and NUL-separated environment entries. Empty
   is a distinct declared option.
 * `order TABLE...` requires the header followed by the named record and
@@ -1819,7 +1823,7 @@ HELPER`.
 * `served_as` is stated by every interface, so no interface is served
   one way by omission. `tree` marks an interface whose grants are
   `erx_fs` grants of one tree, which the grantee mounts and speaks
-  9P2000.L to (`files`, `windows` and `line`); `message` one served as a
+  9P2000.L to (`files`, `windows`, `line` and `input`); `message` one served as a
   message facet. It is the one source of that fact: the generator lists
   the `tree` interfaces for Erlang as `?ERX_TREE_SERVICES`, from which
   the domain service serves the system domain's such services as
