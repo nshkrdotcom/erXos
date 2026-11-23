@@ -4,8 +4,9 @@ erXos is an Erlang-native, cross-platform operating system, targeting
 AArch64 first. Its kernel
 is a capability microkernel of its own, written in C on the design and know-how
 of L4Re's Fiasco, with a process model built around lightweight runtime
-processes; until it is written, a modified Fiasco stands in for it behind
-the same kernel interface. The kernel allocates CPU time to native threads
+processes; until then, and for good if gate GF of
+[docs/plan.md](docs/plan.md) chooses it, a modified Fiasco runs behind the
+same kernel interface. The kernel allocates CPU time to native threads
 and to runtime groups, and each runtime, ERTS first, schedules its own
 lightweight processes within its grants. Every runtime runs in user mode,
 including the one that runs the system services, which are mostly Erlang.
@@ -125,18 +126,20 @@ These shape every design and change; the rules below apply them.
   them as written, with one exception: a development build may boot a
   platform whose DMA handover evidence is not yet recorded; the gap is a
   security residual in `TODO.md` that blocks release. The closure has two
-  forms: 0.2's on Fiasco and M11's on erXos's own kernel. Fiasco is
-  hardened only as [docs/design-fiasco.md](docs/design-fiasco.md) lists
-  (its release build, its patches, the system-call fuzz campaign and the
-  upstream watch); what it lacks against erXos's kernel is a downside of
-  running on Fiasco, published with the release, not a gap to plug.
+  forms: 0.2's on Fiasco and M11's on erXos's own kernel, or on Fiasco if
+  gate GF chooses it. Fiasco is hardened as
+  [docs/design-fiasco.md](docs/design-fiasco.md) lists (its release build,
+  its patches, the system-call fuzz campaign and the upstream watch) and as
+  track F of [docs/plan.md](docs/plan.md) adds; what it still lacks against
+  erXos's kernel is a downside of running on Fiasco, published with the
+  release.
 * **Two phases.** Phase 1 of [docs/plan.md](docs/plan.md) brings the
   system up on a near-stock Fiasco: `liberx`'s Fiasco backend implements
   the kernel interface over Fiasco's own calls in user mode, the system
   domain's `liberx` creates every kernel object and places each in its
   holder, as L4Re's root task does, and nothing of erXos's kernel
-  semantics is built into Fiasco beyond the few patches
-  [docs/design-fiasco.md](docs/design-fiasco.md) lists. 0.2, the first
+  semantics is built into Fiasco beyond the patches
+  [docs/design-fiasco.md](docs/design-fiasco.md) lists, track F's among them. 0.2, the first
   release, ships on that Fiasco: the backend uses Fiasco's own
   capabilities, factories, interrupts and DMA spaces, so isolation
   between domains and budgets as walls rest on Fiasco and on the root
@@ -145,8 +148,9 @@ These shape every design and change; the rules below apply them.
   unless FD32's entry patch is carried, on the CPU's branch predictors
   (FD32). What
   Fiasco lacks against erXos's kernel is a downside row of
-  [docs/design-fiasco.md](docs/design-fiasco.md). Phase 2 builds
-  erXos's kernel with every guarantee and replaces Fiasco.
+  [docs/design-fiasco.md](docs/design-fiasco.md). If gate GF chooses erXos's kernel, Phase 2 builds it with every
+  guarantee and replaces Fiasco; if GF chooses Fiasco, Phase 2 continues
+  track F instead.
   On Fiasco the properties only erXos's kernel enforces are deferred as
   enforcement, not rewritten:
   [the downsides table](docs/design-fiasco.md#downsides-against-erxoss-kernel)
@@ -165,8 +169,10 @@ These shape every design and change; the rules below apply them.
   backend refuses a
   call it cannot implement over Fiasco with `ERX_ENOTSUP`, reports a
   value it cannot measure as unsupported or partial with its reporter
-  named, and never rebuilds a kernel mechanism in user mode for a
-  property that only erXos's kernel promises. Every rule below still
+  named, and rebuilds a kernel mechanism in user mode for a property that
+  erXos's kernel promises only as a planned stage of track F, the way
+  Fiasco and L4Re intend (the root as pager, the root's accounting of the
+  pages it hands out), publishing the guarantee it gives on Fiasco. Every rule below still
   binds the code written in Phase 1: `liberx`, the runtimes, the
   services, the drivers and the tools follow the untrusted-input,
   chokepoint, escaping, fuzz-target, generated-ABI and never-fabricate
@@ -238,8 +244,9 @@ Third-party components are allowed when they pay for themselves.
   exception is the images the website offers (the browser demo and the
   board cards), each distributed with its source offered.
 * **Release components.** A component in a release's trusted base that a
-  later phase replaces, as 0.2 runs on Fiasco and Phase 2 replaces it with
-  erXos's kernel, is marked `release` in the dependency table. What
+  later phase may replace, as 0.2 runs on Fiasco and Phase 2 replaces it
+  with erXos's kernel if gate GF chooses it, is marked `release` in the
+  dependency table (and becomes `permanent` if GF keeps it). What
   separates it from a stopgap a release ships is where it runs: a stopgap
   a release ships runs confined as its release contract states (0.2
   ships littlefs as a NIF in the storage domain, under the release
@@ -248,7 +255,7 @@ Third-party components are allowed when they pay for themselves.
   and the input it is fuzzed against,
   while every domain's isolation rests on a `release` component, so its
   release contract is its design's contract section, which states the
-  isolation every domain rests on. Its replacement is
+  isolation every domain rests on. Its replacement, or the gate that decides it, is
   planned in [docs/plan.md](docs/plan.md), what it lacks against that
   replacement is published with the release, and a release ships only a
   build of it whose link closure is permissive, which a release build
@@ -673,8 +680,8 @@ scripts live in `~/erxos-scratch/tools/`.
 * Watch the argument order of `bcopy(src, dst, n)`, the opposite of `memcpy`.
   Flag it in code review.
 * **Trust placement.** Only the kernel runs in kernel mode: erXos's own C
-  microkernel, or until it replaces it, the modified Fiasco that is the
-  first release's kernel. Every runtime runs in user mode, including the system
+  microkernel, or the modified Fiasco that is the first release's kernel
+  until gate GF decides between them. Every runtime runs in user mode, including the system
   domain's ERTS, which runs the trusted Erlang system services. Mechanism
   that every domain's isolation depends on lives in the kernel; on
   Fiasco it lives in the kernel and in the request decoder and placement
