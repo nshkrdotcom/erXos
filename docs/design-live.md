@@ -1206,10 +1206,22 @@ signal). When it arrives it damages every unfinished request. From then
 on the group takes a character only for its current request, which is
 either one that was unfinished at the loss, damaged since, or one
 started later, which starts damaged while any unfinished request is
-damaged. A request loses its damage only when its own buffer is emptied
-or it ends; while one damaged request is still unfinished, every new one
-starts damaged again. So the only ways out are the user's own discard of
-a damaged request, or the end of input, after which no character comes.
+damaged. A request loses its damage only by the user's discard of it or
+at the end of input; while one damaged request is still unfinished,
+every new one starts damaged again. The premise that closes the
+argument is about endings: `group` ends every request through one
+function, `pop_state/1` (`otp/lib/kernel/src/group.erl:621`), and a
+damaged request reaches it only by the user's discard (`Ctrl-C`), by
+the end of input, or by an error (a driver's `{error, _}`, a failed
+translation or collection), since it returns no line. An error is
+neither the user's act nor the end, so a damaged request that ends with
+one leaves its loss held for the group's next ask, and the next request
+takes that loss first, as a held flushed loss is taken. No other ending
+exists: `group` does not watch the process that asked, so a reader's
+exit leaves its request unfinished until it ends one of these ways, and
+the I/O protocol has no timeout or cancellation on the group's side. So
+the only ways out are the user's own discard of a damaged request, or
+the end of input, after which no character comes.
 
 | Hop | The end of input | A loss |
 | --- | --- | --- |
@@ -1430,9 +1442,12 @@ rules use it, and every way a request changes is one of them:
   it damages that request alone.
 * **A request starts with the group's damage**: damaged when any
   unfinished request of the group is damaged, undamaged otherwise.
-* **A request's damage ends only with that request**: when the user
-  empties its own edited buffer, or when the request ends; the end of
-  one request clears nothing of another's.
+* **A request's damage ends only by the user's discard or the end of
+  input**: when the user empties its own edited buffer, when `Ctrl-C`
+  ends it, or at the end of input. A damaged request that ends any
+  other way, with an error, leaves its loss held for the group's next
+  ask, beside the group's one ask, which outlives requests already.
+  The end of one request clears nothing of another's.
 
 Two nestings show the rules at work, with no case of their own. A prompt holding
 `file:delete("`, a dropped frame holding `scratch/`, then
@@ -1603,6 +1618,7 @@ fail, so the case proves the code under it ran.
 | the same: a loss, a history move, Enter | no line finishes | the history move rebuilding the line state without the damage |
 | the same, nested edited reads: read A damaged, then read B from another process, B's line and Enter; B's buffer emptied, a new line and Enter; then A resumes and Enter | B starts damaged and finishes no line until its buffer is emptied, then returns the new line; A finishes no line | B starting undamaged |
 | the same, the reversed nesting: a helper's `io:get_line/1` A takes a loss of `% ` from a pasted `% file:delete("important").`, the evaluation ends and the shell's command read B starts, then `file:delete("important").` and Enter | B finishes no line | B starting undamaged while A is damaged |
+| the same, an error ending: the only request A damaged by a loss, the driver's `{error, x}` ending A, then the shell's next read B, a line and Enter | A answers `{error, x}`; B takes the held loss first and finishes no line | the error ending dropping A's loss, so B starts undamaged |
 | the same, a refused character: B damaged by a grapheme cluster of 33 codepoints, then read C from another process, a line and Enter | C starts damaged and finishes no line | a request started while another is damaged by a refusal starting undamaged |
 | the same, nested password read: read A undamaged, `io:get_password/0` B with a loss, then B's next line, then `Ctrl-C`, then A's Enter | B returns no line and ends interrupted; A resumes damaged and finishes no line | a loss damaging only the current request |
 | the same, prompt A holding `file:delete("`, frame 1 (`scratch/`) dropped, `io:get_password/0` B from another process, frame 2 `Ctrl-C`, frame 3 `important").` and Enter | B ends interrupted; A resumes damaged and finishes no line | the end of B clearing A's damage |

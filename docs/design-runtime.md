@@ -692,7 +692,9 @@ any unfinished request of the group is damaged, the group's damage being that de
 fact and stored nowhere; the damage is saved and restored with its request when
 `group` sets the request aside for a nested read and resumes it, and gone with its
 answer, and passes it into every `edlin` call, so no line state `group` rebuilds can lose
-it, and the end of one request clears only its own. In dumb mode a damaged read returns no line
+it, and the end of one request clears only its own. A damaged request that ends
+with an error, rather than by `Ctrl-C` or at the end of input, leaves its loss held
+for the group's next ask, beside the ask, so the next request takes it first. In dumb mode a damaged read returns no line
 until `Ctrl-C` or the end of input ends it, and `erx_console` puts no group in raw mode. So
 every character a group takes after a loss lands in a damaged request until the user
 discards one, and no shell that edits with `edlin`, the Erlang shell
