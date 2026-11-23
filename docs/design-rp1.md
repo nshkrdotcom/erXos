@@ -283,12 +283,17 @@ is `rest_for_one`: `erx_rp1` first, then the pin driver, `erx_pins`
 ([Pins](#pins)), then a `one_for_one` supervisor of the parts' drivers,
 the GEM's lender and one USB tree per host. The end of a part's driver
 restarts that driver alone, and the function stays mastering. The end of
-`erx_pins` restarts the parts' drivers after it, and its own restart
-writes no pin of a device that reads as one of its states, so the PHY's
-reset line does not move until the GEM's restarted driver moves it. The end of `erx_rp1` ends every part's driver and starts the
+`erx_pins` stops the parts' drivers before it restarts and starts them
+after. No start of `erx_pins` writes a pin of a part whose driver
+selects states, so the PHY's reset line moves only when the GEM's driver
+moves it. The end of `erx_rp1` ends every part's driver and starts the
 unit again from step 1. A part's driver that keeps failing before its
 call ends its supervisor within that supervisor's intensity, and with it
-the unit. The unit supervisor's own end ends the domain,
+the unit. A part the pin driver reports not ready
+([design-pinctrl.md](design-pinctrl.md#at-start)) is such a part: its
+driver's start fails before it touches the device, so the function
+never masters beside a device that was not reset, and the unit ends by
+the same rule. The unit supervisor's own end ends the domain,
 whose restart the domain service runs within the row's intensity; the
 holder's end sets the function `off`.
 
@@ -385,8 +390,9 @@ the blocks its rows need: `io_bank1` (`0xd4000`) and `pads_bank1`
 (`0xf4000`) for GPIO 32, and `io_bank2` (`0xd8000`) and `pads_bank2`
 (`0xf8000`) for GPIO 42 and 43. The header's bank joins them with the
 first driver of a header pin. The unit supervisor starts `erx_pins`
-after `erx_rp1` answers and before the parts' drivers, so every part
-finds its pins in a state the table lists.
+after `erx_rp1` answers and before the parts' drivers, so a part with
+one state finds its pins in it, or is not started, and a part with more
+selects its own as its driver starts.
 
 The table's rows on RP1, of kind `rp1`:
 
@@ -411,11 +417,35 @@ pin is set only when both read as planned:
 Clearing output disable and setting input enable for every signal lets
 the peripheral's own output enable decide the direction, so the kind
 needs no table of which signals are inputs. That choice is this
-design's, made from the fields' descriptions. `INOVER`, whose values the
-facts record does not list, is left as read and shown in `/proc` until
-the record gives them. Drive strength, slew rate, the Schmitt trigger
-and each bank's `VOLTAGE_SELECT` are in no setting and stay as the
-firmware left them
+design's, made from the fields' descriptions.
+
+**The order of a pin's writes.** The pad register holds the pulls and
+the two enables, and `CTRL` the function and the overrides, so the kind
+orders a pin's steps by what could drive the wire in between:
+
+1. If the plan changes which block drives the pin, its `FUNCSEL` or its
+   `OEOVER`, while the pad's output disable is clear, the pad is written
+   first, with output disable set, input enable set and the new
+   setting's pull bits.
+2. `CTRL` is written once, to its final word. A change of level alone,
+   `OUTOVER` between 2 and 3, is this one write and nothing else, so a
+   reset line moves in one step and never floats.
+3. The pad is written to its final word, with output disable clear
+   where the setting drives or carries a signal.
+
+So a pad never drives the level or the signal of the setting being
+left, a pull is in place before its function, and a pin's pad may be
+written twice in one plan.
+
+**What stays the firmware's.** `INOVER`, bits 17:16 of `CTRL`, is in no
+setting. The facts record names the field and does not give its values,
+so the kind neither writes nor checks it. By its name it overrides the
+input the peripheral sees, and a pin can be reported `set` with that
+override left on. An input signal on RP1 therefore rests on the firmware
+having left `INOVER` alone, until the record gives the values and the
+kind plans the one that passes the pad through. Drive strength, slew
+rate, the Schmitt trigger and each bank's `VOLTAGE_SELECT` are in no
+setting either and stay as the firmware left them
 ([design-pinctrl.md](design-pinctrl.md#what-the-firmware-leaves)).
 
 GPIO 32 is the PHY's reset (`ETH_RST_N`), active low, driven through IO
@@ -425,19 +455,20 @@ the PHY by selecting `reset`, waiting 5 ms and selecting `default`, the
 tree's duration with Linux's post-delay of 0. A state stays until
 another is selected, so a driver that ends between the two leaves the
 PHY in reset until its restart, which begins with the same two selects.
-At the pin driver's start a PHY found held in reset through this pin is
-left so for the GEM's driver, and one found any other way is put in
-`default`.
+The pin driver's start does not write this pin: the part has two
+states, so the pin is the GEM driver's, and stays as the firmware left
+it until that driver's first select.
 
 GPIO 42 and 43 carry the USB ports' power enable and over-current input
 in function `vbus1` (`FUNCSEL` 2), which the Raspberry Pi firmware's
-tree gives `usb0` as its default state. Their `CTRL` words and their
-pads' output-disable and input-enable bits are planned as for any
-signal, so the two signals do not rest on what the firmware left there.
-Which pin is the input is not known, so the rows name no pull, and the
-pads' pull bits are the one thing about these pins the design takes from
-the firmware. The board check records them, and a row gains a pull if
-the reading shows the input needs one.
+tree gives `usb0` as its default state. Their `FUNCSEL`, their output
+overrides and their pads' output-disable and input-enable bits are
+planned as for any signal. Two things about these pins are still the
+firmware's: `INOVER`, as above, and the pads' pull bits, since which pin
+is the input is not known and the rows name no pull. The board check
+records both, and a row gains a pull if the reading shows the input
+needs one. `usb0` has `default` alone, so its pins are set at the pin
+driver's start, and its driver is not started when they differ.
 
 ## The Ethernet controller
 

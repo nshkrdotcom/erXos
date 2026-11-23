@@ -35,8 +35,9 @@ Decisions every reader needs:
   check that keeps the pin controller out of untrusted hands.
 * **No bus driver asks for its pins.** The firmware sets the header's
   bus pins from the map's `gpio=` lines before the kernel runs, and the
-  system domain's pin driver makes every device's pins what the table
-  says before any configured domain starts
+  system domain's pin driver puts each bus's pins in the table's setting
+  before any configured domain starts, and a bus whose pins could not be
+  set is given to no domain
   ([design-pinctrl.md](design-pinctrl.md#at-start)). So I2C, SPI and
   the vault's TPM depend on no domain but the system domain.
 * **The pin driver sets the on-board pins.** Pins off the header that
@@ -367,13 +368,13 @@ written from Table 94 as the others are.
 
 What follows from the rows:
 
-* **The pin driver sets them at its start**, with every other
-  device's pins, before the line service opens UART0 and before any
-  configured domain starts
+* **The pin driver sets them at its start**, with the pins of every
+  other device that has one state, before the line service opens UART0
+  and before any configured domain starts
   ([design-pinctrl.md](design-pinctrl.md#at-start)). They give no
-  `config.txt` line. A boot whose pins are not set goes on: only the
-  chips on those pins fail, with their own diagnostics
-  ([design-fiasco.md](design-fiasco.md#the-raspberry-pi-4)).
+  `config.txt` line. A boot whose pins are not set goes on without the
+  devices on those pins: a device whose pins could not be set is given
+  to no domain and started by no driver.
 * **One table, one writer.** An on-board pin and a header pin differ
   only in where the board wires them: both are rows, and the pin
   driver alone writes either. The root's boot write of the on-board
@@ -548,8 +549,8 @@ One directory per pin of the grant's scope, named by its GPIO number
 
 A pin's **idle state** is input with no pull and no edge detection: the
 state that drives nothing. The pin driver puts every `gpio` pin in it at
-its start, a pin returns to it when its hold ends, and a hold is granted
-only on a pin that reads idle
+its start, a pin returns to it when its hold ends, and a grant takes an
+unheld pin only when it reads idle
 ([design-pinctrl.md](design-pinctrl.md#plain-gpio)), so no holder
 inherits another's settings.
 
@@ -719,7 +720,7 @@ module that reads and writes the registers by name, and the tree module.
 | Core | Decides |
 | --- | --- |
 | `erx_hold` | the holder of each pin, chip select and channel, and whether an operation's handle is live, as above |
-| `erx_pins_core`, `erx_pins_bcm2711` ([design-pinctrl.md](design-pinctrl.md#the-plan)) | the `ctl` grammar; from a pin of a `gpio` row and a request, the register writes: the GPFSEL field (register `pin div 10`, shift `3 * (pin rem 10)`), the pull field (register `pin div 16`, shift `2 * (pin rem 16)`), GPSET or GPCLR, the edge enables, each a read-modify-write that changes only the pin's field; from a GPEDS0 value, the served pins that fired and the bits to clear |
+| `erx_pins_core`, `erx_pins_bcm2711` ([design-pinctrl.md](design-pinctrl.md#the-plan)) | the `ctl` grammar; from a pin of a `gpio` row and a request, the register writes: the GPFSEL field (register `pin div 10`, shift `3 * (pin rem 10)`), the pull field (register `pin div 16`, shift `2 * (pin rem 16)`), and the edge enables, each a field write that changes only the pin's field, and GPSET or GPCLR, a command that carries the pin's bit alone; from a GPEDS0 value, the served pins that fired and the bits to clear |
 | `erx_bsc_core` | a transfer as a state machine: from the request and each status read, the next action (fill or drain the FIFO, start, set up the repeated start, finish) and its result; the service interval and the stall limit |
 | `erx_spi_core` | the `ctl` grammar, the divisor, and the held transfer: from the CS flags, what to write to and read from the FIFO next, chunk by chunk; the service interval and the stall limit |
 | `erx_pwm_core` | the `ctl` grammar and RNG and DAT from period, duty and clock |
@@ -845,9 +846,11 @@ register access that aborts ends the domain, as everywhere
 PWM has no consumer in the first set (a fan, LED dimming and servos are
 the likely ones), and QEMU does not model it, so it is built when a
 consumer needs it. Until then the map's GPIO 18 and 19 are `gpio` rows
-and no domain holds the `pwm` or `clocks` units. They stay `gpio` rows
-once it is built: a running channel borrows its pin, which is plain
-GPIO the rest of the time
+and no domain holds the `pwm` or `clocks` units. Whether a pin can be
+plain GPIO at one time and a channel's at another on one image, or is
+PWM0's by its row, is decided when PWM is designed in full. If it is
+shared, who has the pin is a hold in `erx_hold` and is never read from
+the registers
 ([design-pinctrl.md](design-pinctrl.md#a-pin-that-is-sometimes-a-devices)).
 Building it means:
 
@@ -984,9 +987,10 @@ under `/proc/domains/D/pins/`
 
 * Each driver is one process, so its block sees one request at a time:
   an I2C or SPI transfer runs to its end before the next starts, and a
-  GPIO register update is one read-modify-write by the one process that
-  writes those registers. Requests wait in the driver's queue, bounded by
-  each grant's `in_flight`.
+  GPIO configuration update is one read-modify-write by the one process
+  that writes those registers, a level one command that names its pin
+  alone ([design-pinctrl.md](design-pinctrl.md#the-plan)). Requests wait
+  in the driver's queue, bounded by each grant's `in_flight`.
 * The hold's check and an operation's effect are one step of the driver
   process, so an operation sent before its grant ended cannot act after
   another grant took the resource.

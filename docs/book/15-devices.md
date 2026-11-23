@@ -656,11 +656,12 @@ holds a pin controller and is the only code with a name for a pin
 register ([design-pinctrl.md, The pin
 driver](../design-pinctrl.md#the-pin-driver)). At its start it reads
 the registers, and a pure function returns the writes that put every
-device's pins in a state the table lists, or refuses the whole plan.
-The driver applies the plan, reads the registers again and plans
-again: a pin the second plan would still write is reported as not
-set. A pin that is already right costs no write. Every other driver
-therefore finds its pins set and never asks for them.
+device with one setting in it, or refuses the whole plan. The driver
+applies the plan, reads the registers again and plans again: a pin
+the second plan would still write is reported as not set. A pin that
+is already right costs no write. No driver asks for its pins: a
+device is given to its driver with them set, and a device whose pins
+could not be set is not given at all.
 
 After its start the pin driver writes for two kinds of request only.
 One is a line written to `/dev/gpio`, for a plain GPIO pin that a
@@ -670,10 +671,12 @@ by selecting that name: the Pi 5's Ethernet driver resets its PHY by
 selecting `reset` and then `default`, and the table says which pin
 goes low. No driver sends a function number or a level. A state stays
 until another is selected, and the pin driver keeps no record of it:
-the state a device is in is read from its registers, so a restart of
-the pin driver changes no pin of a device in use. `/proc` shows each
-pin's owner, the setting the table wants and the setting its registers
-hold. The pin driver is designed and not built.
+the state a device is in is read from its registers. A device whose
+driver selects states is written only by those selects, never by a
+start of the pin driver, so a card's supply does not move under a
+transfer when the pin driver restarts. `/proc` shows each pin's owner,
+its setting in the table and the setting its registers hold. The pin
+driver is designed and not built.
 
 What is **Built** is narrower. The firmware sets the header's bus
 pins from the `gpio=` lines the packer writes into `config.txt`, one

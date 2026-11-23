@@ -26,13 +26,13 @@ Decisions every reader needs:
   owners of one pin cannot be written: a pin has one row.
 * **One driver per pin controller is the only writer.** `erx_pins` runs
   in the domain that holds the pin controller, and nothing else has a
-  name for a pin register. At its start it puts every device's pins in
-  a state the table lists. Afterwards it writes only for a state name or
-  a GPIO request that the table and the asker's grant allow.
+  name for a pin register. At its start it sets the pins of every device
+  that has one state. Afterwards it writes only for a state name or a
+  GPIO request that the table and the asker's grant allow.
 * **Defaults need no request.** A device with one state, `default`, is
   put in it when the pin driver starts, whether or not the device is
-  driven. Its driver finds its pins set, and there is no claim protocol
-  between drivers.
+  driven, and there is no claim protocol between drivers. A device whose
+  pins could not be set is not given to its driver at all.
 * **Every write is planned whole, applied, and checked by planning
   again.** A pure function takes the registers as read and the settings
   wanted and returns the register writes, or a refusal that writes
@@ -43,9 +43,9 @@ Decisions every reader needs:
   a power enable or a signalling voltage is a second state of the device
   that owns the pin. A state stays until another is selected.
 * **The pin driver keeps no record of a device's state.** The state a
-  device is in is read from its pins' registers. A restart of the pin
-  driver therefore loses nothing and changes no pin of a device that is
-  in one of its states.
+  device is in is read from its pins' registers, so a restart of the pin
+  driver loses nothing. No start of the pin driver, the first or a later
+  one, writes a pin of a device whose driver selects states.
 * **The console's pins are the firmware's.** The kernel prints before
   any driver runs, so the firmware sets the console's pins. The build
   checks that the rows the table gives the console are the pins the
@@ -169,10 +169,10 @@ report and manifest table are deleted with it
 The board's pin table gives every pin one owner, and every owner's pins
 a setting in each of its named states. One driver per pin controller
 holds the controller's registers and makes them equal to the table: at
-its start it puts every device in one of its states, and afterwards it
-writes only for a state name or a GPIO request that the table and a
-grant allow. Each write, and each answer to "is this pin set?", is a
-pure function of the registers as read and the settings wanted.
+its start for every device that has one state, and afterwards only for
+a state name or a GPIO request that the table and a grant allow. Each
+write, and each answer to "is this pin set?", is a pure function of the
+registers as read and the settings wanted.
 
 Everything below follows from those three sentences.
 
@@ -206,10 +206,11 @@ an earlier one's output again.
 | **PC3.** erXos never writes the console's or JTAG's pins | their rows are pins the firmware's own settings set, which the reader checks; no such row is in the driver's record; a plan changes no field it has no pin for |
 | **PC4.** A refused request writes nothing | `plan/2` returns every write or a refusal; a hold is decided before a plan is made |
 | **PC5.** A client changes a pin only to a setting the table lists, for a pin in its scope | a request carries a state name or a GPIO `ctl` line, never a function or a register; the manifest check proves each grant's scope |
-| **PC6.** When a device's driver starts, the pin driver has put the device's pins in one of its states, or has reported the device `unset` | the pin driver's start returns after its plan is applied and checked; the system release starts it before the domain service, which creates every configured domain, and before its own drivers of devices with rows; a unit's supervisor starts it before the unit's drivers |
-| **PC7.** A GPIO pin is handed to a holder only from its idle state, and goes back to it when the holder ends | a hold is granted only when the pin's registers read idle; the hold core releases at the holder's last close or its end |
+| **PC6.** A device is used only with its pins set | the pin driver's start returns after its plan is applied and checked, and comes before the domain service, which creates every configured domain, before the system release's own drivers of devices with rows, and in a unit before the unit's drivers; a device with `default` alone that is not ready is given to no domain, and in a unit its driver's start fails; a driver that selects states fails its start unless its first select answers `ok` |
+| **PC7.** A GPIO pin passes to a new holder only from its idle state, and who holds it is never read from the registers | a grant takes an unheld pin only when its registers read idle; the hold core's record alone says who holds a pin, and it releases at the holder's last close or its end |
 | **PC8.** What `/proc` shows a pin to hold, and the state it shows a device to be in, are what the registers hold | read from the registers, never from the table and never from memory |
-| **PC9.** A state does not depend on the states before it | every state of a device writes the same fields: a state changes only what the row's plain setting states |
+| **PC9.** A state does not depend on the states before it, and a reading is at most one state | every state of a device writes the same fields, since a state changes only what the row's plain setting states; the reader refuses two states of one device with the same settings |
+| **PC10.** A start of the pin driver moves no line a driver chose | a start plans `default` for a device with `default` alone and nothing for a device with other states |
 
 ### The pin table
 
@@ -251,18 +252,23 @@ firmware's configuration (`config.txt` on the Raspberry Pis,
 setting it can write that makes the firmware set pins, with those pins
 and the signal the firmware puts on each. On the Raspberry Pi 4:
 
-| Setting | Pins | Evidence |
-| --- | --- | --- |
-| `enable_uart` | GPIO 14 and 15, the mini UART's `TXD1` and `RXD1` | seen on the board, whatever `gpio=` lines ask ([design-platforms.md](design-platforms.md#raspberry-pi-4-model-b)) |
-| `enable_jtag_gpio` | GPIO 22 to 27, JTAG's six signals | the Raspberry Pi documentation ([design-header-io.md](design-header-io.md#the-hardware)) |
+| Setting | Pins | Written on | Evidence |
+| --- | --- | --- | --- |
+| `enable_uart` | GPIO 14 and 15, the mini UART's `TXD1` and `RXD1` | every card | seen on the board, whatever `gpio=` lines ask ([design-platforms.md](design-platforms.md#raspberry-pi-4-model-b)) |
+| `enable_jtag_gpio` | GPIO 22 to 27, JTAG's six signals | a development card | the Raspberry Pi documentation ([design-header-io.md](design-header-io.md#the-hardware)) |
 
 A firmware row must be a pin of one of these settings, with that
-setting's signal. A setting's pins are all rows or none, and the boot
-description writes exactly the settings whose pins are rows. The
-console's rows come from one setting, whose signals are the console
-device's. So the pins the pin driver leaves alone are the pins the
-firmware is told to set, and no other reading of "the console's pins"
-exists in the build.
+setting's signal, and a setting's pins are all rows or none. The boot
+description writes a setting when its pins are rows and the card is of
+a kind the table lists for it. The rows themselves do not depend on the
+kind of card: on a release card the six `jtag` rows stay rows, so the
+pins are written by nobody and served to nobody, and `enable_jtag_gpio`
+is not written, which the `config.txt` writer's test checks
+([design-header-io.md](design-header-io.md#security)). The console's
+rows come from one setting, written on every card, whose signals are
+the console device's. So the pins the pin driver leaves alone are pins
+the firmware is told to set, or pins nothing sets, and no other reading
+of "the console's pins" exists in the build.
 
 A device's row carries a **setting**: a `function`, which is one of the
 pin's signal names from the SoC table, `in`, or `out` with a `level` of
@@ -289,7 +295,9 @@ device, with the plain setting overlaid by what the state names. A state
 names a pull only on a row whose plain setting names one, and a level
 goes with `out` in every state. Every state of a device therefore writes
 the same fields, so a state is a value, switching between two states
-needs no history, and the order of switches does not matter.
+needs no history, and the order of switches does not matter. No two
+states of a device, `default` among them, have the same settings, so a
+reading of the device's pins is at most one of its states.
 
 **The Raspberry Pi 4's table** is one entry of kind `bcm2711`, named
 `gpio`: its header map's rows and its on-board rows, one row form in two
@@ -310,12 +318,14 @@ The record reader checks the table and refuses, naming the row:
 * a firmware row that is not a pin of a setting in the board's settings
   table, or that names another signal than the setting's; a setting
   with some of its pins as rows and not all; console rows from two
-  settings, or from a setting whose signals are not the console
-  device's;
+  settings, from a setting whose signals are not the console device's,
+  or from one that some kind of card does not write;
 * a `level` without `out` or `out` without a `level`; a setting on a
   `gpio` or `reserved` row; a state on a firmware, `gpio` or `reserved`
   row;
 * a state that names a pull on a row whose plain setting names none;
+* two states of one device, `default` among them, with the same
+  settings, since a reading could then be either;
 * a device that in `default` lacks a signal its peripheral cannot work
   without, or that carries one signal on two pins in any state;
 * a device whose states other than `default` name pins of two
@@ -345,6 +355,10 @@ The manifest check adds, naming the unit or the row:
 * **A device with rows on a controller a configured domain holds is
   held by that domain**, so no start order between configured domains
   is ever needed ([Placement and boot order](#placement-and-boot-order)).
+* **A device with other states that a domain holds can be selected by
+  that domain.** The holder is the domain that holds the controller, or
+  it has a `pins` grant that names the device. Otherwise the device
+  would be driven with pins that no start and no driver ever set.
 * **A domain serves plain GPIO from one controller.** `gpio` rows on
   two controllers that one domain holds are refused, so the pin numbers
   of a `gpio` grant are read against one controller: the one of its
@@ -383,8 +397,9 @@ The manifest check adds, naming the unit or the row:
    into its register code through the generated register names. No code
    is written by hand in a driver or a record.
 4. **The firmware's settings.** The boot description writes each setting
-   of its table whose pins are rows: on the Raspberry Pi 4 `enable_uart`,
-   and `enable_jtag_gpio` on a development card.
+   of its table whose pins are rows, on the kinds of card the table
+   lists for it: on the Raspberry Pi 4 `enable_uart` on every card, and
+   `enable_jtag_gpio` on a development card alone.
 5. **Which bus devices are driven**, and **who may hold the
    controller**, as the header map already derives them
    ([design-header-io.md](design-header-io.md#the-construction-one-map-of-the-header)).
@@ -398,7 +413,7 @@ every erXos driver ([style](style.md#functional-core)):
 | Module | Decides or does |
 | --- | --- |
 | `erx_pins_core`, pure | from the table and a request, the settings wanted: a device's state, a GPIO pin's `ctl` line, a pin's idle setting; from the table and a reading, the state a device is in; who holds which GPIO pin, through `erx_hold` ([design-header-io.md](design-header-io.md#holding-and-granting)) |
-| `erx_pins_<kind>`, pure | **the plan**: from the registers as read and the settings wanted, the register writes; from a level or event register, the pins' levels and the pins that fired |
+| `erx_pins_<kind>`, pure | **the plan**: from the registers as read and the settings wanted, the register writes; from a level register, the pins' levels; from an event register, the pins that fired and the command that acknowledges them |
 | the kind's register module | reads and writes the registers by generated name, through the device NIF |
 
 It takes the place of the `erx_gpio` application and `erx_gpio_core` of
@@ -420,40 +435,42 @@ erx_pins_KIND:plan(Read, Wanted) -> {ok, Steps} | {error, {Pin, Reason}}
 
 `Read` is the value of each readable register the wanted pins have a
 field in. `Wanted` is a list of pins with their settings, a function
-being a number of the kind, `in` or `out`. `Steps` is a list of writes
-of two forms, because a pin controller has two kinds of register:
+being a number of the kind, `in` or `out`. `Steps` is a list of writes,
+each naming the pins it is for, of two forms, because a pin controller
+has two kinds of register:
 
-* A **field write**, `{field, Register, Word}`, goes to a configuration
-  register, which holds a field for each pin and reads back what was
-  written: the BCM2711's function, pull and edge-enable registers, a
-  pin's `CTRL` and pad registers on RP1. `Word` is the reading with the
-  wanted pins' fields replaced.
-* A **command**, `{command, Register, Bits}`, goes to a register in
-  which a written one acts on its pin and a written zero does nothing:
-  the BCM2711's GPSET and GPCLR, which load a pin's output latch, and
-  its event status, in which a one clears a pin's recorded event. `Bits`
-  has ones for wanted pins only. No reading goes into a command, and a
-  command register is never read to learn a setting.
+* A **field write**, `{field, Pins, Register, Mask, Bits}`, goes to a
+  configuration register, which holds a field for each pin and reads
+  back what was written: the BCM2711's function, pull and edge-enable
+  registers, a pin's `CTRL` and pad registers on RP1. The register
+  module writes the reading with the masked bits replaced by `Bits`.
+* A **level command**, `{command, Pins, Register, Bits}`, goes to a
+  register in which a written one acts on its pin and a written zero
+  does nothing: the BCM2711's GPSET and GPCLR, which load a pin's output
+  latch. `Bits` has ones for wanted pins only. No reading goes into a
+  command, and a command register is never read to learn a setting.
 
 The function is total and writes nothing itself:
 
 * **Refused whole.** A pin the kind does not have, a function number
   outside the kind's range or `out` without a level refuses the plan,
   and nothing is written.
-* **Only what differs.** A field write whose word equals the reading is
-  left out. A level command is left out only when the pin already reads
-  as an output at that level. Otherwise it is planned: the level
-  register shows the wire and not the latch, so an input that reads
-  high says nothing about what the pin will drive. A plan over pins
-  already set is empty, so a restarted driver glitches no line.
-* **Only the wanted pins.** A field write keeps every other field as
-  read, and a command names no other pin. The console's pins have no
-  row in the driver's record, so no plan can name them, and this rule
-  keeps their fields when a neighbour in the same register changes.
-* **An order that drives nothing unasked.** Pulls first, then level
-  commands, then functions, each register once. A pin's latch is loaded
-  while the pin is still an input, so it starts to drive at the level
-  asked.
+* **Only what differs.** A field write that would change no bit is left
+  out. A level command is left out only when the pin already reads as
+  an output at that level. Otherwise it is planned: the level register
+  shows the wire and not the latch, so an input that reads high says
+  nothing about what the pin will drive. A plan over pins already set
+  is empty, so a restarted driver glitches no line.
+* **Only the wanted pins.** A field write's mask covers the wanted pins'
+  fields and no other, and a command names no other pin. The console's
+  pins have no row in the driver's record, so no plan can name them,
+  and this rule keeps their fields when a neighbour in the same
+  register changes.
+* **An order that drives nothing unasked,** which each kind states for
+  its own registers. On the BCM2711: pulls first, then level commands,
+  then functions, so a pin's latch is loaded while the pin is still an
+  input and it starts to drive at the level asked. On RP1 a pin's pad
+  may be written twice ([design-rp1.md](design-rp1.md#pins)).
 * **Total over any reading.** A reading is what a device returned, and
   RP1 is a device on a bus. Every field is taken under its mask, a code
   the kind has no name for is carried as a number, and no reading makes
@@ -461,85 +478,143 @@ The function is total and writes nothing itself:
   hold.
 
 **Applying and checking.** The register module writes the steps in
-order, reads the registers again, and the driver calls `plan/2` again
-with the same `Wanted`. A pin the second plan has no step for is `set`;
-a pin it still has a step for `differs`. The check is the planner
-itself, so no second comparison can disagree with it, and on a kind
-whose pins have several registers a pin is `set` only when all of them
-agree. Nothing is rolled back: the steps already written stay, since
-the values before them are no safer, and the pins that differ are
-named.
+order and reads the configuration and level registers again, and the
+driver calls `plan/2` again with the same `Wanted`. The check covers
+what persists and can be read: a pin's function and pull as its
+configuration registers hold them and, for a pin that is now an output,
+its level as the level register shows it. That last reading is how a
+level command's completion is seen, since the command register itself
+tells nothing. A pin the second plan names in no step is `set`; a pin
+it names in a step **differs**. The check is the planner itself, so no
+second comparison can disagree with it, and on a kind whose pins have
+several registers a pin is `set` only when all of them agree. Nothing
+is rolled back: the steps already written stay, since the values before
+them are no safer, and the pins that differ are named in the answer and
+the log.
+
+**Events are not part of a plan.** An edge event is consumed, not set.
+A second function of the kind takes the event register's reading and
+returns the driver's own pins that fired, with one command that carries
+exactly those bits and so clears them and no event of a pin without a
+row. Nothing checks that command by reading again: a bit found set
+afterwards is a new event, taken at the next reading, and an
+acknowledge that did not take shows as one edge reported twice, never
+as an edge lost.
 
 Kinds differ only here. The `bcm2711` kind plans the function field of
 GPFSEL (3 bits a pin, register `pin div 10`), the pull field of
 GPIO_PUP_PDN_CNTRL (2 bits a pin, register `pin div 16`) and the
-edge-enable bits as field writes, and GPSET or GPCLR for a level and
-the event status for an acknowledge as commands. An acknowledge
-carries the bits of the driver's own pins that fired and no others, so
-it clears no event of a pin without a row. The `rp1` kind plans
-each pin's `CTRL` and its pad together, all field writes
-([design-rp1.md](design-rp1.md#pins)). The `bcm2712` kind waits for a
-facts record of its registers.
+edge-enable bits as field writes, and GPSET or GPCLR as level commands.
+The `rp1` kind plans each pin's `CTRL` and its pad together, all field
+writes ([design-rp1.md](design-rp1.md#pins)). The `bcm2712` kind waits
+for a facts record of its registers.
 
 ### At start
 
 The driver reads the registers of every pin in its record, makes one
 plan, applies it, checks it and reports. The plan holds:
 
-* nothing for a device that reads as one of its states;
-* the `default` state for every other device;
+* the `default` state for every device that has `default` alone on this
+  controller;
+* nothing for a device with other states here;
 * for each `gpio` pin its **idle state**: input, no pull, no edge
   detection, the setting that drives nothing
   ([design-header-io.md](design-header-io.md#devgpio)).
 
-A device **reads as** a state when the plan for that state over the
-reading is empty. A device with one state is put in `default` whatever
-it is found in, and that is every device but the few whose drivers
-select states. A device found in another of its states is left there.
-At boot its driver selects the state it needs as it starts
-([States at run time](#states-at-run-time)). After a restart of the pin
-driver, a device in use keeps the supply, the signalling voltage and the
-reset level its driver selected, because the start has nothing to write
-for it.
+The plan is the same at the first start of a boot and at a restart
+after a failure, and it is safe at both for one reason: a start writes
+a device's pins only where no driver ever selects.
+
+* A device with `default` alone has one setting its driver can rely on,
+  so putting it there is what the driver expects at any moment. After a
+  restart the plan for it is empty unless something outside erXos moved
+  its pins.
+* A device with other states is its driver's, which selects the state
+  it needs as it starts ([States at run time](#states-at-run-time)).
+  The pin driver's start never writes it: not at boot, when its driver
+  has not started, and not after a failure, when its driver may be in
+  the middle of a transfer at the supply and signalling voltage it
+  selected, or in the middle of a selection the failure cut short. It
+  stays as it is until its driver selects, and with no driver it stays
+  as the firmware left it.
+
+So the pin driver needs no way to tell its first start from a later
+one, and no start moves a line a driver chose.
 
 The driver reports one log line: how many pins it wrote, how many
-already agreed, each device left in a state other than `default`, and
-each pin that differs. A device with a pin that differs is `unset`.
+already agreed, each device with other states and the state it reads
+as, and each pin that differs.
 
-The start does not fail and holds no driver back. The driver of an
-`unset` device starts and fails on its own chip, with its own diagnostic
-beside the pin driver's, and a driver that selects states gets `eio`
-from its first select. A refused plan, which a table the build checked
-cannot produce, writes nothing and is reported the same way. Only the
-chips on those pins fail, and the machine boots.
+**A device that is not set is not started.** The start does not fail,
+and the machine boots. But a device with `default` alone whose pins
+differ must not be used, and nothing says its driver would notice: an
+SPI controller clocks bytes in whether or not its pins reach the
+header, and would return them as data. So whatever starts a device's
+use asks the pin driver first:
+
+```
+erx_pins:ready(Device) -> boolean()
+```
+
+The answer is read from the registers when it is asked for: whether the
+device's pins read as `default` on every controller of this domain
+where the device has `default` alone.
+Two places ask, each the step that already starts devices where it
+runs:
+
+* **The device service**, for a controller the system domain holds. It
+  gives a device that is not ready to no domain and logs the device and
+  its pins, as it gives no domain a device whose confinement the
+  machine does not show
+  ([design-system.md](design-system.md#devices)); the machine runs
+  without that device. It asks at every give, so a holder that restarts
+  is given the device once its pins read right. The system domain
+  starts no driver of its own for such a device either.
+* **A unit's supervisor of its parts' drivers**, for a controller
+  inside the unit, as RP1's. The start of a driver for a part that is
+  not ready fails before it touches the device, and the unit takes the
+  path it takes for any part whose driver cannot start. On RP1, whose
+  function masters only after every part's driver has reset its device,
+  that path ends the unit, and the board runs without RP1
+  ([design-rp1.md](design-rp1.md#mastering)).
+
+A device with other states is refused where its use begins, by its own
+driver: the driver's first select answers `eio`, and a driver that
+selects states fails its start on any answer but `ok`.
 
 ### States at run time
 
 ```
-erx_pins:select(Device, State) -> ok | {error, enoent | ebusy | eio}
+erx_pins:select(Device, State) -> ok | {error, enoent | eio}
 ```
 
 `Device` is a device's manifest row index, the word its own record
 carries. The call goes to the process of the one controller that has
 the device's states. That process plans the state's settings for the
 device's pins, applies and checks. `enoent` is a state the table does
-not give the device. `eio` is a pin that differs after the write; the
-device is then `unset` until a select succeeds. `ebusy` arises only
-with a borrowed pin ([below](#a-pin-that-is-sometimes-a-devices)).
+not give the device. `eio` is a pin that differs after the write.
 
 * **Who may select.** A process of the pin driver's own domain, for any
   device of the table; another domain only through a `pins` grant whose
   scope names the device ([Interfaces](#interfaces)).
+* **What a driver that selects owes.** It selects the state it needs as
+  it starts, before it touches its device, as the Ethernet driver's
+  start resets its PHY. After any answer but `ok`, and after a select
+  that the pin driver's end cut short, the device may be in no state:
+  the driver fails its start, or stops using the device, until a select
+  answers `ok`. This is the whole recovery contract between a driver
+  and the pin driver, in one domain or across two, and it needs no
+  message from the pin driver: the failed answer is the notice.
 * **A state stays until another is selected.** Nothing returns a device
   to `default` on its own: not the end of the process that selected it,
-  and not a restart of the pin driver. A driver that uses states selects
-  the one it needs as it starts, as the Ethernet driver's start resets
-  its PHY, so a restarted driver corrects whatever its predecessor
-  left. A driver that is stopped leaves its device in a state the table
-  lists.
+  and not a restart of the pin driver. A restarted driver corrects
+  whatever its predecessor left, by the select its start begins with. A
+  driver that is stopped leaves its device in the state it last
+  selected.
 * **The pin driver remembers no selection.** The state a device is in is
-  read from the registers whenever it is asked for: by `status`, by
-  `/proc` and by the start. Two processes that select for one device
+  read from the registers whenever it is asked for, by `status` and by
+  `/proc`: the one state whose plan over the reading is empty, or
+  `unset` when there is none. Two processes that select for one device
   are served in the order their requests arrive and the later stands.
   Nothing is released when a selector ends, so no cleanup can undo a
   later selection.
@@ -562,31 +637,33 @@ holder at a time, and the pin back in its idle state when its hold
 ends. The `ctl` vocabulary is `in`, `out 0`, `out 1`, three pulls and
 four edges, so a GPIO client cannot ask for an alternate function.
 
-A hold is granted only on a pin that reads idle. At an open the driver
-plans the idle state for the pin, applies and checks it, and when the
-pin differs it answers `eio` and grants nothing. So a pin whose return
-to idle did not take is never handed, still driven, to the next holder,
-and the driver keeps no mark of it: the next open reads the registers
-again.
+A pin passes to a new holder only from its idle state. When a grant
+takes a pin that nobody holds, the driver plans the idle state for it,
+applies and checks, and when the pin differs it answers `eio` and
+grants nothing. A further open by the pin's holder plans nothing, so
+opening `value` after `ctl` leaves what the holder set. A pin whose
+return to idle did not take is thus never handed, still driven, to the
+next holder, and the driver keeps no mark of it: the next taking reads
+the registers again.
+
+Who holds a pin is the hold core's record and nothing else. It is never
+read out of the registers, where a holder's `out 1` and a device's
+level look the same.
 
 ### A pin that is sometimes a device's
 
-Some connector pins serve two uses on one machine: GPIO 18 is plain GPIO
-until a fan needs PWM on it. A device state other than `default` may
-name a pin whose row is `gpio`, a **borrowed** pin, and the `gpio` row
-lists the device, the state and the setting. Selecting that state takes
-the pin's hold for the device: `ebusy` if a grant holds it, every
-borrowed pin or none. While the device reads as that state the pin is
-the device's: opening its GPIO files answers `ebusy`, and the pin
-driver's start leaves it as it leaves the device's own pins. When the
-device selects a state that does not name the pin, the pin returns to
-its idle state.
+Some connector pins could serve two uses on one machine: GPIO 18 is
+plain GPIO until a fan needs PWM on it. This design does not give that.
+A pin has one row, so on one image GPIO 18 is plain GPIO or PWM0's, and
+the other choice is another record.
 
-So a pin has one holder at every moment, decided by the one process that
-writes it, and a wired pin is never contended: only a `gpio` row can be
-borrowed, and `default` never borrows. The first consumer is PWM
-([design-header-io.md](design-header-io.md#pwm)), whose own hold on a
-channel decides when its device selects; borrowing is built with it.
+Serving one pin both ways at run time is designed with its first
+consumer, PWM ([design-header-io.md](design-header-io.md#pwm)). One
+thing is fixed for that design here: who has such a pin is a hold in
+`erx_hold`, taken and released by the hold's own events, an open, the
+last close and the holder's end. It is never inferred from what the
+registers hold, and what a restart of the pin driver, which loses the
+hold core's record, does to such a pin is that design's to state.
 
 ## Where each fact comes from
 
@@ -681,11 +758,15 @@ the firmware's:
   already does; the board probe's readings a minute apart are evidence,
   not proof.
 
-A row's function does not rest on the firmware anywhere. On RP1 a
-function alone connects nothing, since each pad has an output-disable
-bit that is set at reset and an input-enable bit that is clear at reset;
-the `rp1` kind plans both with every function, and a pin there is `set`
-only when its pad agrees too ([design-rp1.md](design-rp1.md#pins)).
+On RP1 a function alone connects nothing, since each pad has an
+output-disable bit that is set at reset and an input-enable bit that is
+clear at reset; the `rp1` kind plans both with every function, and a
+pin there is `set` only when its pad agrees too. One field of a pin's
+`CTRL` stays the firmware's there: `INOVER`, by its name an override of
+the input the peripheral sees, whose values the facts record does not
+give. Until it does, the kind neither writes nor checks the field, so
+an input signal on RP1 rests on the firmware having left it alone, and
+`set` does not vouch for it ([design-rp1.md](design-rp1.md#pins)).
 
 `config.txt`'s `gpio=` lines are no part of this design: with or without
 them the driver's plan leaves the pins as the table says
@@ -699,13 +780,11 @@ them the driver's plan leaves the pins as the table says
   ([design-packaging.md](design-packaging.md#the-declaration)), and
   admission checks them. The table already gives those pins to those
   services, so installing an app changes no row.
-* **A user who wants a connector pin for something else** uses a state
-  that borrows it ([above](#a-pin-that-is-sometimes-a-devices)). The
-  board's table lists what may borrow which pin, so the choice is made
-  at run time among uses the build checked, with no new image and no
-  reboot.
-* **A different default** (the header's I2C on other pins) is a
-  different record, and so a different image.
+* **A user who wants a connector pin for something else,** or a
+  different default (the header's I2C on other pins), needs a different
+  record, and so a different image. Choosing at run time among uses the
+  build checked is not designed here
+  ([above](#a-pin-that-is-sometimes-a-devices)).
 * **Not a device tree overlay.** The firmware would merge it into the
   tree, which is never read for pins; its files come from the
   firmware's distribution under the GPL; and `config.txt` is a file the
@@ -732,15 +811,18 @@ applied and checked. The domain service creates the configured domains
 as it starts, and the system design already requires every service
 whose facets the manifest grants them to be started before it, by an
 application the release starts earlier
-([design-system.md](design-system.md#facets-a-configured-domain-serves)); `gpio` and
-`pins` are such services, so the pin driver's place is the one that
-rule gives it. Three things follow without a further rule:
+([design-system.md](design-system.md#facets-a-configured-domain-serves)). `gpio` and
+`pins` are such services where a board grants them, but the order is
+this design's requirement on every board with a controller the system
+domain holds, since defaults need it whether or not anything is
+granted. Three things follow:
 
-* No configured domain exists before the system domain's pins are set,
-  so the SD controller's, the buses' and the vault's TPM's pins are in
-  a state the table lists before their drivers start. No bus driver
-  depends on any domain but the system domain, on which every domain
-  already depends.
+* No configured domain exists before the pin driver's start has
+  finished. A finished start is not a successful one, so the device
+  service asks before each give ([At start](#at-start)): a bus's pins,
+  the SD controller's and the vault's TPM's read as `default` when the
+  device is given, or it is not given. No bus driver depends on any
+  domain but the system domain, on which every domain already depends.
 * UART0's pins are set before the line service opens the line to the
   Bluetooth controller.
 * Nothing must be set "before any domain runs" except what the firmware
@@ -752,7 +834,8 @@ blocks are parts of RP1's function, so the `rp1` domain runs their
 and starts `erx_rp1`, then `erx_pins`, then the supervisor of the parts'
 drivers ([design-rp1.md](design-rp1.md#mastering)). The pin blocks are
 parts whose driver resets nothing and masters nothing, so RP1's
-mastering barrier counts the other parts alone. Every device with rows
+mastering barrier counts the other parts alone. The start of a driver
+for a part that is not ready fails, as above. Every device with rows
 there is a part of the same unit, which the manifest check holds to.
 
 **Several controllers in one domain** are one process each, started and
@@ -776,7 +859,8 @@ level.
 
 ## Interfaces
 
-**Inside the pin driver's domain:** `erx_pins:select/2` above.
+**Inside the pin driver's domain:** `erx_pins:select/2` and
+`erx_pins:ready/1` above.
 
 **Across domains,** two interfaces that `abi/services` declares, each a
 files tree served through `erx_fs`
@@ -805,9 +889,10 @@ first driver that selects a state from another domain.
 name, a path `abi/inspection.txt` declares, shown under
 `/proc/domains/D/pins/`
 ([design-live.md](design-live.md#the-proc-tree)): the pin's owner (a
-device row index or `gpio`), the state its device reads as, the setting
-wanted, the function, pull and level its registers hold, whether the
-two agree, and for a GPIO pin its holder, edge setting and edge count.
+device row index or `gpio`), the state its device reads as or `unset`,
+the pin's `default` setting from the table, the function, pull and
+level its registers hold, and for a GPIO pin its holder, edge setting
+and edge count. Nothing shown is a request the driver remembers.
 A function code the kind's table has no name for is shown as its number.
 A value the driver cannot read is `unknown`, never the table's.
 
@@ -821,19 +906,21 @@ hold's check and its effect are one step of that process
 A request fails in one of two ways, and they are kept apart. It is
 **refused** before any write, by the table, the hold or the planner, and
 then nothing is written. Or its steps are written and a pin **differs**
-at the check; then the steps stay written, the pin and its device are
-reported, and the pin is not treated as set by anything that follows.
+at the check; then the steps stay written and the request answers
+`eio`. The pin driver remembers neither: what `status` and `/proc` show
+afterwards is what the registers then hold.
 
 | Event | Result |
 | --- | --- |
 | a request is refused: a state the table lacks, a pin another holds, a plan the kind refuses | nothing is written; the request answers its error |
-| a pin differs after a select | `eio`; the device is `unset`, in `status`, `/proc` and the log, until a select succeeds; its driver treats the select as failed |
-| a pin differs at the pin driver's start | reported as above; the start goes on and no driver is held back ([At start](#at-start)) |
+| a pin differs after a select | `eio`, and the pin is named in the log; the device then reads as whatever its registers hold, its old state, the new one or `unset`; its driver does not use the device until a select answers `ok` ([States at run time](#states-at-run-time)) |
+| a device with `default` alone differs at the pin driver's start | it is not ready: the device service gives it to no domain, and in a unit its driver's start fails ([At start](#at-start)); the pin driver's own start goes on |
 | a GPIO pin differs after a `ctl` or `value` write | `eio`; the hold stands |
-| a GPIO pin does not read idle when its hold ends | the hold ends and the pin `differs`; the next open plans idle again and is granted only if the pin then reads idle |
-| a register reads a value no row gives: a code with no name, or all ones from a device that has left its bus | the plan is total over it; the pins differ and are reported; no pin without a row is written |
+| a GPIO pin does not read idle when its hold ends | the hold ends; the next grant to take the pin plans idle again and gets it only if it then reads idle |
+| a register reads a value no row gives: a code with no name, or all ones from a device that has left its bus | the plan is total over it; the pins differ; no pin without a row is written |
 | a device's driver ends | its device stays in the state it selected, and the restarted driver selects again; a GPIO pin it held goes idle, by the hold's release |
-| the pin driver's process ends | its supervisor restarts it, and it reads and plans as at its start: a device that reads as one of its states is not written; a device the end caught between two states is put in `default`, its select having failed; GPIO pins go to their idle state and old GPIO handles answer `eio`. Under a unit's `rest_for_one` supervisor the unit's drivers restart after it |
+| the pin driver's process ends | a select in flight fails, by `eio` from the `pins` tree or the caller's failed call, and its driver holds to its contract. The supervisor restarts the pin driver, which plans as at any start: nothing for a device with other states, even one the end caught between two; `default` for a device with `default` alone, which writes nothing unless its pins were moved; GPIO pins to idle, and old GPIO handles answer `eio`. Under a unit's `rest_for_one` supervisor the unit's drivers are stopped before it restarts and started after |
+| after such a restart a device with `default` alone, already given, is not ready | the pin driver's start logs it and names it to the device service, which stops its unit's driver through driver control ([design-system.md](design-system.md#the-holders-driver-control-facet)) |
 | the domain of a controller ends (`rp1`) | the registers keep their values; the restarted domain's driver plans from what it reads |
 | the firmware writes the controller after hand-over | a race the design excludes by requirement, not by mechanism |
 
@@ -842,10 +929,11 @@ reported, and the pin is not treated as set by anything that follows.
 | Request | Answer |
 | --- | --- |
 | `select` of a state the table does not give the device | `enoent` |
-| an open of a GPIO pin a device or another grant holds; with borrowing, a `select` whose borrowed pin a grant holds | `ebusy` |
-| a `select`, a GPIO open or a GPIO write after which a pin differs; a GPIO handle of an ended driver | `eio` |
+| an open of a GPIO pin another grant holds | `ebusy` |
+| a `select`, the taking of a GPIO pin or a GPIO write after which a pin differs; a request in flight when the pin driver ends; a GPIO handle of an ended driver | `eio` |
 | a `ctl` line outside its grammar | `einval` |
 | a walk to a device or pin outside the grant's scope | `enoent` |
+| a give of a device that is not ready | no give; the device service's log line names the device and its pins |
 
 The build's refusals are listed under
 [What the build refuses](#what-the-build-refuses) and
@@ -892,21 +980,23 @@ must make it fail.
 | --- | --- |
 | `erx_pins_bcm2711:plan/2` against the board's reading of GPFSEL3, `0x00000fc0`, wanting UART0's four pins | each field one pin off; a whole-register write, which zeroes GPIO 34 to 39; ALT4 and ALT5 swapped |
 | a refused plan returns no step | the steps before the refused pin returned |
-| checking by planning again, over a register model: empty after the steps are applied; names the pin when one field write is dropped | the second plan replaced by `ok` |
+| checking by planning again, over a register model: empty after the steps are applied; names the one pin whose field write was dropped, in a register two wanted pins share; names an output pin whose level reads otherwise | the second plan replaced by `ok`; a step that does not carry its pins |
 | the plan is idempotent: planning over its own result is empty | the "only what differs" rule removed |
 | a level is a command: `out` with level 1, for a pin that reads high as an input, plans GPSET with that pin's bit alone | the command left out because the level register reads 1; a GPSET word that carries other bits of a reading |
-| an event acknowledge names only the driver's own pins that fired | the event word written back as read, which clears GPIO 15's event |
+| an event acknowledge names only the driver's own pins that fired, and a bit set again after it is reported as a new event | the event word written back as read, which clears GPIO 15's event; the acknowledge checked by a second plan, which reports a new edge as a failure |
 | a neighbour's field is kept: a plan for GPIO 12 and 13 leaves GPIO 14 and 15 as read | a GPFSEL write that is not a read-modify-write |
 | pulls: GPIO 34 to 39 as the Wi-Fi rows state them; a row with no pull plans no pull write in any state | up and down swapped; a row without a pull writing `none` |
 | write order: pull, level, function | the function written before the level, which a model that samples the pin between writes exposes |
 | total over readings, a property test: for any register words the steps touch only the wanted pins' fields and bits | a field taken without its mask |
 | `erx_pins_rp1:plan/2` over a pad at its reset value, output disable set and input enable clear, plans both bits with the function | a plan that writes `CTRL` alone |
+| `erx_pins_rp1:plan/2` order, over a model that samples the pad between writes: from a pad that can drive and a `CTRL` that forces level 1, a plan to a signal sets output disable, writes `CTRL`, then clears it; a change of level alone is one `CTRL` write | `CTRL` written while the pad can drive; a level change that sets output disable first |
 | `erx_pins_core` states: `default` overlaid by a state; an unknown state | the overlay dropping a pin the state does not name |
-| the start plan: a device that reads as any of its states is not written, one that reads as none is put in `default`, GPIO pins go idle, no firmware pin is named | `default` written over a device that reads as another state, which is what a restart under a card at 1.8 V would do; a firmware row written into the record |
-| a hold needs an idle pin: an open of a pin that still differs after its idle plan answers `eio` and holds nothing | the check removed, which hands a driven pin to the next grant |
-| with borrowing: `erx_hold`'s exhaustive test gains an event, a select that takes two pins | one pin taken when the other is held |
-| the table reader, one table that breaks only each refusal, among them: the console's rows on GPIO 32 and 33 with GPIO 14 and 15 as `gpio`; a `gpio` row on GPIO 14; `enable_jtag_gpio`'s pins with five rows; a state that names a pull its plain setting lacks; a device with states on two controllers | as each refusal says |
-| the manifest check's clauses | a controller's GPIO bank placed in another unit; a table with rows and no holder; `gpio` rows on two controllers of one domain; a `pins` grant that names a device with `default` alone |
+| the start plan: `default` for a device with `default` alone, nothing for a device with other states whatever it reads as, GPIO pins idle, no firmware pin named | `default` planned for a device with other states, which is what a restart under a card at 1.8 V would write; a firmware row written into the record |
+| a device that is not set is not started: `erx_pins:ready/1` is false for a device with `default` alone and a pin that differs; the device service gives it to no domain and logs it; in a unit its driver's start fails | the question left out of the give, which hands SPI0 to its driver with its pins as inputs |
+| a hold starts from idle: taking a pin that still differs after its idle plan answers `eio` and holds nothing; a second open by the holder plans nothing | the check removed, which hands a driven pin to the next grant; idle planned at every open, which turns the holder's `out 1` back to an input when it opens `value` |
+| the table reader, one table that breaks only each refusal, among them: the console's rows on GPIO 32 and 33 with GPIO 14 and 15 as `gpio`; a `gpio` row on GPIO 14; `enable_jtag_gpio`'s pins with five rows; a state that names a pull its plain setting lacks; two states of one device with the same settings; a device with states on two controllers | as each refusal says |
+| the boot description: with the same six `jtag` rows, `enable_jtag_gpio` is written on a development card and not on a release card | the kinds of card a setting is written on ignored |
+| the manifest check's clauses | a controller's GPIO bank placed in another unit; a table with rows and no holder; a device with other states whose holder has no `pins` grant for it; `gpio` rows on two controllers of one domain; a `pins` grant that names a device with `default` alone |
 | the chokepoint: a module outside the kind's register module that calls a GPFSEL accessor fails the build | the rule's entry for the kind removed |
 | with the importer: a group of each form decodes to its rows; a tree and a record that both state one pin, and a group that names GPIO 14, are refused | a cell count not checked; the group's parent not checked |
 
@@ -941,10 +1031,10 @@ the header design's.
 **The Raspberry Pi 5 board**, with its packages: the Ethernet link comes
 up after `reset` and `default`; USB ports have power with GPIO 42 and 43
 in `vbus1`, and `/proc` shows their pads with output disable clear and
-input enable set; the pulls of those two pads, which no row states, are
-recorded. With the SD slot's states: ending the pin driver's process
-while the card is in a state other than `default` changes no register,
-read through `/proc` before and after.
+input enable set; the pulls and the `INOVER` fields of those two pins,
+which no row states, are recorded. With the SD slot's states: ending
+the pin driver's process while the card is in a state other than
+`default` changes no register, read through `/proc` before and after.
 
 ## Performance
 
@@ -984,8 +1074,11 @@ Added: state names in the table and a name for each controller; the
 boot description's settings table and the reader's check of the
 firmware's rows against it; the manifest's `pins` table and the `pins`
 record; `erx_pins` with one kind module per chip; the `pins` service;
-four clauses of the manifest check; one inspection path. Planned with
-their first consumers and not before: borrowing, and the tree importer.
+`erx_pins:ready/1`, asked by the device service before a give and by a
+unit's supervisor before a part's driver; five clauses of the manifest
+check; one inspection path. Planned with its first consumer and not
+before: the tree importer. Not designed here: one pin served both as
+plain GPIO and as a device's.
 
 ## Alternatives considered
 
@@ -1009,8 +1102,9 @@ their first consumers and not before: borrowing, and the tree importer.
   driver's start removes the request.
 * **Run-time claims on any pin, first come first served,** as Linux
   resolves conflicts. Which driver wins would depend on start order.
-  With one row per pin the conflict cannot be written; only a borrowed
-  `gpio` pin is decided at run time, and it is refused with `ebusy`.
+  With one row per pin the conflict cannot be written; only a plain GPIO
+  pin is decided at run time, between grants, and the later one is
+  refused with `ebusy`.
 * **States in each device's record.** The conflict check would have to
   gather them, and the pin driver would have to trust what each client
   sends.
@@ -1027,14 +1121,23 @@ their first consumers and not before: borrowing, and the tree importer.
   any pin found carrying a console signal. QEMU runs no firmware, a
   table that disagrees with the board would go unnoticed until a boot,
   and property 8 needs the answer when the manifest is checked.
-* **Hold a device's driver back when its pins differ.** The pin driver's
-  result would have to reach whatever starts each driver, for most
-  devices in another domain: a start-order protocol between domains
-  that nothing else needs. A register that does not take a write is a
-  hardware fault or a wrong kind module, and in both cases the device's
-  driver fails on its chip at once, with the pin named beside it in the
-  log and in `/proc`. Rolling the plan back is no better: the values
-  before it are no safer, and their writes can fail the same way.
+* **Let the driver of a device that is not set start, and fail on its
+  chip.** Only some drivers would notice. An SPI controller clocks bytes
+  in whether or not its pins reach the header, and would return them as
+  data. So use is refused where it starts: at the give, in a unit's
+  supervisor, or by the driver's own first select.
+* **Write `default` to every device at the first start, and leave a
+  device alone at a later one.** The pin driver would need to know which
+  start it is, a fact kept outside the process, and "first" is not the
+  property that matters. What makes a start's write safe is that no
+  driver selects for the device, which the table says of every device
+  with `default` alone, at every start.
+* **Stop every consumer before the pin driver restarts,** so that the
+  restart could write freely. It puts driver-control calls into other
+  domains on the pin driver's recovery path. A start that writes no
+  device with other states needs none.
+* **Roll back a plan after which a pin differs.** The values before it
+  are no safer, and their writes can fail the same way.
 * **One process for every controller of a domain,** so that a state
   could span two controllers. No device needs such a state, and a pin
   number would then need its controller in every request.

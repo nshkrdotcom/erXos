@@ -775,29 +775,32 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
 * [Medium] pin control, the pin table ([design-pinctrl.md](design-pinctrl.md#the-pin-table);
   `tools/lib/erx/header_map.rb`, `config/platforms/raspi4b.json`, `abi/manifest.txt`): `pins` as a list of named controller
   entries; on-board rows in the device rows' form, with an optional pull and states; `in`, `out` and `level`; the
-  boot description's table of the firmware settings that set pins, and the console's and JTAG's rows checked
-  against it; the reader's refusals, each with a table that breaks only it; the manifest's `pins` table in place of `onboard_pins`;
+  boot description's table of the firmware settings that set pins, with the kinds of card each is written on,
+  and the console's and JTAG's rows checked against it; the header probe's GPFSEL1 and GPFSEL2 readings
+  recorded as its board evidence; the reader's refusals, each with a table that breaks only it; the manifest's `pins` table in place of `onboard_pins`;
   the `pins` record and its packed layout in `abi/erx_abi.txt`, counted in the boot page's room; the map of function
   numbers generated from `hw/pins/<kind>.txt`; the manifest check's unit, holder and one-GPIO-controller clauses.
 * [Medium] pin control, `erx_pins` on the BCM2711 ([design-pinctrl.md](design-pinctrl.md#the-pin-driver)), after the
   table and on open decision 1: `erx_pins_core`, `erx_pins_bcm2711` with `plan/2` over function, pull and level as
   field writes and commands, the check by planning again, the register module with `hw/svd/bcm2711_gpio`'s pull
-  registers, the start plan, which leaves a device that reads as one of its states, in the system release before
-  the domain service and the line service, the log line, the chokepoint entry and `/proc/domains/D/pins`. The platform record's `gpio` row is 180
+  registers, the start plan (`default` for a device with `default` alone, nothing for a device with other
+  states) in the system release before the domain service and the line service, `erx_pins:ready/1` and the
+  device service's question before a give, the log line, the chokepoint entry and `/proc/domains/D/pins`. The platform record's `gpio` row is 180
   bytes, shorter than the SVD's block of `0xf4`, which holds the pull registers at `0xe4`; widen it, since the device
   NIF refuses a record smaller than its peripheral's block. In the same change the root's write goes:
   `kernel/core/bcm2711_pins.c` and its header, `liberx/backend/fiasco/bcm2711_pins.c`, `board_pins` and
   `root_report_pins`, the chokepoint group and `onboard_pins`. Parity on the board: GPFSEL3 reads `0x00000fff` and the
   Bluetooth controller answers; the boot time before and after.
 * [Medium] pin control, `/dev/gpio` ([design-header-io.md](design-header-io.md#devgpio); plan.md 1b-I (e), package
-  4), on open decision 2: the `gpio` service of `erx_pins`, `erx_hold`, a hold granted only on a pin that reads idle, edge
-  events, the LED and the button.
+  4), on open decision 2: the `gpio` service of `erx_pins`, `erx_hold`, an unheld pin taken only when it reads idle,
+  edge events, the LED and the button.
 * [Medium] pin control, RP1 ([design-rp1.md](design-rp1.md#pins)), with 1b-J's RP1 package: `hw/pins/rp1.txt` from
-  [research-rp1-clocks.md](research-rp1-clocks.md), section 6; the `rp1` kind, which plans a pin's `CTRL` and pad together;
-  the pin parts, `pads_bank2` among them, and RP1's rows; `erx_pins` in the unit supervisor after `erx_rp1`, and
-  the mastering barrier leaving the pin blocks out by role; `erx_pins:select/2`, first used by the GEM driver's PHY
-  reset; `INOVER`'s values from the facts record, and from the board the pulls the firmware leaves on GPIO 42 and
-  43.
+  [research-rp1-clocks.md](research-rp1-clocks.md), section 6; the `rp1` kind, which plans a pin's `CTRL` and pad together
+  in the order the design gives; the pin parts, `pads_bank2` among them, and RP1's rows; `erx_pins` in the unit
+  supervisor after `erx_rp1`, the mastering barrier leaving the pin blocks out by role, and the parts' supervisor
+  asking `erx_pins:ready/1`; `erx_pins:select/2`, first used by the GEM driver's PHY reset; `INOVER`'s values into
+  the facts record, after which the kind plans the field; from the board, the pulls the firmware leaves on GPIO 42
+  and 43.
 * [Medium] pin control, the BCM2712's two pin controllers: no binding document exists for them at the pinned commit,
   so a clean-room facts record of their function and pad registers and encodings comes first; then
   `hw/pins/bcm2712.txt`, the `bcm2712` kind and the Pi 5's rows for the SD slot, the Bluetooth UART and the WiFi slot.
@@ -812,8 +815,10 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
 * [Low] pin control, the `pins` service and `/dev/pins` ([design-pinctrl.md](design-pinctrl.md#interfaces)): built
   with the first driver that selects a state from another domain, likely the Pi 5's SD power cycle
   ([design-storage.md](design-storage.md#the-raspberry-pi-5s-controller)).
-* [Low] pin control, borrowed pins ([design-pinctrl.md](design-pinctrl.md#a-pin-that-is-sometimes-a-devices)): built
-  with PWM, their first consumer, with the select event in `erx_hold`'s exhaustive test.
+* [Low] pin control, one pin served both as plain GPIO and as a device's
+  ([design-pinctrl.md](design-pinctrl.md#a-pin-that-is-sometimes-a-devices)): not designed. Design it with PWM, its
+  first consumer, as a hold in `erx_hold` that is never inferred from the registers, and state what a restart of
+  the pin driver does to it.
 * [Low] pin control, rows from a board's tree ([design-pinctrl.md](design-pinctrl.md#rows-from-a-boards-tree)):
   `erx_dt`'s pin query, the two group decoders and their fuzz targets, built for the first board that needs them, on
   open decision 4.
