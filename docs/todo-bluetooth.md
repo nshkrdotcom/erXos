@@ -196,7 +196,9 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   "Declarations: `abi/gatt`"): `erx_ble_facet` admits a grantee's operations and forwards them to the registry,
   but no app uses it. Missing: `ble_grant`'s refusals (`tools/lib/erx/manifest.rb`, `check_ble_grants`) of a
   service two rows name, two served services of one UUID, and advertising data that do not fit; the client
-  `erx_gatt`, which takes the events' envelope off, and the `erx_gatt_service` behaviour; and the served
+  `erx_gatt`, which takes the events' envelope off, and the `erx_gatt_service` behaviour (a first version, written
+  before the facet's redesign, is on branch `bt-gatt-client`, commit bda412e16, with its EUnit suite and fuzz
+  target: start from it, not from scratch); and the served
   services read from the manifest's rows, where `erx_bt_sup` serves every declared service. Whether the
   registry's monitor of a handler in another domain fires when that handler or its domain ends is unverified,
   and so is the mint's success path: no suite grants `ble`, so no test sees the boot view's `services` and limits
