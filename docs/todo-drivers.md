@@ -784,8 +784,11 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   table and on open decision 1: `erx_pins_core`, `erx_pins_bcm2711` with `plan/2` over function, pull and level as
   field writes and commands, the check by planning again, the register module with `hw/svd/bcm2711_gpio`'s pull
   registers, the start plan (`default` for a device with `default` alone, nothing for a device with other
-  states) in the system release before the domain service and the line service, a start that fails when a pin
-  differs, a probe of QEMU `raspi4b`'s GPIO model for the registers the plan checks, the log line, the chokepoint entry and `/proc/domains/D/pins`. The platform record's `gpio` row is 180
+  states) in the system release before the domain service and the line service, a start for a configuration that fails when it
+  leaves unset a device that configuration uses, the generated mark of which configurations use each device, the
+  release's choice of configuration (normal, rescue or none), a probe of QEMU `raspi4b`'s GPIO model that writes a
+  changed value to each kind of register the plan checks and reads it back, with the rows of a field the model does
+  not keep left out of the model's table and reported as not run, the log line, the chokepoint entry and `/proc/domains/D/pins`. The platform record's `gpio` row is 180
   bytes, shorter than the SVD's block of `0xf4`, which holds the pull registers at `0xe4`; widen it, since the device
   NIF refuses a record smaller than its peripheral's block. In the same change the root's write goes:
   `kernel/core/bcm2711_pins.c` and its header, `liberx/backend/fiasco/bcm2711_pins.c`, `board_pins` and

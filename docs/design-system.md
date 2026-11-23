@@ -1099,6 +1099,10 @@ for rescue, in the default manifests the devices domain, the storage
 domains, the slot writer, the vault's storage domain and the vault, and
 no user domain and no network domain, so an operator at the console can
 repair what a deterministic fault at boot would otherwise reset forever.
+The release boots the same configuration at once, whatever the count,
+when its pin driver's start cannot set the pins of a device that only
+domains outside that configuration use
+([design-pinctrl.md](design-pinctrl.md#at-start)).
 The manifest check proves that the domains marked for rescue need nothing
 outside themselves and the system release (property 11). An end before
 the slot writer advances the count is not counted; the committed slot
@@ -4449,7 +4453,7 @@ manifest lists: the vault.
 | tracer, `erx_tracer` | trace sessions and the kernel's trace | [design-live.md](design-live.md#tracing) |
 | host link, `erx_hostlink` | sessions with the development host | [design-live.md](design-live.md#the-host-link) |
 | line service, `erx_line` | one line tree, `data` and `ctl`, for each grant of the `line` interface, over the driver of the device its `device` parameter names, a UART or a virtio console, in that line's group; it moves the bytes and parses none, and its `ctl` takes one word, `reset`, which turns the line's device off through the device service, starts the driver afresh and turns the device on; a driver that does not start leaves the line broken with no driver, so it ends no process | [design-bluetooth.md](design-bluetooth.md#the-controllers-line) |
-| pin driver, `erx_pins` | on a board whose pin controller the system domain holds: puts every device that has one state in it, from the board's pin table, before the domain service and the line service start, and fails its start, and with it the boot, when it cannot; serves the `gpio` and `pins` trees | [design-pinctrl.md](design-pinctrl.md#placement-and-boot-order) |
+| pin driver, `erx_pins` | on a board whose pin controller the system domain holds: puts every device that has one state in it, from the board's pin table, before the domain service and the line service start; when it cannot set a device, the release boots its rescue configuration, or does not boot when that configuration uses the device; serves the `gpio` and `pins` trees | [design-pinctrl.md](design-pinctrl.md#placement-and-boot-order) |
 | code service, `erx_code` | the code store, code facets, overlays, the install facet | [design-live.md](design-live.md#the-code-store) |
 | update service, `erx_update` | system updates, through the slot writer: writing the spare slot, the trial, the commit and the fallback | [design-storage.md](design-storage.md#system-updates) |
 | start service, `erx_starter` | the start table, the manifest's `start` rows with the machine's `start.conf` over them, and the supervisor and keeper of each row; its tree, `start`; the package process and its `apps` tree ([design-packaging.md](design-packaging.md#apps)) | [design-apps.md](design-apps.md) |

@@ -661,8 +661,10 @@ applies the plan, reads the registers again and plans again: a pin
 the second plan would still write is reported as not set. A pin that
 is already right costs no write. The driver of a device with one
 setting never asks for its pins: the pin driver's start has set them,
-or it has failed, and then nothing that drives the device starts. A
-device with more settings is set by its own driver's first select.
+or the boot starts nothing that would use the device. The system then
+boots its rescue configuration, and does not boot when rescue needs
+the device too. A device with more settings is set by its own
+driver's first select.
 
 After its start the pin driver writes for two kinds of request only.
 One is a line written to `/dev/gpio`, for a plain GPIO pin that a
