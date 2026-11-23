@@ -7,8 +7,8 @@ Test only: the serial service's echo (docs/design-bluetooth.md, "On QEMU against
 Bumble"). The application's supervisor starts one process, registered under this
 module's name, which starts erx_gatt_serial linked to itself and sends each
 `{serial, Conn, Bytes}` back with erx_gatt_serial:send/2, so a phone reads on `tx`
-every byte it wrote to `rx`, in order. A failed send ends the echo, and the supervisor
-starts it and its handler again.
+every byte it wrote to `rx`, in order. A send that fails, to a phone that left or did
+not subscribe to `tx`, drops those bytes.
 """.
 
 -behaviour(application).
@@ -48,7 +48,7 @@ echo_init(Parent) ->
 echo() ->
     receive
         {serial, Conn, Bytes} ->
-            ok = erx_gatt_serial:send(Conn, Bytes),
+            _ = erx_gatt_serial:send(Conn, Bytes),
             echo();
         _Other ->
             echo()

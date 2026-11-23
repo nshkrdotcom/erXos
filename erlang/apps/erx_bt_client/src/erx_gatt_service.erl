@@ -29,10 +29,11 @@ envelope is the handler's own domain's and calls the optional `Module:handle_inf
 State)`, answering `{ok, State}`; an enveloped message that is no event of the facet's
 owner is dropped.
 
-**The facet's end.** The server monitors the facet and stops with `{facet, Reason}` when
-it ends: the Bluetooth domain's restart takes the registry and every attachment, and the
-new incarnation mints a new facet, which the supervisor's restart of the handler attaches
-through.
+**The facet's end.** The server monitors the facet. When it ends, the Bluetooth domain's
+restart has taken the registry and every attachment; the server waits until this domain
+holds the facet the new incarnation mints (erx_facets:await/3, with the ended facet as
+the one seen) and then stops with `{facet, Reason}`, so its supervisor's restart attaches
+through the new facet at once instead of spending its intensity on the dead one.
 """.
 
 -behaviour(gen_server).
@@ -49,8 +50,10 @@ through.
 -callback handle_info(Info :: term(), State :: term()) -> {ok, State :: term()}.
 -optional_callbacks([handle_info/2]).
 
--record(handler, {module :: module(), facet :: reference(), origin :: non_neg_integer(), state :: term()}).
-%% facet: the monitor of the facet; origin: its owner, whose envelope the events arrive in.
+%% facet_monitor: the monitor of the facet; origin: the facet's owner, whose envelope the
+%% events arrive in.
+-record(handler, {module :: module(), facet_monitor :: reference(), origin :: non_neg_integer(),
+                  state :: term()}).
 
 -doc "Starts the handler of `Service`, linked to the caller.".
 -spec start_link(atom(), module(), term()) -> gen_server:start_ret().
@@ -78,7 +81,7 @@ init({Service, Module, Args}) ->
                 {ok, _Table} ->
                     {ok, Values, State} = Module:init(Args),
                     [ok = erx_gatt:set(Service, Char, Value) || Char := Value <- maps:iterator(Values, ordered)],
-                    {ok, #handler{module = Module, facet = Monitor, origin = Origin, state = State}};
+                    {ok, #handler{module = Module, facet_monitor = Monitor, origin = Origin, state = State}};
                 {error, Reason} ->
                     {stop, Reason}
             end
@@ -94,7 +97,8 @@ handle_cast(_Message, Handler) ->
     {noreply, Handler}.
 
 -doc false.
-handle_info({'DOWN', Monitor, process, _Facet, Reason}, #handler{facet = Monitor} = Handler) ->
+handle_info({'DOWN', Monitor, process, Facet, Reason}, #handler{facet_monitor = Monitor} = Handler) ->
+    _ = erx_facets:await(ble, Facet, infinity),
     {stop, {facet, Reason}, Handler};
 handle_info({erx_origin, _, _} = Message, #handler{origin = Origin} = Handler) ->
     case erx_gatt:event(Origin, Message) of

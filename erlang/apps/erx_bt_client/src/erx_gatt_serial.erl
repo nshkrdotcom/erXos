@@ -8,7 +8,10 @@ apps"): the handler of `nus` (abi/gatt/nus.txt), an erx_gatt_service registered 
 this module's name, which turns the service into a byte stream for each phone.
 
 * Each write of `rx` is answered `ok` at once and becomes `{serial, Conn, Bytes}` to the
-  owner; the owner also hears `{connected, Conn, Info}` and `{disconnected, Conn}`.
+  owner, while the owner's queue holds fewer than `bt_write_queue` messages; past that
+  the write is answered the Application Error `?OWNER_BUSY` and its bytes are dropped,
+  so a phone that writes faster than the owner reads cannot grow the owner's queue
+  without bound. The owner also hears `{connected, Conn, Info}` and `{disconnected, Conn}`.
 * send/2 cuts its bytes into notifications of `tx` of at most `Mtu - 3` octets each,
   `Mtu` the link's bearer MTU as its last `mtu` event gave it, 23 until one comes, and
   returns once all are queued for the link, in order. A notification refused `busy`, the
@@ -17,8 +20,9 @@ this module's name, which turns the service into a byte stream for each phone.
   rest of the bytes are not sent. `{error, gone}` answers a link that has ended.
 
 The stream is as reliable as ATT makes it: a phone that writes faster than the owner
-reads loses the write commands past `bt_write_queue` (ATT 3.3.2); a phone that needs
-every byte uses `write` with response. The handler ends with its owner.
+reads loses the writes past the owner's `bt_write_queue`, silently for write commands
+(ATT 3.3.2) and with `?OWNER_BUSY` for write requests, which a phone that needs every
+byte uses and repeats. The handler ends with its owner.
 """.
 
 -behaviour(erx_gatt_service).
@@ -30,6 +34,8 @@ every byte uses `write` with response. The handler ends with its owner.
 
 %% How often a notification the link's full queue refused is asked again.
 -define(BUSY_RETRY_MS, 5).
+%% The Application Error a write of rx is answered while the owner is behind.
+-define(OWNER_BUSY, ?ERX_ATT_APPLICATION_ERROR_MIN).
 
 -record(serial, {owner :: pid(), mtus = #{} :: #{reference() => pos_integer()}}).
 
@@ -52,8 +58,13 @@ init(Owner) ->
 
 -doc false.
 handle_write(Conn, rx, Bytes, #serial{owner = Owner} = Serial) ->
-    Owner ! {serial, Conn, Bytes},
-    {ok, Serial}.
+    case process_info(Owner, message_queue_len) of
+        {message_queue_len, Queued} when Queued < ?ERX_BT_WRITE_QUEUE ->
+            Owner ! {serial, Conn, Bytes},
+            {ok, Serial};
+        _Behind ->
+            {{error, ?OWNER_BUSY}, Serial}
+    end.
 
 -doc false.
 handle_event({connected, Conn, Info}, #serial{owner = Owner} = Serial) ->

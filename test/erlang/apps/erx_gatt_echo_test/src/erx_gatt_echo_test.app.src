@@ -8,6 +8,6 @@
  [{description, "erXos test: the serial service's bytes sent back"},
   {vsn, "1"},
   {modules, [erx_gatt_echo_test]},
-  {registered, [erx_gatt_echo_test, erx_gatt_serial]},
+  {registered, [erx_gatt_echo_test, erx_gatt_echo_test_sup, erx_gatt_serial]},
   {applications, [kernel, stdlib, erx, erx_bt_client]},
   {mod, {erx_gatt_echo_test, []}}]}.

@@ -74,7 +74,7 @@ attach(Service, Deadline) ->
 -doc "Sets the value reads of `Service`'s `Char` return from now on.".
 -spec set(atom(), atom(), binary()) -> ok | {error, atom()}.
 set(Service, Char, Value) ->
-    owner(Service, call({set, Service, Char, Value})).
+    attached(Service, call({set, Service, Char, Value})).
 
 -doc """
 Notifies the phone of link `Conn` of `Service`'s `Char`: `ok` once queued for the link,
@@ -82,12 +82,12 @@ Notifies the phone of link `Conn` of `Service`'s `Char`: `ok` once queued for th
 """.
 -spec notify(reference(), atom(), atom(), binary()) -> ok | {error, atom()}.
 notify(Conn, Service, Char, Value) ->
-    owner(Service, call({notify, Conn, Service, Char, Value})).
+    attached(Service, call({notify, Conn, Service, Char, Value})).
 
 -doc "Indicates `Service`'s `Char` to the phone of link `Conn`: `ok` once the phone confirms.".
 -spec indicate(reference(), atom(), atom(), binary()) -> ok | {error, atom()}.
 indicate(Conn, Service, Char, Value) ->
-    owner(Service, call({indicate, Conn, Service, Char, Value})).
+    attached(Service, call({indicate, Conn, Service, Char, Value})).
 
 -doc """
 Answers the write the registry named `Req`. The registry takes the answer only from the
@@ -146,8 +146,8 @@ call(Request) ->
     end.
 
 %% The caller is no longer Service's handler: it exits, for its supervisor to attach anew.
-owner(Service, {error, not_attached}) -> exit({not_attached, Service});
-owner(_Service, Answer) -> Answer.
+attached(Service, {error, not_attached}) -> exit({not_attached, Service});
+attached(_Service, Answer) -> Answer.
 
 is_characteristic({Char, #{max := Max, access := Access} = Limits}) ->
     is_atom(Char) andalso map_size(Limits) =:= 2 andalso is_integer(Max) andalso Max >= 0 andalso Max =< 512

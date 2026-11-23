@@ -2262,6 +2262,9 @@ cuts the bytes into notifications of at most `Mtu - 3` octets on `tx`,
 returning once all are queued; a notification the link's full queue
 refuses `busy` is asked again until the queue takes it, for at most
 `bt_handler_timeout_ms`, after which `send/2` answers `{error, busy}`.
+A write that finds the owner's queue holding `bt_write_queue` messages
+or more is answered the Application Error `0x80` and its bytes are
+dropped, so a phone cannot grow the owner's queue without bound.
 The stream is as reliable as ATT makes it:
 a phone that writes faster than the app reads loses the commands past
 `bt_write_queue` (ATT 3.3.2), which nRF-style terminal apps send as write

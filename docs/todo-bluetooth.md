@@ -41,6 +41,19 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
 * [Medium] bluetooth, a handler attached mid-connection sends at the default MTU (`erx_gatt_serial`; the item
   "what a handler hears" below): the registry does not replay a link's MTU at `attach`, so after a restart of the
   serial handler `send/2` cuts at 20 octets until the phone's next Exchange MTU, which most phones send once.
+* [Medium] bluetooth, the serial service's send path (`erlang/apps/erx_bt_client/src/erx_gatt_serial.erl`; review
+  of bt-nus): `send/2` runs in the handler, so a write waits behind a send's busy retries (every 5 ms, up to
+  `bt_handler_timeout_ms`, against design-system.md's rule that no waiter looks again on a timer), and a write
+  the registry already answered Unlikely Error is still handed to the owner when read; a partial send does not
+  say how much was sent; the piece size `Mtu - 3` is not bounded by `tx`'s declared maximum (equal today, 244,
+  by coincidence of `bt_acl_rx_max`), since `erx_gatt_service` drops the attach table. Settle in the design: the
+  link holding a notification until its queue has room, a deferred write answer in `erx_gatt_service`, and
+  `send/2` answering what it left unsent.
+* [Medium] bluetooth, a handler that only listens and a registry restart (`erx_gatt_service`): the design has a
+  handler learn of a registry restart from its next `set` or `notify`, but `erx_gatt_serial` makes neither until
+  the app sends, so after a registry crash alone `nus` answers Unlikely Error until the domain restarts. The
+  facet could end when the registry it forwards to changes, which the handler's facet monitor already covers.
+  Also: a handler started while the domain holds a dead facet fails its start with `noproc`.
 
 
 ## Security residuals
@@ -238,8 +251,7 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   it registers (`erx_pkg_plan:recover/2`, PK7); a service's state as its handler's (docs/design-bluetooth.md "A
   service belongs to its handler"): the registry's `{handler, Service, Handler | none}` to every link and the
   values dropped at a handler's end (`erx_gatt_registry`), the handler a link's write carries and the link's reset
-  at a change (`erx_bt_link_core`); the client modules' entries in the SDK's `public.txt` and `erx_bt_client` in
-  the app template's release (`tools/lib/erx/release_files.rb`); the tests the designs pair with seeded faults,
+  at a change (`erx_bt_link_core`); the client modules' entries in the SDK's `public.txt`; the tests the designs pair with seeded faults,
   the Bluetooth suite's two-package cases among them.
   Unverified: that the end of a handler in another domain reaches the registry within `bt_attach_wait_ms`; the
   suite's removal and restart cases settle it.
