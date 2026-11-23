@@ -11,14 +11,15 @@ anything between power-on and `HCI_Reset`, what the firmware answers a
 set-GPIO-state request with, and what the controller's ROM firmware is
 and can do before the patch.
 
-**Status:** B-P1 and B-P2 are recorded from board runs 1 to 4
+**Status:** B-P1 and B-P2 are recorded from board runs 1 to 5
 (2026-11-22), which agree. B-P3 before the patch and B-P4's advertising
-are recorded from run 4: powered up with the host's RTS held
-deasserted, the controller's ROM answers every standard command tried
-and advertises; powered up with RTS asserted, it is in a download mode
-that answers only `HCI_Reset` and the patch commands (runs 1 to 3).
-B-P4's connection and B-P3 after the patch are still to come. A blank
-(`____`) is a reading still to come.
+are recorded from runs 4 and 5, and B-P4's connection from run 5:
+powered up with the host's RTS held deasserted, the controller's ROM
+answers every standard command tried, advertises and accepts a
+connection as a peripheral; powered up with RTS asserted, it is in a
+download mode that answers only `HCI_Reset` and the vendor download
+minidriver (runs 1 to 3). B-P3 after the patch is not read: no run
+loaded one. A blank (`____`) is a reading still to come.
 
 ## The probe image
 
@@ -72,14 +73,16 @@ Run 1:
 * **Board:** Raspberry Pi 4 Model B, ____ GB, revision ____
 * **Firmware:** `start4.elf` ____ (the card's), board tree ____
 * **Image:** run 1 commit `b0fbfb889`, run 2 commit `89c9a6b4b`, run 3
-  commit `9a3e427eb`, run 4 commit `827dd2fc5` (branch
+  commit `9a3e427eb`, runs 4 and 5 commit `827dd2fc5` (branch
   `bt-probes`), `build/production-image/raspi4b/boot`,
   built on the Apple Silicon macOS development host with Homebrew LLVM
 * **Console:** the mini UART on GPIO 14 and 15, 115200 baud; the probe's
   lines are kept in the separate history repository at
-  `pi4/2026-11-22-bt-probes/bt-probe-run1.txt` to `bt-probe-run4.txt`;
+  `pi4/2026-11-22-bt-probes/bt-probe-run1.txt` to `bt-probe-run5.txt`;
   run 4's kept log ends at B-P4's `advertising as erxos-probe` line, so
   its end lines are not recorded
+* **Peer (run 5):** a Mac running macOS and the `blew` BLE command-line
+  tool, which saw `erxos-probe` at -34 dBm and connected
 
 The run takes about 5 s before the root goes on, plus up to 60 s for
 B-P4's connection window. B-P4 needs a phone or another host scanning for
@@ -398,9 +401,10 @@ own shows whether the bring-up must set the address itself.
   first command.
 * **No patch for HCI and LE advertising.** In that mode the ROM answers
   Read Local Version, Write Scan Enable, Read BD_ADDR and B-P4's event
-  masks and advertising commands without the patch. Whether it accepts
-  a connection and serves the later stages without the patch is still to
-  be read (B-P4's connection).
+  masks and advertising commands without the patch. Run 5 adds that it
+  accepts a connection as a peripheral and carries the peer's first ATT
+  PDU (B-P4); whether it serves the later stages without the patch is
+  for the stages' own board runs.
 * **The ROM's public address is a placeholder.** Read BD_ADDR answers
   `aa:aa:aa:aa:aa:aa`, so no host may use the public address as the
   machine's identity. A host that wants a public address must set one with
@@ -415,8 +419,8 @@ own shows whether the bring-up must set the address itself.
 
 **Run 4 (advertising only):** every command was answered with status 0
 in 2 to 5 ms, and the probe advertised as `erxos-probe`. No phone was
-connected in the window, so the connection is still to be read. Runs 1
-to 3 stopped at Set Event Mask, unanswered, because the controller was
+connected in the window; run 5, the same image, read the connection
+(below). Runs 1 to 3 stopped at Set Event Mask, unanswered, because the controller was
 in download mode (B-P3).
 
 The probe sets the event masks (LE meta, disconnection complete, hardware
@@ -433,14 +437,61 @@ waits 2 s and resets the controller, which drops it.
 | Reading | Value |
 | --- | --- |
 | Each command's status | Set Event Mask, LE Set Event Mask, LE Set Advertising Parameters, LE Set Advertising Data, LE Set Advertising Enable: all 0x00 (run 4) |
-| Seen by the phone (name, address) | ____ (run 4: no phone scanned; the address advertised is the public `aa:aa:aa:aa:aa:aa`) |
-| Connected, after (ms) | ____ |
-| LE Connection Complete parameters | ____ |
-| Hardware error events | ____ |
+| Seen by the peer (name, address) | run 5: `erxos-probe`, at -34 dBm; the address advertised is the public `aa:aa:aa:aa:aa:aa` (run 4: no peer scanned) |
+| Connected, after (ms) | run 5: 38192 into the 60 s window, one event (`B-P4 connected 1 ms 38192 events 1`) |
+| LE Connection Complete parameters | run 5: `01 00 40 00 01 00 3f c2 42 5f 3e 60 18 00 00 00 48 00 01`, decoded below |
+| Hardware error events | none in run 5 |
+| First bytes from the peer | run 5: `02 40 20 07 00 03 00 04 00 02 b9 00`, an ATT Exchange MTU Request, decoded below |
+
+**Run 5:** the event arrived whole, `04 3e 13` and 19 parameter bytes
+(rx 22, no receive error). Decoded by the field order and sizes of LE
+Connection Complete (Core 6.3, Vol 4 Part E, 7.7.65.1; the HTML edition
+whose SHA-256 is `76eb9e21a158ac3a2340087568437b0b91408b333ab135c7a13f9b5bdcc57ed2`),
+each multi-octet field little-endian:
+
+| Field | Bytes | Value |
+| --- | --- | --- |
+| Subevent_Code | `01` | LE Connection Complete |
+| Status | `00` | success |
+| Connection_Handle | `40 00` | `0x0040` |
+| Role | `01` | Peripheral |
+| Peer_Address_Type | `00` | Public Device Address |
+| Peer_Address | `3f c2 42 5f 3e 60` | `60:3e:5f:42:c2:3f` |
+| Connection_Interval | `18 00` | 24, 30 ms (N x 1.25 ms) |
+| Peripheral_Latency | `00 00` | 0 |
+| Supervision_Timeout | `48 00` | 72, 720 ms (N x 10 ms) |
+| Central_Clock_Accuracy | `01` | 250 ppm |
+
+The peer then sent ACL data on the link; its bytes arrived ahead of the
+end reset's Command Complete in that command's receive window
+(`end reset ... rx 19 ... bytes 02402007000300040002b900040e0401030c00`).
+Decoded by the HCI ACL Data packet header (Vol 4 Part E, 5.4.2), the
+Basic L2CAP header (Core 6.3, Vol 3 Part A, 3.1, with the LE-U CID
+`0x0004` for ATT from Table 2.3; SHA-256
+`9fc72a9efd4229c3f800ac862808bba7b33d6a95679cfbd2acda5b3650069905`) and
+ATT_EXCHANGE_MTU_REQ (Vol 3 Part F, 3.4.2.1; SHA-256
+`272a2472b71b54503d44a16286b9e399a323774d8b7b8246283a7c49e96d0638`):
+
+| Field | Bytes | Value |
+| --- | --- | --- |
+| H4 packet indicator | `02` | ACL data |
+| Handle and flags | `40 20` | handle `0x040`; Packet_Boundary_Flag `0b10`, the start of an automatically flushable L2CAP PDU; Broadcast_Flag `0b00` |
+| Data total length | `07 00` | 7 |
+| L2CAP PDU length | `03 00` | 3 |
+| L2CAP channel ID | `04 00` | `0x0004`, ATT |
+| ATT opcode | `02` | ATT_EXCHANGE_MTU_REQ |
+| Client Rx MTU | `b9 00` | 185 |
+
+The probe has no ATT, so the request went unanswered and `blew connect`
+reported "The connection has timed out unexpectedly". The end reset was
+answered in 6 ms and the pin set back to 1; the boot went on to the
+shell's prompt.
 
 **Feeds:** advertising and a connection on the ROM say the patch is not
 needed for Stage 1; a refusal or a hardware error says the patch is a
-prerequisite of every stage.
+prerequisite of every stage. Run 5 reads the first: the ROM accepts a
+connection as a peripheral and carries the peer's first ATT PDU to the
+host without the patch.
 
 ## End
 
@@ -451,6 +502,6 @@ on any boot.
 
 | Reading | Value |
 | --- | --- |
-| End reset answered | yes, 1 ms (runs 1 and 3; run 4's not in the kept log) |
-| Pin restored to | 1, on (runs 1 and 3; run 4's not in the kept log) |
-| Boot reached the shell afterwards | ____ |
+| End reset answered | yes, 1 ms (runs 1 and 3), 6 ms after a connection (run 5); run 4's not in the kept log |
+| Pin restored to | 1, on (runs 1, 3 and 5; run 4's not in the kept log) |
+| Boot reached the shell afterwards | yes, the `rc` prompt (run 5) |

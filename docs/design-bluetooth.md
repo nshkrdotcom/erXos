@@ -144,8 +144,12 @@ sees it (4.8.1); the Report Map is at most 512 octets (HIDS 2.6.1).
 * **The ROM serves the stages without a patch.** In the mode ready for
   every command the controller's ROM reports HCI version 7, LMP version
   7, manufacturer `0x000f` and LMP subversion `0x6119`, advertises, and
-  accepts a connection as a peripheral (probes B-P3 and B-P4): a Mac
-  connected and sent its ATT Exchange MTU Request at once. Hosts that
+  accepts a connection as a peripheral (probes B-P3 and B-P4,
+  [research-bluetooth-pi4.md](research-bluetooth-pi4.md#b-p4-advertising-on-the-rom-firmware)):
+  in run 5 a Mac connected, the controller reported LE Connection
+  Complete with status 0 and the peripheral role, and the Mac's ATT
+  Exchange MTU Request, client MTU 185, reached the host on CID
+  `0x0004`. Hosts that
   drive a CYW43xxx load a patch into the controller's RAM before use:
   NetBSD's `btattach` sends the vendor command `0xFC2E` (download
   minidriver), replays the `.hcd` file as HCI commands of the form
@@ -2784,9 +2788,9 @@ are read; what they settle is in [The hardware](#the-hardware),
   subversion `0x6119` and the placeholder address `aa:aa:aa:aa:aa:aa`;
   powered up with RTS asserted, it is in download mode. The reading
   after a patch belongs to a board whose manifest names one.
-* **B-P4, read.** On the ROM the controller advertises and accepts a
-  connection as a peripheral, after which the phone sends its ATT
-  Exchange MTU Request: the stages need no patch to begin. Whether the
+* **B-P4, read.** On the ROM the controller advertises (runs 4 and 5)
+  and accepts a connection as a peripheral, after which the peer sends
+  its ATT Exchange MTU Request (run 5): the stages need no patch to begin. Whether the
   ROM serves GATT, the serial service and pairing as the stages build
   them is read by the board's checklist over the real stack
   ([On the board](#on-the-board)), not by a probe.
