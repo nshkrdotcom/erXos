@@ -221,10 +221,15 @@ say_count(const char *name, uint64_t value)
 	say("\n");
 }
 
+/*
+ * Every domain's and the principal's ceiling: a frame of the code protocol's
+ * floor, below which an ERTS domain's code server ends it at its start
+ * (erx_code_agent; docs/design-live.md, "The code server").
+ */
 static erx_runtime_limits_t
 limits_default(void)
 {
-	return ((erx_runtime_limits_t){ .max_frame = 65536, .max_message_heap = MIB, .funnel_depth = 64,
+	return ((erx_runtime_limits_t){ .max_frame = ERX_CODE_LOAD_MAX_FRAME_MIN, .max_message_heap = MIB, .funnel_depth = 64,
 	    .exports = 64, .tmp = MIB, .overlay = MIB, .atoms = 65536, .foreign_atoms = 1024, .processes = 1024,
 	    .peer_held = MIB, .peer_held_total = 4 * MIB });
 }

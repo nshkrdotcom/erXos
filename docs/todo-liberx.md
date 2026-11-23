@@ -394,6 +394,14 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   with a chokepoint rule in `tools/lib/erx/chokepoint_rules/` and its seeded violation;
   `apply_pass` is the one call, for a creation's and a connection's installs, but it takes a
   bare rights mask rather than the `erx_dom_grants` row, and no rule checks it.
+* [High] domain library, `test/guest/native_domain` (`lane_party`): the suite fails its
+  `connection`, `exports`, `refs` and `origins` cases, each domain logging "init: no answer
+  to the ready report in 5000 ms" and the system party never taking the burst's first
+  frame; every other case passes. It passed before `erx_code_agent` landed, so the likely
+  cause, not yet confirmed, is a frame the code agent's start puts on the system
+  connection before the burst, which `party_open`/`party_burst_index` do not expect. Find
+  the first frame after the ready report, and teach the party the code agent's frames
+  and the ready report's answer.
 * [Medium] domain library, `test/guest/native_domain` (`hook_step`): the hooked failure
   refuses a step before it is applied or after it completed, never between a step's two
   calls (a bell's create and bind, a group's create and configure), so a handle noted
