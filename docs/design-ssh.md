@@ -199,8 +199,9 @@ the system domain beyond what a line already is:
   nothing that grants authority over principals;
 * a login through the facet starts the principal's session from its
   template, as at the console, so the session's grants are the
-  template's (S1), and the system domain introduces the session to the
-  SSH domain, exporting the session's `erx_ssh_line`;
+  template's (S1), and the system domain has the session mint its
+  line, the `ssh_line` facet in front of `erx_ssh_line`, for the SSH
+  domain ([design-system.md](design-system.md#a-sessions-lines));
 * a channel's shell runs on a tty of the session's relay whose master is
   the channel's process in the SSH domain, speaking the console
   interface's six messages, so line discipline, job control, `termios`,
@@ -835,16 +836,19 @@ Each reads through a cursor and has a fuzz target
 
 ### Sessions, ttys and shells
 
-`erx_ssh_line` is the session's process that the SSH domain reaches,
-exported to it at the introduction, as `erx_web_line` is to the web
-domain. Both are lines of one module, `erx_session_line`, which owns who
-reaches a line: it takes the export only in the system domain's
-envelope, and a call only in the peer's envelope from a caller and alias
-of the peer's. Each line keeps its own requests, and the other messages
-in the peer's envelope that its protocol names, such as a job's below;
-everything else from another domain is dropped. `erx_ssh_line` takes two
+`erx_ssh_line` is the session's process behind its line to the SSH
+domain, the `ssh_line` facet that the session mints for the SSH domain
+when a login through the facet names it, as `erx_web_line` is behind the
+web domain's ([design-system.md](design-system.md#a-sessions-lines)).
+The facet admits the SSH domain's calls, within its `max_request` and
+`in_flight`, each from a caller and alias of that domain's, and forwards
+each with the channel's domain to `erx_ssh_line`; nothing else from
+another domain reaches the line process. The interface `ssh_line` in
+`abi/services/ssh.txt` lists the operations the line serves, an
+operation entering it with the code that serves it, and the messages
+the line sends a channel are no operations of it. `erx_ssh_line` takes two
 requests, each from a channel process of the SSH
-domain, heard through that domain's envelope, and answers each `ok` or
+domain, and answers each `ok` or
 `{error, limited | badarg}`:
 
 * **`{open_tty, Channel, Run, Term, Rows, Columns}`** for a channel that
@@ -912,8 +916,12 @@ so the stream still ends when `rc` does. On a tty, the command shell's
 group writes `io` output to the terminal, which is standard error
 there, so output follows one rule in both.
 
-A job's channel and its line exchange seven closed messages, heard
-through each other's domain envelope and each checked by its receiver:
+A job's channel and its line exchange seven closed messages, each
+checked by its receiver: the channel's reach the line only through the
+line's facet, which forwards a message in no call's shape with its
+`message/2`, within `in_flight`
+([design-system.md](design-system.md#a-sessions-lines)), and the line's
+reach the channel in the session's envelope:
 
 | Message | Direction | The receiver's check | If it fails |
 | --- | --- | --- | --- |
@@ -1500,7 +1508,8 @@ boots the card and logs in.
 | Interface | Between | Declared in |
 | --- | --- | --- |
 | `erx_ssh_login`: `cookie`, `key_ok`, `login_key`, `login_passphrase`, `logout` | the SSH domain and the system domain | `abi/services/ssh.txt`, citing [Logging in](#logging-in) |
-| `erx_ssh_line`: `open_tty`, `open_job`, and a job's `job_input`, `job_written`, `job_eof`, `job_output`, `job_sent`, `job_hangup`, `exited`, and a tty's `signaled` | the SSH domain and a session it logged in | `abi/services/ssh.txt`, citing [Sessions, ttys and shells](#sessions-ttys-and-shells) |
+| the `ssh_line` facet in front of `erx_ssh_line`: `open_tty`, `open_job`, and a job's `job_input`, `job_eof`, `job_sent` and `job_hangup` | the SSH domain and a session it logged in | `abi/services/ssh.txt`, `served_by session`, citing [Sessions, ttys and shells](#sessions-ttys-and-shells), each operation as the line serves it ([design-system.md](design-system.md#a-sessions-lines)) |
+| the line's messages to a channel: a job's `job_written` and `job_output`, `exited`, and a tty's `signaled` | a session and a channel of the SSH domain | this document's table in [Sessions, ttys and shells](#sessions-ttys-and-shells), and `abi/signals.txt`'s signal set `tty_master` |
 | the console interface's six messages | a channel and a tty | `abi/services/console.txt` ([design-live.md](design-live.md#paths)) |
 | the credentials facet: `login_keys`, `add_login_key`, `del_login_key` | a session and the principal service | the principal service's service file, citing [Login keys](#login-keys) |
 | `{ssh_host, Name}` key facet | the SSH domain and the vault | [design-system.md](design-system.md#the-vault) |

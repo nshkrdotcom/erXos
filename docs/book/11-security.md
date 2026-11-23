@@ -393,6 +393,11 @@ allows, within its limits, and forwards them to the service. Most
 facets are processes of the system domain.
 A domain that holds no facet for a service has no way to reach it: a
 call that needs one fails with `no_facet` before it reaches anything.
+A front end reaches a session the same way: the session's **line**, to
+the web domain or the SSH domain, is a facet the session mints for that
+domain when the system domain names it at a login, and the front end
+holds no other name of the session
+([design-system.md, A session's lines](../design-system.md#a-sessions-lines)).
 
 A grant is a row of the system manifest. Here is one from
 `config/manifest/development.txt`, abridged (the full row also sets

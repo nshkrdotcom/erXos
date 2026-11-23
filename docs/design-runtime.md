@@ -308,7 +308,7 @@ stack and not the system domain, and `erx_session` with start type
 release holds it, where the session template's `-eval` starts it once
 the domain holds its facets; `erx_web_line` starts from the session's
 boot script, before the session reports ready, since the ready report
-names the line.
+names the line as the mint of its facet.
 `crypto`, `asn1`, `public_key`, `ssh`, `ssl` and `inets` ship in the
 releases that ask for them, never in the system release, and the NIFs of
 the first two are linked into the interpreter and BeamAsm images alone,

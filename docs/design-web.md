@@ -210,20 +210,24 @@ the same tree for a screen or a panel. What the three agree on is the
 tree, the values and the events, and that is what their tests compare.
 
 The **line** is the web domain's connection to one session domain: the
-session's process `erx_web_line`, exported to the web domain when the
-system domain first introduces the session to it, which opens the views
-of paths, traces and UIs. It is a line of `erx_session_line`, as the SSH
-domain's `erx_ssh_line` is ([design-ssh.md](design-ssh.md#sessions-ttys-and-shells)):
-that module takes the export only in the system domain's envelope and a
-request only in the web domain's, from a caller and alias of that
-domain's, and `erx_web_line` keeps only its own requests and views. A session with a line has the display named
+`web_line` facet, which the session mints for the web domain when the
+system domain names it, in front of the session's process
+`erx_web_line`, which opens the views of paths, traces and UIs. It is a
+session's line as the SSH domain's is
+([design-system.md](design-system.md#a-sessions-lines)): the facet
+admits the web domain's calls within its bounds, each from a caller and
+alias of that domain's, and forwards each with the caller to
+`erx_web_line`, which keeps only its own requests and views. A session
+with a line has the display named
 `web`: its applications' `erx_ui:open/1` opens there with the browser
-renderer. A session has at most one line, which ends with the session
-domain, so it has no lifetime of its own to track. The line itself is
-not a facet and has no row in the facet table: it is a name that an
-operation of a declared facet hands out, `login` of the login facet or
-the host link's `web` root, which is how every route between domains
-begins ([design.md](design.md#decisions)); what travels on it is the web
+renderer. A session's line has at most one facet, which ends with the
+session domain and with the session's connection to the web domain.
+No manifest row grants the line: its interface, `web_line` in
+`abi/services/web.txt`, is `served_by session`, and the system domain
+hands the facet out as the reply of a declared facet's operation,
+`login` of the login facet or the host link's `web` root, which is how
+every route between domains begins ([design.md](design.md#decisions));
+what travels on it is the web
 relay's conversation, the protocol's types as Erlang terms. Its views
 read through the session's own inspect facet, at that facet's scope,
 and the line holds no scope of its own.
@@ -491,14 +495,17 @@ and closes it without a `bye`, since nothing is listening.
 `erx_web_line`, its own application in every session domain's release,
 is the parent of the session's views and the keeper of the table of the
 session's open UIs on the web, and nothing else: `{open, Target}` from the web
-domain starts a view process under it and answers `{ok, View}`, the view's
-pid, exported to the web domain with the reply, or `{error, busy}` past
-64 views. A view's crash ends that view alone, which the web domain sees
+domain, through the line's facet, starts a view process under it and
+answers `{ok, View}`, the view's
+pid, exported to the web domain with the facet's reply, or `{error, busy}` past
+64 views. `open` is the one operation of the `web_line` interface. A
+view answers the web domain's caller of the `open`, which the facet
+hands the line with the request. A view's crash ends that view alone, which the web domain sees
 through its monitor and reports as `ended closed`. The session's boot
 script starts the line's application permanent, before the session
 reports ready, and the line is the application's one process, so the
-ready report can name the line and the line and the session domain end
-together. A view is one process with one query or one trace at
+ready report can name the line as the mint of its facet and the line
+and the session domain end together. A view is one process with one query or one trace at
 a time, so the line's inspector queries in flight are at most its open
 views, and the session's inspect facet admits at most its grant's
 `in_flight` of them at once: past that a query is refused `busy` and
@@ -665,8 +672,9 @@ that has not enrolled gets `no_match`, the same answer as a wrong
 passphrase, since enrolment is at the UART only. On a match the domain
 service starts a session for the principal, as a console login does; the
 session's environment sets `display` to `web`; and the system domain
-introduces the session to the web domain, exporting its `erx_web_line`,
-and the reply names the line.
+has the session mint its line for the web domain
+([design-system.md](design-system.md#a-sessions-lines)), and the reply
+names the line's facet.
 `logout(Line)` ends a session that a login through this facet started, as
 a console's log-out ends the sessions started there, and is refused for
 any other line; the session's end ends its line and its
@@ -675,8 +683,9 @@ it, and the sessions its logins started end as at a log-out. The web
 domain never stores a passphrase.
 
 The host link's `web` facet is the other way in. On its opening in a
-development build, the system domain introduces `root`'s session to the
-web domain, as the host link's `console` reaches it, unless it is already;
+development build, the system domain has `root`'s session, the one the
+host link's `console` reaches, mint its line for the web domain, whose
+facet replaces the one an earlier opening got;
 the session's environment is unchanged, so an application of `root`'s
 opens on the web when it names `web` or when the user sets `display` to
 it. Closing the facet closes its connections and leaves the line and its
@@ -908,8 +917,10 @@ may carry; the generator emits a reader and a writer of both directions
 in TypeScript, as in Erlang and C.
 
 **`abi/services/web.txt`**: `erx_web_login`'s `login` and
-`logout`, and the host link's `web` facet's `connect`, `data` and
-`close`.
+`logout`, the host link's `web` facet's `connect`, `data` and
+`close`, and the line, `web_line`, `served_by session`, with its one
+operation `open` and its `max_request` and `in_flight`
+([design-system.md](design-system.md#a-sessions-lines)).
 
 **`abi/inspection.txt`**: the `present` marks of its paths, the
 append-only mark and the backend reporters' labels and scopes, generated

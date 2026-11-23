@@ -623,14 +623,18 @@ sequenceDiagram
   C->>D: connect, key exchange
   D->>S: login key check (login facet)
   S->>P: start session from template
-  S->>D: introduce the session's line
+  S->>P: mint the line's facet for D
+  S->>D: reply with the line's facet
   D->>P: open a tty, channel is master
   P-->>C: rc on the tty
 ```
 
 *Figure 20.3. An SSH login in the design. The SSH domain parses the
 network's bytes but decides nothing about who logs in; the channel
-becomes one more tty master. This path is designed and not built.*
+becomes one more tty master. The session's line is a facet the session
+mints for the SSH domain when the system domain names it, so the SSH
+domain reaches the session only through it. This path is designed and
+not built.*
 
 Two properties fall out of the construction. erXos needs no
 `PermitRootLogin` setting: the system shell opens only at a secure

@@ -3076,8 +3076,9 @@ from a control slot, and the agent acts only on the system domain's.
   `{'$gen_call', From, Req}` in `D`'s envelope is `D`'s own when `From`
   is a caller and a reply alias that `Owner`, `erx:owner/1` or the owner
   function of the caller's export-table module, gives `D` for both, so no
-  reply goes to a third domain. A facet and a session's line ask it of
-  each call they take.
+  reply goes to a third domain. A facet, a session's line among them
+  ([design-system.md](design-system.md#a-sessions-lines)), asks it of
+  each call it takes.
 * `{erx_serve, any}` starts a `gen_server` or `gen_statem` that serves
   other domains: it takes their calls and casts as its own domain's, a
   call only when every name its reply goes to is of the caller's domain

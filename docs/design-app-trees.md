@@ -416,8 +416,10 @@ with a session in place of a configured domain's incarnation:
 * its plan serves `svc` ([Serving](#serving-erx_svc));
 * the mint is a pid the session owns, node and creation both, as for a
   configured domain;
-* `svc` is the only name a session may provide; a `provides` map naming
-  any other is refused whole.
+* `svc` and the session's lines
+  ([design-system.md](design-system.md#a-sessions-lines)) are the only
+  names a session may provide; a `provides` map naming any other is
+  refused whole.
 
 A report that provides `svc` otherwise is refused, logged and counted,
 and the rest of the report stands.
