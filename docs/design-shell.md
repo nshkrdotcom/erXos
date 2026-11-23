@@ -238,8 +238,8 @@ what a terminal needs added:
   shell on the terminal above the command shell until that shell ends.
 * **Authority.** The shell runs inside the session's domain with that
   domain's authority and facets, and nothing more; neither the shell nor
-  any command has authority of its own (SH1). `bind`, `mount` and
-  `unmount` change the session domain's namespace, which every shell and
+  any command has authority of its own (SH1). `mount` and `umount`
+  change the session domain's namespace, which every shell and
   command of the session shares.
 
 Its interpreter is ordinary Erlang, an estimated 2,000 to 3,000 lines for
@@ -341,7 +341,7 @@ shell and for `erx:` functions that run commands:
    `halt`, which follow FreeBSD's reboot(8), need the `machine` grant and
    write one end to `/machine/ctl`
    ([design-system.md](design-system.md#a-sessions-request)); and erXos's own `i`, `domains`, `source`, `trace`,
-   `attach`, `bind`, `mount` and `unmount`, and `load`, which loads code
+   `attach`, `mount` and `umount` ([Interfaces](#interfaces)), and `load`, which loads code
    into a domain through the session's install or code facet
    ([design-live.md](design-live.md#one-load-three-routes)), none of
    which has a FreeBSD counterpart;
@@ -2570,14 +2570,35 @@ driver creates, pauses and ends their sub-spaces
 ([design-programs.md](design-programs.md),
 [design-runtime.md](design-runtime.md#programs-as-ports)); `/proc`, the
 inspector and the code store are reached through Erlang commands with the
-facets in their context ([design-live.md](design-live.md)); and `bind`,
-`mount` and `unmount` change the session domain's namespace
-([design-files.md](design-files.md#building-binding-and-mounting)).
-`mount FILE DIR` mounts the EROFS image of a package file of `/apps`
-read-only at `DIR`, with the layout of the header the `apps` tree
-served, read through the same open as the image, and answers `einval`
-for any other file; `unmount DIR` ends it
-([design-packaging.md](design-packaging.md#apps)).
+facets in their context ([design-live.md](design-live.md)); and `mount`
+and `umount` change the session domain's namespace
+([design-files.md](design-files.md#building-binding-and-mounting)):
+
+* `mount`, with no argument, prints one line for each entry of the
+  namespace table, `SOURCE on POINT (TYPE, OPTIONS)`, as FreeBSD's does.
+* `mount [-r] SOURCE DIR`, SOURCE a directory the session already
+  reaches, such as `/media/disk0/s1`, places that tree at `DIR` too,
+  over `erx_ns:bind/2`, or `bind/3` with `[ro]` for `-r`. `-r` makes a
+  read-only view: writes through `DIR` answer `erofs`, while what the
+  entry reaches stays as its server serves it and other entries may
+  still write it, which is weaker than a read-only file system
+  ([design-drives.md](design-drives.md#placing-a-volume)).
+* `mount FILE DIR`, FILE a package file of `/apps`, mounts its EROFS
+  image read-only at `DIR`, with the layout of the header the `apps`
+  tree served, read through the same open as the image, and answers
+  `einval` for any other file
+  ([design-packaging.md](design-packaging.md#apps)).
+* `umount DIR` removes the entry at `DIR`, over `erx_ns:unmount/1`; it
+  flushes nothing and ejects nothing.
+
+"Mount" here is the session's act, placing a tree in its namespace, as
+on an NFS client; a server's mounting of its own media, such as the
+media domain's of a drive's volumes, is the server's. The names are
+FreeBSD's and promise less: there is no device argument and no `-t`,
+since a session holds no device and a server names its own formats. A
+SOURCE under `/dev`, or a `-t` option, is refused with a message naming
+`mount [-r] /media/diskN/sN DIR`, and `umount` of a path that is no
+entry with one naming `echo eject > /media/diskN/ctl`.
 
 ## Compatibility and migration
 

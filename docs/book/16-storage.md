@@ -489,7 +489,7 @@ turns any such medium into files by one path
 The domain that drives the medium's transport, the USB domain for a
 stick, serves the medium **whole**, as one window, and parses none of
 it, so nothing a stranger wrote is read in a domain that holds a
-device. A drive's grant hands that window, once, to the **media
+device. A drive's grant hands that window to the **media
 domain**, which holds no device and nothing but the drives. There the
 medium passes through a few steps. A pure reader takes its partition table
 apart, an MBR, a GPT or none at all, by FreeBSD's tests, and refuses
@@ -504,7 +504,9 @@ its own for littlefs's C. Sessions that hold the
 `media` facet see the drives at `/media/disk0/s1` and so on, beside
 each drive's `status`, which names every volume's format, label and
 mount, and its `ctl`, to which `eject` is written before a stick is
-pulled.
+pulled. A session puts a volume wherever it likes in its own
+namespace, `mount /media/disk0/s1 /mnt`, and takes it away with
+`umount /mnt`, which removes the entry and ejects nothing.
 
 The rule that keeps the design safe is that everything a medium's
 bytes reach belongs to that medium. The reader, the volume processes
@@ -514,7 +516,8 @@ bound the media domain's budget covers. A crafted volume therefore
 ends at most its own mount, and a crafted table its own stick's; a
 pulled stick ends its volumes, and an open file on it answers `eio`;
 the next stick in the same drive meets nothing the last one left; and
-since the grant hands each window out once, no stick is mounted twice.
+no stick is mounted twice at once, since asking for its window again
+restarts its block service first.
 `eject`, and the machine's orderly shutdown, give each volume a last
 request that closes it to anything later, writes what it holds and
 flushes, so nothing it acknowledged is lost on a stick that flushes. A volume is written only when one

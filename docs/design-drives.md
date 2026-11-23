@@ -4,30 +4,34 @@ A **drive** is a place that holds at most one medium at a time: a USB
 stick, an SD card in a USB reader, or the medium of a block device the
 manifest gives to no file system of its own, such as a second virtio
 disk. Every drive reaches files by one path. The domain that drives the
-medium's transport serves the medium **whole**, as one window, hands
-that window out once, and parses none of it. One domain of its own, the
+medium's transport serves the medium **whole**, as one window, and
+parses none of it. One domain of its own, the
 **media domain**, which holds no device, reads the medium's partition
 table and mounts each partition, a **volume**, behind one process,
 which names the volume's file system from its contents and parses it;
-it serves every drive's volumes as files at `/media/diskN/sN`. A release
+it serves every drive's volumes as files at `/media/diskN/sN`, and a
+session places any of them wherever it likes in its own namespace with
+`mount`. A release
 serves FAT16, FAT32 and EROFS volumes; development builds and test
 images serve littlefs volumes too; erXos's F2FS joins as one row of the
 same format table. The key idea is that everything a medium's bytes
 reach, the table reader, each volume's process and littlefs's C code in
 its sub-space, is a child of that medium's supervisor and ends with the
-medium's window, and that a window is mounted at most once, so a crafted
-medium ends at most its own mounts, no state of one medium reaches the
+medium's window, and that a medium's earlier mount is gone before a
+later one starts, so a crafted medium ends at most its own mounts, no state of one medium reaches the
 next, and "any format on any drive" is the product of one drive path and
 one format table rather than a matrix of cases.
 
 Decisions every reader needs:
 
-* **A drive serves its medium whole, once.** The USB domain, or the
-  domain that drives a block device of the drive role, runs a transport
-  and one window covering the medium, and hands that window out through
-  the drive's grant once. It reads no table, so nothing a medium holds
-  is parsed in a domain that holds a device, and no medium is mounted
-  twice, whatever restarts in the media domain.
+* **A drive serves its medium whole.** The USB domain, or the domain
+  that drives a block device of the drive role, runs a transport and one
+  window covering the medium, and hands that window out through the
+  drive's grant. It reads no table, so nothing a medium holds is parsed
+  in a domain that holds a device. Asked again, after a restart in the
+  media domain, the grant first ends and restarts the medium's block
+  service, so an earlier mount's requests are gone before a new mount
+  starts and no medium is mounted twice at once.
 * **One media domain holds every drive.** It holds no device, no window
   of the boot medium and nothing but the drives' grants, and it serves
   one files service, `media`, which sessions mount at `/media`.
@@ -40,10 +44,17 @@ Decisions every reader needs:
   C in a sub-space with a budget of its own, so a crash, an exhausted
   allowance or a memory error ends only that volume and never costs the
   media domain a restart; a crafted table ends that medium's mounts.
-* **Written only when unambiguous.** A volume is written only when one
-  format alone claims it, that format is one erXos writes, the medium
-  flushes, and the format's own state allows it; otherwise it is
-  read-only, and a medium whose flush fails is refused.
+* **Written only as what it is.** A volume is written only when its
+  selected format is one erXos writes, no other format the build writes
+  has its signature on it, the medium flushes, and the format's own state
+  allows it; otherwise it is read-only, and a medium whose flush fails is
+  refused.
+* **Two acts called mounting.** The media domain mounts each volume,
+  starting its file system, at the first walk of its drive after the
+  medium arrives. A session mounts trees: the shell's `mount` places
+  `/media`, or any volume under it, anywhere in the session's namespace,
+  and `umount` removes the entry, as an NFS client mounts what a server
+  exports ([Placing a volume](#placing-a-volume)).
 * **One finish for eject and for the machine's end.** A volume's last
   request closes it, writes what it holds and flushes, so a write it
   acknowledged survives `eject` and an ordered end on a medium that
@@ -153,9 +164,10 @@ the superblock by matching tags, not by offset (`lfs.c:4496-4520`).
   ([design-files.md](design-files.md#serving-the-erx_fs-behaviour)).
 * The ordered end, which freezes every service on its durability facet
   under one deadline ([design-system.md](design-system.md#shutting-down)).
-* A facet's mount, read at each lookup against the facet registry, and
-  the resolver's rule that follows no link in a tree it reached through
-  `{facets, svc}`
+* A facet's mount, read at each lookup against the facet registry;
+  `erx_ns:bind/2,3` and `erx_ns:unmount/1`, which place and remove a
+  namespace entry; and the resolver's rule that follows no link in a
+  tree it reached through `{facets, svc}`
   ([design-files.md](design-files.md#building-binding-and-mounting),
   [design-app-trees.md](design-app-trees.md#links)).
 * The `status` and `ctl` files of a tree its owner serves
@@ -188,13 +200,14 @@ the superblock by matching tags, not by offset (`lfs.c:4496-4520`).
   partition and every package as it stands: no byte of a drive reaches
   the EROFS decoder in a runtime that mounts a package or serves the
   `system` tree.
-* **DR-R4. A medium's state dies with it, and it is mounted once.** No
-  process, sub-space or cache holding a medium's state outlives the
-  medium's mount; an open file of an ended mount answers `eio`; a medium
-  is mounted at most once, and a new medium mounts afresh.
+* **DR-R4. A medium's state dies with it, and it is never mounted twice
+  at once.** No process, sub-space or cache holding a medium's state
+  outlives the medium's mount; an open file of an ended mount answers
+  `eio`; a new mount of a medium starts only after every request of its
+  earlier mount is answered or refused, and a new medium mounts afresh.
 * **DR-R5. Never written by a misreading, never lost by an orderly
-  end.** A volume is written only when one format alone claims it,
-  erXos writes that format, and the medium flushes; every other volume
+  end.** A volume is written only when erXos writes its selected format,
+  no other format the build writes claims it, and the medium flushes; every other volume
   is read-only or refused, with the reason shown. On a medium that
   flushes, every write a volume acknowledged before an `eject` or an
   ordered end that finished is on the medium.
@@ -204,14 +217,20 @@ the superblock by matching tags, not by offset (`lfs.c:4496-4520`).
 * **DR-R7. No new mechanism.** Drives reach their files through windows,
   grants, one files service, `erx_fs` keepers and its freeze, the
   littlefs port and a `status` and `ctl` pair, each named here.
-* **DR-R8. Authority.** Which domains see which drives is the manifest's
-  `media` facet rows' and nothing else's.
+* **DR-R8. Authority.** Which domains see the drives is the manifest's
+  `media` facet rows' and nothing else's: a domain granted `media` sees
+  every drive, with its row's rights, and a domain not granted it sees
+  none. No grant narrower than every drive exists.
+* **DR-R9. Placing.** A session places the media tree, or any volume of
+  it, wherever it likes in its own namespace, and removes it, with the
+  shell's `mount` and `umount`, over namespace calls that exist.
 
 Non-goals: FAT12, exFAT, NTFS, ext2, UFS, HFS+, APFS and ISO 9660, each
 named by the probe and refused; littlefs volumes in a release; logical
 partitions inside an MBR's extended partition; repairing a table or a
-volume; media whose blocks are not 512 bytes; booting, updating or
-loading code from a drive.
+volume; media whose blocks are not 512 bytes; device nodes for drives
+or volumes, and any session's access to a medium's sectors; booting,
+updating or loading code from a drive.
 
 ## The construction
 
@@ -219,7 +238,7 @@ loading code from a drive.
 
 ```text
  the transport's domain (the USB domain, or a block device's driver domain)
-   medium ---> one window, the medium whole ---> drive grant, diskN (once per window)
+   medium ---> one window, the medium whole ---> drive grant, diskN
                                                       |
  the media domain                                     v
    drive process (one per drive; parses nothing)
@@ -233,7 +252,7 @@ loading code from a drive.
 
 1. **The medium.** The transport's domain runs, for each medium, the
    transport and one window covering every sector of it, and the drive's
-   grant answers that window's pid once. That domain reads no sector of
+   grant answers that window's pid. That domain reads no sector of
    the medium on its own behalf.
 2. **The volumes.** In the media domain, a reader process under the
    medium's supervisor reads the table with `erx_media_table`, a pure
@@ -249,7 +268,8 @@ loading code from a drive.
    ([The writable rule](#the-writable-rule)); one it does not serve
    stays, unmounted, to say why.
 5. **The files.** The media tree routes every request on a volume to its
-   volume process and serves the rest itself
+   volume process and serves the rest itself, and a session places the
+   tree, or any volume of it, in its namespace
    ([The media tree](#the-media-tree)).
 6. **The finish.** `eject` and the machine's ordered end give each
    volume its last request, which closes it, writes what it holds and
@@ -283,13 +303,13 @@ loading code from a drive.
   ([EROFS, unauthenticated](#erofs-unauthenticated)).
 * **DR-R4.** Step 7: the supervisor is the medium's, so its end takes
   every holder of the medium's state with it, the EROFS block cache and
-  the littlefs port included. The grant answers each window once, so no
-  mount of a medium follows another of the same medium, after an eject
-  or after a restart of the drive process or the media domain, while the
-  first one's requests may still be in flight.
+  the littlefs port included. Asked for a window it already answered, the
+  grant ends and restarts the medium's block service through the one
+  process that issues the medium's commands, so every request of the
+  earlier mount is answered or refused before the new mount sends its
+  first ([A drive and its medium](#a-drive-and-its-medium)).
 * **DR-R5.** The writable rule is the one place that decides writing,
-  from the probe's answer, the format, the mount's flush and the
-  format's state. The finish is the one way a volume is closed while its
+  from the probe's answer, the mount's flush and the format's state. The finish is the one way a volume is closed while its
   medium stays, and every request reaches the volume through its
   process, so the finish is its one admission barrier.
 * **DR-R6.** The table reader, the probe and each format have fuzz
@@ -297,16 +317,18 @@ loading code from a drive.
   `status` file through the field escape; the resolver follows no link
   in the `media` tree.
 * **DR-R7.** [The mechanisms used](#what-it-builds-on) are all
-  existing. The names this design adds are a window role, `drive`; one
-  service, `media`, with its mount point, its durability facet and its
-  place beside `{facets, svc}` in the resolver's no-follow rule; the
-  decoder's source entry, `erx_erofs:mount_source/2`; the probe's
-  table, `abi/formats/probe.txt`; two limits, `media_volumes_max` and
-  `media_volume_bytes`; two statfs types, `msdosfs` and `media`; the
-  node argument of `erx_fs`'s `statfs` callback; and the modules of
+  existing. The names this design adds are a window role, `drive`; the
+  grant's restart of a block service asked twice; one service, `media`,
+  with its mount point, its durability facet and a `nofollow` mark on its
+  row; the decoder's source entry, `erx_erofs:mount_source/2`; the
+  probe's table, `abi/formats/probe.txt`; two limits, `media_volumes_max`
+  and `media_volume_bytes`; two statfs types, `msdosfs` and `media`; the
+  argument forms of the shell's `mount` and `umount`; and the modules of
   `erx_media`.
 * **DR-R8.** A session reaches `/media` only through a `media` facet
-  the manifest grants it.
+  the manifest grants it, and the tree it serves holds every drive.
+* **DR-R9.** `mount` and `umount` are `erx_ns:bind/2,3` and
+  `erx_ns:unmount/1` ([Placing a volume](#placing-a-volume)).
 
 ### What disappears
 
@@ -317,8 +339,10 @@ loading code from a drive.
 * The FAT server's own mounting on each walk, its unmount on a window's
   end, and its retry of a refused mount at the next walk: a volume
   process is the mount, and the medium's supervisor ends it.
-* A record of mounted media that must survive a restart: the grant hands
-  each window out once.
+* A record of mounted media that must survive a restart: asking again
+  restarts the medium's block service.
+* A second-signature condition in a release: a release writes one
+  format, so no other format it writes can be found.
 * A placement rule per format: every format runs in its volume's
   process, and the one exception, C, runs in its volume's sub-space.
 * The `fat` window role and the exchange partition of the boot medium: a
@@ -355,16 +379,35 @@ whole capacity ([design-storage.md](design-storage.md#data-model)),
 writable unless the boot is a trial, when the write path refuses every
 write to it with `erofs` (U4). The drive's grant, `erx_blk_drive`,
 answers one request, `window`: `{ok, Window}`, the pid of the medium's
-window, the first time it is asked while that window lives;
-`{error, taken}` each later time; and `{error, no_medium}` while the
-drive holds none. The grant lives as long as its serving domain, learns
-of each window as the medium's block service starts it, and forgets it
-when the window ends ([design-usb.md](design-usb.md#concurrency)).
-Holding the grant is holding whatever medium the drive holds, whole,
-once: a holder that lost the window, by a restart of its own, gets
-`taken` until the medium is taken out and put back, so no medium is
-mounted twice and no newer mount meets an older one's requests at the
-window.
+window, or `{error, no_medium}` while the drive holds none. The grant
+lives as long as its serving domain, learns of each window as the
+medium's block service starts it, and forgets it when the window ends
+([design-usb.md](design-usb.md#concurrency)). Holding the grant is
+holding whatever medium the drive holds, whole.
+
+The first ask for a medium's window answers the window its block
+service started. A later ask comes only from a drive process or a media
+domain that restarted and lost the window, whose earlier mount may still
+have requests on their way. The grant therefore first **ends and
+restarts the medium's block service**, through the one process that
+issues the medium's commands, and then answers as to a first ask:
+
+* **On USB** it ends the medium as a UNIT ATTENTION does: the engine
+  answers every queued request of the old reference `gone`, and the
+  medium becomes ready again, under a fresh reference, only through
+  commands queued behind that step
+  ([design-usb.md](design-usb.md#media-and-drives)). The medium may
+  come back as another free drive, as a stick put back may.
+* **On a block device** the restart is a request of the device process,
+  which takes it behind every request the earlier window handed it, so
+  they are answered before the new window starts. This request is the
+  one thing a drive adds to `erx_blk`'s device process.
+
+So an earlier mount's requests are answered or refused before a new
+mount sends its first, and no medium is mounted twice at once, by the
+order of one process rather than by a record of what was mounted; a
+fixed drive, such as a second virtio disk, mounts again after any
+restart with nothing taken out.
 
 ### Manifest rows
 
@@ -473,9 +516,10 @@ format reaches a sector outside its volume.
 
 `erx_media_probe:format(Read)` runs in the volume's own process and
 reads, through the volume's placement, a fixed set of sectors. It
-answers the formats whose signature it finds: the first in the order
-below that matches, which **selects** the volume's format, and every
-other that does. The order is `fstyp`'s, the header at the largest
+answers the first format in the order below whose signature it finds,
+which **selects** the volume's format, and, of the other formats the
+build writes, those whose signature it also finds, for the writable
+rule. The order is `fstyp`'s, the header at the largest
 offset first, with erXos's formats placed by where their headers lie:
 
 | Order | Name | Served | Signature, from |
@@ -498,7 +542,7 @@ generates the probe's constants. FAT's row is code, since it reads
 fields, not one string: the FAT server's boot-sector decoder, which
 gives the probe both the test and the type, so the type has one source.
 A FAT12 volume is refused by name there: `sN msdosfs`, `sN_fat 12`,
-`sN_mount not served FAT12`, since FAT12's entries of a byte and a half
+`sN_mount none format`, since FAT12's entries of a byte and a half
 would need a decoder and a write rule of their own. littlefs's row is
 the specification's statement, which the host tests check on volumes
 formatted, modified, compacted and cut mid-commit
@@ -510,12 +554,11 @@ that signature.
 The selected format is the volume's only reading. A volume whose
 selected format is not served is refused by that name, as FreeBSD's
 automounter refuses a format it has no program for: `s1 exfat`,
-`s1_mount not served`. A volume whose selected format fails its mount
-is `failed`, and nothing falls through to another format the probe
-found: a format that fails its own checks says the bytes are not what
-its header claims, and reading them as the next format is the
-misreading DR-R5 forbids. Every name the probe found is shown in the
-`status` file.
+`s1_mount none format`. A volume whose selected format fails its mount
+is `none failed`, and nothing falls through to another format: a
+format that fails its own checks says the bytes are not what its header
+claims, and reading them as the next format is the misreading DR-R5
+forbids.
 
 ## Volumes
 
@@ -541,23 +584,26 @@ does not:
 
 1. its format is one erXos writes on a drive (`format`): FAT16, FAT32 or
    littlefs, not EROFS;
-2. the probe found its format alone (`also NAME`), since a medium
-   formatted twice may keep the first format's header, and writing the
-   wrong one destroys the other's files;
+2. the probe found on it no signature of another format the build
+   writes (`also NAME`), since a medium formatted twice may keep the
+   first format's header, and writing the wrong one destroys the other's
+   files. The formats the build writes are the format table's rows that
+   write: in a release, FAT alone, so the condition never holds and no
+   `also` is shown; in a development build, FAT and littlefs, so a FAT
+   volume that kept an old littlefs superblock is read as littlefs and
+   written as neither;
 3. its mount's one flush, sent before anything is written, answered `ok`
-   (`no flush` when it answered `enotsup`, a medium that cannot flush);
+   (`flush` when it answered `enotsup`, a medium that cannot flush);
 4. its format's own state allows it: a FAT volume's dirty flag is clear
    (`dirty`).
 
 A flush that answers anything else, `eio` or the window's end, **refuses**
-the mount, with nothing written: the volume shows `refused` with the
+the mount, with nothing written: the volume shows `none flush` with the
 answer, and every request on it answers `eio`. A refusal is not a
 read-only mount, since a flush that fails says that this flush failed,
 not that the medium cannot flush, and a read-only mount would show a
-failing medium as a working one. Each outcome holds until the medium
-ends: the medium is mounted once, so a refusal is tried again by taking
-the medium out and putting it back, which a failing or departed medium
-needs anyway. A grant whose rights are not `rw` refuses every write
+failing medium as a working one. Each outcome holds for the mount, and
+the medium's next mount, when it is put back, tries again. A grant whose rights are not `rw` refuses every write
 before it reaches a volume, whatever the rule decides (F5 of
 [design-files.md](design-files.md#invariants)).
 
@@ -671,7 +717,9 @@ things the volume holds:
 * **its right to be written**: a program or an erase is answered only
   while the volume is writable, from the moment the writable rule admits
   it, which for littlefs is before its mount since rule 4 is FAT's
-  alone, until its finish. On a read-only volume, and after the finish,
+  alone, until its finish. Whether littlefs's mount writes before its
+  first change is unverified; the owner's host test settles it, and a
+  mount that writes on a read-only volume fails there. On a read-only volume, and after the finish,
   each is refused with an error answer, which littlefs takes as an I/O
   error, so a port whose code a crafted volume has taken over writes
   nothing the volume's mount did not allow.
@@ -680,7 +728,7 @@ So:
 
 * a crash, a littlefs assertion or the port's exit ends the port, which
   the owner sees as `{exit_status, N}` and ends with it: the volume is
-  `failed`, its requests answer `eio`, and nothing else ends; a port
+  `none failed`, its requests answer `eio`, and nothing else ends; a port
   that stops answering is ended at its owner's deadline, the same way;
 * a memory error that a crafted volume steers reaches the port's
   sub-space, its channel, and through its owner's checks the sectors of
@@ -743,17 +791,19 @@ what its flush made durable, and none is answered after it.
 
 Two things finish volumes:
 
-* **Eject**, written to a drive's `ctl`: the drive process marks the
-  medium `ejecting`, so no walk mounts anything more of it, sends every
-  volume of the medium its finish at once, and waits for each answer;
-  then it ends the medium's supervisor and marks the medium `ejected`.
+* **Eject**, written to a drive's `ctl`: the drive process, which takes
+  the drive's requests one at a time, sends every volume of the medium
+  its finish at once and waits for each answer, walks of the drive
+  waiting behind it; then it ends the medium's supervisor and shows the
+  medium `idle ejected`.
   The write answers `ok` when every finish answered `ok`, `eio` when one
   did not or its volume had already ended, the medium being ended
-  either way, and `enxio` when the drive holds no mounted medium. Walks
-  of the drive, and a second `eject`, wait for it; the second then
-  answers `enxio`. The ejected medium is not mounted again, since its
-  window was handed out once: taking the stick out and putting it back
-  makes a new one. The word promises what macOS's and FreeBSD's ejects
+  either way, and `enxio` when the drive holds no mounted medium, as a
+  second `eject` then finds. The drive process mounts an ejected medium
+  again only once it has ended: taking the stick out and putting it back
+  makes a new one, and a fixed drive's medium stays idle until the media
+  domain or its driver's domain restarts. A restart of the drive process
+  forgets an eject, and the medium mounts again at the next walk. The word promises what macOS's and FreeBSD's ejects
   promise of a stick, that it may be pulled without loss; nothing moves,
   since no command of the SCSI subset ejects a medium
   ([design-usb.md](design-usb.md#the-scsi-subset)).
@@ -827,11 +877,10 @@ asks the drive process for the drive's medium; when the drive's grant
 answers a window, the drive process starts that medium's supervisor and
 waits for the reader to have read the table and started the volume
 processes, so the listing that follows names every volume. With no
-medium, or once a medium has ended, been ejected or been found `taken`,
-`diskN` holds `status` and `ctl` alone. Walking into `sN` waits for that
-volume's probe and mount, and reaches its root while it is mounted; a
-volume refused, failed or not served answers `eio` there and shows why
-in `status`.
+medium, or while the medium is idle, `diskN` holds `status` and `ctl`
+alone. Walking into `sN` waits for that volume's probe and mount, and
+reaches its root while it is mounted; a volume whose outcome is `none`
+answers `eio` there and shows why in `status`.
 
 Every request on a volume's node goes to its volume process. Reads and
 writes are waiting requests whose keeper is the volume process
@@ -853,13 +902,12 @@ parser reads both:
 
 | Name | Value |
 | --- | --- |
-| `medium` | `none`, `ready`, `ejecting`, `ejected`, `failed`, or `taken`: a medium an earlier drive process or media domain mounted, not mounted again until it is taken out and put back |
+| `medium` | `none`, no medium; `ready`, its volumes served; or `idle REASON`, present and not served: `ejected`, `table` when the table was refused, or `failed` with why its reading ended |
 | `transport`, `sectors`, `flush` | the transport's name, the medium's capacity, and `yes` or `no` |
 | `table` | `mbr`, `gpt`, `none` or `refused FINDING` |
 | `sN` | volume N's format, a name of the probe's table or `unknown`; `extended` for an MBR's extended entry |
-| `sN_mount` | `rw`; `ro` with the writable rule's reason; `refused` with the flush's answer; `not served`, with `FAT12` for a FAT12 volume; or `failed` with why the volume ended |
+| `sN_mount` | one of three outcomes: `rw`; `ro REASON`, the writable rule's `format`, `also NAME`, `flush` or `dirty`; or `none REASON`, no files: `format` for a format not served, FAT12 among them, `unknown`, `extended`, `flush` with the flush's answer, or `failed` with why the volume ended |
 | `sN_sectors` | its length |
-| `sN_also` | the other formats the probe found |
 | `sN_fat` | FAT's type, `12`, `16` or `32` |
 | `sN_label`, `sN_serial` | the volume's label and serial number, or a GPT entry's name and unique GUID, as the medium gives them |
 | `unserved` | how many volumes past `media_volumes_max` the table lists |
@@ -897,8 +945,12 @@ follows none in an app's tree: where it would follow one, it answers
 `eacces`, as FreeBSD's `nosymfollow` mount does, and an operation on the
 link itself acts on it
 ([design-app-trees.md](design-app-trees.md#links)). The rule belongs to
-the provider, `{facet, media, Tree}`, so every bind of `/media` and
-every program's table that takes its entries keeps it. A drive is a
+the provider: the `media` service's row in `abi/services` is marked
+`nofollow`, the facet provider the namespace builds from it carries the
+mark, and every bind of `/media` or of a volume under it, and every
+program's table that takes its entries, keeps it. The resolver keeps one
+rule, to follow no link in a tree whose provider carries the mark
+([design-files.md](design-files.md#building-binding-and-mounting)). A drive is a
 stranger's bytes: a link there to `/root/.ssh/authorized_keys` must not
 make a copy onto the stick write root's keys. No `media` grant is `rx`,
 so nothing runs from a drive; a program on a stick is copied off and
@@ -914,19 +966,64 @@ among them, answers `eacces`.
 
 ### Mounting it
 
+"Mount" names two acts here, as on an NFS client, whose server mounts
+its disks and whose client mounts what the server exports. The media
+domain **mounts a volume**: it starts the volume's file system, at the
+first walk of its drive after the medium arrives. A session **mounts a
+tree**: it adds an entry to its own namespace. The shell's `mount` and
+`umount` are the second act alone.
+
 `erx_ns`'s table of mount points gives `media` the point `/media`, read
 at `erx_ns:mount_facets/1`, so a session granted `media` mounts it there
 and a session granted none sees the release's empty, read-only `/media`
 directory, as for `/data`
 ([design-files.md](design-files.md#building-binding-and-mounting), "A
 facet's mount"). `mount` prints it as `PID:/media on /media (media)`,
-the type being the statfs of the tree's root, `media`, while `df` on a
-volume's path reads that volume's own: `msdosfs`, `erofs` or
-`littlefs`, with its size and free space. That needs `erx_fs`'s
-`statfs` callback to take the node the request names, as 9P2000.L's
-`Tstatfs` names a fid: a change of the interface every tree
-implements, each other tree ignoring the node
-([design-files.md](design-files.md#serving-the-erx_fs-behaviour)).
+whatever the drives hold, since it shows the session's entries and not
+the media domain's volumes; a statfs anywhere in the tree answers the
+tree's own, type `media`, and what each volume is, and how large, is its
+drive's `status`.
+
+Reading `/media/disk0/status` is itself a walk of `disk0`, so looking at
+a drive mounts its medium. That writes nothing: a writable FAT volume
+writes nothing before its first change
+([design-storage.md](design-storage.md#removable-media-fat)), and a
+littlefs volume's mount is held to the same by its owner's write
+admission ([littlefs, through its port](#littlefs-through-its-port)).
+
+### Placing a volume
+
+A session places the media tree, or any part of it, wherever it likes
+in its own namespace with the shell's `mount`, and removes the entry
+with `umount` ([design-shell.md](design-shell.md#interfaces)):
+
+```text
+mount /media/disk0/s1 /mnt        the volume's files also at /mnt
+mount -r /media/disk0/s1 /mnt     the same, read-only through /mnt
+umount /mnt                       the entry gone; nothing flushed, nothing ejected
+echo eject > /media/disk0/ctl     the stick safe to pull
+```
+
+`mount SOURCE DIR` is `erx_ns:bind/2`, and `mount -r` its `bind/3` with
+`[ro]`: the entry at DIR is the same `media` grant, rooted at
+`disk0/s1`, so it names the place, keeps the `nofollow` mark, and
+reaches whatever volume `s1` of `disk0` is at each lookup, the next
+stick's after a replug. `-r` is a read-only view: writes through DIR
+answer `erofs`, while the volume stays as the media domain mounted it
+and other entries may still write it, which is weaker than a read-only
+file system, the writable rule's alone. `umount DIR` is
+`erx_ns:unmount/1`: it removes the entry, and flushes and ejects
+nothing. A placement lasts as long as the session's namespace, as every
+entry does.
+
+The names are FreeBSD's and promise less than FreeBSD's: no device
+argument and no `-t`, since a session never holds a medium's sectors
+and the media domain names each format. A SOURCE under `/dev`, or a
+`-t` option, is refused with a message naming the form that works,
+`mount [-r] /media/diskN/sN DIR`; `umount` of a path that is no entry
+is refused with one naming `echo eject > /media/diskN/ctl`, so the user
+who meant FreeBSD's `umount` of a stick learns the step that makes it
+safe to pull.
 
 ## Where each parser runs
 
@@ -959,8 +1056,8 @@ it whose failure the domain's restart intensity counts.
   requests the serving domain answers one at a time in order. A volume's
   writes reach the window in the order its process makes them; a volume
   that ends leaves its sent requests to complete or fail at the window,
-  and no later mount of that window exists to race them, since the grant
-  handed it out once.
+  and a later mount of the medium starts only after the grant has
+  restarted its block service, which answers or refuses them first.
 * **A finish** reaches each volume as a request behind those it holds,
   so the volume completes what it was given first and admits nothing
   after it; a request that arrives after it, or after the medium's end,
@@ -971,42 +1068,45 @@ it whose failure the domain's restart intensity counts.
   window's end is a message to it, and the next walk after it finds no
   medium, or the next one.
 * **A restarted drive process**, after a defect of its own, has ended
-  its medium's supervisor with it, since the two are linked; the grant
-  answers it `taken` for the medium it held, so it shows the medium
-  `taken` and mounts the next medium the drive holds. A restarted media
-  domain finds every medium present `taken` the same way.
+  its medium's supervisor with it, since the two are linked; its next
+  walk asks the grant again, which restarts the medium's block service
+  first, so the medium mounts afresh with no earlier request
+  outstanding. A restarted media domain mounts every medium present the
+  same way.
 
 ## Failure handling
 
 | Failure | Detected by | What ends | What the user sees |
 | --- | --- | --- | --- |
-| a table refused | `erx_media_table` | nothing mounts on that medium | `table refused FINDING`; `diskN` holds `status` and `ctl` |
-| a format not served, or none found | the probe | that volume is not mounted | `sN NAME`, `sN_mount not served`; `eio` in `sN` |
-| the selected format's mount fails: a structure check, its allowance, its geometry | the format's mount | that volume; no other format is tried | `sN_mount failed REASON`; `eio` in `sN` |
-| a mount's flush fails | the writable rule | that volume's mount, with nothing written | `sN_mount refused eio`; out and in again to retry |
-| a volume's process crashes or passes its memory bound | its supervisor's link, temporary | that volume; its requests answer `eio` | `sN_mount failed`; the drive's other volumes go on |
+| a table refused | `erx_media_table` | nothing mounts on that medium | `medium idle table`, `table refused FINDING`; `diskN` holds `status` and `ctl` |
+| a format not served, or none found | the probe | that volume is not mounted | `sN NAME`, `sN_mount none format` or `none unknown`; `eio` in `sN` |
+| the selected format's mount fails: a structure check, its allowance, its geometry | the format's mount | that volume; no other format is tried | `sN_mount none failed REASON`; `eio` in `sN` |
+| a mount's flush fails | the writable rule | that volume's mount, with nothing written | `sN_mount none flush eio`; out and in again to retry |
+| a volume's process crashes or passes its memory bound | its supervisor's link, temporary | that volume; its requests answer `eio` | `sN_mount none failed`; the drive's other volumes go on |
 | a littlefs port exits, asserts, faults, passes its budget or misses its owner's deadline | the owner's `{exit_status, N}`, its allocation's refusal, its deadline | that volume | as above, with `timeout` for the deadline |
 | the medium removed, changed or failing | the window's end ([design-usb.md](design-usb.md#media-and-drives)) | the medium's supervisor: every volume and port of it | open files answer `eio`; `diskN` empty but for `status` and `ctl`; the next medium mounts at the next walk |
 | a finish whose writes or flush fail | its answer | the medium, as an eject ends it | `eject` answers `eio`; FAT volumes show `dirty` at the next mount |
 | a write on a trial boot | the write path (U4) | that write, `erofs` | a FAT write answers `erofs`; a littlefs volume, whose block write failed, ends |
 | a FAT volume removed while written | its next mount: the dirty flag | nothing | that volume read-only, `ro dirty`, until repaired on another machine |
-| the drive process ends | `erx_media_sup` | that drive's medium mounts | `eio` on its open files; the medium `taken` until it is taken out and put back |
-| the media domain ends | the domain service | every drive's mounts | `/media` answers `eio` until the restarted domain's re-grant; open files keep answering `eio`; every medium present `taken` |
+| the drive process ends | `erx_media_sup` | that drive's medium mounts | `eio` on its open files; the next walk mounts the medium afresh, its block service restarted first |
+| the media domain ends | the domain service | every drive's mounts | `/media` answers `eio` until the restarted domain's re-grant; open files keep answering `eio`; each medium mounts afresh at its next walk |
 | the serving domain ends (the USB domain, a block device's driver domain) | the drive grant's end | that domain's drives' media | as a removal; the restarted domain's drive grants reach the media domain as every window's grant reaches its holder, with fresh windows |
 
 ## Refusals and error results
 
 | Call or input | Answer | When |
 | --- | --- | --- |
-| a drive grant's `window` | `{error, no_medium}`; `{error, taken}` | the drive holds no ready medium; the grant already answered this window |
+| a drive grant's `window` | `{error, no_medium}` | the drive holds no ready medium |
 | `erx_media_table:read/2` | `{refused, Finding}`: `gpt header`, `gpt array`, `gpt metadata`, `past the end`, `overlap`, `backwards`, `before the first usable sector` | the scheme's checks; each finding names the copy or the entries |
 | `erx_media_table:place/3` | `{error, erange}` | a request that reaches past its volume |
 | a littlefs port's program or erase | an error answer | the volume is read-only or finished |
-| a walk into `sN` | `eio` | the volume is not served, failed, refused, finished or ended |
+| a walk into `sN` | `eio` | the volume's outcome is `none`, or it is finished or ended |
 | a write on a read-only volume | `erofs` | the writable rule mounted it read-only |
 | a write on a grant that is not `rw` | `erofs` | before any callback (F5) |
 | a write after the ordered end's freeze | `erofs` | at the grant (`erx_fs`'s freeze) |
 | a rename or link between two volumes | `exdev` | before either volume is asked |
+| `mount` with a SOURCE under `/dev`, or with `-t` | `einval`, naming `mount [-r] /media/diskN/sN DIR` | always: no device argument, no type |
+| `umount DIR` | `einval`, naming `echo eject > /media/diskN/ctl` | DIR is no namespace entry |
 | a write to `ctl` | `einval` | anything but `eject` |
 | `eject` | `enxio`; `eio` | no mounted medium; a finish failed or its volume had ended |
 | a write to `status` | `eacces` | always |
@@ -1077,18 +1177,20 @@ so a pass shows the code under test ran.
 | `erx_media_table` over written cases of each rule: an MBR with one and with four entries; a FAT boot sector with zero entries and a plausible BPB, read as no table; a boot sector whose status bytes are not 0 or `0x80`, read as no table; entries of type `0x00` and of start or length 0 skipped; an extended entry listed and not served; an entry past the end, one that runs backwards and two overlapping entries, each refusing the table, the overlap in both orders | the status-byte test dropped, so a boot sector with code is read as a table; the overlap check made order-dependent, so the second order passes; the backwards check dropped |
 | the GPT cases: a GPT behind its protective entry; a primary that fails its signature, its header CRC, its array CRC and its bounds in turn, each read from the backup at the last sector; a primary that passes with its backup at its alternate sector; both failing, refused and never read as an MBR or as no table; an array of 17 KiB; nine used entries, eight served; a usable area that meets a header, the taken array, the other copy's array, and an array that encloses the usable area, each refused `gpt metadata` | a missing primary signature taken as no GPT, so the medium falls back to no table; the backup read at the primary's alternate sector after a failed primary; the array compared by its ends alone, so the enclosing array passes; the other copy's array left out of the metadata set; the array bound removed |
 | the table as a property test: for every MBR and GPT the generator writes, the served volumes lie inside the medium, pairwise apart and apart from every metadata sector, and `place/3` never answers a sector outside its volume | the end check written `<` for `=<` |
-| `erx_media_probe` on a seed of each table row; on a FAT32 volume holding EROFS's magic at 1,024 bytes, which selects `erofs` with `msdosfs` also found; on a FAT32 volume whose boot sector's system id is `NTFS    `, which selects `msdosfs` with `ntfs` also found; and on a FAT12 volume fsimg writes, refused `not served FAT12` | the order reversed, so the first volume selects `msdosfs`; `also` dropped; the FAT type left to the mount, so the FAT12 volume is selected and mounted |
+| `erx_media_probe` on a seed of each table row; on a FAT32 volume holding EROFS's magic at 1,024 bytes, which selects `erofs`; on a FAT32 volume that kept a littlefs superblock in block 1, which selects `littlefs` with `msdosfs` also found in a development build and nothing also found in a release; and on a FAT12 volume fsimg writes, refused `none format` | the order reversed, so the first volume selects `msdosfs`; the written-formats check dropped, so the littlefs volume is found alone; the FAT type left to the mount, so the FAT12 volume is selected and mounted |
 | littlefs's signature over volumes the tree's littlefs writes with `erx_lfs_config`: freshly formatted, after many commits, after compactions of the root pair that leave its current superblock in block 1, and cut mid-commit and mounted again, each found by the probe and mounted | the signature read in block 0 alone, so the compacted volume is `unknown` |
-| the writable rule over every combination of format, probe answer, flush answer and dirty flag | the `also` condition removed, so the doubly formatted volume mounts writable; every flush answer but `ok` taken as `enotsup` |
-| a selected format whose mount fails: the FAT32 volume holding EROFS's magic is `failed` and nothing is written | a fall-through to the next format found, which mounts it as FAT |
-| the drive process and the media tree, under `erx_media_sup` against a fake drive grant and window: a medium's mount, a listing, a read; the window's end, after which an open fid answers `eio` and `diskN` lists `status` and `ctl`; a new window, mounted at the next walk; a volume process killed, the others still served; a volume past its memory bound; the drive process killed, after which the grant answers `taken` and the medium is shown `taken`, not mounted | the drive process not monitoring the window, so the open fid reads after the end; a volume process started as a permanent child, so the kill restarts it; the grant answering a window twice, so the restarted drive process mounts the same medium again |
+| the writable rule over every combination of format, written formats also found, flush answer and dirty flag | the `also` condition removed, so the doubly formatted volume mounts writable; every flush answer but `ok` taken as `enotsup` |
+| a selected format whose mount fails: the FAT32 volume holding EROFS's magic is `none failed` and nothing is written | a fall-through to the next format found, which mounts it as FAT |
+| the drive process and the media tree, under `erx_media_sup` against a fake drive grant and window: a medium's mount, a listing, a read; the window's end, after which an open fid answers `eio` and `diskN` lists `status` and `ctl`; a new window, mounted at the next walk; a volume process killed, the others still served; a volume past its memory bound; the drive process killed with a write outstanding, after which the next walk mounts the medium afresh and the outstanding write is answered before the new mount's first read | the drive process not monitoring the window, so the open fid reads after the end; a volume process started as a permanent child, so the kill restarts it; the grant answering the old window again without its restart, so the old write reaches the window after the new mount's read |
+| the block-device grant's restart: `erx_blk`'s device process takes it behind every request the earlier window handed it | the restart handled ahead of the queue, so an earlier write is issued after the new window's first request |
 | `eject` over two FAT volumes and a littlefs volume of one medium, with writers on every volume running through it: every write answered `ok` before the eject is on the fake window before its last flush, every write after a volume's finish answers `eio`, and the FAT images pass fsimg's verify | the finish not closing its volume, so a write to an already finished volume is answered `ok` and never flushed; `eject` answering before the last finish's flush |
 | the media service's freezing checkpoint with writers on two drives: it answers once every volume has finished, later writes answer `erofs` | the media tree answering the checkpoint before its volumes' finishes |
 | `erx_erofs:mount_source/2` over `erx_media_blocks` on fsimg images and on the reader's existing cases, which leave `erx_verity`'s `unchecked` mode; an fsimg image with a compression feature bit set refused with `erofs: compressed images are not supported`, and one with a compressed inode answering `enotsup` there | `erx_media_blocks` reading past its volume, which a fixture image at a partition's start shows; the compression bits taken as any other incompatible bit, so the refusal names bits instead of compression |
 | the EROFS calls check: no module but `erx_erofs` and `erx_media_erofs` calls `mount_source/2`; `erx_verity` has no `unchecked` | each with a seeded violation: `erx_ns` calling `mount_source/2`; `unchecked` restored |
 | the manifest check's drive rules, its budget rule, and the release check | each rule with a seeded manifest or release that breaks it alone |
 | the littlefs owner over a fake port on the host: a block request past the volume refused; a program and an erase during a read-only mount and after the finish refused, and on a writable volume answered; the port's exit, and its silence past the deadline, ending the volume | the placement check removed; the write admission removed, so the read-only volume's fake window receives the program |
-| the media tree's statfs and renames: `df` on a FAT volume answers `msdosfs` and its sizes, on the root `media`; a rename between two volumes answers `exdev` with neither volume asked, one inside a volume reaches it | `statfs` answered from the tree for every node; the volume comparison dropped, so the rename reaches the source volume |
+| the media tree's renames: a rename between two volumes answers `exdev` with neither volume asked, one inside a volume reaches it | the volume comparison dropped, so the rename reaches the source volume |
+| `mount` and `umount`: `mount /media/disk0/s1 /mnt` reads the volume at `/mnt`, `mount -r` refuses a write through `/mnt` with `erofs` while `/media/disk0/s1` still writes, `umount /mnt` removes the entry, a `/dev` source and `-t` are refused naming the working form, `umount` of a path that is no entry names `eject` | `-r` dropped, so the write through `/mnt` succeeds; `umount` that ejects, so `/media/disk0/s1` ends |
 
 ### Fuzz targets
 
@@ -1116,17 +1218,18 @@ when the names and hashes equal the harness's.
 | Case | Seeded fault that must fail it |
 | --- | --- |
 | a FAT16 and a FAT32 stick on an MBR, a FAT32 stick with no table and a FAT32 stick on a GPT, each listed and read | the no-table rule dropped, so the bare stick shows no volume |
-| a FAT12 stick fsimg writes, refused `not served FAT12`, its bytes unchanged | the probe's FAT type dropped, so the stick mounts |
+| a FAT12 stick fsimg writes, refused `none format` with `sN_fat 12`, its bytes unchanged | the probe's FAT type dropped, so the stick mounts |
 | an EROFS stick, uncompressed, fsimg's | the volume module mounting with `erx_erofs:mount/2`, which no layout opens |
 | a littlefs stick of erXos's geometry, written by the harness's littlefs tool, on a development build | the owner's placement check removed, while the port asks for a block past the volume |
 | a stick of each refused name (an exFAT, an NTFS and an ext2 signature, each the format's header alone) refused by name, its bytes unchanged | the probe answering `unknown` for every unserved format |
-| a FAT32 stick whose boot sector's system id is `NTFS    `: read-only, `ro also ntfs`, its bytes unchanged after a write is refused | the `also` condition removed |
-| a FAT32 stick that also holds EROFS's magic at 1,024 bytes: `failed`, its bytes unchanged | a fall-through to the next format found |
+| a FAT32 stick that also holds EROFS's magic at 1,024 bytes: `none failed`, its bytes unchanged | a fall-through to the next format found |
 | a FAT32 and, on a development build, a littlefs stick written, synced, ejected through `ctl`, read again after the stick is put back; the FAT image passes fsimg's verify after the run | the finish's flush skipped, so the FAT image is dirty |
 | a FAT32 stick written without a sync, then the machine ended by an ordered `off`; the stick, read on the host, holds every write and passes fsimg's verify | the media service left out of the ordered end, so the stick is dirty |
 | a file open on a stick when QMP ejects its medium: the next read answers `eio`, `ls /media/disk0` shows `status` and `ctl`; the medium put back through QMP mounts again and reads equal | the volume's node naming the drive rather than the volume process, so the old fid reads the new medium |
 | `device_del` mid-write, then `device_add`: the stick mounts again, FAT read-only `dirty` | the dirty flag ignored at mount |
+| a session's `mount /media/disk0/s1 /mnt`, the stick's files read through `/mnt` and their hashes equal, then `umount /mnt`, after which `/mnt` is gone and `/media/disk0/s1` still reads | `mount` binding the drive's directory instead of the volume, so `/mnt` lists `status` and `ctl` |
 | a second virtio disk of the `drive` role, served by a block driver domain of its own, listed and read | the block service reading the boot layout on a `drive` device |
+| the same virtio disk read again after the media domain is restarted, with nothing detached | the grant answering a second ask `no_medium`, so the disk is not mounted again |
 
 At the milestone gate, images that the FreeBSD oracle guest's
 `newfs_msdos` and `gpart`, and the Linux oracle guest's `mkfs.fat`,
@@ -1161,11 +1264,55 @@ volume before any mounts. It loses: a probe defect a volume's bytes
 trigger would end its siblings' mounts too, and each volume's process
 reads its own sectors anyway.
 
-**Remembering mounted media in the media domain.** A record of the
-windows already mounted would have to outlive the drive process and the
-media domain both, or be lost at the restart it exists for. The grant,
-which lives in the domain that owns the window, answers each window once
-and needs no record beyond the window it already holds.
+**Volumes as device nodes under `/dev`.** `/dev/disk0/p1`, or
+`/dev/disk0/1`, would hold a volume's files. It loses: a directory
+named like a device node promises what a device node does, `dd`,
+`newfs` and `mount` working on it, and gives `EISDIR` to all three;
+and it would join a third server at `/dev`, where a program's
+namespace joins two
+([design-files.md](design-files.md#building-binding-and-mounting)).
+`/media` is the media service's tree and says so.
+
+**An explicit mount of each volume, with a lifetime of its own.** A
+session would ask the media domain to start one volume's file system,
+in a mode it chose, at a path it chose, and the volume would live
+while any attachment did. It loses for the release: a state per volume
+(mounted or not), a lifetime to keep across every session's entries,
+and a remount path, where mounting at the first walk in a domain that
+holds nothing else buys the same safety, and the session's own
+`mount` already chooses the path. Its one gain, a read-only volume by
+request rather than a read-only view, has no consumer yet.
+
+**Raw access to a medium, later.** No release consumer needs a
+medium's sectors: exchanging files does not, and updates have the slot
+writer. When one does, the shape is a file `data` in the drive's
+directory, `/media/diskN/data`, the medium whole, served by the media
+domain, which alone holds the window; reached only through an
+administrator's facet that serves the same tree with `data` added, as
+the device service's control facet adds `ctl`
+([design-system.md](design-system.md#drivers), "The `/dev` tree"), so an ordinary
+`media` grant never lists it; and opened only while the medium is
+idle, no volume process existing then, `ebusy` otherwise, decided by
+the drive process, the drive's one owner. FreeBSD's `newfs_msdos` and
+`fsck_msdosfs` would then be plain programs over `data`, and a dirty
+stick would be repaired on erXos.
+
+**A grant that answers each window once.** It would keep a medium from
+being mounted twice by refusing a second ask until the medium ended. It
+loses: a fixed drive, which cannot be taken out, would stay unusable
+after any restart of the media domain, and every user would replug
+after one. Restarting the block service on a second ask gives the same
+order with nothing to replug.
+
+**A tree per volume.** Each volume its own tree and grant would make
+the namespace's own `exdev`, statfs and qid rules apply and give
+`mount` a line per volume. It loses: grants of another domain reach a
+session only through the system domain's introduction, and facets are
+fixed by the manifest, so every insertion would cross into the system
+domain. One tree over every drive costs the media tree's own `exdev`
+rule, the mount number in each qid, a slow volume delaying its
+session's other calls into the tree, and one `mount` line whatever is
+plugged in.
 
 **littlefs's NIF in the media domain.** It loses: an assertion or crash
 would end the media domain and every drive's mounts, a stick that fails

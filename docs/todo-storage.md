@@ -16,33 +16,35 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
      `abi/protocols/9p.txt`; the `media` service, its mount point in `erx_ns`, and its durability facet
      to the system domain in the facet table.
   2. The whole-medium window: `erx_usb_bot`'s block service with one window over the medium and
-     `erx_blk_drive`, the drive grant, which answers each window once and `taken` after; `erx_blk`
+     `erx_blk_drive`, the drive grant, which, asked again for a window it answered, ends and restarts
+     the medium's block service first (on USB as UNIT ATTENTION ends a medium; on a block device by a
+     restart request of `erx_blk`'s device process, behind the earlier window's requests); `erx_blk`
      serving a `block` device's medium as a drive. Its moduledoc's "not started yet" goes.
   3. `erx_media_table` (MBR, GPT with both copies and the metadata rule, none, whole-table refusal,
      `place/3`) and `erx_media_probe` with `abi/formats/probe.txt`, pure, with their fuzz targets and
      seeds; FAT's row through the FAT server's boot-sector decoder, FAT12 refused by name.
-  4. `erx_fs`'s `statfs` callback takes the node: every tree's `statfs/1` becomes `statfs/2`, ignoring it,
-     and the grant passes the fid's node.
-  5. The `erx_media` application: the drive process, the medium supervisor and reader, the volume
-     process with its probe and memory bound, the media tree with `status`, `ctl`, the two-volume `exdev`
-     rule and per-volume statfs, the writable rule, the finish shared by `eject` and the freezing
+  4. The `erx_media` application: the drive process, the medium supervisor and reader, the volume
+     process with its probe and memory bound, the media tree with `status`, `ctl` and the two-volume
+     `exdev` rule, the writable rule over the formats the build writes, the finish shared by `eject` and the freezing
      checkpoint; the release check that `erx_media` lies only in the media domain's release, which names
      no `erx_storage` or `erx_blk`, and in a release build no `erx_lfs`; the resolver's no-follow rule
-     extended to the `media` facet; the ordered end's step 2 freezing the media service.
-  6. The FAT server, `erx_fat`, over a FAT16 or FAT32 volume: its read path, then its batches, dirty flag
+     as a `nofollow` mark a provider carries, from the `media` service's row in `abi/services`; the
+     ordered end's step 2 freezing the media service; the shell's `mount` and `umount` forms
+     ([todo-shell.md](todo-shell.md)).
+  5. The FAT server, `erx_fat`, over a FAT16 or FAT32 volume: its read path, then its batches, dirty flag
      and finish.
-  7. EROFS: `erx_erofs` reading through its mount's source function, with `mount_source/2` beside
+  6. EROFS: `erx_erofs` reading through its mount's source function, with `mount_source/2` beside
      `mount/2`; `erx_media_blocks` and `erx_media_erofs`; `erx_erofs_tree` factored out of
      `erx_storage_system`; the compression refusal by name; `Erx::ErofsReads` extended to the two callers
      of `mount_source/2`; and `erx_verity`'s `unchecked` form deleted, its tests and fuzz target moved to
      `erx_media_blocks`.
-  8. littlefs for development builds and test images, through its port once the port exists (the port
+  7. littlefs for development builds and test images, through its port once the port exists (the port
      item under "Stopgap replacements"): the owner's placement and write admission of the port's block
      requests, the port's budget, and the port's channel decoders with their fuzz targets. A steerable
      memory error in littlefs on a crafted stick reaches the port's sub-space, its own volume through
      its owner's checks, the kernel's calls and the CPU: a residual of development builds, which run only
      trusted code, and of no release, since none serves littlefs volumes.
-  9. The harness: stick images from a declared tree with their files' SHA-256 (fsimg's FAT12, FAT16,
+  8. The harness: stick images from a declared tree with their files' SHA-256 (fsimg's FAT12, FAT16,
      FAT32 and EROFS; a host tool that writes a littlefs volume's files with `erx_lfs_config`; an MBR and
      a GPT writer; signature-only images of the refused formats), and the QEMU cases of design-drives.md
      in the `usb` suite, over its stick plumbing.
@@ -443,6 +445,17 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   card's removable partitions), or a second domain holds USB controllers, design the one allocator
   they share, so a medium takes the lowest free number on the machine, and the bound on drives across
   the machine with it.
+* [Low] storage, FAT's dirty flag cleared when a drive's volume goes idle
+  ([design-storage.md](design-storage.md#removable-media-fat)): the FAT server sets the flag before a
+  volume's first change and clears it only at the volume's finish, so a stick pulled without `eject`
+  after any write mounts read-only on erXos until another machine repairs it. Clearing the flag after a
+  batch with nothing waiting, and setting it again before the next change, would leave a stick pulled
+  while idle clean and keep "a volume whose flag is clear has no change half made"; it costs two
+  flushes for each burst of writes and wear on the FAT's first sector, neither measured.
+* [Low] storage, raw access to a drive's medium ([design-drives.md](design-drives.md#alternatives-considered)):
+  a file `data` in the drive's directory, the medium whole, served by the media domain through an
+  administrator's facet and opened only while the medium is idle, with FreeBSD's `newfs_msdos` and
+  `fsck_msdosfs` as programs over it. No release consumer needs it yet.
 * [Low] storage, compressed EROFS images on drives ([design-drives.md](design-drives.md#erofs-unauthenticated)):
   the media domain serves uncompressed EROFS volumes only and refuses a compressed one by name. LZ4 first,
   then LZMA, DEFLATE and Zstandard, the other algorithms EROFS defines, would make the images Linux's

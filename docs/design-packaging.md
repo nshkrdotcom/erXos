@@ -109,7 +109,7 @@ the shell's `cp` opens its target itself and reports a failed close
 is the namespace's one EROFS mount, `erx_ns:mount({erofs, Source}, To,
 Options)`, read through `erx_verity`
 ([design-files.md](design-files.md#building-binding-and-mounting)),
-which the shell's `mount` and `unmount` make and end.
+which the shell's `mount` and `umount` make and end.
 
 ### What two demo apps found
 
@@ -945,7 +945,7 @@ replaced, and here the tree keeps no file without its name.
 
 **Looking inside a package.** `mount /apps/NAME.app DIR` mounts the
 package's image read-only at `DIR` in the session's namespace, and
-`unmount DIR` ends it. It is the namespace's EROFS mount,
+`umount DIR` ends it. It is the namespace's EROFS mount,
 `erx_ns:mount({erofs, {header, Path}}, DIR, [ro])`
 ([design-files.md](design-files.md#building-binding-and-mounting)), the
 mount `erx_app` makes of `/app` with `app` instead of `{header, Path}`
@@ -1962,7 +1962,7 @@ boundary fails there.
 
 An administrator installs, updates, lists and removes apps with the
 shell's own `cp`, `ls`, `cat` and `rm` in `/apps`, looks inside one with
-`mount` and `unmount`, enables, disables and purges them with `service`,
+`mount` and `umount`, enables, disables and purges them with `service`,
 and reads their state with `cat` under `/proc/packages`; there is no
 command of packaging's own. `/proc` is read-only, as all of it is
 ([design.md](design.md#decisions)): it shows what an app's state is, and
@@ -1976,7 +1976,7 @@ takes no command.
 | `rm /apps/NAME.app`, `rm /apps/.NAME.app` | removes the installed package, or the installed package of the name that an image package shadows, and answers `ok`; `enoent` for no package of the name; `erofs` for a package of the image, and on a trial boot; `eio` for a failed deletion or checkpoint, a directory past the scan bound, or a lifetime that ended |
 | `ls /apps` | every package, installed or of the image, admitted or refused, each a regular file; with `-a`, each shadowed package too, as `.NAME.app` |
 | `cat`, `cp` from `/apps/NAME.app` | the package's bytes; `eio` for a header changed on the medium since its check, for every read of a package the file check refused, or once the name holds another package or none since the open, for every read that reaches the tree |
-| `mount /apps/NAME.app DIR`, `unmount DIR` | mounts the package's image read-only at `DIR`, and ends the mount; the mount is refused with the reader's answer for a header that does not decode or an image the reader refuses, and `eio` for a header the tree refuses; below `DIR`, `eio` for a block that fails its hash, and once the package is removed or replaced, the old package's bytes from the mount's cache and `eio` for every block it reads again, never a byte of the replacement; `enotsup` for an inode of a layout the reader lacks |
+| `mount /apps/NAME.app DIR`, `umount DIR` | mounts the package's image read-only at `DIR`, and ends the mount; the mount is refused with the reader's answer for a header that does not decode or an image the reader refuses, and `eio` for a header the tree refuses; below `DIR`, `eio` for a block that fails its hash, and once the package is removed or replaced, the old package's bytes from the mount's cache and `eio` for every block it reads again, never a byte of the replacement; `enotsup` for an inode of a layout the reader lacks |
 
 The reason of every refusal goes to the log. Who holds `start`, and so
 `apps`, is the manifest's ([design-apps.md](design-apps.md#interfaces)).
@@ -2116,7 +2116,7 @@ A mount of a package is an entry of the session's namespace like any
 other, changed only by `erx_ns`'s process
 ([design-files.md](design-files.md#building-binding-and-mounting)): it
 holds one fid of the package file, which `erx_ns`'s process owns, from
-`mount` until `unmount` or the session's end, and every process of the
+`mount` until `umount` or the session's end, and every process of the
 session that reads below its point sends its reads on that fid, in its
 own process, as every EROFS mount is read
 ([Looking inside a package](#apps)). No reading process owns the fid or

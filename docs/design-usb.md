@@ -636,15 +636,17 @@ grant it hands over is a **drive grant**: a process of the USB domain,
 domain.
 
 A drive grant answers one request, `window`: `{ok, Window}`, the pid of
-the window on the medium the drive holds now, the first time it is asked
-while that window lives; `{error, taken}` each later time; or
-`{error, no_medium}` while the drive holds none. Answering each window
-once keeps a medium from being mounted twice when its holder restarts
+the window on the medium the drive holds now, or `{error, no_medium}`
+while the drive holds none. Asked again for a window it already
+answered, which only a restarted holder does, the grant first ends the
+medium as a UNIT ATTENTION does, so the engine refuses every request of
+the old reference before the medium is ready again under a fresh one,
+and answers the new window; so no medium is mounted twice at once
 ([design-drives.md](design-drives.md#a-drive-and-its-medium)). The window is an ordinary window of the
 block service, whose sectors are the medium's, answering `{read, Sector,
 Count}`, `{write, Sector, Bytes}` and `flush` with the block service's
 answers, and it ends when its medium ends. Holding a drive grant is
-holding whatever medium that drive holds, whole and once, as holding a
+holding whatever medium that drive holds, whole, as holding a
 window is holding its sectors, so the grant checks no caller and names nothing
 else. What the media domain does with it, from the table to the files
 at `/media/diskN`, is [design-drives.md](design-drives.md)'s.
@@ -3449,7 +3451,7 @@ sink shows it.
 | `erx_usb_pipe` calls | `{error, gone}` | the pipe's device has detached |
 | `erx_usb_pipe` calls | `{error, halted}`, `{error, resetting}`, `{error, stopped}` | the pipe halted and has not been reset; a reset is running; the transfer was still posted when a reset restarted the ring |
 | `erx_usb_pipe` calls | `{error, stall}`, `{error, timeout}`, `{error, {controller, Code}}` | the endpoint halted on this transfer; no answer in 5 s; any other completion code |
-| a drive grant's `window` | `{error, no_medium}`; `{error, taken}` | the drive holds no ready medium; the grant already answered this window |
+| a drive grant's `window` | `{error, no_medium}` | the drive holds no ready medium |
 | a window of a medium that has gone | no answer: the process has ended | the caller's monitor fires |
 | the transport | `{error, {device, {sense, Key, Asc, Ascq}}}`, `{error, {device, no_sense}}`, `{error, {device, reset}}`, `{error, {device, short}}`, `{error, {device, gone}}`, `{error, {device, deadline}}`, `{error, no_flush}` | a failed command; a failed command whose REQUEST SENSE failed too; a reset recovery; a transfer that moved less than asked; a request of an ended medium; the wait bound passed; a flush of a medium that cannot flush |
 | a device at enumeration | refused, with `descriptor too long`, `malformed descriptor`, `duplicate interface`, `missing setting`, `endpoint zero`, `duplicate endpoint`, `missing companion`, `unsupported speed`, `too deep`, `too many ports`, `too many devices`, `too many endpoints`, `endpoint too large` or `zero interval payload` | the decoder or a bound |

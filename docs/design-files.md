@@ -1222,9 +1222,12 @@ mount's root names whatever the reader's namespace holds there, often
 nothing. Local providers follow links only through the resolver: the EROFS
 reader answers its walks and link reads as a grant does, and the release
 file system holds no links. A link that lies in a tree reached through
-the provider `{facets, svc}`, through which a session reaches an app's
-tree, or through the facet `media`, through which it reaches a drive's
-volumes ([design-drives.md](design-drives.md#links-and-rights)), is never followed: where the resolver would
+a provider marked `nofollow` is never followed. The provider
+`{facets, svc}`, through which a session reaches an app's tree, always
+carries the mark, and a facet's provider carries it when its service's
+row in `abi/services` is marked, as the `media` service's is, through
+which a session reaches a drive's volumes
+([design-drives.md](design-drives.md#links-and-rights)). Such a link is never followed: where the resolver would
 follow it, it answers `eacces`, as FreeBSD's `vfs_lookup` answers on a
 `nosymfollow` mount, and an operation that acts on the link itself acts
 on it. A bind or a program's table on that provider keeps the rule, and
@@ -2114,10 +2117,7 @@ writes in Erlang form the `erx_files` application
               {ok, [dirent()]} | {error, file:posix()}.
 -callback readlink(Node :: term(), Fs :: term()) ->
               {ok, binary()} | {error, file:posix()}.
-%% Node is the fid's node, as Tstatfs names a fid; a tree whose every node
-%% lies in one file system ignores it, and the media tree answers each
-%% volume's own (design-drives.md, "Mounting it").
--callback statfs(Node :: term(), Fs :: term()) -> {ok, statfs()}.
+-callback statfs(Fs :: term()) -> {ok, statfs()}.
 %% ok, or the errno of what the close could not complete; the fid ends
 %% either way.
 -callback clunk(Handle :: term(), Fs :: term()) -> ok | {error, file:posix()}.
