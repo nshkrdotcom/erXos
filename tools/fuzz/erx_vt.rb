@@ -1,6 +1,7 @@
 # Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
 # SPDX-License-Identifier: BSD-2-Clause
 # frozen_string_literal: true
+# erx-gate: fuzz seeded deadline=600
 
 require 'open3'
 require 'optparse'
@@ -20,6 +21,8 @@ module ErxVtFuzz
   # The width table and erx_present, by which erx_vt reads erx: links, with erx_schema.
   GENERATED = %w[erlang/apps/erx_win/src/erx_vt_width.erl erlang/apps/erx/src/generated/erx_present.erl
                  erlang/apps/erx/src/generated/erx_schema.erl].freeze
+  # Where erx_vt's generated/erx_abi.hrl is found, in the generated tree.
+  INCLUDE = 'erlang/apps/erx/include'
   # A broken guarantee: the text that keeps it, what replaces it, and the property that
   # must then fail, as the target names it.
   Seed = Data.define(:text, :broken, :property)
@@ -33,7 +36,8 @@ module ErxVtFuzz
     'the repair of a split width-2 cell' => Seed.new(text: 'list_to_tuple(repair(Edited, Blank))',
                                                      broken: 'list_to_tuple(Edited)',
                                                      property: 'wide_cell_unpaired'),
-    'UTF-8 carried between calls' => Seed.new(text: 'more -> VT#vt{utf8 = Bytes}', broken: 'more -> VT',
+    'UTF-8 carried between calls' => Seed.new(text: 'more -> VT#vt{lifetime = (VT#vt.lifetime)#lifetime{utf8 = Bytes}}',
+                                              broken: 'more -> VT',
                                               property: 'split_differs'),
     'the 256-link bound' => Seed.new(text: 'Kept = maps:remove(Id - ?MAX_LINKS, Links),', broken: 'Kept = Links,',
                                      property: 'links_over_bound')
@@ -64,7 +68,8 @@ module ErxVtFuzz
       module_path = File.join(work, 'erx_vt.erl')
       File.binwrite(module_path, module_text)
       generated = GENERATED.map { |path| Erx::Generated.path(path, root: ROOT) }
-      output, status = Open3.capture2e('gtimeout', '-k', '10', DEADLINE_SECONDS, ENV.fetch('ERX_ERLC'), '-o', work,
+      output, status = Open3.capture2e('gtimeout', '-k', '10', DEADLINE_SECONDS, ENV.fetch('ERX_ERLC'),
+                                       '-I', Erx::Generated.path(INCLUDE, root: ROOT), '-o', work,
                                        *generated, module_path, TARGET_SOURCE, stdin_data: '')
       raise output unless status.success?
 

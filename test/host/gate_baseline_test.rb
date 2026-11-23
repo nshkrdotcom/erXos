@@ -6,6 +6,7 @@ require 'minitest/autorun'
 require_relative '../../tools/fuzz/run_pack'
 require_relative '../../tools/lib/erx/checks'
 require_relative '../../tools/lib/erx/core_archive'
+require_relative '../../tools/lib/erx/fuzz_drivers'
 require_relative '../../tools/lib/erx/qemu_gate'
 require_relative '../../tools/lib/erx/sanitizer_tests'
 require_relative '../fixtures/generated_tree'
@@ -94,6 +95,19 @@ class GateBaselineTest < Minitest::Test
                        build/gen/kernel/generated/abi_decode.c build/gen/kernel/generated/abi_run.c
                        kernel/sched/sched.c].freeze
 
+  # The Ruby fuzz drivers of the parsers CLAUDE.md names, each run at least once.
+  RUBY_FUZZ_DRIVERS = %w[
+    tools/fuzz/erx_9p.rb tools/fuzz/erx_blk_table.rb tools/fuzz/erx_boot_keys.rb tools/fuzz/erx_draw_codec.rb
+    tools/fuzz/erx_erofs.rb tools/fuzz/erx_f2fs.rb tools/fuzz/erx_fat_read.rb tools/fuzz/erx_grep_re.rb
+    tools/fuzz/erx_hostlink_frame.rb tools/fuzz/erx_input_codec.rb tools/fuzz/erx_manifest.rb
+    tools/fuzz/erx_memdraw_y.rb tools/fuzz/erx_net_codec.rb tools/fuzz/erx_net_input.rb tools/fuzz/erx_path.rb
+    tools/fuzz/erx_pcie_cfg.rb tools/fuzz/erx_png.rb tools/fuzz/erx_procfs.rb tools/fuzz/erx_prog_grammar.rb
+    tools/fuzz/erx_shell_parse.rb tools/fuzz/erx_tty.rb tools/fuzz/erx_tty_link.rb tools/fuzz/erx_ui_schema.rb
+    tools/fuzz/erx_virtio_gpu_core.rb tools/fuzz/erx_virtio_input_core.rb tools/fuzz/erx_vt.rb tools/fuzz/erx_wctl.rb
+    tools/fuzz/erx_web_proto.rb tools/fuzz/erx_web_proto_ts.rb tools/fuzz/fat_volume.rb tools/fuzz/harness_screen.rb
+    tools/fuzz/hostlink_frame.rb tools/fuzz/line_escape.rb tools/fuzz/web_front.rb
+  ].freeze
+
   # The suites the QEMU gate runs. The conformance roster's pending cases are
   # not a floor: they come and go as the calls they wait for land.
   QEMU_SUITES = %w[boot_image conformance debug_log native_boot production_image].freeze
@@ -114,6 +128,11 @@ class GateBaselineTest < Minitest::Test
       assert_empty FUZZ_INCLUDES - target.includes, "#{kind} lost an include path"
       assert_operator target.seeds.size, :>=, floor.fetch(:seeds), "#{kind} lost seeds"
     end
+  end
+
+  def test_the_fuzz_gate_still_runs_every_ruby_driver
+    planned = Erx::FuzzDrivers.runs(root: ROOT, seconds: 1, seed: 1).map(&:path)
+    assert_empty RUBY_FUZZ_DRIVERS - planned
   end
 
   def test_every_chokepoint_rule_keeps_its_seeds

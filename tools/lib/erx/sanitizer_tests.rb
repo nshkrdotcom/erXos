@@ -19,7 +19,8 @@ module Erx
     module_function
 
     DECLARATION = '# erx-gate: sanitizers'
-    # The test pool's `# erx-gate: serial` is the only other declaration.
+    # The test pool's `# erx-gate: serial` is the only other declaration in a test;
+    # FuzzDrivers reads `# erx-gate: fuzz` in tools/fuzz and test/fuzz.
     KNOWN_DECLARATIONS = [DECLARATION, TestPool::SERIAL_DECLARATION].freeze
     # Any comment trying to be a declaration, spelled however.
     DECLARATION_LIKE = /^\s*#[\W_]*erx[\W_]*gates?\b.*$/i

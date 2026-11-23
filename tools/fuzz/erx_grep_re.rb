@@ -2,6 +2,7 @@
 # Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
 # SPDX-License-Identifier: BSD-2-Clause
 # frozen_string_literal: true
+# erx-gate: fuzz seeded deadline=600
 
 # Runs test/erlang/erx_grep_re_fuzz.erl, the fuzz target of grep's pattern
 # translator (erlang/apps/erx_shell/src/erx_grep_re.erl, docs/design-shell.md,

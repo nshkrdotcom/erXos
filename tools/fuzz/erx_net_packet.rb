@@ -2,6 +2,7 @@
 # Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
 # SPDX-License-Identifier: BSD-2-Clause
 # frozen_string_literal: true
+# erx-gate: fuzz seeded deadline=900 targets=ErxNetPacketFuzz::FAULTS
 
 # Runs test/erlang/erx_net_packet_fuzz.erl, the fuzz target of a TCP socket process's
 # packet framing (docs/design-network-stack.md, "The socket process"), for one target,

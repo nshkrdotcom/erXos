@@ -2,6 +2,7 @@
 # Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
 # SPDX-License-Identifier: BSD-2-Clause
 # frozen_string_literal: true
+# erx-gate: fuzz seeded deadline=900 targets=ErxNetAdmitFuzz::FAULTS
 
 # Runs test/erlang/erx_net_admit_fuzz.erl, the fuzz target of the network stack's admission
 # of messages from the other domain (docs/design-network-stack.md, "Untrusted input"), for

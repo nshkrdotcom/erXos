@@ -238,6 +238,18 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
 
 ## Bugs by subsystem
 
+* [Medium] check-fuzz, Ruby drivers (`tools/lib/erx/fuzz_drivers.rb`): a driver can leave the gate by declaring
+  itself `# erx-gate: fuzz helper`, and `make check` stays green unless the driver is one of the floor in
+  `test/host/gate_baseline_test.rb`. Move the four helpers (`tools/fuzz/run_pack.rb`, `manifest_seeds.rb`,
+  `package_seeds.rb`, `test/fuzz/abi_corpus.rb`) out of the driver directories and delete the `helper` kind, so
+  every `*.rb` there but a native `KIND_target.rb` is a driver by construction; about ten `require_relative` and
+  path edits follow, each failing loudly when missed.
+* [Medium] check-fuzz, Ruby drivers (`FuzzDrivers.target_names`): a driver with `targets=` is loaded into the
+  planning process (`tools/erx check-fuzz`, `tools/erx gates`, `make check`) to read its table, so a driver whose
+  main program loses its `$PROGRAM_NAME` guard runs inside the gate and can end it with its own exit status. Ask
+  the driver in a subprocess under a deadline instead (for example `ruby FILE --list-targets`, answered from its
+  own table), which keeps the table the one source. The `targets=` floor also checks only paths, not how many
+  targets a driver keeps.
 * [Low] QEMU harness, console record patterns: `Erx::Transcript` (`tools/lib/erx/qemu.rb`) reads a line that ends in
   a console log line as the log line and its head, rejoined with what follows (`LOG_LINE_END`), but the suites keep
   their own copies of the record format (`NativeRoot::DOMAIN_RECORD`, `NativeTask::LOG_RECORD`,

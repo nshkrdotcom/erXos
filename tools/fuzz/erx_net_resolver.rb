@@ -2,6 +2,7 @@
 # Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
 # SPDX-License-Identifier: BSD-2-Clause
 # frozen_string_literal: true
+# erx-gate: fuzz seeded deadline=900 targets=ErxNetResolverFuzz::FAULTS
 
 # Runs test/erlang/erx_net_resolver_fuzz.erl, the fuzz target of name resolution's
 # untrusted inputs (docs/design-network-stack.md, "Name resolution"), for one target,

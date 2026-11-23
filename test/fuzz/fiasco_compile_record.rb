@@ -2,12 +2,19 @@
 # Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
 # SPDX-License-Identifier: BSD-2-Clause
 # frozen_string_literal: true
+# erx-gate: fuzz timed
 
+require 'optparse'
 require_relative '../../tools/lib/erx/fiasco_provenance'
 
-seconds = Integer(ARGV.fetch(0, '2'))
-raise Erx::Error, 'fuzz duration outside bounds' unless seconds.between?(1, 3600)
-random = Random.new(1_234_567)
+seconds = 2
+seed = 1_234_567
+OptionParser.new do |flags|
+  flags.on('--seconds N', Integer) { |value| seconds = value }
+  flags.on('--seed N', Integer) { |value| seed = value }
+end.parse!
+raise Erx::Error, 'fuzz duration outside bounds' unless ARGV.empty? && seconds.between?(1, 3600)
+random = Random.new(seed)
 deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + seconds
 cases = 0
 until Process.clock_gettime(Process::CLOCK_MONOTONIC) >= deadline
@@ -22,4 +29,4 @@ until Process.clock_gettime(Process::CLOCK_MONOTONIC) >= deadline
   end
   cases += 1
 end
-Erx::Terminal.puts("Fiasco compiler-record fuzz passed: #{cases} cases, seed 1234567")
+Erx::Terminal.puts("Fiasco compiler-record fuzz passed: #{cases} cases, seed #{seed}")

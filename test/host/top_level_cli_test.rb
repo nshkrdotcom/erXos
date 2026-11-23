@@ -548,14 +548,17 @@ end
     commands = []
     observed = []
     c = proc { |**options| observed << [:c, options.fetch(:runs), options.fetch(:seed)] }
-    ruby = proc { |**options| observed << [:ruby, options.fetch(:seconds), options.fetch(:seed)] }
+    ruby = proc do |plan:, **|
+      timed = plan.find { |run| run.arguments.include?('--seconds') }
+      observed << [:ruby, timed.arguments.last(4), timed.deadline]
+    end
     with_checks(commands) do |collaborators|
       status, output = run_cli('check-fuzz', '--seconds', '7', '--runs', '1234', '--seed', '19',
                                **collaborators.slice(:runner_class, :runtime), c_fuzzer: c, ruby_fuzzer: ruby)
       assert_equal 0, status
-      assert_includes output, 'fixed 20000 iterations, seed 1'
+      assert_includes output, 'Ruby fuzz drivers passed: '
     end
-    assert_equal [[:c, 1234, 19], [:ruby, 7, 19]], observed
+    assert_equal [[:c, 1234, 19], [:ruby, %w[--seconds 7 --seed 19], 37]], observed
   end
 
   # A Dependencies that only records the sources each fetch names.

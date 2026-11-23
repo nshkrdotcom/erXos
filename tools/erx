@@ -32,6 +32,7 @@ begin
   require_relative 'lib/erx/boot_image_check'
   require_relative 'lib/erx/debug_log_probe'
   require_relative 'lib/erx/qemu_gate'
+  require_relative 'lib/erx/fuzz_drivers'
   require_relative 'lib/erx/checks'
   require_relative 'lib/erx/hardware'
   require_relative 'lib/erx/arch_terms'
@@ -328,6 +329,9 @@ module Erx
                     "each file under its own #{TEST_FILE_DEADLINE}s deadline; " \
                     "serial files: #{serial.empty? ? 'none' : serial.join(' ')}")
       QemuGate.suites.each { |suite| Terminal.puts("QEMU suite: #{suite.name}") }
+      FuzzDrivers.runs(root: ROOT, **FUZZ_DEFAULTS.slice(:seconds, :seed)).each do |run|
+        Terminal.puts("Ruby fuzz driver: #{run.name}: #{run.path} #{run.arguments.join(' ')}, deadline #{run.deadline}s")
+      end
       PackFuzz.targets.each do |target|
         Terminal.puts("native fuzz target: #{target.kind}: #{target.seeds.size} seeds; " \
                       "sources #{target.sources.join(' ')}; includes #{target.includes.join(' ')}")
@@ -339,229 +343,30 @@ module Erx
       0
     end
 
+    # check-fuzz's budget per timed Ruby driver, executions per C target, and seed.
+    FUZZ_DEFAULTS = { seconds: 3, runs: 20_000, seed: 1 }.freeze
+
     def self.check_fuzz(input_arguments, runner_class: Runner, runtime: method(:with_test_runtime),
                         c_fuzzer: method(:fuzz_c), ruby_fuzzer: method(:fuzz_ruby))
       arguments = input_arguments.dup
-      options = { seconds: 3, runs: 20_000, seed: 1 }
+      options = FUZZ_DEFAULTS.dup
       OptionParser.new do |flags|
         flags.on('--seconds N', Integer, 'Budget per timed Ruby target, 1..60') { |value| options[:seconds] = value }
         flags.on('--runs N', Integer, 'C libFuzzer executions per target, 1..10000000') { |value| options[:runs] = value }
-        flags.on('--seed N', Integer, 'Seed for C ABI and timed Ruby targets') { |value| options[:seed] = value }
+        flags.on('--seed N', Integer, 'Seed for C ABI targets and Ruby drivers') { |value| options[:seed] = value }
       end.parse!(arguments)
       unless arguments.empty? && options.fetch(:seconds).between?(1, 60) &&
              options.fetch(:runs).between?(1, 10_000_000) && options.fetch(:seed).between?(0, (1 << 31) - 1)
         raise OptionParser::InvalidArgument, 'fuzz budget, seed or trailing arguments outside bounds'
       end
+      plan = FuzzDrivers.runs(root: ROOT, seconds: options.fetch(:seconds), seed: options.fetch(:seed))
       runner = runner_class.new(owner_root: ROOT, log_dir: File.join(ROOT, 'build/logs'))
       runtime.call(runner: runner) do |environment|
         c_fuzzer.call(runner: runner, environment: environment, runs: options.fetch(:runs), seed: options.fetch(:seed))
-        ruby_fuzzer.call(runner: runner, environment: environment, seconds: options.fetch(:seconds), seed: options.fetch(:seed))
+        ruby_fuzzer.call(runner: runner, environment: environment, plan: plan)
         runner.run([RbConfig.ruby, File.join(ROOT, 'test/host/abi_erlang_test.rb'),
                     '--name', 'test_production_fuzz_entry_refuses_mutations_without_vm_exception'],
                    name: 'fuzz-erlang-manifest', deadline: 180, chdir: ROOT, env: environment)
-        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_manifest.rb'), '--seed', options.fetch(:seed).to_s],
-                   name: 'fuzz-erx-manifest', deadline: 660, chdir: ROOT, env: environment)
-        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_console_input.rb'), '--seed', options.fetch(:seed).to_s],
-                   name: 'fuzz-erx-console-input', deadline: 300, chdir: ROOT, env: environment)
-        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_tty_link.rb'), '--seed', options.fetch(:seed).to_s],
-                   name: 'fuzz-erx-tty-link', deadline: 900, chdir: ROOT, env: environment)
-        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_tty.rb'), '--seed', options.fetch(:seed).to_s],
-                   name: 'fuzz-erx-tty', deadline: 900, chdir: ROOT, env: environment)
-        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_wctl.rb'), '--seed', options.fetch(:seed).to_s],
-                   name: 'fuzz-erx-wctl', deadline: 900, chdir: ROOT, env: environment)
-        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_winctl.rb'), '--seed', options.fetch(:seed).to_s],
-                   name: 'fuzz-erx-winctl', deadline: 1200, chdir: ROOT, env: environment)
-        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_win_core.rb'), '--seed', options.fetch(:seed).to_s],
-                   name: 'fuzz-erx-win-core', deadline: 1200, chdir: ROOT, env: environment)
-        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_vt.rb'), '--seed', options.fetch(:seed).to_s],
-                   name: 'fuzz-erx-vt', deadline: 600, chdir: ROOT, env: environment)
-        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_ui_schema.rb'), '--seed', options.fetch(:seed).to_s],
-                   name: 'fuzz-erx-ui-schema', deadline: 600, chdir: ROOT, env: environment)
-        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_ui_wire.rb'), '--seed', options.fetch(:seed).to_s],
-                   name: 'fuzz-erx-ui-wire', deadline: 600, chdir: ROOT, env: environment)
-        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_png.rb'), '--seed', options.fetch(:seed).to_s],
-                   name: 'fuzz-erx-png', deadline: 960, chdir: ROOT, env: environment)
-        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_draw_codec.rb'), '--seed', options.fetch(:seed).to_s],
-                   name: 'fuzz-erx-draw-codec', deadline: 600, chdir: ROOT, env: environment)
-        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_input_codec.rb'), '--seed', options.fetch(:seed).to_s],
-                   name: 'fuzz-erx-input-codec', deadline: 600, chdir: ROOT, env: environment)
-        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_memdraw_y.rb'), '--seed', options.fetch(:seed).to_s],
-                   name: 'fuzz-erx-memdraw-y', deadline: 900, chdir: ROOT, env: environment)
-        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_font.rb'), '--seed', options.fetch(:seed).to_s],
-                   name: 'fuzz-erx-font', deadline: 600, chdir: ROOT, env: environment)
-        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_ui_wire_ts.rb'), '--seed', options.fetch(:seed).to_s],
-                   name: 'fuzz-erx-ui-wire-ts', deadline: 360, chdir: ROOT, env: environment)
-        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_web_text.rb'), '--seed', options.fetch(:seed).to_s],
-                   name: 'fuzz-erx-web-text', deadline: 360, chdir: ROOT, env: environment)
-        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_web_routes.rb'), '--seed', options.fetch(:seed).to_s],
-                   name: 'fuzz-erx-web-routes', deadline: 360, chdir: ROOT, env: environment)
-        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_web_proto.rb'), '--seed', options.fetch(:seed).to_s],
-                   name: 'fuzz-erx-web-proto', deadline: 660, chdir: ROOT, env: environment)
-        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_web_proto_ts.rb'), '--seed', options.fetch(:seed).to_s],
-                   name: 'fuzz-erx-web-proto-ts', deadline: 360, chdir: ROOT, env: environment)
-        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_pl011_console_uart.rb'), '--seed',
-                    options.fetch(:seed).to_s],
-                   name: 'fuzz-erx-pl011-console-uart', deadline: 300, chdir: ROOT, env: environment)
-        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_mini_uart_console_uart.rb'), '--seed',
-                    options.fetch(:seed).to_s],
-                   name: 'fuzz-erx-mini-uart-console-uart', deadline: 300, chdir: ROOT, env: environment)
-        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_device_record.rb'), '--seed', options.fetch(:seed).to_s],
-                   name: 'fuzz-erx-device-record', deadline: 300, chdir: ROOT, env: environment)
-        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_schema.rb'), '--seed', options.fetch(:seed).to_s],
-                   name: 'fuzz-erx-schema', deadline: 300, chdir: ROOT, env: environment)
-        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_present.rb'), '--seed', options.fetch(:seed).to_s],
-                   name: 'fuzz-erx-present', deadline: 300, chdir: ROOT, env: environment)
-        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_procfs.rb'), '--seed', options.fetch(:seed).to_s],
-                   name: 'fuzz-erx-procfs', deadline: 300, chdir: ROOT, env: environment)
-        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_inspect_query.rb'), '--seed', options.fetch(:seed).to_s],
-                   name: 'fuzz-erx-inspect-query', deadline: 300, chdir: ROOT, env: environment)
-        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_log_facet.rb'), '--seed', options.fetch(:seed).to_s],
-                   name: 'fuzz-erx-log-facet', deadline: 300, chdir: ROOT, env: environment)
-        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_clock_facet.rb'), '--seed', options.fetch(:seed).to_s],
-                   name: 'fuzz-erx-clock-facet', deadline: 300, chdir: ROOT, env: environment)
-        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_code_objects_facet.rb'), '--seed',
-                    options.fetch(:seed).to_s],
-                   name: 'fuzz-erx-code-objects-facet', deadline: 300, chdir: ROOT, env: environment)
-        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_devfs.rb'), '--seed', options.fetch(:seed).to_s],
-                   name: 'fuzz-erx-devfs', deadline: 300, chdir: ROOT, env: environment)
-        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_rc_conf.rb'), '--seed', options.fetch(:seed).to_s],
-                   name: 'fuzz-erx-rc-conf', deadline: 300, chdir: ROOT, env: environment)
-        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_apps_ctl.rb'), '--seed', options.fetch(:seed).to_s],
-                   name: 'fuzz-erx-apps-ctl', deadline: 300, chdir: ROOT, env: environment)
-        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_cmd_date.rb'), '--seed', options.fetch(:seed).to_s],
-                   name: 'fuzz-erx-cmd-date', deadline: 300, chdir: ROOT, env: environment)
-        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_cmd_load.rb'), '--seed', options.fetch(:seed).to_s],
-                   name: 'fuzz-erx-cmd-load', deadline: 300, chdir: ROOT, env: environment)
-        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_ntp_wire.rb'), '--seed', options.fetch(:seed).to_s],
-                   name: 'fuzz-erx-ntp-wire', deadline: 600, chdir: ROOT, env: environment)
-        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_ntpd_flags.rb'), '--seed', options.fetch(:seed).to_s],
-                   name: 'fuzz-erx-ntpd-flags', deadline: 600, chdir: ROOT, env: environment)
-        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_ssh_wire.rb'), '--seed', options.fetch(:seed).to_s],
-                   name: 'fuzz-erx-ssh-wire', deadline: 300, chdir: ROOT, env: environment)
-        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_quotes.rb'), '--seed', options.fetch(:seed).to_s],
-                   name: 'fuzz-erx-quotes', deadline: 600, chdir: ROOT, env: environment)
-        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_boot_keys.rb'), '--seed', options.fetch(:seed).to_s],
-                   name: 'fuzz-erx-boot-keys', deadline: 600, chdir: ROOT, env: environment)
-        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_fat_read.rb'), '--seed', options.fetch(:seed).to_s],
-                   name: 'fuzz-erx-fat-read', deadline: 600, chdir: ROOT, env: environment)
-        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_bt_hci.rb'), '--seed', options.fetch(:seed).to_s],
-                   name: 'fuzz-erx-bt-hci', deadline: 300, chdir: ROOT, env: environment)
-        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_bt_att.rb'), '--seed', options.fetch(:seed).to_s],
-                   name: 'fuzz-erx-bt-att', deadline: 300, chdir: ROOT, env: environment)
-        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_bt_smp.rb'), '--seed', options.fetch(:seed).to_s],
-                   name: 'fuzz-erx-bt-smp', deadline: 300, chdir: ROOT, env: environment)
-        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_bt_link.rb'), '--seed', options.fetch(:seed).to_s],
-                   name: 'fuzz-erx-bt-link', deadline: 300, chdir: ROOT, env: environment)
-        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_bt_state.rb'), '--seed', options.fetch(:seed).to_s],
-                   name: 'fuzz-erx-bt-state', deadline: 300, chdir: ROOT, env: environment)
-        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_machine_ctl.rb'), '--seed', options.fetch(:seed).to_s],
-                   name: 'fuzz-erx-machine-ctl', deadline: 300, chdir: ROOT, env: environment)
-        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_line_ctl.rb'), '--seed', options.fetch(:seed).to_s],
-                   name: 'fuzz-erx-line-ctl', deadline: 300, chdir: ROOT, env: environment)
-        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_bt_pair.rb'), '--seed', options.fetch(:seed).to_s],
-                   name: 'fuzz-erx-bt-pair', deadline: 300, chdir: ROOT, env: environment)
-        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_bt_ctl.rb'), '--seed', options.fetch(:seed).to_s],
-                   name: 'fuzz-erx-bt-ctl', deadline: 300, chdir: ROOT, env: environment)
-        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_blk_request.rb'), '--seed', options.fetch(:seed).to_s],
-                   name: 'fuzz-erx-blk-request', deadline: 300, chdir: ROOT, env: environment)
-        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_virtio_gpu_core.rb'), '--seed', options.fetch(:seed).to_s],
-                   name: 'fuzz-erx-virtio-gpu-core', deadline: 300, chdir: ROOT, env: environment)
-        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_virtio_input_core.rb'), '--seed',
-                    options.fetch(:seed).to_s],
-                   name: 'fuzz-erx-virtio-input-core', deadline: 300, chdir: ROOT, env: environment)
-        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_hid_desc.rb'), '--seed', options.fetch(:seed).to_s],
-                   name: 'fuzz-erx-hid-desc', deadline: 600, chdir: ROOT, env: environment)
-        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_pcie_cfg.rb'), '--seed', options.fetch(:seed).to_s],
-                   name: 'fuzz-erx-pcie-cfg', deadline: 600, chdir: ROOT, env: environment)
-        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_hid_core.rb'), '--seed', options.fetch(:seed).to_s],
-                   name: 'fuzz-erx-hid-core', deadline: 600, chdir: ROOT, env: environment)
-        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_usb_desc.rb'), '--seed', options.fetch(:seed).to_s],
-                   name: 'fuzz-erx-usb-desc', deadline: 600, chdir: ROOT, env: environment)
-        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_usb_hub_core.rb'), '--seed', options.fetch(:seed).to_s],
-                   name: 'fuzz-erx-usb-hub-core', deadline: 300, chdir: ROOT, env: environment)
-        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_usb_bot_core.rb'), '--seed', options.fetch(:seed).to_s],
-                   name: 'fuzz-erx-usb-bot-core', deadline: 300, chdir: ROOT, env: environment)
-        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_xhci_core.rb'), '--seed', options.fetch(:seed).to_s],
-                   name: 'fuzz-erx-xhci-core', deadline: 300, chdir: ROOT, env: environment)
-        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_virtio_net_frame.rb'), '--seed',
-                    options.fetch(:seed).to_s],
-                   name: 'fuzz-erx-virtio-net-frame', deadline: 300, chdir: ROOT, env: environment)
-        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_genet.rb'), '--seed', options.fetch(:seed).to_s],
-                   name: 'fuzz-erx-genet', deadline: 600, chdir: ROOT, env: environment)
-        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_blk_table.rb'), '--seed', options.fetch(:seed).to_s],
-                   name: 'fuzz-erx-blk-table', deadline: 300, chdir: ROOT, env: environment)
-        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_blk_sd.rb'), '--seed', options.fetch(:seed).to_s],
-                   name: 'fuzz-erx-blk-sd', deadline: 600, chdir: ROOT, env: environment)
-        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_code_request.rb'), '--seed', options.fetch(:seed).to_s],
-                   name: 'fuzz-erx-code-request', deadline: 660, chdir: ROOT, env: environment)
-        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_9p_grammar.rb'), '--seed', options.fetch(:seed).to_s],
-                   name: 'fuzz-erx-9p-grammar', deadline: 660, chdir: ROOT, env: environment)
-        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_prog_grammar.rb'), '--seed', options.fetch(:seed).to_s],
-                   name: 'fuzz-erx-prog-grammar', deadline: 660, chdir: ROOT, env: environment)
-        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_9p.rb'), '--seed', options.fetch(:seed).to_s],
-                   name: 'fuzz-erx-9p', deadline: 660, chdir: ROOT, env: environment)
-        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_hostlink_9p.rb'), '--seed', options.fetch(:seed).to_s],
-                   name: 'fuzz-erx-hostlink-9p', deadline: 660, chdir: ROOT, env: environment)
-        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_ramfs_core.rb'), '--seed', options.fetch(:seed).to_s],
-                   name: 'fuzz-erx-ramfs-core', deadline: 600, chdir: ROOT, env: environment)
-        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_fs_grant.rb'), '--seed', options.fetch(:seed).to_s],
-                   name: 'fuzz-erx-fs-grant', deadline: 660, chdir: ROOT, env: environment)
-        %w[report reply].each do |target|
-          runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_domain_mints.rb'), '--target', target,
-                      '--seed', options.fetch(:seed).to_s],
-                     name: "fuzz-erx-domain-mints-#{target}", deadline: 600, chdir: ROOT, env: environment)
-        end
-        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_connections_install.rb'), '--seed',
-                    options.fetch(:seed).to_s],
-                   name: 'fuzz-erx-connections-install', deadline: 600, chdir: ROOT, env: environment)
-        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_file_remote.rb'), '--seed', options.fetch(:seed).to_s],
-                   name: 'fuzz-erx-file-remote', deadline: 600, chdir: ROOT, env: environment)
-        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_path.rb'), '--seed', options.fetch(:seed).to_s],
-                   name: 'fuzz-erx-path', deadline: 900, chdir: ROOT, env: environment)
-        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_shell_parse.rb'), '--seed', options.fetch(:seed).to_s],
-                   name: 'fuzz-erx-shell-parse', deadline: 1000, chdir: ROOT, env: environment)
-        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_grep_re.rb'), '--seed', options.fetch(:seed).to_s],
-                   name: 'fuzz-erx-grep-re', deadline: 600, chdir: ROOT, env: environment)
-        %w[line field].each do |target|
-          runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_text.rb'), '--target', target,
-                      '--seed', options.fetch(:seed).to_s],
-                     name: "fuzz-erx-text-#{target}", deadline: 1500, chdir: ROOT, env: environment)
-        end
-        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_erofs.rb'), '--seed', options.fetch(:seed).to_s],
-                   name: 'fuzz-erx-erofs', deadline: 1800, chdir: ROOT, env: environment)
-        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_f2fs.rb'), '--seed', options.fetch(:seed).to_s],
-                   name: 'fuzz-erx-f2fs', deadline: 900, chdir: ROOT, env: environment)
-        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_wpa_key.rb'), '--seed', options.fetch(:seed).to_s],
-                   name: 'fuzz-erx-wpa-key', deadline: 600, chdir: ROOT, env: environment)
-        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_sae.rb'), '--seed', options.fetch(:seed).to_s],
-                   name: 'fuzz-erx-sae', deadline: 600, chdir: ROOT, env: environment)
-        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_pkg_header.rb'), '--seed', options.fetch(:seed).to_s],
-                   name: 'fuzz-erx-pkg-header', deadline: 600, chdir: ROOT, env: environment)
-        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_hostlink_frame.rb'), '--seed', options.fetch(:seed).to_s],
-                   name: 'fuzz-erx-hostlink-frame', deadline: 1000, chdir: ROOT, env: environment)
-        %w[eth arp ip4 icmp4 icmp4_quoted udp ip6 ip6_pointer icmp6 icmp6_mtu icmp6_quoted tcp tcp_sack dhcp4
-           dhcp4_join dhcp4_routes].each do |target|
-          runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_net_codec.rb'), '--target', target,
-                      '--seed', options.fetch(:seed).to_s],
-                     name: "fuzz-erx-net-#{target}", deadline: 900, chdir: ROOT, env: environment)
-        end
-        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_net_input.rb'), '--seed', options.fetch(:seed).to_s],
-                   name: 'fuzz-erx-net-input', deadline: 3900, chdir: ROOT, env: environment)
-        %w[config dns host].each do |target|
-          runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_net_resolver.rb'), '--target', target,
-                      '--seed', options.fetch(:seed).to_s],
-                     name: "fuzz-erx-net-resolver-#{target}", deadline: 900, chdir: ROOT, env: environment)
-        end
-        %w[admit sock].each do |target|
-          runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_net_admit.rb'), '--target', target,
-                      '--seed', options.fetch(:seed).to_s],
-                     name: "fuzz-erx-net-admit-#{target}", deadline: 900, chdir: ROOT, env: environment)
-        end
-        %w[decode core].each do |target|
-          runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_net_packet.rb'), '--target', target,
-                      '--seed', options.fetch(:seed).to_s],
-                     name: "fuzz-erx-net-packet-#{target}", deadline: 900, chdir: ROOT, env: environment)
-        end
         runner.run([RbConfig.ruby, File.join(ROOT, 'test/host/erx_tcp_explore_test.rb')],
                    name: 'explore-erx-tcp', deadline: 900, chdir: ROOT,
                    env: environment.merge('ERX_TCP_EXPLORE' => 'full'))
@@ -577,10 +382,10 @@ module Erx
                    env: environment.merge('ERX_PIPE_EXPLORE' => 'full'))
       end
       require_relative 'fuzz/run_pack'
-      Terminal.puts('implemented ABI, manifest and host metadata parser fuzz targets passed')
+      Terminal.puts('ABI and Erlang manifest fuzz targets and full explorations passed')
       Terminal.puts("native fuzz targets passed: #{PackFuzz.targets.map(&:kind).join(' ')}")
-      Terminal.puts('pack/terminal/export Ruby targets: fixed 20000 iterations, seed 1; ' \
-                    'native C seeds are recorded in logs')
+      Terminal.puts("Ruby fuzz drivers passed: #{plan.map(&:name).join(' ')}")
+      Terminal.puts('fixed Ruby drivers ran their own iteration counts and seeds; native C seeds are recorded in logs')
       Terminal.puts('root-startup and target runtime/service parsers: unsupported until their implementations land')
       0
     end
@@ -609,25 +414,11 @@ module Erx
                  env: environment.merge('RUNS' => runs.to_s))
     end
 
-    def self.fuzz_ruby(runner:, environment:, seconds:, seed:)
-      %w[test/fuzz/abi.rb test/fuzz/qemu_transcript.rb test/fuzz/cli_status.rb tools/fuzz/oracle_results.rb tools/fuzz/crash_frame.rb
-         tools/fuzz/boot_record.rb tools/fuzz/fat_volume.rb tools/fuzz/etf.rb tools/fuzz/hostlink_frame.rb
-         tools/fuzz/line_escape.rb tools/fuzz/web_front.rb tools/fuzz/harness_screen.rb tools/fuzz/platform_record.rb
-         tools/fuzz/gpos_fuzz.rb].each do |path|
-        runner.run([RbConfig.ruby, File.join(ROOT, path), '--seconds', seconds.to_s, '--seed', seed.to_s],
-                   name: "fuzz-#{File.basename(path, '.rb').tr('_', '-')}", deadline: seconds + 30,
-                   chdir: ROOT, env: environment)
-      end
-      %w[pack_host_fuzz terminal_rules_fuzz oracle_export_fuzz].each do |name|
-        runner.run([RbConfig.ruby, File.join(ROOT, "tools/fuzz/#{name}.rb")],
-                   name: name.tr('_', '-'), deadline: 180, chdir: ROOT, env: environment)
-      end
-      require_relative 'fuzz/host_metadata'
-      HostMetadataFuzz::TARGETS.each do |target|
-        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/host_metadata.rb'), '--target', target,
-                    '--seconds', seconds.to_s, '--seed', seed.to_s],
-                   name: "fuzz-#{target.tr('_', '-')}", deadline: seconds + 30,
-                   chdir: ROOT, env: environment)
+    # Runs each driver of FuzzDrivers' plan, checked whole before check-fuzz started anything.
+    def self.fuzz_ruby(runner:, environment:, plan:)
+      plan.each do |run|
+        runner.run([RbConfig.ruby, File.join(ROOT, run.path), *run.arguments],
+                   name: run.name, deadline: run.deadline, chdir: ROOT, env: environment)
       end
     end
 

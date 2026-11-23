@@ -2,6 +2,7 @@
 # Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
 # SPDX-License-Identifier: BSD-2-Clause
 # frozen_string_literal: true
+# erx-gate: fuzz timed
 
 require 'optparse'
 load File.expand_path('../../tools/erx', __dir__)

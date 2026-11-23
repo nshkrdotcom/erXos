@@ -1,6 +1,7 @@
 # Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
 # SPDX-License-Identifier: BSD-2-Clause
 # frozen_string_literal: true
+# erx-gate: fuzz seeded deadline=300
 
 # The fuzz target of the command shell's `date` argument parser,
 # erx_cmd_date:parse/1 (test/erlang/erx_cmd_date_fuzz.erl), compiled from

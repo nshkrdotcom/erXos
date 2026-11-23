@@ -1,6 +1,7 @@
 # Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
 # SPDX-License-Identifier: BSD-2-Clause
 # frozen_string_literal: true
+# erx-gate: fuzz helper
 
 require_relative '../lib/erx/display_domain'
 require_relative '../lib/erx/platform'
