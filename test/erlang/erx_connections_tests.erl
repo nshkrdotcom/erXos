@@ -33,7 +33,8 @@ agent_test_() ->
                          {refused_open, fun refused_open/1}, {down, fun down/1}, {forged, fun forged/1},
                          {facets, fun facets/1}, {app, fun app/1}, {installs, fun installs/1}, {connection, fun connection/1},
                          {area_down, fun area_down/1}, {area_lost, fun area_lost/1},
-                         {area_lost_then_down, fun area_lost_then_down/1}, {area_refused, fun area_refused/1}]]
+                         {area_lost_then_down, fun area_lost_then_down/1}, {area_refused, fun area_refused/1},
+                         {malformed_calls, fun malformed_calls/1}]]
     %% area_collected starts its own agent, with erx_area:map/4 in place of the stand-in fun.
     ++ [{"area_collected", fun area_collected/0}].
 
@@ -391,7 +392,8 @@ side_test_() ->
      || {Name, Case} <- [{side_answered_once_up, fun side_answered_once_up/1},
                          {side_ended_before_up, fun side_ended_before_up/1},
                          {side_ended_after_up, fun side_ended_after_up/1},
-                         {side_closed_before_up, fun side_closed_before_up/1}]].
+                         {sides_only_from_service, fun sides_only_from_service/1},
+                         {malformed_calls, fun malformed_calls/1}]].
 
 with_sides(Case) ->
     Test = self(),
@@ -414,10 +416,15 @@ side_values() ->
     #{node => ?PEER_NODE, connection => 9, side => 11, peer_side => 12, bell => 13, reader => 2,
       system_lane => 3, ctl_slots => 4, domain_pid_number => 40, domain_pid_serial => 0, supervised => false}.
 
-%% open_side for the peer from a caller standing for the domain service.
+%% open_side for the peer from a caller standing for the domain service, which makes
+%% itself the agent's installer first, as the service does as it starts.
 open_side() ->
     Test = self(),
-    spawn(fun() -> Test ! {side, erx_connections:open_side(?PEER, side_values())}, forward(Test) end).
+    spawn(fun() ->
+                  ok = erx_connections:become_installer(),
+                  Test ! {side, erx_connections:open_side(?PEER, side_values())},
+                  forward(Test)
+          end).
 
 forward(Test) ->
     receive Msg -> Test ! {side, Msg}, forward(Test) end.
@@ -457,14 +464,33 @@ side_ended_after_up(Agent) ->
     exit(Port, kill),
     ?assertEqual({system_side_ended, ?PEER}, side_answer(2000)).
 
-side_closed_before_up(Agent) ->
-    %% close_side on a side still coming up ends it, and its opener hears noconnection.
+sides_only_from_service(Agent) ->
+    %% The system domain's agent opens and closes a side only for its installer, as it
+    %% installs: open_side/2 and close_side/2 from any other process of its runtime are
+    %% answered badarg, before any process is the installer and while one is, and open
+    %% or end nothing, so no slip ends a domain's system connection.
+    ?assertEqual({error, badarg}, erx_connections:open_side(?PEER, side_values())),
+    ?assertEqual(none, receive {opened, _, _} = Opened -> Opened after 200 -> none end),
     open_side(),
     {_Command, Port} = opened(),
     {Port, _Owner} = accept(Agent, owner),
-    ?assertEqual(ok, erx_connections:close_side(?PEER, stopped)),
-    ?assertEqual({error, noconnection}, side_answer(2000)),
-    ?assertEqual(none, side_answer(200)).
+    Agent ! {erx_connection_inserted, ?PEER, Port},
+    ?assertEqual({ok, Port}, side_answer(2000)),
+    ?assertEqual({error, badarg}, erx_connections:close_side(?PEER, stopped)),
+    ?assertEqual({error, badarg}, erx_connections:open_side(?PEER + 1, side_values())),
+    ?assertEqual(none, side_answer(200)),
+    ?assertNotEqual(undefined, erlang:port_info(Port)).
+
+malformed_calls(Agent) ->
+    %% A call whose From is no pair is no call the agent takes, whatever it asks: it is
+    %% dropped and counted, and the agent goes on serving, where a reply to it would end
+    %% the agent, and so the runtime.
+    Dropped = erx_connections:dropped(),
+    Requests = [dropped, app, app_held, {connection, ?PEER}, {area, ?PEER}, {changed, 0},
+                {grant, #{}}, become_installer, {close_side, ?PEER, stopped}, nothing],
+    [Agent ! {'$gen_call', From, Request} || From <- [not_a_from, {self(), make_ref(), extra}], Request <- Requests],
+    ?assertEqual(Dropped + 2 * length(Requests), erx_connections:dropped()),
+    ?assert(is_process_alive(Agent)).
 
 area_down(Agent) ->
     %% The agent maps the area with the connection and hands it out on open; on

@@ -3203,7 +3203,8 @@ service does as it starts, before it grants anything. The first claim
 is the only one: the service is never restarted, its end ending the
 system domain, so a slip that claims before it ends the service's start
 rather than installing in its place, and the agent, in the base runtime,
-names nothing of the domain service. Any other process of its runtime is answered `badarg`; a message from another domain arrives in its
+names nothing of the domain service. It takes the service's two other calls, `open_side/2` and
+`close_side/2`, from its installer alone too, so no slip ends a domain's system connection. Any other process of its runtime is answered `badarg`; a message from another domain arrives in its
 `{erx_origin, D, Msg}` envelope, which is no call the agent takes
 (`erx_connections:serve/2`), and a domain's agent answers `grant`
 `badarg`, as any call it does not take, since a domain's installations

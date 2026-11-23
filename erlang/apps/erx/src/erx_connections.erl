@@ -54,9 +54,10 @@ start(Kernel, System) ->
 %% so the caller finds the connection to the domain's node there: erx_dist:export/3 to
 %% the domain succeeds from the answer on. The caller is then sent {system_side_ended, Id}
 %% if the side ends before close_side/2 closes it. {error, noconnection} for a side that
-%% ends, or is closed, before its entry is up; {error, noproc} where no agent runs, the
-%% runtime being no node; the lane driver's or net_kernel's refusal otherwise, and badarg
-%% for a domain whose side is open or opening already.
+%% ends before its entry is up; {error, noproc} where no agent runs, the runtime being no
+%% node; the lane driver's or net_kernel's refusal otherwise, and badarg for a domain
+%% whose side is open or opening already, or asked by any process but the agent's
+%% installer (become_installer/0), as grant/1 is.
 -spec open_side(pos_integer(), side_values()) -> {ok, port()} | {error, term()}.
 open_side(Id, Values) ->
     call({open_side, Id, Values}).
@@ -64,9 +65,10 @@ open_side(Id, Values) ->
 %% In the system domain: finishes the system side of domain Id's system connection, so
 %% every whole frame the domain published is delivered, then ends it with Reason, which takes
 %% the domain's entry down, and answers once the port has ended, so the connection's objects
-%% may be destroyed then. ok for a domain whose side is not open. Reason is not normal,
-%% which would end nothing.
--spec close_side(pos_integer(), term()) -> ok | {error, noproc}.
+%% may be destroyed then. ok for a domain whose side is not open; {error, badarg} asked
+%% by any process but the agent's installer, as grant/1 is, so no slip ends a domain's
+%% system connection, and with it the domain. Reason is not normal, which would end nothing.
+-spec close_side(pos_integer(), term()) -> ok | {error, noproc | badarg}.
 close_side(Id, Reason) when Reason =/= normal ->
     call({close_side, Id, Reason}).
 
@@ -205,24 +207,29 @@ claim(_Caller, #{} = Env) -> {{error, badarg}, Env}.
 %% then {open, Service}, the process that made the call, the domain service. The answer
 %% waits for the entry, so the export to the domain that follows it finds the connection
 %% (open_side/2); a side that ends before then answers noconnection and was never open.
-%% A close_side while a side is opening comes only from the host test, since the service,
-%% the one caller, waits in open_side then; it answers the opener noconnection too.
+%% The service's three calls, open_side/2, close_side/2 and grant/1, are taken only from
+%% Env's installer, so no close comes while a side is opening: the installer waits in
+%% open_side then.
 %% A side's port ends with its owner (erx_dist), each linked to the other, so its monitor
 %% fires on every end of either: the agent then tells the service, which stops the domain
 %% (docs/design-system.md, "A lost system connection ends the domain"). A side the
 %% service closes is no longer monitored, so its ordered end tells no one. The owner's
 %% word for a side no longer opening, one closed or ended first, is ignored, and anything
-%% else dropped and counted in Dropped. The service's installations in the system domain's
-%% registry (grant/1) and the waits for them (asked/3) are served as in records/3; an
-%% installation is taken only from Env's installer, none or the pid of the process that
-%% made itself the installer (become_installer/0), so no slip of another process installs
-%% a facet whose rights the manifest did not give, and a slip's claim before the domain
-%% service's ends the service's start. The caller's pid is what its
+%% else dropped and counted in Dropped, a call whose From is no pair among them. The
+%% service's installations in the system domain's registry (grant/1) and the waits for
+%% them (asked/3) are served as in records/3. Env's installer is none or the pid of the
+%% process that made itself the installer (become_installer/0), and any other caller of
+%% the service's three calls is answered badarg, as for any call the agent does not take,
+%% so no slip of another process installs a facet whose rights the manifest did not give
+%% or ends a domain's system connection, and a slip's claim before the domain service's
+%% ends the service's start. The caller's pid is what its
 %% call says it is: a message forged with the installer's pid installs, as a direct write
 %% of the registry would, and neither is a slip.
-sides(#{kernel := Kernel, open := Open} = Env, Sides, Dropped) ->
+sides(#{kernel := Kernel, open := Open, installer := Installer} = Env, Sides, Dropped) ->
     receive
-        {'$gen_call', From, {open_side, Id, Values}} when not is_map_key(Id, Sides) ->
+        %% A caller that is no pid, none among them, is never the installer.
+        {'$gen_call', {Installer, _} = From, {open_side, Id, Values}}
+          when is_pid(Installer), not is_map_key(Id, Sides) ->
             case open(Kernel, Open, Id, Values) of
                 {ok, Port} ->
                     Monitor = erlang:monitor(port, Port, [{tag, {side_ended, Id}}]),
@@ -239,29 +246,22 @@ sides(#{kernel := Kernel, open := Open} = Env, Sides, Dropped) ->
                 #{} ->
                     sides(Env, Sides, Dropped)
             end;
-        {'$gen_call', From, {close_side, Id, Reason}} ->
+        %% The side is open: the installer, the one caller, waits in open_side while it opens.
+        {'$gen_call', {Installer, _} = From, {close_side, Id, Reason}} when is_pid(Installer) ->
             case maps:take(Id, Sides) of
-                {{Port, Monitor, Phase}, Rest} ->
+                {{Port, Monitor, _Open}, Rest} ->
                     erlang:demonitor(Monitor, [flush]),
                     finish(Port, Reason),
-                    answer_unopened(Phase),
                     gen:reply(From, ok),
                     sides(Env, Rest, Dropped);
                 error ->
                     gen:reply(From, ok),
                     sides(Env, Sides, Dropped)
             end;
-        %% A caller that is no pid, none among them, is never the installer.
-        {'$gen_call', {Caller, _} = From, {grant, Facets}} when is_pid(Caller), is_map(Facets) ->
-            case Env of
-                #{installer := Caller} ->
-                    Next = write(Facets, Env),
-                    gen:reply(From, ok),
-                    sides(Next, Sides, Dropped);
-                #{} ->
-                    gen:reply(From, {error, badarg}),
-                    sides(Env, Sides, Dropped)
-            end;
+        {'$gen_call', {Installer, _} = From, {grant, Facets}} when is_pid(Installer), is_map(Facets) ->
+            Next = write(Facets, Env),
+            gen:reply(From, ok),
+            sides(Next, Sides, Dropped);
         {'$gen_call', {Caller, _} = From, become_installer} when is_pid(Caller) ->
             {Reply, Next} = claim(Caller, Env),
             gen:reply(From, Reply),
@@ -270,10 +270,10 @@ sides(#{kernel := Kernel, open := Open} = Env, Sides, Dropped) ->
             sides(asked(From, Seen, Env), Sides, Dropped);
         {waiter_ended, Monitor, process, Pid, _Reason} ->
             sides(waiter_ended(Monitor, Pid, Env), Sides, Dropped);
-        {'$gen_call', From, dropped} ->
+        {'$gen_call', {_, _} = From, dropped} ->
             gen:reply(From, Dropped),
             sides(Env, Sides, Dropped);
-        {'$gen_call', From, _Request} ->
+        {'$gen_call', {_, _} = From, _Request} ->
             gen:reply(From, {error, badarg}),
             sides(Env, Sides, Dropped);
         {{side_ended, Id}, Monitor, port, Port, _Reason} ->
@@ -475,30 +475,30 @@ records(#{kernel := Kernel, system := SystemId} = Env, Held, Dropped) ->
             records(asked(From, Seen, Env), Held, Dropped);
         {waiter_ended, Monitor, process, Pid, _Reason} ->
             records(waiter_ended(Monitor, Pid, Env), Held, Dropped);
-        {'$gen_call', From, dropped} ->
+        {'$gen_call', {_, _} = From, dropped} ->
             gen:reply(From, Dropped),
             records(Env, Held, Dropped);
-        {'$gen_call', From, {connection, Peer}} ->
+        {'$gen_call', {_, _} = From, {connection, Peer}} ->
             gen:reply(From, case Held of
                                 #{Peer := {up, Port, _Monitor, _Area}} -> {ok, Port};
                                 #{} -> {error, noconnection}
                             end),
             records(Env, Held, Dropped);
-        {'$gen_call', From, {area, Peer}} ->
+        {'$gen_call', {_, _} = From, {area, Peer}} ->
             gen:reply(From, case Held of
                                 #{Peer := {_Phase, _Port, _Monitor, {Area, Bytes, _Tag}}} -> {ok, Area, Bytes};
                                 #{} -> {error, none}
                             end),
             records(Env, Held, Dropped);
-        {'$gen_call', From, app} ->
+        {'$gen_call', {_, _} = From, app} ->
             records(app_asked(From, Env), Held, Dropped);
-        {'$gen_call', From, app_held} ->
+        {'$gen_call', {_, _} = From, app_held} ->
             gen:reply(From, case Env of
                                 #{app := {record, App}} -> {ok, App};
                                 #{app := {waiting, _}} -> {error, enoent}
                             end),
             records(Env, Held, Dropped);
-        {'$gen_call', From, _Request} ->
+        {'$gen_call', {_, _} = From, _Request} ->
             gen:reply(From, {error, badarg}),
             records(Env, Held, Dropped);
         {'EXIT', Kernel, Reason} ->

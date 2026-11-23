@@ -647,18 +647,6 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   `apps_chokepoints_test` (step 2);
   `erx_devices_pci_core_tests`, `erx_devices_pci_tests`, `erx_domain_mints_srv_tests`, `dom_core_test`
   (step 3).
-* [Low] system domain's connection agent, `erlang/apps/erx/src/erx_connections.erl` (`sides/3`):
-  `open_side/2` and `close_side/2` are taken from any process of the system domain's runtime, while
-  `grant/1` is taken only from the installer the domain service makes itself; a slip that calls
-  `close_side/2` ends a domain's system connection, and so the domain. The same check on all three of the
-  domain service's calls makes a close while a side is opening unreachable (the service waits in
-  `open_side/2`), so the `close_side` clause's `answer_unopened/1` call and the `side_closed_before_up`
-  case go with it; a side whose port ends while opening still needs `answer_unopened/1`.
-* [Low] connection agent, `erlang/apps/erx/src/erx_connections.erl` (`sides/3`, `records/3`): a
-  `'$gen_call'` whose `From` is no two-tuple reaches a clause that answers it through `gen:reply/2`,
-  which fails with `function_clause` and ends the agent, and so the runtime; in the system domain that
-  resets the machine. Only the domain's own trusted code can send it. Match `{_, _} = From` in the
-  call clauses and drop anything else as a message not acted on.
 * [Medium] code server, the rest of its inputs (`erlang/apps/erx/src/erx_code_agent.erl`,
   `erxos_env/2`; `erlang/apps/erx_code/src/erx_code_target.erl`): the code server reads
   its boot information's `supervised` flag and its runtime's limits, but no reader of the
