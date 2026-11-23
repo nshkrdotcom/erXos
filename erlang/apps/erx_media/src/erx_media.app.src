@@ -1,0 +1,13 @@
+%% Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
+%% SPDX-License-Identifier: BSD-2-Clause
+
+%% erXos's drives (docs/design-drives.md): every medium's volumes, served at
+%% /media. Its modules are the pure readers of a medium's bytes: the partition
+%% table, erx_media_table. It starts no process.
+{application, erx_media,
+ [{description, "erXos drives"},
+  {vsn, "1"},
+  {modules, [erx_media_table]},
+  {registered, []},
+  {applications, [kernel, stdlib, erx]},
+  {env, []}]}.
