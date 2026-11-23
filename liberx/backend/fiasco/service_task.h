@@ -28,8 +28,6 @@ typedef struct erx_pack_view erx_pack_view_t;
 #define ERX_FIASCO_TASK_ROOT		0u
 /* A stopped task's status when a fault ended it. */
 #define ERX_FIASCO_TASK_STATUS_FAULT	INT64_C(-1)
-/* A body's result that sends no reply: its caller's thread is gone. */
-#define ERX_FIASCO_NO_REPLY		INT32_MIN
 
 typedef enum erx_fiasco_task_thread {
 	ERX_FIASCO_TASK_THREAD_ABSENT = 0,

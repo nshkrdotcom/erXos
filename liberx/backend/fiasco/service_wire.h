@@ -29,7 +29,7 @@
 #define ERX_FIASCO_WIRE_WORDS_MAX	7u
 
 typedef enum erx_fiasco_wire_kind {
-	ERX_FIASCO_WIRE_DROP = 1,	/* no live task: no reply */
+	ERX_FIASCO_WIRE_DROP = 1,	/* no live task: its answer reaches no running thread */
 	ERX_FIASCO_WIRE_REFUSE,		/* reply with status */
 	ERX_FIASCO_WIRE_REQUEST,
 	ERX_FIASCO_WIRE_FAULT_PAGE,

@@ -131,6 +131,8 @@ module Erx
         liberx/backend/fiasco/service_stubs.c
         liberx/backend/fiasco/service_wire.c
         liberx/backend/fiasco/service_wire.h
+        liberx/backend/fiasco/reply_slots.c
+        liberx/backend/fiasco/reply_slots.h
         liberx/backend/fiasco/slice.c
         liberx/backend/fiasco/slice.h
         liberx/backend/fiasco/task.ld

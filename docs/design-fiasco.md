@@ -2097,7 +2097,7 @@ the stops (a space's release finishes its own tree first, and withdraws the reco
    deletes the space with every space below it, freeing their labels, and closes the root's handle. A space that
    held the last handle of the budget it is charged to goes with that budget once its stop is over, and as every
    deletion does, the deletion withdraws its exit record: its creator sees no record, and a join answers
-   `ERX_ESTALE`. A thread that stopped its own task gets no reply.
+   `ERX_ESTALE`. A thread that stopped its own task is answered `ERX_OK`, an answer it never sees, since the stop deleted it.
 
 **A space's release finishes its teardown.** The end of a space record, by its last handle's close, its creator's
 destroy or end, or its budget's destroy, stops the space if it runs and then runs the teardown of the space and of
@@ -2360,9 +2360,22 @@ through the object's window addresses. The caller's task can write its public UT
 copies what a request takes from it, the length first and then at most that many bytes, into the service's own buffer once, and
 every check and the body read only that copy; nothing is read from the public UTCB a second time for the same request.
 
-**The loop.** `l4_ipc_wait`; decode; run the body; run one piece of a pending teardown; end what the body and the piece marked; `l4_ipc_reply_and_wait` with `L4_IPC_SEND_TIMEOUT_0`, or with `L4_IPC_BOTH_TIMEOUT_0` while a teardown is pending. A body never calls a stub, and never hashes an image entry: the root's caller checks one in its own thread first ([The call table](#the-call-table), `erx_image_map`), because a hash a whole image long would hold every other call of every task and of the root behind it. For the same reason a stopped task's teardown is no body but pieces ([Task exit](#task-exit)): the stopping tasks are the service's pending work, taken in the order of their stops, and while any is pending every receive has a zero timeout, and one that finds no message yields the CPU to the ready threads of the service's priority before the next piece. So a call waits behind at most one piece, the longest of which is the task object's deletion, unless it comes behind a space's release or a budget's destroy, which finish the teardown of the spaces they delete in their own body. A body that stays long holds every call all the same, and a root thread that waits on it holds what it runs: on the root's normal scheduler, the watchdog pet ([The watchdog](#the-watchdog)). So the NIFs a runtime calls all through its life whose call is a service round trip, `erx_log`'s three calls, `erx_object_info`'s report and `erx_clock_nif`'s setter, are dirty I/O NIFs in every domain's runtime, and the domain library's entries are dirty CPU NIFs.
+**The loop.** `l4_ipc_wait_ext` into one of the service's reply slots; decode; run the body; run one piece of a pending teardown; end what the body and the piece marked; empty the reply slot of every fault whose task has stopped; `l4_ipc_reply_and_wait_ext` from the slot the message came in and into the same slot, with `L4_IPC_SEND_TIMEOUT_0`, or with `L4_IPC_BOTH_TIMEOUT_0` while a teardown is pending. A body never calls a stub, and never hashes an image entry: the root's caller checks one in its own thread first ([The call table](#the-call-table), `erx_image_map`), because a hash a whole image long would hold every other call of every task and of the root behind it. For the same reason a stopped task's teardown is no body but pieces ([Task exit](#task-exit)): the stopping tasks are the service's pending work, taken in the order of their stops, and while any is pending every receive has a zero timeout, and one that finds no message yields the CPU to the ready threads of the service's priority before the next piece. So a call waits behind at most one piece, the longest of which is the task object's deletion, unless it comes behind a space's release or a budget's destroy, which finish the teardown of the spaces they delete in their own body. A body that stays long holds every call all the same, and a root thread that waits on it holds what it runs: on the root's normal scheduler, the watchdog pet ([The watchdog](#the-watchdog)). So the NIFs a runtime calls all through its life whose call is a service round trip, `erx_log`'s three calls, `erx_object_info`'s report and `erx_clock_nif`'s setter, are dirty I/O NIFs in every domain's runtime, and the domain library's entries are dirty CPU NIFs.
 
-**Refusals.** A label naming no live task is dropped with a counted diagnostic and no reply. An unknown call number, a word count
+**Reply slots.** The service receives into Fiasco's explicit reply slots (`EXPLICIT_REPLY_CAPS`, a reply space charged to the
+root's quota), so that no receive fills a slot that still holds a caller: Fiasco answers such a receive by emptying the slot and
+writing `Application bug: reply capability overwritten!` (`receiver.cpp`, `set_reply_cap`) straight to the UART from a newline,
+which splits whatever line it lands in. Every message but a fault is answered from the slot it came in, and the next receive
+fills that slot again. A fault's slot is parked with its task and the receive moves to a free slot (`reply_slots.c`). Once the
+task is no longer live, its stop has deleted the faulting thread, and the service answers the parked slot with an empty message,
+which resumes nothing and frees the slot. The table has 64 slots, one for each faulting thread whose space's server has not
+stopped it yet; with all but the receive slot parked, a further fault is not parked, and the next receive takes its slot over
+with Fiasco's warning while its thread stays blocked until its stop. The table is the root's alone and no domain's
+limit bounds it, unlike the pause's held exceptions ([Threads, bands and stops](#threads-bands-and-stops)), which take
+slots of the same reply space within the domain's share; a fault names no thread, so its slot cannot be the thread's.
+
+**Refusals.** A label naming no live task is dropped with a counted diagnostic and answered `ERX_EDEAD`, an answer no running
+thread sees: a task that is no longer live has had its threads deleted. An unknown call number, a word count
 that differs from the ABI's, a thread index past the table or a payload length past `utcb_bytes_max` is `ERX_EINVAL`; a call without a
 row is `ERX_ENOTSUP`. The decoder has a fuzz target. Addresses cross as values, and the service never loads through them.
 
@@ -2545,7 +2558,7 @@ program behind those two paths.
 
 ### Faults, and the fault of the root task
 
-A fault is one more message to the service, which never answers it, because every committed page is already mapped. It names the task,
+A fault is one more message to the service, which never answers it while its task lives, because every committed page is already mapped; its reply slot waits for the task's stop ([Reply slots](#the-root-service)). It names the task,
 by the gate, and not the thread, so a record's thread field is `unknown`, and it carries the address and instruction pointer.
 A page fault is recorded as kind `memory`, with the low three bits of Fiasco's fault word in `cause`, where bit 1 says the access was a
 write. Every exception is recorded as kind `undefined`, with the architecture's syndrome in `cause`: the record is for a reader, and

@@ -908,7 +908,9 @@ erx_fiasco_task_space_release(uint32_t record)
 /*
  * A task stops itself or a space it created; the root's own stop is the machine's end.
  * A stopped space stays stopped with its first status. The kernel's own statuses are
- * refused, so a record that carries one was written by the backend.
+ * refused, so a record that carries one was written by the backend. A task that stops
+ * itself is answered too: its thread is deleted, so the answer only empties the
+ * service's reply slot.
  */
 int
 erx_fiasco_task_stop_body(uint32_t caller, uint64_t space, int64_t status)
@@ -924,7 +926,7 @@ erx_fiasco_task_stop_body(uint32_t caller, uint64_t space, int64_t status)
 		erx_fiasco_end(ERX_FIASCO_END_STOP, NULL);
 	if (erx_fiasco_task(task)->state == ERX_FIASCO_TASK_LIVE)
 		task_stop_tree(task, caller, status);
-	return (task == caller ? ERX_FIASCO_NO_REPLY : ERX_OK);
+	return (ERX_OK);
 }
 
 int
