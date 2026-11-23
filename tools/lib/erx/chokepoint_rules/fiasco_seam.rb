@@ -106,6 +106,8 @@ module Erx
         liberx/backend/fiasco/libc_task.c
         liberx/backend/fiasco/program_task.c
         liberx/backend/fiasco/domain_entry.c
+        liberx/backend/fiasco/output_line.c
+        liberx/backend/fiasco/output_line.h
         liberx/backend/fiasco/release_task.c
         liberx/backend/fiasco/rng200.c
         liberx/backend/fiasco/rng200.h
@@ -266,26 +268,20 @@ module Erx
         Chokepoints::Forbidden.new(
           name: 'fiasco-console-sink',
           rule: "only liberx's fiasco console writes to the kernel's log object, and only the root task's report, " \
-                "the root's memory effects' fixed refusals, the entropy banner line, the root's device-tree lines, the end path's crash frame, the service's and the reaper's fixed refusals, " \
-                "the memory, thread, crash, watchdog and interrupt transcripts, the group's report, the debug log and the standard output of the root and of " \
-                "a task, through the service, call it",
+                "the entropy banner line, the root's device-tree lines, the end path's crash frame and refusals, a task's reaper's refusal, " \
+                "the memory, thread, crash, watchdog and interrupt transcripts, the debug log and the standard output of " \
+                "a test task, through the service, call it; the root's own standard output and the group's report are debug log records",
           design: "#{FIASCO}#the-console",
           scope: ERXOS_C,
           pattern: /\b(?:l4_vcon_write(?:_u)?|erx_fiasco_console_write)\b/,
           sites: [Chokepoints::Site.new(glob: 'liberx/backend/fiasco/console.[ch]'),
                   Chokepoints::Site.new(glob: 'liberx/backend/fiasco/root.c', permits: /\Aerx_fiasco_console_write\z/),
-                  Chokepoints::Site.new(glob: 'liberx/backend/fiasco/libc_root_start.c', permits: /\Aerx_fiasco_console_write\z/),
-                  Chokepoints::Site.new(glob: 'liberx/backend/fiasco/libc_root_write.c', permits: /\Aerx_fiasco_console_write\z/),
-                  Chokepoints::Site.new(glob: 'liberx/backend/fiasco/libc_root.c', permits: /\Aerx_fiasco_console_write\z/),
                   Chokepoints::Site.new(glob: 'liberx/backend/fiasco/runtime_entry.c', permits: /\Aerx_fiasco_console_write\z/),
                   Chokepoints::Site.new(glob: 'liberx/backend/fiasco/root_no_program.c', permits: /\Aerx_fiasco_console_write\z/),
-                  Chokepoints::Site.new(glob: 'liberx/backend/fiasco/vm.c', permits: /\Aerx_fiasco_console_write\z/),
                   Chokepoints::Site.new(glob: 'liberx/backend/fiasco/end.c', permits: /\Aerx_fiasco_console_write\z/),
+                  Chokepoints::Site.new(glob: 'liberx/backend/fiasco/task_start.c', permits: /\Aerx_fiasco_console_write\z/),
                   Chokepoints::Site.new(glob: 'liberx/backend/fiasco/entropy.c', permits: /\Aerx_fiasco_console_write\z/),
                   Chokepoints::Site.new(glob: 'liberx/backend/fiasco/service.c', permits: /\Aerx_fiasco_console_write\z/),
-                  Chokepoints::Site.new(glob: 'liberx/backend/fiasco/service_task.c', permits: /\Aerx_fiasco_console_write\z/),
-                  Chokepoints::Site.new(glob: 'liberx/backend/fiasco/thread.c', permits: /\Aerx_fiasco_console_write\z/),
-                  Chokepoints::Site.new(glob: 'liberx/backend/fiasco/park_report.c', permits: /\Aerx_fiasco_console_write\z/),
                   Chokepoints::Site.new(glob: 'test/guest/native_memory/guest.c', permits: /\Aerx_fiasco_console_write\z/),
                   Chokepoints::Site.new(glob: 'test/guest/native_threads/guest.c', permits: /\Aerx_fiasco_console_write\z/),
                   Chokepoints::Site.new(glob: 'test/guest/native_crash/guest.c', permits: /\Aerx_fiasco_console_write\z/),
@@ -298,7 +294,9 @@ module Erx
                   Chokepoints::Site.new(glob: 'test/guest/native_space/guest.c', permits: /\Aerx_fiasco_console_write\z/),
                   Chokepoints::Site.new(glob: 'test/guest/native_domain/guest.c', permits: /\Aerx_fiasco_console_write\z/)],
           seed: { 'liberx/backend/fiasco/seeded.c' => "void f(void) { l4_vcon_write(0, \"x\", 1); }\n",
-                  'liberx/backend/fiasco/root.c' => "void f(void) { l4_vcon_write(0, \"x\", 1); }\n" }
+                  'liberx/backend/fiasco/root.c' => "void f(void) { l4_vcon_write(0, \"x\", 1); }\n",
+                  'liberx/backend/fiasco/libc_root_write.c' => "void f(void) { erx_fiasco_console_write(\"x\", 1); }\n",
+                  'liberx/backend/fiasco/park_report.c' => "void f(void) { erx_fiasco_console_write(\"x\", 1); }\n" }
         ),
         # The machine's end is static in end.c, behind erx_fiasco_end and its closed set of
         # causes; a second caller of the platform control, in any of its forms, would end the

@@ -117,10 +117,13 @@ module Erx
     DEVICE_TREE_FLAGS = ['-I', LIBFDT, '-DFDT_ASSUME_MASK=0'].freeze
     # The system's root task, less what its link takes from musl and ERTS: musl supplies
     # the memcpy and the rest of what root_mem.c gives a freestanding root.
+    # A runtime's C output as debug log records (output_line.h), which a root linked with
+    # musl and a domain's runtime both link.
+    OUTPUT_LINE = ["#{BACKEND}/output_line.c", 'liberx/backend/core/line_gather.c'].freeze
     SYSTEM = [*(RUNTIME - ["#{BACKEND}/root_mem.c"]), *VM, *SERVICE, *LAUNCH, "#{BACKEND}/root.c",
               'liberx/backend/core/boot_info.c', 'liberx/backend/core/boot_manifest.c', 'liberx/backend/core/refused.c',
               'liberx/backend/core/arch/aarch64/cpu_features.c',
-              "#{BACKEND}/api_names.c", "#{BACKEND}/libc_start.c", "#{BACKEND}/libc_root_start.c", "#{BACKEND}/libc_root_write.c", "#{BACKEND}/runtime_entry.c",
+              "#{BACKEND}/api_names.c", "#{BACKEND}/libc_start.c", "#{BACKEND}/libc_root_start.c", "#{BACKEND}/libc_root_write.c", *OUTPUT_LINE, "#{BACKEND}/runtime_entry.c",
               "#{BACKEND}/park_report.c", "#{BACKEND}/runtime_main.c", "#{BACKEND}/rng200.c", "kernel/core/rng200.c", 'liberx/release.c', 'liberx/release_fs.c',
               *DOMAIN_LIBRARY, *CONNECTION, *PIPE, *DEVICE_TREE].freeze
     # A domain's runtime image: the interpreter ERTS as a task's program, at task.ld's
@@ -131,12 +134,13 @@ module Erx
     # task_refused.c answers the calls the service does not answer a task, and dom_lib_none.c
     # the domain library's entries, since only the root builds a library. One
     # image serves every domain (docs/design-runtime.md, "The build").
-    # What a domain's runtime writes reaches the console as debug log records of its space, one
-    # per line (docs/design-runtime.md, "The console and standard I/O"): this is a record's head,
+    # What a domain's runtime writes, the system domain's root included, reaches the console as
+    # debug log records of its space, one per line (docs/design-runtime.md, "The console and
+    # standard I/O"): this is a record's head,
     # as erx_log_render writes it, for a pattern to put before the line it expects. A Regexp, so
     # it keeps its own flags inside an extended pattern, whose # would otherwise open a comment.
     DOMAIN_RECORD = /\#\d+ \d+\.\d+ debug space \d+(?: dropped \d+)?: /n
-    DOMAIN_RUNTIME = [*(TASK - ["#{BACKEND}/root_mem.c"]), "#{BACKEND}/libc_start.c", "#{BACKEND}/domain_entry.c", 'liberx/backend/core/line_gather.c',
+    DOMAIN_RUNTIME = [*(TASK - ["#{BACKEND}/root_mem.c"]), "#{BACKEND}/libc_start.c", "#{BACKEND}/domain_entry.c", *OUTPUT_LINE,
                       "#{BACKEND}/runtime_main.c", 'liberx/backend/core/boot_info.c', 'liberx/backend/core/boot_manifest.c',
                       'liberx/backend/core/refused.c', 'liberx/backend/core/object_info.c', 'kernel/core/log.c', "#{BACKEND}/api_names.c",
                       "#{BACKEND}/task_refused.c", 'liberx/backend/core/dom_lib_none.c', "#{BACKEND}/release_task.c", 'liberx/release_fs.c', 'liberx/system/dom_dump.c',

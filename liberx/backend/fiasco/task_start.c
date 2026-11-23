@@ -12,6 +12,7 @@
  * answers erx_image_map's check here, where the root's in slice.c is not.
  */
 
+#include <stddef.h>
 #include <stdint.h>
 
 #include <l4/sys/consts.h>
@@ -93,13 +94,24 @@ erx_fiasco_task_main(uint64_t arg0, uint64_t arg1, uint64_t arg2, uint64_t arg3,
 /*
  * A task holds neither the platform control nor the kernel's log, so it cannot end the
  * machine: the end path (end.c) is the root's, and a task's one caller of it, the
- * reaper's refusal (thread.c), sleeps here instead, leaving the task to run on without
- * its reaper.
+ * reaper's refusal (thread.c), writes its line and sleeps here instead, leaving the task
+ * to run on without its reaper.
  */
 _Noreturn void
 erx_fiasco_end(erx_fiasco_end_cause_t cause, const erx_crash_fault_t *fault)
 {
 	(void)cause;
 	(void)fault;
+	erx_fiasco_sleep_forever();
+}
+
+_Noreturn void
+erx_fiasco_end_refused(const char *line)
+{
+	size_t length = 0;
+
+	while (line[length] != '\0')
+		length++;
+	erx_fiasco_console_write(line, length);
 	erx_fiasco_sleep_forever();
 }

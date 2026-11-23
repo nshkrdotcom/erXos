@@ -326,21 +326,27 @@ class LibcTestTest < Minitest::Test
   # OTP links a tool with the archives ahead of its objects, so what an early libc reference
   # pulls in from the archive comes before the tool's own main. Every stdio call reaches the
   # root's write: were its member to reach the start path, that would bring runtime_main.c's
-  # main and collide with the tool's, as yielding_c_fun's link did. So it needs the console alone.
-  def test_the_root_write_member_needs_only_the_console
+  # main and collide with the tool's, as yielding_c_fun's link did. So it needs the output line
+  # alone, and the output line needs only the thread's record, the debug log's stub and the gather.
+  def test_the_root_write_member_needs_only_the_output_line
     compiler = ENV.fetch('ERX_CLANG', '')
     skip 'set ERX_CLANG to the installed LLVM clang' if compiler.empty?
 
     root = File.expand_path('../..', __dir__)
-    source = Erx::NativeRoot::SYSTEM.find do |path|
+    write = Erx::NativeRoot::SYSTEM.find do |path|
       path.end_with?('.c') && File.read(File.join(root, path)).match?(/^erx_fiasco_libc_write\(/)
     end
+    assert_equal %w[erx_fiasco_output_write], undefined_symbols(compiler, root, write), "what #{write} makes the link pull in"
+    assert_equal %w[erx_debug_log erx_fiasco_thread_self erx_fiasco_utcb_store_bytes erx_line_gather_write],
+                 undefined_symbols(compiler, root, Erx::NativeRoot::OUTPUT_LINE.first).sort, 'what the output line makes the link pull in'
+  end
+
+  def undefined_symbols(compiler, root, source)
     Dir.mktmpdir('erx-root-write-') do |directory|
-      object = File.join(directory, 'write.o')
+      object = File.join(directory, 'member.o')
       assert system(compiler, *Erx::NativeRoot::FLAGS, '-c', source, '-o', object, chdir: root), "#{source} compiles"
       nm = File.join(File.dirname(compiler), 'llvm-nm')
-      undefined = IO.popen([nm, '--undefined-only', '--format=just-symbols', object], &:read).split
-      assert_equal %w[erx_fiasco_console_write], undefined, "what #{source} makes the link pull in"
+      IO.popen([nm, '--undefined-only', '--format=just-symbols', object], &:read).split
     end
   end
 end

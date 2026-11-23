@@ -304,14 +304,12 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   `test/host/erx_program_grants_test.rb` copies the 255 once more, against the rule that the ABI has
   one source. `abi/` has no home for a driver's port-control interface;
   give it one in the generator and generate both sides.
-* [Low] console, `liberx/backend/fiasco/console.c` (`erx_fiasco_console_write`): once the console
-  driver holds the UART, four writers still reach it through `l4_vcon_write` beside the driver, so
-  their bytes can fall between the driver's at any byte: the system domain's own ERTS C output
-  (`libc_root_write.c`, a byte per call for `erts_fprintf`), the park report (`park_report.c`), the
-  root's fixed lines (`root.c`, `thread.c`, `vm.c`, `service*.c`) and a program's output through
-  `task_write`. A domain's runtime already logs whole lines (`domain_entry.c`). Have each reach the
-  console through `erx_console` too: the root's lines and the park report as debug log records, and
-  program output by a raw form the ring does not have yet. The service also still answers
+* [Medium] console, `liberx/backend/fiasco/console.c` (`erx_fiasco_console_write`): once the console
+  driver holds the UART, a test task's standard output through `task_write` still reaches it beside
+  the driver, so its bytes can fall between the driver's at any byte; every runtime's C output and
+  the park report are debug log records (`output_line.c`), and the end path's lines are the
+  published FD26 row. Have test output reach the console through `erx_console` by a raw form the
+  ring does not have yet. The service also still answers
   `task_write` from a domain's task, which its runtime does not call: refuse it there, so a
   domain has no raw path to the console. A record `erx_console` writes still starts wherever the
   console's line stands, after a prompt with no newline included (`1> #0 ... debug space 0: erx_blk:`).

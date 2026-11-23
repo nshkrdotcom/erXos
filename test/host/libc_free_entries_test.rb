@@ -17,7 +17,7 @@ require_relative '../../tools/lib/erx/native_musl'
 #   headers, so only this test or that suite's build sees a C library header in it.
 class LibcFreeEntriesTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
-  ENTRIES = %w[libc_root_write.c libc_task.c domain_entry.c].map { |name| "#{Erx::NativeRoot::BACKEND}/#{name}" }.freeze
+  ENTRIES = %w[libc_root_write.c output_line.c libc_task.c domain_entry.c].map { |name| "#{Erx::NativeRoot::BACKEND}/#{name}" }.freeze
 
   def test_libc_test_and_native_musl_compile_no_source_that_reads_musls_headers
     assert_empty((Erx::NativeRoot::LIBC_TASK + Erx::NativeMusl::SOURCES) & Erx::NativeRoot::LIBC_SOURCES)

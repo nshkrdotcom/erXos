@@ -313,19 +313,13 @@ class BootManifestTest < Minitest::Test
     assert_equal 1, status.exitstatus, output
     assert_match(/\Arefused /, output)
   end
-  # The handoff (docs/design-fiasco.md, "The console"): the root hands the log to the console
-  # when its driver maps the console's page, the one the device NIF maps for the registers. On
-  # QEMU virt the PL011 starts its page; the Raspberry Pi 4's mini UART is 0x40 into its own,
-  # so the page, not the registers' base, is what the driver's map names.
-  def test_the_console_page_is_the_page_the_driver_maps
-    output, status = read(admitted)
-    assert status.success?, output
-    assert_includes output, "console_page 150994944\n"
+  # The Raspberry Pi 4's console is the mini UART, whose registers start 0x40 into their page:
+  # the console record names the registers' base, not the page's.
+  def test_the_raspberry_pi_console_is_the_mini_uart_at_its_registers
     pi = Erx::Platform.load(root: ROOT, name: 'raspi4b').manifest_source(ROOT)
     output, status = read(admitted(pi, platform: 'raspi4b'), stdout_path: '/soc/serial@7e215040')
     assert status.success?, output
     assert_includes output, "console_uart mini_uart #{0xfe215040} 64 "
-    assert_includes output, "console_page #{0xfe215000}\n"
   end
 
   # A console UART of a compatible string no row of erx/device_kinds.h's erx_uart_kinds names

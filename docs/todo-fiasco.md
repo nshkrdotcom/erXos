@@ -471,6 +471,19 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
 
 ## Bugs by subsystem
 
+* [Medium] Fiasco backend, the console handoff (`liberx/backend/fiasco/service.c`, `service_log_take`): the log is
+  handed to the console at the log service's first take, so the early console stops before the console's driver
+  touches the UART only because `kernel_sup` starts `erx_syslog_sup` before `user_sup` starts `erx_console` and
+  `erx_syslog`'s first take reaches the service. A take refused before it does (`erx_log_nif`'s `take_nif` when
+  `enif_alloc` fails, which `erx_syslog:take/2` notes and goes on from) lets the driver start while the service still
+  polls records out to the UART, until a later take succeeds. Make the handoff part of the console's own start, a
+  synchronous take `erx_console` requires before its driver opens, so the order holds by construction.
+* [Low] Fiasco's own warnings (`fiasco/kernel/src/kern/warn.cpp`, `WARN`): `config/fiasco/kernel.defconfig` sets no warning
+  level, so both builds take Kconfig's default `WARN_WARNING`, and a warning goes to the kernel's console by polling whatever the
+  debug log's sink is. After the log service's first take such a line can fall inside the console driver's writes, as the
+  reply-capability warning below does at each domain fault; `thread-ipc.cpp:260` (a fault whose pager capability is invalid) is
+  another, whether it fires in erXos's configuration unverified. Either set `WARN_NONE` in the release kernel's configuration
+  or publish the interleaving with the release.
 * [Medium] Fiasco backend's service loop (`liberx/backend/fiasco/service.c`, `service_page_fault` and
   `service_exception`): a task's fault reaches the root as a call that the root never answers, since the task ends
   instead, so when the next call reaches the service thread Fiasco prints `KERNEL: Warning: ...: Application bug:

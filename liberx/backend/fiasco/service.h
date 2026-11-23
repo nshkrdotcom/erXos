@@ -193,8 +193,6 @@ void	erx_fiasco_task_write(const void *bytes, size_t length);
  * message words, as erx_debug_log and task_write read them, the last word zero-padded.
  */
 void	erx_fiasco_utcb_store_bytes(const void *bytes, size_t length);
-/* The page of the manifest's console UART, whose create hands the debug log to its reader. 0 is none. */
-void	erx_fiasco_task_console_set(uint64_t page);
 
 /* how is ERX_END_OFF or ERX_END_RESET; res is ignored. Returns only on a refusal. */
 int	erx_machine_end(uint64_t res, uint32_t how);
@@ -205,6 +203,15 @@ int	erx_machine_end(uint64_t res, uint32_t how);
  * cause decides how the machine ends (erx_fiasco_end_how). Takes no lock.
  */
 _Noreturn void	erx_fiasco_end(erx_fiasco_end_cause_t cause, const erx_crash_fault_t *fault);
+/*
+ * A refusal's end: line is a NUL-terminated fixed line of the root's own ending in a newline. On
+ * the service thread, which owns the log, it follows the records the log still holds, so the
+ * console shows them in the order written; on any other thread the ring is skipped, as at
+ * every end off the service thread (end.c).
+ */
+_Noreturn void	erx_fiasco_end_refused(const char *line);
+/* A refused boot's end, the same with the line "erx: root task refused the boot: REASON". */
+_Noreturn void	erx_fiasco_end_boot_refused(const char *reason);
 /* The same for a missed pet, on the watchdog's own thread. */
 _Noreturn void	erx_fiasco_end_watchdog(const erx_watchdog_end_t *end);
 /* Whether an end has been taken, after which the board's watchdog is written no more (erx_fiasco_pm_wdt_step). */

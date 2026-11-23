@@ -13,7 +13,6 @@
 
 #include "erx/abi.h"
 #include "liberx/backend/api.h"
-#include "liberx/backend/fiasco/console.h"
 #include "liberx/backend/fiasco/libc_start.h"
 #include "liberx/backend/fiasco/runtime_entry.h"
 #include "liberx/backend/fiasco/service.h"
@@ -56,8 +55,7 @@ main_stack_alloc_or_end(void)
 
 	if (erx_vm_reserve(ERX_CAP_SELF, 0, MAIN_STACK_GUARD_BYTES + MAIN_STACK_BYTES, 0, &base) != ERX_OK ||
 	    erx_vm_commit(ERX_CAP_SELF, base + MAIN_STACK_GUARD_BYTES, MAIN_STACK_BYTES) != ERX_OK) {
-		erx_fiasco_console_write(refused, sizeof(refused) - 1);
-		erx_fiasco_end(ERX_FIASCO_END_REFUSED, NULL);
+		erx_fiasco_end_refused(refused);
 	}
 	return (base + MAIN_STACK_GUARD_BYTES + MAIN_STACK_BYTES);
 }
@@ -68,6 +66,6 @@ root_enter(void)
 	static const char refused[] = "erx: root task: the generator refused AT_RANDOM's bytes\n";
 
 	if (erx_fiasco_libc_start(root_program, root_features) == ERX_FIASCO_TASK_STATUS_ENTROPY)
-		erx_fiasco_console_write(refused, sizeof(refused) - 1);
+		erx_fiasco_end_refused(refused);
 	erx_fiasco_end(ERX_FIASCO_END_REFUSED, NULL);
 }

@@ -905,9 +905,14 @@ log service:
   the line has none of its own;
 * the kernel's early console, the same UART, at the address its platform
   build fixes and checks against `stdout-path` at boot, which it writes by
-  polling at boot, before the driver starts, and at a panic, after the
-  system domain has stopped; so the kernel and the driver share the UART
-  in time and never write it together.
+  polling until the log service's first take hands the log to the
+  console, before the driver starts, and again at a panic or the
+  machine's end; so the kernel and the driver share the UART in time.
+  On Fiasco the machine's end stops no thread first
+  ([design-fiasco.md](design-fiasco.md#the-end-path)), so the end's last
+  lines can fall among a driver write still under way, and a
+  development build's test tasks write their bytes to it unchanged
+  ([design-fiasco.md](design-fiasco.md#the-console)).
 
 The host link shows its own session's output and the log lines the log
 service sends it, and nothing else.

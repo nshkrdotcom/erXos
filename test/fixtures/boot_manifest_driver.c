@@ -212,7 +212,6 @@ main(int argc, char **argv)
 		printf("exact %d short %zu\n", length != 0 && erx_boot_console_words(&manifest.console, words, length) == length,
 		    length == 0 ? 0 : erx_boot_console_words(&manifest.console, words, length - 1));
 	}
-	printf("console_page %llu\n", (unsigned long long)erx_boot_console_page(&manifest));
 	{
 		erx_abi_error_t error = { 0 };
 		erx_manifest_view_t view;

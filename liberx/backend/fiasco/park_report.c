@@ -6,10 +6,13 @@
 /*
  * The group's report on the native root, under erx.group_report=1 (docs/design-fiasco.md,
  * "The command line"): a thread of its own looks at the status page park.c keeps ten times a
- * second, and the console gets a line each time the count of parked executors or of executors
- * changes, as ERX_HOSTED_GROUP_REPORT gives the hosted backend. That is how the QEMU suite
- * reads an idle machine. The thread only reads the page and sleeps; the machine's end ends it.
- * The line is erx_group_report_line's, which the host tests check.
+ * second, and logs a line each time the count of parked executors or of executors changes,
+ * as ERX_HOSTED_GROUP_REPORT gives the hosted backend. That is how the QEMU suite reads an
+ * idle machine. The line is a debug log record of the root's space, gathered in the thread's
+ * own record as standard output is (output_line.h), so the console's one sink writes it whole
+ * once the log service has taken the log. The thread only
+ * reads the page, logs and sleeps; the machine's end ends it. The line is
+ * erx_group_report_line's, which the host tests check.
  */
 
 #include <stdatomic.h>
@@ -21,7 +24,7 @@
 #include "erx/abi.h"
 #include "liberx/backend/api.h"
 #include "liberx/backend/core/group_report.h"
-#include "liberx/backend/fiasco/console.h"
+#include "liberx/backend/fiasco/output_line.h"
 #include "liberx/backend/fiasco/park.h"
 #include "liberx/backend/fiasco/thread.h"
 
@@ -49,7 +52,7 @@ report_main(uint64_t unused)
 		const uint32_t executors = erx_group_status_executors(status);
 
 		if (parked != last_parked || executors != last_executors) {
-			erx_fiasco_console_write(line,
+			erx_fiasco_output_write(line,
 			    erx_group_report_line(line, sizeof(line), REPORT_HEAD, parked, executors));
 			last_parked = parked;
 			last_executors = executors;

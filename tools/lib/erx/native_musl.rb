@@ -15,13 +15,15 @@ require_relative 'runner'
 
 module Erx
   # A C program linked against erXos's musl, run as the root on native Fiasco:
-  # test/guest/native_musl reports each case through stdio, and exit() ends the machine.
+  # test/guest/native_musl reports each case through stdio, which reaches the console as
+  # debug log records of the root's space (RECORD), and exit() ends the machine.
   module NativeMusl
     MEMORY_MIB = 512
     BACKEND = NativeRoot::BACKEND
+    RECORD = NativeRoot::DOMAIN_RECORD
     # musl supplies memcpy, bcopy and the rest of what root_mem.c gives a freestanding root.
     SOURCES = [*(NativeRoot::RUNTIME - ["#{BACKEND}/root_mem.c"]), *NativeRoot::VM, *NativeRoot::SERVICE,
-               "#{BACKEND}/libc_start.c", "#{BACKEND}/libc_root_start.c", "#{BACKEND}/libc_root_write.c", "#{BACKEND}/libc_root.c",
+               "#{BACKEND}/libc_start.c", "#{BACKEND}/libc_root_start.c", "#{BACKEND}/libc_root_write.c", *NativeRoot::OUTPUT_LINE, "#{BACKEND}/libc_root.c",
                "#{BACKEND}/root_handoff.c", 'kernel/core/boot_handoff.c', 'liberx/backend/core/arch/aarch64/cpu_features.c'].freeze
     GUEST = 'test/guest/native_musl/guest.c'
     GUEST_FLAGS = %w[--target=aarch64-none-elf -std=c17 -Wall -Wextra -Werror -O2 -nostdinc -fno-stack-protector
@@ -39,15 +41,15 @@ module Erx
     # The program counts the CPUs it can pin to, and every pinned case rests on that count.
     def checkpoints(cpus:)
       [*Qemu.boot_transcript(memory_mib: MEMORY_MIB),
-       { name: 'musl-main', pattern: /\Aerx: musl: main runs, 1 argument/n, seconds: 30 }.freeze,
-       { name: 'musl-cpus', pattern: /\Aerx: musl: cpus #{cpus}\r?\n/n, seconds: 30 }.freeze,
+       { name: 'musl-main', pattern: /\A#{RECORD}erx: musl: main runs, 1 argument/n, seconds: 30 }.freeze,
+       { name: 'musl-cpus', pattern: /\A#{RECORD}erx: musl: cpus #{cpus}\r?\n/n, seconds: 30 }.freeze,
        *CASES.map { |name| case_point(name) },
-       { name: 'musl-atexit', pattern: /\Aerx: musl: atexit ran/n, seconds: 30 }.freeze,
-       { name: 'musl-done', pattern: /\Aerx: musl: done/n, seconds: 30 }.freeze].freeze
+       { name: 'musl-atexit', pattern: /\A#{RECORD}erx: musl: atexit ran/n, seconds: 30 }.freeze,
+       { name: 'musl-done', pattern: /\A#{RECORD}erx: musl: done/n, seconds: 30 }.freeze].freeze
     end
 
     def case_point(name)
-      { name: "musl-#{name}", pattern: /\Aerx: musl: #{name} /n, seconds: LONG_CASES.fetch(name, CASE_SECONDS),
+      { name: "musl-#{name}", pattern: /\A#{RECORD}erx: musl: #{name} /n, seconds: LONG_CASES.fetch(name, CASE_SECONDS),
         verify: ->(text) { raise Error, "the musl case reports #{text.inspect}" unless text.match?(/ ok\r?\n\z/n) } }.freeze
     end
 

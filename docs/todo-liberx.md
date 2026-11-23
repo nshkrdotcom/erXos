@@ -99,14 +99,6 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   interface section from `draw.txt`; it does not, and the table in "Draw messages" is hand-written.
 * [Low] abi, `abi/erx_abi.txt`: `group_executors` and `group_executors_max` hold the same value. Keep one, and
   update whichever of `design-kernel.md` and `design-scheduler.md` then disagrees.
-* [Medium] liberx, the console handoff (`erx_fiasco_task_mem_physical_body`, `erx_boot_console_page`):
-  the root hands the log to the console at the first physical object it creates at the console's
-  page, whoever the object is for. On the Raspberry Pi 4 that page also holds the auxiliary SPI
-  controllers, so a root-side driver or given record of an SPI there would hand the log over before
-  the console starts. Tie the handoff to the console itself (its first `erx_log_take`, or a role its
-  driver's open names) rather than to an address: [design-fiasco.md](design-fiasco.md#the-console) ties it to
-  the log service's first take, which [design-log.md](design-log.md#the-kernels-records) has `erx_syslog` make
-  before `user_sup` starts the console and its driver.
 * [Low] `liberx/backend/core/boot_manifest.h`, `erx_boot_device_t`: `given` and `framebuffer` are two bools for
   one closed kind (physical, given, framebuffer), so `given && framebuffer` is representable and a consumer that
   forgets the framebuffer case reads a NULL `role`. One enum switched on exhaustively.

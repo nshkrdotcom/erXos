@@ -74,7 +74,6 @@ static void root_append_hex(char *, size_t *, const uint8_t *, size_t);
 static const char *root_boot(erx_boot_handoff_view_t *, erx_manifest_view_t *, erx_boot_args_t *);
 static uint64_t root_image_bytes(void);
 static bool root_memory_fits(uint64_t, uint64_t, uint64_t);
-static _Noreturn void root_refuse(const char *);
 static void root_report(const erx_boot_handoff_view_t *, uint32_t);
 static void root_report_manifest(const erx_manifest_view_t *, uint64_t);
 static void root_report_watchdog(const erx_watchdog_config_t *, erx_watchdog_mode_t, erx_fiasco_board_wdt_t);
@@ -91,7 +90,7 @@ erx_fiasco_root_main(void)
 	reason = root_boot(&handoff, &manifest, &boot_args);
 	if (reason == NULL)
 		reason = erx_fiasco_program_start(&handoff, &manifest, &root_pack, &root_tree, &boot_args);
-	root_refuse(reason);
+	erx_fiasco_end_boot_refused(reason);
 }
 
 static const char *
@@ -307,17 +306,4 @@ root_report_mailbox(erx_fiasco_board_mbox_t mailbox)
 	    "none: its record is not confirmed or not mapped");
 	root_append(line, &used, "\n");
 	erx_fiasco_console_write(line, used);
-}
-
-static _Noreturn void
-root_refuse(const char *reason)
-{
-	char line[ERX_ROOT_LINE_MAX];
-	size_t used = 0;
-
-	root_append(line, &used, "erx: root task refused the boot: ");
-	root_append(line, &used, reason);
-	root_append(line, &used, "\n");
-	erx_fiasco_console_write(line, used);
-	erx_fiasco_end(ERX_FIASCO_END_REFUSED, NULL);
 }

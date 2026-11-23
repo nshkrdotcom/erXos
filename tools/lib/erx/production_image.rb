@@ -1231,8 +1231,10 @@ module Erx
          point('root-identity', /\Aerx: root task: build/n, identity),
          point('root-manifest', /\Aerx: root task: manifest/n, manifest),
          point('root-watchdog', /\Aerx: root task: watchdog/n, /\Aerx: root task: watchdog #{watchdog}\r?\n\z/n),
-         point('erts-start', /\Aerx: erts: erl_start runs/n, /\Aerx: erts: erl_start runs, #{arguments} arguments\r?\n\z/n, seconds: 60),
-         point('erts-executors', /\Aerx: erts: \d+ schedulers and/n, /\Aerx: erts: #{count} schedulers and #{count} dirty CPU schedulers hold executor slots\r*\n\z/n, seconds: 60),
+         # ERTS's own lines are debug log records of the root's space (NativeRoot::DOMAIN_RECORD).
+         point('erts-start', /\A#{NativeRoot::DOMAIN_RECORD}erx: erts: erl_start runs/n,
+               /\A#{NativeRoot::DOMAIN_RECORD}erx: erts: erl_start runs, #{arguments} arguments\r?\n\z/n, seconds: 60),
+         point('erts-executors', /\A#{NativeRoot::DOMAIN_RECORD}erx: erts: \d+ schedulers and/n, /\A#{NativeRoot::DOMAIN_RECORD}erx: erts: #{count} schedulers and #{count} dirty CPU schedulers hold executor slots\r*\n\z/n, seconds: 60),
          SLOGAN, RELEASE_SHELL].freeze
       end
 
@@ -1242,10 +1244,12 @@ module Erx
         (share & ((1 << cpus) - 1)).to_s(2).count('1')
       end
 
-      # A line of the group's report, which the root task writes beside the console driver.
-      REPORT_LINE = 'erx: root task: group: parked \d+ of \d+\r*\n'
+      # A line of the group's report, a debug log record of the root's space, which the
+      # console writes whole between its other writes.
+      REPORT_LINE = "#{NativeRoot::DOMAIN_RECORD.source}erx: root task: group: parked \\d+ of \\d+\\r*\\n"
       # TEXT as the console shows it with the report on: the report's lines may fall between
-      # any two of its bytes, even inside a word.
+      # any two of the console's writes, and a shell that echoes a byte at a time writes each
+      # byte apart, so even inside a word.
       def self.beside_report(text)
         Regexp.new(text.each_char.map { |char| Regexp.escape(char) }.join("(?:#{REPORT_LINE})*"), Regexp::NOENCODING)
       end
@@ -1255,8 +1259,8 @@ module Erx
       # the counts change, and a fast machine may park everything before the banner, so the
       # person at the console starts the Erlang shell and keeps one scheduler busy for half a
       # second first: the report must then show it wake and every executor park again. The
-      # report writes beside the console driver, so the slogan and the two shells' banners are
-      # looked for anywhere in a line, and its line may follow an unended prompt.
+      # report's lines fall between the console's writes, so the slogan and the two shells'
+      # banners are looked for anywhere in a line, and its line may follow an unended prompt.
       def self.idle_checkpoints(cpus:, root:, machine:)
         # Each scheduler and each dirty CPU scheduler holds an executor slot.
         executors = 2 * schedulers(machine.platform.manifest_source(root), cpus: cpus)
@@ -1264,7 +1268,7 @@ module Erx
          { name: 'release-slogan', pattern: beside_report('Erlang/OTP 29 '), seconds: 240 }.freeze,
          { name: 'release-shell', pattern: beside_report(COMMAND_SHELL_BANNER), seconds: 60, type: ERL_LINE }.freeze,
          { name: 'erlang-shell', pattern: beside_report('Eshell V'), seconds: 60, type: BUSY_EXPRESSION }.freeze,
-         # The report's bytes may fall inside the driver's, so the line is looked for at its end only.
+         # The report's record may follow an unended prompt, so the line is looked for at its end only.
          { name: 'idle-parked', pattern: /erx: root task: group: parked #{executors} of #{executors}\r*\n\z/n,
            seconds: EVAL_SECONDS }.freeze].freeze
       end

@@ -38,6 +38,14 @@ typedef struct erx_line_gather {
  */
 typedef void erx_line_gather_emit_t(void *context, const char *line, size_t length);
 
+/* Empties the gather, dropping any unfinished line, as a new thread starts with none. */
+static inline void
+erx_line_gather_clear(erx_line_gather_t *gather)
+{
+	gather->length = 0;
+	gather->returns = 0;
+}
+
 /* Adds length bytes, calling emit for each line they finish and each buffer they fill. */
 void	erx_line_gather_write(erx_line_gather_t *gather, const void *bytes, size_t length,
 	    erx_line_gather_emit_t *emit, void *context);

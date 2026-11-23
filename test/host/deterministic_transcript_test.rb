@@ -14,7 +14,7 @@ class DeterministicTranscriptTest < Minitest::Test
     "             __  __\r\n",
     "ARM generic timer: 62500000 Hz (62.5 MHz) interval=62500 cnt=13542012 periodic mode\r\n",
     "erx: root task: watchdog off\r\n",
-    "erx: erts: erl_start runs, 10 arguments\r\n",
+    "#3 0.500000 debug space 0: erx: erts: erl_start runs, 10 arguments\r\n",
     "rc: the command shell; erl starts the Erlang shell\r\n"
   ].join.b.freeze
 

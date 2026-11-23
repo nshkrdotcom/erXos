@@ -581,7 +581,11 @@ class ProductionImageTest < Minitest::Test
 
     release, erlang = shells.call(run.idle_checkpoints(cpus: 1, root: ROOT, machine: DEVELOPMENT))
     assert_equal ["erl\r", run::BUSY_EXPRESSION], [release, erlang].map { |point| point.fetch(:type) }
-    assert_match release.fetch(:pattern), "erx: root task: group: parked 2 of 2#{rc}"
+    # The group's report is a debug log record of the root's space, which the console writes
+    # whole between its other writes, so it can land inside the banner.
+    report = "#7 1.000000 debug space 0: erx: root task: group: parked 2 of 2\r\n"
+    assert_match release.fetch(:pattern), "#{report}#{rc}"
+    assert_match release.fetch(:pattern), "rc: the command #{report}shell; erl starts the Erlang shell\r\n"
     assert_match erlang.fetch(:pattern), "1> #{eshell}"
   end
 
@@ -1072,13 +1076,13 @@ class ProductionImageTest < Minitest::Test
     # the system's: the host link's physical one and the PL031's given one.
     always = Erx::ProductionImage::Run.arguments_always(ROOT) + Erx::ProductionImage::Run::DEVICE_RECORD_WORDS +
              Erx::ProductionImage::Run::GIVEN_RECORD_WORDS
-    checkpoint_verifier('erts-start').call("erx: erts: erl_start runs, #{always + system_args} arguments\n")
-    checkpoint_verifier('erts-start', extra_arguments: 1).call("erx: erts: erl_start runs, #{always + system_args + 1} arguments\n")
-    assert_raises(Erx::Error) { checkpoint_verifier('erts-start').call("erx: erts: erl_start runs, #{always} arguments\n") }
+    checkpoint_verifier('erts-start').call("#3 0.500000 debug space 0: erx: erts: erl_start runs, #{always + system_args} arguments\n")
+    checkpoint_verifier('erts-start', extra_arguments: 1).call("#3 0.500000 debug space 0: erx: erts: erl_start runs, #{always + system_args + 1} arguments\n")
+    assert_raises(Erx::Error) { checkpoint_verifier('erts-start').call("#3 0.500000 debug space 0: erx: erts: erl_start runs, #{always} arguments\n") }
     # Without erx.hostlink=1 the host link's UART gives no record, so the boot has one fewer.
     plain = always - Erx::ProductionImage::Run::DEVICE_RECORD_WORDS + system_args
-    checkpoint_verifier('erts-start', hostlink: Erx::QemuPlan::NO_HOSTLINK).call("erx: erts: erl_start runs, #{plain} arguments\n")
-    assert_raises(Erx::Error) { checkpoint_verifier('erts-start', hostlink: Erx::QemuPlan::NO_HOSTLINK).call("erx: erts: erl_start runs, #{always + system_args} arguments\n") }
+    checkpoint_verifier('erts-start', hostlink: Erx::QemuPlan::NO_HOSTLINK).call("#3 0.500000 debug space 0: erx: erts: erl_start runs, #{plain} arguments\n")
+    assert_raises(Erx::Error) { checkpoint_verifier('erts-start', hostlink: Erx::QemuPlan::NO_HOSTLINK).call("#3 0.500000 debug space 0: erx: erts: erl_start runs, #{always + system_args} arguments\n") }
   end
 
   # The root gives a record to each device of a held unit that is a row of erx/device_kinds.h,
@@ -1096,10 +1100,10 @@ class ProductionImageTest < Minitest::Test
     # The display's records come beside the host link's and the RTC's (the test above).
     words = Erx::ProductionImage::Run.arguments_always(ROOT) + Erx::ProductionImage::Run::DEVICE_RECORD_WORDS +
             ((given + 1) * Erx::ProductionImage::Run::GIVEN_RECORD_WORDS) + system_args
-    checkpoint_verifier('erts-start', manifest_source: source).call("erx: erts: erl_start runs, #{words} arguments\n")
+    checkpoint_verifier('erts-start', manifest_source: source).call("#3 0.500000 debug space 0: erx: erts: erl_start runs, #{words} arguments\n")
     assert_raises(Erx::Error) do
       checkpoint_verifier('erts-start', manifest_source: source)
-        .call("erx: erts: erl_start runs, #{words - Erx::ProductionImage::Run::GIVEN_RECORD_WORDS} arguments\n")
+        .call("#3 0.500000 debug space 0: erx: erts: erl_start runs, #{words - Erx::ProductionImage::Run::GIVEN_RECORD_WORDS} arguments\n")
     end
   end
 
@@ -1186,9 +1190,9 @@ class ProductionImageTest < Minitest::Test
   # A scheduler short of a CPU, or started as a worker, leaves the count wrong or the line unsaid.
   def test_the_executors_line_must_count_a_scheduler_per_cpu
     verify = checkpoint_verifier('erts-executors')
-    verify.call("erx: erts: 4 schedulers and 4 dirty CPU schedulers hold executor slots\n")
-    assert_raises(Erx::Error) { verify.call("erx: erts: 1 schedulers and 4 dirty CPU schedulers hold executor slots\n") }
-    assert_raises(Erx::Error) { verify.call("erx: erts: 4 schedulers and 1 dirty CPU schedulers hold executor slots\n") }
+    verify.call("#3 0.500000 debug space 0: erx: erts: 4 schedulers and 4 dirty CPU schedulers hold executor slots\n")
+    assert_raises(Erx::Error) { verify.call("#3 0.500000 debug space 0: erx: erts: 1 schedulers and 4 dirty CPU schedulers hold executor slots\n") }
+    assert_raises(Erx::Error) { verify.call("#3 0.500000 debug space 0: erx: erts: 4 schedulers and 1 dirty CPU schedulers hold executor slots\n") }
   end
 
   # The narrow manifest puts every share on two CPUs at most, so a machine of four runs two schedulers:
@@ -1201,8 +1205,8 @@ class ProductionImageTest < Minitest::Test
     far = Erx::Manifest::Frontend.read(Erx::Manifest::Edit.set(narrow, { ['share system', 'cpuset'] => 12 }))
     assert_raises(Erx::Error) { Erx::ProductionImage::Run.narrow_share(far.records.fetch('share').find { |share| share.name == 'system' }) }
     verify = checkpoint_verifier("erts-executors", manifest_source: narrow)
-    verify.call("erx: erts: 2 schedulers and 2 dirty CPU schedulers hold executor slots\n")
-    assert_raises(Erx::Error) { verify.call("erx: erts: 4 schedulers and 4 dirty CPU schedulers hold executor slots\n") }
+    verify.call("#3 0.500000 debug space 0: erx: erts: 2 schedulers and 2 dirty CPU schedulers hold executor slots\n")
+    assert_raises(Erx::Error) { verify.call("#3 0.500000 debug space 0: erx: erts: 4 schedulers and 4 dirty CPU schedulers hold executor slots\n") }
   end
 
   # A stopped pet ends the machine about the pet deadline later: at once or much later is a fault.

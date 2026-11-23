@@ -13,7 +13,6 @@
 #include <stddef.h>
 
 #include "liberx/backend/core/cpu_features.h"
-#include "liberx/backend/fiasco/console.h"
 #include "liberx/backend/fiasco/root_handoff.h"
 #include "liberx/backend/fiasco/runtime_entry.h"
 #include "liberx/backend/fiasco/service.h"
@@ -34,14 +33,8 @@ erx_fiasco_root_main(void)
 		reason = erx_fiasco_root_up(NULL, 0, 0, NULL);
 	}
 
-	if (reason != NULL) {
-		size_t length = 0;
-
-		while (reason[length] != '\0')
-			length++;
-		erx_fiasco_console_write(reason, length);
-		erx_fiasco_end(ERX_FIASCO_END_REFUSED, NULL);
-	}
+	if (reason != NULL)
+		erx_fiasco_end_boot_refused(reason);
 	erx_fiasco_libc_root_start(main, (erx_fiasco_cpu_features_t){ .hwcap = features.hwcap,
 	    .hwcap2 = features.hwcap2 });
 }

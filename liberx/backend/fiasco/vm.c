@@ -46,7 +46,6 @@
 #include "erx/abi.h"
 #include "liberx/backend/core/mem.h"
 #include "liberx/backend/fiasco/cache.h"
-#include "liberx/backend/fiasco/console.h"
 #include "liberx/backend/fiasco/object.h"
 #include "liberx/backend/fiasco/service.h"
 #include "liberx/backend/fiasco/thread.h"
@@ -805,10 +804,5 @@ fpage_rights(uint32_t rights)
 static _Noreturn void
 vm_refused(const char *line)
 {
-	size_t length = 0;
-
-	while (line[length] != '\0')
-		length++;
-	erx_fiasco_console_write(line, length);
-	erx_fiasco_end(ERX_FIASCO_END_REFUSED, NULL);
+	erx_fiasco_end_refused(line);
 }

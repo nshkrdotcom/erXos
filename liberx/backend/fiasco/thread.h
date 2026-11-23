@@ -12,6 +12,7 @@
 
 #include "erx/abi.h"
 #include "erx/cdefs.h"
+#include "liberx/backend/core/line_gather.h"
 #include "liberx/backend/core/park_table.h"
 #include "liberx/backend/fiasco/service_wire.h"
 #include "liberx/backend/fiasco/umtx_table.h"
@@ -65,6 +66,7 @@ typedef struct erx_fiasco_thread_record {
 	uint64_t		release_base;	/* a detached thread's range, for the reaper to release */
 	uint64_t		release_size;
 	struct erx_fiasco_thread_record *reap_next;	/* the reaper's list, under the thread lock */
+	erx_line_gather_t	line;	/* its standard output's unfinished line, which only it writes once started (output_line.h) */
 } erx_fiasco_thread_record_t;
 
 /* The calling thread's record, through its native UTCB's first user word. */

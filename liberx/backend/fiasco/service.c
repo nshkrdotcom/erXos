@@ -539,7 +539,14 @@ service_log_read(uint32_t task, const erx_fiasco_log_read_request_t *request, er
 	return (service_log_reply(&copied, reply));
 }
 
-/* The console's read: what neither the early console nor an earlier take had. */
+/*
+ * The console's read: what neither the early console nor an earlier take had. The first
+ * take is the handoff (docs/design-fiasco.md, "The console"), and each later take hands over
+ * again, which changes nothing: from the first on the early console
+ * writes no record, and records wait in the ring for the next take. The log service makes
+ * it as it starts, before the console's driver touches the UART, so the handoff names the
+ * console's reader, never an address another device's record could share.
+ */
 static int
 service_log_take(uint32_t task, const erx_fiasco_log_take_request_t *request, erx_fiasco_reply_t *reply)
 {
@@ -549,6 +556,7 @@ service_log_take(uint32_t task, const erx_fiasco_log_take_request_t *request, er
 		return (ERX_ENOTSUP);
 	if (!service_log_window_valid(request->window, request->size))
 		return (ERX_EINVAL);
+	erx_debug_log_hand_to_console();
 	copied = erx_debug_log_take((uint8_t *)(uintptr_t)request->window, (size_t)request->size);
 	return (service_log_reply(&copied, reply));
 }
@@ -879,8 +887,7 @@ service_thread_delete(uint32_t task, uint32_t index)
 		erx_fiasco_trace_set_mask(index, 0);
 	if (service_failed(l4_task_delete_obj(L4_BASE_TASK_CAP, erx_fiasco_task_thread_cap(task, index))) ||
 	    service_failed(l4_task_delete_obj(L4_BASE_TASK_CAP, erx_fiasco_task_semaphore_cap(task, index)))) {
-		erx_fiasco_console_write(line, sizeof(line) - 1);
-		erx_fiasco_end(ERX_FIASCO_END_REFUSED, NULL);
+		erx_fiasco_end_refused(line);
 	}
 	erx_fiasco_task_thread_pair_free(task, index);
 }

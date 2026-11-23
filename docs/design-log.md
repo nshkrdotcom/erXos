@@ -594,8 +594,10 @@ the cap answers `enospc` and gives the batch up.
 
 ### The emergency path
 
-What must reach the operator before the service starts and after it dies
-does not pass through it:
+What must reach the operator before the service's first take, at the
+machine's end, and from the system domain's shell after the service dies
+does not pass through it; a kernel record logged between the first take and
+the machine's end waits in the ring for the service:
 
 * **The kernel** writes its own records on the early console until the
   first take, and at a panic or the machine's end writes its report
@@ -608,8 +610,9 @@ does not pass through it:
   writes their bytes to its driver unchanged
   ([design-runtime.md](design-runtime.md#the-console-and-standard-io)),
   with no dependency on `erx_syslog`; with `erx_console` gone they take
-  the C path, `erx_output_write`, which on erXos's kernel makes them
-  kernel records.
+  the C path, `erx_output_write`, which makes them kernel records, on
+  Fiasco as on erXos's kernel, so after the first take they too wait
+  for the service.
 
 At the machine's end, lines taken but not yet on the console are not
 shown, since a take is not a write; they are in the store after a reboot

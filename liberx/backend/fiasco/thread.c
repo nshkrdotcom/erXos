@@ -157,6 +157,7 @@ erx_fiasco_thread_first_init(void)
 	first->index = 0;
 	first->semaphore = erx_fiasco_thread_semaphore_cap(0);
 	first->executor_slot = ERX_BACKEND_PARK_NO_SLOT;
+	erx_line_gather_clear(&first->line);
 	thread_first_utcb = l4_utcb();
 	atomic_store_explicit(&first->utcb.self, (uint64_t)(uintptr_t)&first->utcb, memory_order_relaxed);
 	l4_utcb_tcr()->user[0] = (l4_umword_t)(uintptr_t)first;
@@ -244,6 +245,7 @@ erx_thread_create(uint64_t budget, uint64_t space, uint64_t group, uint64_t thre
 	record->release_base = 0;
 	record->release_size = 0;
 	record->reap_next = NULL;
+	erx_line_gather_clear(&record->line);
 	atomic_store_explicit(&record->utcb.self, (uint64_t)(uintptr_t)&record->utcb, memory_order_relaxed);
 	atomic_store_explicit(&record->used, ERX_FIASCO_THREAD_CREATED, memory_order_release);
 	*thread = reply.first;
@@ -385,12 +387,7 @@ erx_thread_exit_release(uint64_t base, uint64_t size)
 static _Noreturn void
 reaper_refused(const char *line)
 {
-	size_t length = 0;
-
-	while (line[length] != '\0')
-		length++;
-	erx_fiasco_console_write(line, length);
-	erx_fiasco_end(ERX_FIASCO_END_REFUSED, NULL);
+	erx_fiasco_end_refused(line);
 }
 
 /*

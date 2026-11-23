@@ -13,7 +13,6 @@
  * slot by index, and every page is in the task's range table or one of its objects.
  */
 
-#include <stdatomic.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -28,7 +27,6 @@
 #include "erx/elf_plan.h"
 #include "erx/pack.h"
 #include "liberx/backend/fiasco/cache.h"
-#include "liberx/backend/fiasco/console.h"
 #include "liberx/backend/fiasco/root_mem.h"
 #include "liberx/backend/fiasco/service.h"
 #include "liberx/backend/core/device_check.h"
@@ -249,8 +247,7 @@ pair_free(erx_slot_pool_t *share, erx_slot_pair_t *pair)
 	static const char line[] = "erx: service: a free of a slot pair its share holds free\n";
 
 	if (!erx_slot_pool_free(share, pair)) {
-		erx_fiasco_console_write(line, sizeof(line) - 1);
-		erx_fiasco_end(ERX_FIASCO_END_REFUSED, NULL);
+		erx_fiasco_end_refused(line);
 	}
 }
 
@@ -637,8 +634,7 @@ task_delete(uint64_t cap)
 	static const char line[] = "erx: service: the kernel refused a task's deletion\n";
 
 	if (task_failed(l4_task_delete_obj(L4_BASE_TASK_CAP, cap))) {
-		erx_fiasco_console_write(line, sizeof(line) - 1);
-		erx_fiasco_end(ERX_FIASCO_END_REFUSED, NULL);
+		erx_fiasco_end_refused(line);
 	}
 }
 
@@ -1038,34 +1034,16 @@ task_fill_contiguous(uint32_t object, const void *request)
 }
 
 /*
- * Written by the root's entry on the root thread before its program runs, and read on the
- * service thread, so atomic. It publishes only itself.
- */
-static _Atomic uint64_t task_console_page;
-
-void
-erx_fiasco_task_console_set(uint64_t page)
-{
-	atomic_store_explicit(&task_console_page, page, memory_order_relaxed);
-}
-
-/*
  * Device memory, a physical object or a contiguous run, comes from the root only
  * (docs/design-fiasco.md, "The call table"): the root's own drivers make theirs, and the
  * domain library makes every other holder's and passes it, so a create from any other
  * task is ERX_ENOTSUP before its request is read. This body and the contiguous one below
  * are the only callers of task_fill_physical and task_fill_contiguous, and the service's
  * dispatch the only caller of the bodies, so the check in each covers every create.
- *
- * The handoff (docs/design-fiasco.md, "The console"): the console's driver maps the page that
- * holds its registers (erx_boot_console_page), and its first touch of a register
- * needs this reply, so it follows the last log record the service wrote to the UART, and a
- * failed map changes nothing.
  */
 int
 erx_fiasco_task_mem_physical_body(uint32_t caller, const erx_fiasco_mem_physical_request_t *request, uint64_t *mem)
 {
-	uint64_t console_page;
 	int status;
 
 	if (caller != ERX_FIASCO_TASK_ROOT)
@@ -1075,9 +1053,6 @@ erx_fiasco_task_mem_physical_body(uint32_t caller, const erx_fiasco_mem_physical
 	if (status != ERX_OK)
 		return (status);
 	status = erx_fiasco_object_create(caller, ERX_BACKEND_OBJECT_MEMORY, request->budget, task_fill_physical, request, mem);
-	console_page = atomic_load_explicit(&task_console_page, memory_order_relaxed);
-	if (status == ERX_OK && console_page != 0 && request->base == console_page)
-		erx_debug_log_hand_to_console();
 	return (status);
 }
 

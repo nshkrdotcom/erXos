@@ -31,6 +31,9 @@
 #include "liberx/backend/fiasco/log.h"
 #include "liberx/backend/fiasco/service.h"
 
+/* A refused boot's line, as long as the root's other lines (root.c). */
+#define END_LINE_MAX	640u
+
 static _Atomic uint32_t end_taken;
 static _Alignas(ERX_CRASH_BUFFER_ALIGN) uint8_t end_record[ERX_CRASH_SIZE];
 static _Alignas(ERX_CRASH_BUFFER_ALIGN) uint8_t end_scratch[ERX_CRASH_SCRATCH_BYTES];
@@ -88,14 +91,21 @@ erx_fiasco_end_watchdog(const erx_watchdog_end_t *end)
 	machine_end(ERX_FIASCO_END_PET);
 }
 
+/* Takes the end, and on the log's owning thread gives the UART back to the early console. */
+static void
+end_begin(void)
+{
+	end_take();
+	if (erx_fiasco_log_owned())
+		erx_debug_log_take_back();
+}
+
 _Noreturn void
 erx_fiasco_end(erx_fiasco_end_cause_t cause, const erx_crash_fault_t *fault)
 {
 	static const char message[] = "root task fault";
 
-	end_take();
-	if (erx_fiasco_log_owned())
-		erx_debug_log_take_back();
+	end_begin();
 	if (fault != NULL) {
 		const erx_crash_input_t input = { .form = ERX_CRASH_FORM_FULL, .cause = ERX_CRASH_CAUSE_FAULT,
 		    .boot_value = ERX_BOOT_VALUE_UNKNOWN, .boot_slot = ERX_BOOT_SLOT_NONE,
@@ -106,6 +116,48 @@ erx_fiasco_end(erx_fiasco_end_cause_t cause, const erx_crash_fault_t *fault)
 		erx_crash_frame_write(end_record, ERX_CRASH_END_FAULT);
 	}
 	machine_end(cause);
+}
+
+/* TEXT, a NUL-terminated fixed string of the root's own, to the console. */
+static void
+end_say(const char *text)
+{
+	size_t length = 0;
+
+	while (text[length] != '\0')
+		length++;
+	erx_fiasco_console_write(text, length);
+}
+
+_Noreturn void
+erx_fiasco_end_refused(const char *line)
+{
+	end_begin();
+	end_say(line);
+	machine_end(ERX_FIASCO_END_REFUSED);
+}
+
+/* TEXT after the USED bytes of LINE, cut at END_LINE_MAX. */
+static void
+end_append(char *line, size_t *used, const char *text)
+{
+	while (*text != '\0' && *used < END_LINE_MAX)
+		line[(*used)++] = *text++;
+}
+
+/* The line is whole before it is written, so nothing else on the console falls inside it. */
+_Noreturn void
+erx_fiasco_end_boot_refused(const char *reason)
+{
+	char line[END_LINE_MAX];
+	size_t used = 0;
+
+	end_begin();
+	end_append(line, &used, "erx: root task refused the boot: ");
+	end_append(line, &used, reason);
+	end_append(line, &used, "\n");
+	erx_fiasco_console_write(line, used);
+	machine_end(ERX_FIASCO_END_REFUSED);
 }
 
 /* Buffers of its own: the watchdog's end may run at the same time and takes the others. */
