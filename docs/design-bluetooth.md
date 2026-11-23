@@ -3382,7 +3382,9 @@ list ([todo-performance.md](todo-performance.md)):
    considered](#alternatives-considered)). The QEMU suite's echo stays a
    test-only configured domain, which its release, carried only by a
    test image, runs.
-7. **Open: how the board's echo app reaches the Pi 4.** The Bluetooth
+7. **Decided: the Pi 4's development card carries the echo as a second
+   package, enabled, with `max 2`, and its `apps` row offers `gatt nus`
+   alone.** The Bluetooth
    track's demo ([plan.md](plan.md#track-b-bluetooth)) and the board's
    checklist have a terminal app on the phone echo through an app on
    the Pi 4. Under decision 6 the echo is a package declaring `gatt
@@ -3395,9 +3397,9 @@ list ([todo-performance.md](todo-performance.md)):
    enabled, with `max 2`, which the display pays for with one more
    pixel area of 8 MiB; or a configured domain in the Pi 4's development
    manifest runs the echo with a `ble` row of its own naming `nus`, as
-   the QEMU suite does. Recommendation: the second package, since it is
-   the path an app takes on every other machine and exercises the
-   install check on the board; the published card keeps the kiosk alone.
+   the QEMU suite does. The second package is chosen, since it is the
+   path an app takes on every other machine and exercises the install
+   check on the board; the published card keeps the kiosk alone.
 
 ## Board probes
 
