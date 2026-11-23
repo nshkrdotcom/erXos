@@ -12,7 +12,7 @@ its small work itself.
 """.
 
 -export([i/0, i/1, inspect/2, source/1, trace/1, trace_stop/1, export/3, exports/1, owner/1,
-         call_from/3, cap/1, caps/0, granted/0, granted/1, app/0]).
+         limits/0, call_from/3, cap/1, caps/0, granted/0, granted/1, app/0]).
 -export_type([app_record/0]).
 
 %%% Source lines: erx:source/1.
@@ -145,6 +145,20 @@ that name claims, so a reply sent to a forged name goes to no third domain.
 -spec owner(pid() | reference() | port()) -> non_neg_integer().
 owner(Name) ->
     erx_dist:owner(Name).
+
+-doc """
+The limits the calling domain's runtime applies to every frame from another
+domain, as it installed them at its start: a payload of at most `max_frame`
+bytes, decoding to at most `max_message_heap` words, nested at most
+`funnel_depth` deep.
+""".
+-spec limits() -> #{max_frame := pos_integer(),
+                    max_message_heap := pos_integer(),
+                    funnel_depth := pos_integer()}.
+limits() ->
+    {MaxFrame, MaxMessageHeap, FunnelDepth} = erx_dist:limits(),
+    #{max_frame => MaxFrame, max_message_heap => MaxMessageHeap,
+      funnel_depth => FunnelDepth}.
 
 -doc """
 Whether a call that arrived in domain `D`'s envelope, `{erx_origin, D,

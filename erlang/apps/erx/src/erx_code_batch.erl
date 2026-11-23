@@ -25,14 +25,20 @@ how a later load tells that the module is already current.
 -export([load/1, file_name/1]).
 -export_type([module_bytes/0, result/0]).
 
+-include("generated/erx_abi.hrl").
+
 -doc "A module of a batch: its name, the SHA-256 of its bytes, and the bytes.".
 -type module_bytes() :: {Name :: binary(), Hash :: <<_:256>>, Bytes :: binary()}.
 
 -doc """
-`ok` once every module of the batch is current, or `{error, {not_loaded, Failed}}`
-with each refused module's name and the reason `code:atomic_load/1` gives.
+`ok` once every module of the batch is current, or
+`{error, {not_loaded, Failed}}` with each refused module's name and the reason
+`code:atomic_load/1` gives, a member of abi/services/code.txt's
+`code_load_reason`.
 """.
--type result() :: ok | {error, {not_loaded, [{binary(), atom()}]}}.
+-type result() :: ok
+                | {error, {not_loaded,
+                           [{binary(), erx_abi_enums:code_load_reason()}]}}.
 
 -doc "Makes every module of Batch current as one step, or none of them.".
 -spec load([module_bytes()]) -> result().
@@ -69,4 +75,13 @@ finish(Prepared, Purge) ->
     end.
 
 not_loaded(Failed) ->
-    {error, {not_loaded, [{atom_to_binary(Module), What} || {Module, What} <- Failed]}}.
+    {error, {not_loaded, [{atom_to_binary(Module), reason(What)}
+                          || {Module, What} <- Failed]}}.
+
+%% The reasons code:atomic_load/1 gives are a closed set, code_load_reason, and
+%% the code protocol's answer floors count an answer's reasons as its longest
+%% member. A reason outside it would be an OTP change this module has not
+%% learned, so it fails here, with the reason in the error, rather than reach an
+%% answer the floors do not cover.
+reason(What) when ?ERX_IS_CODE_LOAD_REASON(What) ->
+    What.

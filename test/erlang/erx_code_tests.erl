@@ -12,6 +12,7 @@
 -module(erx_code_tests).
 
 -include_lib("eunit/include/eunit.hrl").
+-include("generated/erx_abi.hrl").
 
 -define(A, erx_code_tests_target_a).
 -define(B, erx_code_tests_target_b).
@@ -26,7 +27,8 @@ service_test_() ->
       fun a_module_with_an_on_load_function_never_loads/0,
       fun a_stored_blob_whose_bytes_changed_never_loads/0,
       fun reloads_purge_old_code_and_a_rollback_loads_an_older_hash/0,
-      fun refused_requests_change_nothing/0]}.
+      fun refused_requests_change_nothing/0,
+      fun the_longest_refusal_fits_the_facet_frame_floor/0]}.
 
 start() ->
     _ = [unload(Module) || Module <- [?A, ?B]],
@@ -143,6 +145,26 @@ a_module_with_an_on_load_function_never_loads() ->
     {ok, stored} = send(OnLoad),
     ?assertEqual({error, {not_loaded, [{name(?A), on_load_not_allowed}]}}, erx_code:load([{name(?A), hash(OnLoad)}])),
     ?assertEqual(false, code:is_loaded(?A)).
+
+%% The longest answer erx_code gives a code facet, a load of code_modules_max modules
+%% with 255-byte names that each fail, fits a frame of code_facet_max_frame_min, the
+%% floor the manifest check holds a code facet's grantee to (abi/services/code.txt,
+%% tools/lib/erx/abi_code_bounds.rb), in gen_server's reply envelope with a reference
+%% of the longest node name; a frame's payload is the term with its version byte.
+the_longest_refusal_fits_the_facet_frame_floor() ->
+    Bytes = beam(?A, 1),
+    {ok, stored} = send(Bytes),
+    Names = [iolist_to_binary([integer_to_list(I),
+                               lists:duplicate(255 - length(integer_to_list(I)), $m)])
+             || I <- lists:seq(1, ?ERX_CODE_MODULES_MAX)],
+    Reply = erx_code:load([{Name, hash(Bytes)} || Name <- Names]),
+    ?assertMatch({error, {not_loaded, Failed}}
+                   when length(Failed) =:= ?ERX_CODE_MODULES_MAX, Reply),
+    Node = binary:copy(<<$n>>, 255),
+    Ref = binary_to_term(<<131, 90, 5:16, 119, 255, Node/binary,
+                           1:32, 1:32, 2:32, 3:32, 4:32, 5:32>>),
+    ?assert(erlang:external_size({[alias | Ref], Reply})
+            =< ?ERX_CODE_FACET_MAX_FRAME_MIN).
 
 a_module_whose_name_differs_from_its_bytes_never_loads() ->
     Bytes = beam(?A, 1),

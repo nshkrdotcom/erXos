@@ -2165,8 +2165,8 @@ module Erx
       # system domain holds one (property 8), and a facet of the input interface reads every
       # key pressed on its devices, so only a display domain holds one (check_input_grants);
       # the network's facets are property 15's
-      # (check_network_grants), and the files and inspect receivers' floors property 16's
-      # (check_files_grants, check_inspect_grants). Each facet's parameters are resolved
+      # (check_network_grants), and the files, inspect and code receivers' floors property
+      # 16's (check_files_grants, check_inspect_grants, check_code_grants). Each facet's parameters are resolved
       # against its service's declarations (facet_parameters), and its operations against
       # its interface's (facet_operations). Answers the sorted rows, each with its
       # operations and parameters spans, the facet_operations and facet_parameters tables
@@ -2212,6 +2212,7 @@ module Erx
         check_network_grants(rows, packed.map(&:first), tables)
         check_files_grants(rows, tables)
         check_inspect_grants(rows, tables)
+        check_code_grants(rows, tables)
         check_line_grants(rows, packed.map(&:first), tables)
         check_input_grants(rows, tables)
         operations = records('facet').zip(sources).map { |record, row| facet_operations(record, row, service_rows) } +
@@ -2723,6 +2724,66 @@ module Erx
           invalid('only the system domain serves the inspect interface', 'service.server')
         end
         facets_of(facets, 'inspect', tables).each { |row| check_receiver_floors(row, tables, 'inspect', floors) }
+      end
+
+      # The code protocol's floors (docs/design-live.md, "The code server", Floors),
+      # computed from abi/services/code.txt (tools/lib/erx/abi_code_bounds.rb): for each
+      # set of receivers, the ABI constant that floors each runtime_limits field.
+      CODE_FLOORS = {
+        load: { 'max_frame' => 'code_load_max_frame_min',
+                'max_message_heap' => 'code_load_message_heap_min',
+                'funnel_depth' => 'code_load_funnel_depth_min' }.freeze,
+        answer: { 'max_frame' => 'code_answer_max_frame_min',
+                  'max_message_heap' => 'code_answer_message_heap_min',
+                  'funnel_depth' => 'code_answer_funnel_depth_min' }.freeze,
+        facet: { 'max_frame' => 'code_facet_max_frame_min',
+                 'max_message_heap' => 'code_facet_message_heap_min',
+                 'funnel_depth' => 'code_facet_funnel_depth_min' }.freeze
+      }.freeze
+
+      # Property 16 for code: every configured domain and session template, each of
+      # which erx_code's loads reach whatever it is granted, runs with at least the
+      # load floors, and the system domain, which takes the answers, with the answer
+      # floors, so no receiver's funnel drops a message of a load; and every facet of the
+      # code interface passes check_code_facets.
+      def check_code_grants(facets, tables)
+        check_code_facets(facets, tables)
+        loads = %w[domain session].flat_map do |kind|
+          table = kind == 'domain' ? 'domains' : 'sessions'
+          tables.fetch(table).each_index.map { |index| receiver_limits(grantee_kind(kind), index, tables) }
+        end
+        loads.uniq.each { |profile| check_code_floors(profile, :load) }
+        check_code_floors(receiver_limits(grantee_kind('system'), nil, tables), :answer)
+      end
+
+      # Every facet of the code interface admits code_request_max, the longest request
+      # load sends, which a smaller max_request would drop unanswered, and its grantee
+      # and server, which take its requests and replies, run with the facet floors.
+      def check_code_facets(facets, tables)
+        bound = @codec.constant('code_request_max')
+        facets_of(facets, 'code', tables).each do |row|
+          if row.fetch('max_request') < bound
+            invalid("facet #{row.fetch('name')}'s max_request #{row.fetch('max_request')} " \
+                    "is below code_request_max #{bound}", 'facet.max_request')
+          end
+          check_receiver_floors(row, tables, 'code', code_floors(:facet))
+        end
+      end
+
+      # The code protocol's floors for RECEIVERS, a key of CODE_FLOORS, keyed by the
+      # runtime_limits field each binds.
+      def code_floors(receivers) = CODE_FLOORS.fetch(receivers).transform_values { |name| @codec.constant(name) }
+
+      # Refuses PROFILE, a runtime_limits row, when one of its three funnel limits is
+      # below the code protocol's floor for its RECEIVERS.
+      def check_code_floors(profile, receivers)
+        code_floors(receivers).each do |field, floor|
+          next if profile.fetch(field) >= floor
+
+          invalid("runtime limits #{profile.fetch('name')} run with #{field} " \
+                  "#{profile.fetch(field)}, below the code protocol's #{receivers} " \
+                  "floor of #{floor}", "runtime_limits.#{field}")
+        end
       end
 
       # At most one service of the code_objects interface, named code_objects and served by

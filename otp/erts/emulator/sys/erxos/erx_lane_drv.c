@@ -1145,6 +1145,36 @@ erx_dist_boot_0(BIF_ALIST_0)
 	BIF_RET(TUPLE2(hp, make_small((Uint)boot->domain_id), system));
 }
 
+/*
+ * {MaxFrame, MaxMessageHeap, FunnelDepth}: the limits every connection's
+ * funnel applies to a frame, from the record the runtime installed at its
+ * start, which erx:limits/0 names (docs/design-domains.md, "Erlang
+ * interface").
+ */
+BIF_RETTYPE
+erx_dist_limits_0(BIF_ALIST_0)
+{
+	const erx_runtime_limits_t *const limits = erx_runtime_limits();
+	Eterm *const hp = HAlloc(BIF_P, 4);
+
+	/* Each is a u32, a small integer on the 64-bit builds erXos makes. */
+	BIF_RET(TUPLE3(hp, make_small((Uint)limits->max_frame),
+	    make_small((Uint)limits->max_message_heap),
+	    make_small((Uint)limits->funnel_depth)));
+}
+
+/*
+ * Whether the boot page marks this domain supervised: one the domain service
+ * restarts, whose code server waits for its start load (docs/design-live.md,
+ * "The code server").
+ */
+BIF_RETTYPE
+erx_dist_supervised_0(BIF_ALIST_0)
+{
+	BIF_RET((erx_runtime_boot()->flags & ERX_BOOT_SUPERVISED) != 0 ?
+	    am_true : am_false);
+}
+
 /* One -erx flag at argv[at], its name next and any value after it; the words it takes, or 0. */
 static int
 lane_flag(int argc, char **argv, int at)

@@ -705,7 +705,8 @@ class ManifestDomainsTest < Minitest::Test
   # session template, and its server each take frames of at least files_max_frame_min
   # under their own runtime limits, and the facet's max_request admits a request that
   # long. beta serves under the system runtime limits, and so does alpha as a grantee; a
-  # session takes the session ones.
+  # session takes the session ones. A session granted no files facet is still held to
+  # the code protocol's load floor, which equals this one (test_code_receivers_below_a_floor_are_refused).
   def test_a_files_receiver_below_the_frame_floor_is_refused
     floor = @codec.constant('files_max_frame_min')
     files = service('f', '@domain.beta').sub('interface 1', 'interface files')
@@ -714,7 +715,6 @@ class ManifestDomainsTest < Minitest::Test
     refused(Erx::Manifest::Invalid, 'facet.max_request', granted.call('system').sub("max_request #{floor}", "max_request #{floor - 1}"),
             message: /f's max_request #{floor - 1} .*#{floor}/)
     %w[system @domain.alpha @session.system].each { |grantee| admit(granted.call(grantee)) }
-    admit(with_max_frame(granted.call('@domain.alpha'), 'session', floor - 1))
     [['grantee', with_max_frame(granted.call('@session.system'), 'session', floor - 1)],
      ['server', with_max_frame(granted.call('@session.system'), 'system', floor - 1)],
      ['grantee', with_max_frame(granted.call('system'), 'system', floor - 1)]].each do |role, source|
@@ -784,6 +784,54 @@ class ManifestDomainsTest < Minitest::Test
       refused(Erx::Manifest::Invalid, "runtime_limits.#{field}",
               with_runtime_limit(granted, name, field, floors.fetch(field) - 1),
               message: /i's #{role} runs with #{field} #{floors.fetch(field) - 1}, below inspect's floor/)
+    end
+  end
+
+  # Property 16 for code: every configured domain and session template runs with the
+  # code protocol's load floors and the system domain with its answer floors, granted
+  # anything or nothing, and a facet of the code interface admits code_request_max and
+  # its grantee and server run with the facet floors. The
+  # seeds are the design's: a check of the domains alone accepts the session template's
+  # limits; one of max_frame alone accepts its max_message_heap; one that holds the
+  # system domain to the load floors accepts its funnel_depth below the answer floor,
+  # the one field whose answer floor is above its load floor.
+  def test_code_receivers_below_a_floor_are_refused
+    floors = %w[load answer].to_h do |direction|
+      [direction, { 'max_frame' => @codec.constant("code_#{direction}_max_frame_min"),
+                    'max_message_heap' => @codec.constant("code_#{direction}_message_heap_min"),
+                    'funnel_depth' => @codec.constant("code_#{direction}_funnel_depth_min") }]
+    end
+    source = with_session(self.class.session)
+    admit(source)
+    refute_empty(floors.fetch('answer').select { |field, floor| floor > floors.fetch('load').fetch(field) },
+                 'no answer floor is above its load floor, so the system domain seed refuses nothing')
+    [['session', 'load'], ['system', 'answer']].each do |name, direction|
+      floors.fetch(direction).each do |field, floor|
+        # alpha and beta run under the system runtime limits, so the load check meets an
+        # answer floor no higher than its load floor first.
+        next if direction == 'answer' && floor <= floors.fetch('load').fetch(field)
+
+        refused(Erx::Manifest::Invalid, "runtime_limits.#{field}", with_runtime_limit(source, name, field, floor - 1),
+                message: /run with #{field} #{floor - 1}, below the code protocol's #{direction} floor/)
+      end
+    end
+    bound = @codec.constant('code_request_max')
+    code = service('c', 'system').sub('interface 1', 'interface code')
+    granted = source + code + facet('c', '@session.system', '@service.c').sub('max_request 1', "max_request #{bound}")
+    admit(granted)
+    refused(Erx::Manifest::Invalid, 'facet.max_request', granted.sub("max_request #{bound}", "max_request #{bound - 1}"),
+            message: /c's max_request #{bound - 1} is below code_request_max/)
+    # The facet's grantee takes its requests and replies, which pass the load floors on
+    # at least one limit; a grantee at the load floors but below the facet's is refused.
+    stricter = { 'max_frame' => 'max_frame', 'max_message_heap' => 'message_heap', 'funnel_depth' => 'funnel_depth' }
+               .filter_map do |field, name|
+                 floor = @codec.constant("code_facet_#{name}_min")
+                 [field, floor] if floor > floors.fetch('load').fetch(field)
+               end
+    refute_empty stricter
+    stricter.each do |field, floor|
+      refused(Erx::Manifest::Invalid, "runtime_limits.#{field}", with_runtime_limit(granted, 'session', field, floor - 1),
+              message: /facet c's grantee runs with #{field} #{floor - 1}, below code's floor of #{floor}/)
     end
   end
 

@@ -13,7 +13,8 @@ plan `plan_load/2` returns.
 Everything a request carries is untrusted. `read_request/1` is the one reader of a
 request term, so every operation below is handed values of the shapes it documents:
 
-* `{missing, Hashes}` names at most 1,024 hashes; the answer is those the store lacks.
+* `{missing, Hashes}` names at most code_modules_max hashes; the answer is those the store
+  lacks.
 * `{put, Hash, Size, Offset, Piece}` sends bytes `Offset .. Offset + byte_size(Piece) - 1`
   of a blob of `Size` bytes. The pieces of one blob arrive in order from offset 0, each
   65,536 bytes but the last, which holds the rest; a piece at offset 0 starts the blob
@@ -21,7 +22,7 @@ request term, so every operation below is handed values of the shapes it documen
   stored once its last byte arrives and its bytes hash to `Hash`; otherwise the upload is
   dropped and the answer is `hash_mismatch`, so a blob one bit off its hash is never
   stored.
-* `{load, Manifest}` names 1 to 1,024 modules by `{Name, Hash}`, each name once.
+* `{load, Manifest}` names 1 to code_modules_max modules by `{Name, Hash}`, each name once.
   `plan_load/2` hashes each named blob again before it plans the load, so a store whose
   bytes changed can fail a load but never change what is loaded.
 * `{history, DomainId, Module}` asks for the hashes loaded for a module.
@@ -150,7 +151,7 @@ read_request(_Term) ->
     {error, bad_request}.
 
 -doc """
-A manifest from outside the code service: a proper list of 1 to 1,024 `{Name, Hash}`
+A manifest from outside the code service: a proper list of 1 to code_modules_max `{Name, Hash}`
 pairs, each name a module name and named once, each hash 32 bytes.
 """.
 -spec read_manifest(term()) -> {ok, manifest()} | {error, manifest_error()}.

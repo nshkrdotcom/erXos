@@ -8,20 +8,41 @@
 # modules, and loads it as one batch. The install service of this interface loads into
 # the system domain alone, and erx_code_facet refuses an operation its row does not
 # grant. A load reads its modules whole, at most code_load_bytes_max bytes in all, the
-# default overlay limit, before it sends anything. code_request_max bounds a request's
-# encoding with its call envelope, as a facet measures it against its row's max_request:
-# code_modules_max entries of a 255-byte name and a 32-byte hash, about 300 KiB, fit, and
-# load refuses a manifest past it before sending it, so no request is dropped unanswered.
+# default overlay limit, before it sends anything. The generator derives from
+# code_modules_max and code_piece_max (tools/lib/erx/abi_code_bounds.rb) code_request_max,
+# the longest request with its call envelope as a facet measures it against its row's
+# max_request, which load holds every request to before sending it and the manifest
+# check holds every code facet's max_request to, so no request is dropped unanswered; and
+# the code protocol's floors (docs/design-live.md, "The code server"), for max_frame,
+# max_message_heap and funnel_depth: code_load_*_min, which the manifest check holds
+# every configured domain and session template to, from a load of code_modules_max
+# modules with 255-byte names and a piece of code_piece_max bytes; code_answer_*_min,
+# which it holds the system domain to, from an answer naming every module of such a load
+# with the longest code_load_reason;
+# and code_facet_*_min, which it holds every code facet's grantee and server to, from the
+# facet's requests and replies (docs/design-system.md, "The manifest", property 16).
 # code_load_wait is the 30 s, in milliseconds, within which erx_code ends a load into
-# another domain and that domain's code server, erx_code_agent, finishes it from when it
-# took it (docs/design-live.md, "The code server").
+# another domain and that domain's code server, erx_code_agent, finishes it from when
+# it took it. code_load_reason is the closed set of reasons code:atomic_load/1 gives
+# for a module it refuses (OTP's code.erl, and system_limit from beam_load.c's
+# erts_prepare_loading when the JIT's code space is exhausted), the only What an answer's
+# {not_loaded, [{Name, What}]} carries and erx_code_target accepts, so no answer grows
+# past the answer floors.
 service code 19
   served_as message
   operation missing 1
   operation put 2
   operation load 3
 limit code_piece_max u32 65536
-limit code_modules_max u32 1024
+limit code_modules_max u32 256
 limit code_load_bytes_max u32 16777216
-limit code_request_max u32 327680
 limit code_load_wait u32 30000
+enum code_load_reason u8
+  value badfile 1
+  value nofile 2
+  value on_load_not_allowed 3
+  value duplicated 4
+  value not_purged 5
+  value sticky_directory 6
+  value pending_on_load 7
+  value system_limit 8

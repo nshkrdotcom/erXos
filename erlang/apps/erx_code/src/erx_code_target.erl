@@ -54,13 +54,14 @@ publication. Revision 0 is the empty overlay a specification starts with.
 * `deadline/2` and `domain_down/2`, the load's 30 s timer (`code_load_wait`) and the
   domain pid's `'DOWN'`, end the load as `timeout` and `domain_ended`.
 
-**Until the `supervised` flag exists.** Only a code server whose boot information carries
-the `supervised` flag keeps only published code and waits for its start load; without it
-the code server treats its domain as one no specification restarts, and a batch sent to
-it runs whether or not it is published. So a supervised target is made with
-`supervised_flag` false unless its caller says its domains carry the flag, and such a
-target is sent nothing and stops nothing: `load/4` and `reset/3` refuse `enotsup` and
-`started/4` sends no start load (docs/todo-domains.md, the code server's runtime inputs).
+**The `supervised` flag.** Only a code server whose boot information carries the
+`supervised` flag keeps only published code and waits for its start load; without it the
+code server treats its domain as one no specification restarts, and a batch sent to it
+runs whether or not it is published. So a supervised target is made with
+`supervised_flag` true only when its caller knows, from the domain library, that its
+domains carry the flag; any other supervised target is sent nothing and stops nothing:
+`load/4` and `reset/3` refuse `enotsup` and `started/4` sends no start load
+(docs/todo-domains.md, "code service, start loads to supervised domains").
 
 A load serves only the bytes erx_code holds: each event that sends a load is handed the
 stored size of each blob of it the store holds, and a piece is cut to that size, never
@@ -382,12 +383,14 @@ piece(Hash, Size, Offset, Cursor) ->
     Length = min(?ERX_CODE_PIECE_MAX, Size - Offset),
     {piece, Hash, Offset, Length, Cursor#cursor{blob = {Hash, Size, Offset + Length}}}.
 
-%% A refusal names only modules of the manifest, each with an atom for its reason, and
-%% so no more of them than the manifest has; Left bounds the walk, so a long list costs
-%% no more than the manifest, and an improper one is refused.
+%% A refusal names only modules of the manifest, each with a reason of
+%% code_load_reason, the closed set the answer floors count, and so no more of them
+%% than the manifest has; Left bounds the walk, so a long list costs no more than
+%% the manifest, and an improper one is refused.
 refusals([], _, _) ->
     ok;
-refusals([{Name, What} | Failed], Left, Manifest) when Left > 0, is_atom(What) ->
+refusals([{Name, What} | Failed], Left, Manifest)
+  when Left > 0, ?ERX_IS_CODE_LOAD_REASON(What) ->
     named(Name, Manifest),
     refusals(Failed, Left - 1, Manifest);
 refusals(_, _, _) ->

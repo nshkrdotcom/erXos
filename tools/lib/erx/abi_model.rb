@@ -276,6 +276,7 @@ module Erx
           add_constant(all_constants, "service_#{service.fetch(:name)}", service.fetch(:number), BASE_TYPES.fetch('u32'), abi.line)
         end
         inspection_bounds(inspection, all_constants, abi.line) if inspection
+        code_bounds(all_constants, types, abi.line) if all_constants.key?('code_modules_max')
         exec_window(all_constants, abi.line) if all_constants.key?('exec_window_base')
         Names.validate(types: types, constants: all_constants, calls: calls,
                        readers: readers, marks: marks, architecture: architecture, line: abi.line)
@@ -1351,6 +1352,44 @@ module Erx
         add_constant(constants, 'inspect_funnel_depth_min', InspectionBounds.funnel_depth(inspection),
                      BASE_TYPES.fetch('u32'), line,
                      description: 'the deepest nesting of an inspect answer, computed from the inspection schema')
+      end
+
+      # What abi/services/code.txt's module and piece limits and its load reasons let the
+      # code interface's terms be (docs/design-live.md, "The code server", Floors;
+      # tools/lib/erx/abi_code_bounds.rb): code_request_max, the longest request a facet
+      # of the interface carries, and for each of the three limits the funnel applies to a
+      # frame, code_load_*_min, the floor of every domain, which takes loads,
+      # code_answer_*_min, the floor of the system domain, which takes their answers, and
+      # code_facet_*_min, the floor of a code facet's grantee and server, which take its
+      # requests and replies. The manifest check holds the configured domains, the session
+      # templates, the system domain and each code facet's receivers to them
+      # (docs/design-system.md, "The manifest", property 16).
+      def code_bounds(constants, types, line)
+        require_relative 'abi_code_bounds'
+        modules_max = constants.fetch('code_modules_max').value
+        piece_max = constants['code_piece_max']&.value ||
+                    line.fail!('the code interface needs its limit code_piece_max')
+        reasons = types['code_load_reason']&.members&.keys ||
+                  line.fail!('the code interface needs its enum code_load_reason')
+        load = CodeBounds.load_floors(modules_max: modules_max, piece_max: piece_max)
+        answer = CodeBounds.answer_floors(modules_max: modules_max, reasons: reasons)
+        facet = CodeBounds.facet_floors(modules_max: modules_max, piece_max: piece_max, reasons: reasons)
+        u32 = BASE_TYPES.fetch('u32')
+        add_constant(constants, 'code_request_max', CodeBounds.request_max(modules_max: modules_max, piece_max: piece_max),
+                     u32, line, description: 'the longest request of the code interface, its call envelope included')
+        {
+          'code_load_max_frame_min' => load.max_frame,
+          'code_load_message_heap_min' => load.max_message_heap,
+          'code_load_funnel_depth_min' => load.funnel_depth,
+          'code_answer_max_frame_min' => answer.max_frame,
+          'code_answer_message_heap_min' => answer.max_message_heap,
+          'code_answer_funnel_depth_min' => answer.funnel_depth,
+          'code_facet_max_frame_min' => facet.max_frame,
+          'code_facet_message_heap_min' => facet.max_message_heap,
+          'code_facet_funnel_depth_min' => facet.funnel_depth
+        }.each do |name, value|
+          add_constant(constants, name, value, u32, line, description: "a floor of the code protocol (#{name})")
+        end
       end
 
       # The widget format's members have namespaces of their own and refer

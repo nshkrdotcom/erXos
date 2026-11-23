@@ -19,7 +19,7 @@
 #
 # %CopyrightEnd%
 #
-# Modified by erXos: adds erx_device's, erx_trace_ring's, erx_dist's and erx_bytes's BIFs. Adds erx_dist:aliases/0 (edit 17), erx_dist:exports_refused/0 and erx_dist:atoms_refused/0 (edit 9). Adds erts_internal:msgq_hand_out/1, msgq_finish/2 and msgq_release/1 (edit 78), whose hand-out copy was edit 77.
+# Modified by erXos: adds erx_device's, erx_trace_ring's, erx_dist's and erx_bytes's BIFs. Adds erx_dist:aliases/0 (edit 17), erx_dist:exports_refused/0 and erx_dist:atoms_refused/0 (edit 9), and erx_dist:limits/0 and erx_dist:supervised/0. Adds erts_internal:msgq_hand_out/1, msgq_finish/2 and msgq_release/1 (edit 78), whose hand-out copy was edit 77.
 #
 
 #
@@ -889,11 +889,15 @@ bif erx_trace_ring:clocks/0
 #
 # erXos: the boot page's identity for the distribution carrier between domains
 # (docs/design-runtime.md, "Connections in ERTS"), and the count of sends to another
-# domain's registered names its runtime dropped (edit 27).
+# domain's registered names its runtime dropped (edit 27), the funnel's limits the runtime
+# installed at its start, and the boot page's supervised flag (docs/design-live.md, "The
+# code server").
 #
 
 bif erx_dist:boot/0
 bif erx_dist:names_dropped/0
+bif erx_dist:limits/0
+bif erx_dist:supervised/0
 
 #
 # erXos: the export table (docs/design-domains.md, "Exports"), the owner of a name (edit 16),

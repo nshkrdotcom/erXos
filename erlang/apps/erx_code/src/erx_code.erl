@@ -18,9 +18,10 @@ three steps, sending only what the store lacks: `missing/1` with the modules' ha
 A load is planned whole before it changes anything. The plan names every module's verified
 bytes (`erx_code_store:plan_load/2`), and `erx_code_batch:load/1`, which every domain's code
 server also loads through, makes the batch current or refuses it whole: either every
-module of the manifest is current when `load/1` returns `ok` or none changed. `erx_code_batch:load/1` makes the
-names atoms, only after the manifest has been read, at most 1,024 of 255 bytes each per
-load; a load the loader refuses still leaves its names' atoms behind (TODO.md).
+module of the manifest is current when `load/1` returns `ok` or none changed.
+`erx_code_batch:load/1` makes the names atoms, only after the manifest has been read, at
+most code_modules_max of 255 bytes each per load (abi/services/code.txt); a load the
+loader refuses still leaves its names' atoms behind (TODO.md).
 """.
 
 -export([start_link/0, start_link/1, call/1, missing/1, put_piece/4, load/1, history/2]).
@@ -33,13 +34,13 @@ load; a load the loader refuses still leaves its names' atoms behind (TODO.md).
 
 %% The store's limit: the overlay limit's default (docs/design-live.md, "Overlays").
 -define(STORE_LIMIT, ?ERX_CODE_LOAD_BYTES_MAX).
-%% A load prepares, purges and loads up to 1,024 modules.
+%% A load prepares, purges and loads up to code_modules_max modules.
 -define(CALL_TIMEOUT, 60000).
 
 -doc """
 The answer to a request. A load that `code:prepare_loading/1` or `code:finish_loading/1`
 refuses answers `{error, {not_loaded, [{Name, What}]}}`, with `What` as `code:atomic_load/1`
-gives it.
+gives it, a member of abi/services/code.txt's `code_load_reason`.
 """.
 -type reply() :: ok
                | {ok, [erx_code_store:hash()]}
@@ -49,7 +50,7 @@ gives it.
                        | erx_code_store:put_error()
                        | {missing, [erx_code_store:hash()]}
                        | {hash_mismatch, erx_code_store:name()}
-                       | {not_loaded, [{erx_code_store:name(), atom()}]}
+                       | {not_loaded, [{erx_code_store:name(), erx_abi_enums:code_load_reason()}]}
                        | scope}.
 
 -doc "Starts the code service, registered as `erx_code`, with a store of 16 MiB.".

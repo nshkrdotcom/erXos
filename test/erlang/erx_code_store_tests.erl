@@ -9,6 +9,7 @@
 -module(erx_code_store_tests).
 
 -include_lib("eunit/include/eunit.hrl").
+-include("generated/erx_abi.hrl").
 
 -define(PIECE, 65536).
 
@@ -252,8 +253,8 @@ manifests_are_read_or_refused_with_their_reason_test() ->
     Names = [<<"erx_code">>, <<"Elixir.Foo">>, <<"a@b">>, <<"_9">>, binary:copy(<<"m">>, 255)],
     Good = [{Name, Hash} || Name <- Names],
     ?assertEqual({ok, Good}, erx_code_store:read_manifest(Good)),
-    Many = [{<<"m", (integer_to_binary(Index))/binary>>, Hash} || Index <- lists:seq(1, 1025)],
-    ?assertMatch({ok, [_ | _]}, erx_code_store:read_manifest(lists:sublist(Many, 1024))),
+    Many = [{<<"m", (integer_to_binary(Index))/binary>>, Hash} || Index <- lists:seq(1, ?ERX_CODE_MODULES_MAX + 1)],
+    ?assertMatch({ok, [_ | _]}, erx_code_store:read_manifest(lists:sublist(Many, ?ERX_CODE_MODULES_MAX))),
     Cases = [{not_a_list, #{}}, {not_a_list, [{<<"a">>, Hash} | {<<"b">>, Hash}]}, {empty, []},
              {too_many, Many},
              {{bad_entry, 1}, [{<<>>, Hash}]}, {{bad_entry, 1}, [{binary:copy(<<"m">>, 256), Hash}]},

@@ -24,7 +24,7 @@ share users
   ceiling 31
   flags none
 runtime_limits native
-  max_frame 4096
+  max_frame 262144
   max_message_heap 8192
   funnel_depth 64
   exports 64

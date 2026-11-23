@@ -49,6 +49,7 @@
 %% start load's modules; and every piece of every blob served.
 -module(erx_code_target_tests).
 -include_lib("eunit/include/eunit.hrl").
+-include("generated/erx_abi.hrl").
 
 -define(EVENTS, 8).
 -define(D1, 1).
@@ -119,7 +120,8 @@ a_load_into_a_domain_no_specification_restarts_answers_ok_none_test() ->
     ?assertEqual([{end_load, Alias}, {reply, f1, {ok, none}}], Done),
     ?assertEqual([{reply, r, {error, no_overlay}}], element(2, erx_code_target:reset(r, ?D1, T0))).
 
-%% An answer naming a module outside the load, a piece out of order (a later blob while
+%% An answer naming a module outside the load, or a reason outside code_load_reason,
+%% which the answer floors do not count, a piece out of order (a later blob while
 %% the current one is half fetched among them) and a stray shape each end the load as
 %% invalid; the same from another domain, or to another alias, change nothing.
 messages_the_load_does_not_expect_end_it_invalid_test() ->
@@ -129,6 +131,7 @@ messages_the_load_does_not_expect_end_it_invalid_test() ->
     Invalid = [{erx_code_loaded, Alias, {error, {hash_mismatch, <<"b">>}}},
                {erx_code_loaded, Alias, {error, {not_loaded, [{<<"a">>, badfile} | {<<"a">>, badfile}]}}},
                {erx_code_loaded, Alias, {error, {not_loaded, [{<<"a">>, x}, {<<"a">>, x}]}}},
+               {erx_code_loaded, Alias, {error, {not_loaded, [{<<"a">>, x}]}}},
                {erx_code_loaded, Alias, {error, {not_loaded, []}}},
                {erx_code_get, Alias, ?HASH_A, 65536},
                {erx_code_get, Alias, ?HASH_B, 0},
@@ -204,6 +207,29 @@ a_supervised_target_without_the_flag_is_sent_nothing_test() ->
     ?assertEqual({T0, [{unalias, Alias}, {reply, f1, {error, enotsup}}]},
                  erx_code_target:load(f1, Alias, request(?F1_MANIFEST), T0)),
     ?assertEqual({T0, [{reply, r, {error, enotsup}}]}, erx_code_target:reset(r, ?D1, T0)).
+
+%% The load erx_code_target sends for the largest load, code_modules_max modules with
+%% 255-byte names and sizes past a small integer, fits the code protocol's load floors
+%% (docs/design-live.md, "Floors"), which tools/lib/erx/abi_code_bounds.rb computes from
+%% the same shapes with a 255-byte node name; a local alias and pid are shorter, so a
+%% field this message gains past the model's is what makes it fail.
+%% erts_debug:flat_size/1 counts the local heap, near the funnel's count but not it; the
+%% funnel's own check of these terms is docs/todo-domains.md's "code bounds" item.
+the_largest_load_fits_the_load_floors_test() ->
+    Entries = [{<<I:32, (binary:copy(<<$m>>, 251))/binary>>, <<I:256>>, 1 bsl 63}
+               || I <- lists:seq(1, ?ERX_CODE_MODULES_MAX)],
+    Stored = maps:from_list([{Hash, Size} || {_, Hash, Size} <- Entries]),
+    Target = erx_code_target:new(#{lifeline => lifeline(0), overlay_limit => length(Entries) bsl 63,
+                                   supervised_flag => true}),
+    Alias = make_ref(),
+    {_, Sent} = erx_code_target:load(f1, Alias, #{domain => domain(?D1), manifest => Entries, missing => [],
+                                                  stored => Stored, charge => ok},
+                                     confirmed(Target)),
+    ?assertMatch([_], [Message || {send, _, {erx_code_load, _, _} = Message} <- Sent], Sent),
+    [Load] = [Message || {send, _, {erx_code_load, _, _} = Message} <- Sent],
+    ?assertEqual(Entries, element(3, Load)),
+    ?assert(erlang:external_size(Load) =< ?ERX_CODE_LOAD_MAX_FRAME_MIN),
+    ?assert(erts_debug:flat_size(Load) =< ?ERX_CODE_LOAD_MESSAGE_HEAP_MIN).
 
 supervised() ->
     erx_code_target:new(#{lifeline => lifeline(0), overlay_limit => ?LIMIT, supervised_flag => true}).

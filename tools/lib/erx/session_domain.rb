@@ -228,6 +228,11 @@ module Erx
     DATE_SET = "date 202611161230 +%Y%m%d%H%M\r"
     DATE_READ = "date +%Y%m%d%H%M\r"
     DATE_SET_LINE = '202611161230'
+    # The session reads the funnel limits of its runtime_limits profile, the development
+    # manifest's session one, and its boot page marks it unsupervised: no specification
+    # restarts a session (docs/design-live.md, "The code server").
+    LIMITS = "{erx:limits() =:= \#{max_frame => 524288, max_message_heap => 131072, funnel_depth => 64}, " \
+             "erx_dist:supervised()}.\r"
     CLOCK_SAMPLE = "gen_server:call(erx:cap(clock), {sample, 0, 0, 1, {0, 0, 0, 0}}).\r"
     MONOTONIC_KEPT = "os:perf_counter(second) < 3600.\r"
     SET_EPOCH_S = 1_794_832_200
@@ -389,7 +394,8 @@ module Erx
        { name: 'session-date-set', pattern: line(DATE_SET_LINE), seconds: 60, type: DATE_READ }.freeze,
        { name: 'session-date-read', pattern: line(DATE_SET_LINE), seconds: 60, type: ERL }.freeze,
        shell.merge(name: 'root_1-erlang-shell', type: "node().\r").freeze,
-       { name: 'root_1-node', pattern: answer('root_1@erxos'), seconds: 60, type: CLOCK_SAMPLE }.freeze,
+       { name: 'root_1-node', pattern: answer('root_1@erxos'), seconds: 60, type: LIMITS }.freeze,
+       { name: 'root_1-limits', pattern: answer('{true,false}'), seconds: 60, type: CLOCK_SAMPLE }.freeze,
        { name: 'root_1-sample-refused', pattern: answer('{error,eperm}'), seconds: 60, type: MONOTONIC_KEPT }.freeze,
        { name: 'root_1-monotonic-kept', pattern: answer('true'), seconds: 60, type: MACHINE }.freeze,
        { name: 'root_1-machine', pattern: MACHINE_UPTIME, seconds: 60, type: PROGRAM_REFUSED }.freeze,

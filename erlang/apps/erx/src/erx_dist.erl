@@ -27,7 +27,7 @@
 
 -export([listen/2, accept/1, accept_connection/5, setup/5, close/1, select/1,
          address/1, unavailable/2]).
--export([boot/0, names_dropped/0, export/3, exports/1, owner/1, aliases/0,
+-export([boot/0, limits/0, supervised/0, names_dropped/0, export/3, exports/1, owner/1, aliases/0,
          exports_refused/0, atoms_refused/0]).
 
 -include_lib("kernel/include/net_address.hrl").
@@ -57,6 +57,20 @@
 %% A BIF of ERTS (erx_lane_drv.c).
 -spec boot() -> {pos_integer(), {pos_integer(), node(), pid()} | none}.
 boot() ->
+    erlang:nif_error(undefined).
+
+%% The limits every connection's funnel applies to a frame, {MaxFrame, MaxMessageHeap,
+%% FunnelDepth}, from the record the runtime installed at its start (erx:limits/0). A BIF
+%% of ERTS (erx_lane_drv.c).
+-spec limits() -> {pos_integer(), pos_integer(), pos_integer()}.
+limits() ->
+    erlang:nif_error(undefined).
+
+%% Whether the boot page marks this domain supervised, one the domain service restarts,
+%% whose code server waits for its start load (docs/design-live.md, "The code server").
+%% A BIF of ERTS (erx_lane_drv.c).
+-spec supervised() -> boolean().
+supervised() ->
     erlang:nif_error(undefined).
 
 %% The sends to another domain's registered names this runtime dropped, which never cross a

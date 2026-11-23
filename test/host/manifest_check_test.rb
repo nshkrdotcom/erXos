@@ -6,6 +6,7 @@ require 'json'
 require 'minitest/autorun'
 require_relative '../../tools/lib/erx/manifest'
 require_relative '../../tools/lib/erx/platform'
+require_relative '../../tools/lib/erx/medium_boot'
 require_relative '../../tools/lib/erx/pcie_domain'
 require_relative '../fixtures/manifest_context'
 
@@ -168,6 +169,18 @@ class ManifestCheckTest < Minitest::Test
     result = admit(Erx::PcieDomain.manifest(Erx::PcieDomain.manifest_source(ROOT, platform: platform)), medium)
     view = @codec.open('manifest', result.bytes)
     assert_equal 5, view.count('domains')
+  end
+
+  # The footprint cell's manifest (MediumBoot::Footprint.manifest), made from the website's,
+  # passes too: its configured domains' small profile meets the code protocol's load floors.
+  def test_the_footprint_cell_s_manifest_is_accepted
+    platform = Erx::Platform.load(root: ROOT, name: 'qemu-virt')
+    medium = context do |arguments|
+      arguments.merge!(ManifestContextFixture.archive_arguments(@codec, boots: %w[bare blk net network storage]))
+      arguments[:platform] = @platform.merge('ram_bytes' => Erx::MediumBoot.machine(platform).memory_mib << 20)
+    end
+    result = admit(Erx::MediumBoot::Footprint.manifest(site_manifest, system_tmp: 8_388_608), medium)
+    assert_equal 5, @codec.open('manifest', result.bytes).count('domains')
   end
 
   # The website's manifest passes the same check: its storage and network domains, without

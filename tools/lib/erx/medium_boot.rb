@@ -611,6 +611,8 @@ module Erx
       def self.pool_used(bound) = "fun()->\#{attrs:=\#{used:={_,{_,#{bound}}}}}=erx_kernel_records:budget(" \
                                   "erx_kernel_records:system_domain()),#{bound} end"
       # The small profile of the session domain, in the configured rows and in every create.
+      # Its max_frame is the code protocol's load floor, code_load_max_frame_min, which the
+      # manifest check holds every configured domain to (abi/services/code.txt).
       PROCESSES = 1024
       ATOMS = 16_384
       # A step: its name, its release and the cap of the domain's /tmp in bytes. The last step
@@ -631,7 +633,7 @@ module Erx
           ceiling 31
           flags none
         runtime_limits small
-          max_frame 65536
+          max_frame 131072
           max_message_heap 1048576
           funnel_depth 64
           exports 256

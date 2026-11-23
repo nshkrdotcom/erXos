@@ -11,6 +11,7 @@ session reaches it. Each case starts its own erx_code.
 """.
 
 -include_lib("eunit/include/eunit.hrl").
+-include("generated/erx_abi.hrl").
 
 %%% The reader
 
@@ -130,6 +131,46 @@ a_blob_past_one_piece_goes_in_pieces(#{dir := Dir}) ->
     [?_assert(byte_size(Beam) > 2 * 65536),
      ?_assertEqual({<<>>, <<>>, <<>>}, Result),
      ?_assertEqual(Big, erx_load_probe_a:v())].
+
+%% The largest requests load sends fit code_request_max, which the generator derives
+%% from abi/services/code.txt (tools/lib/erx/abi_code_bounds.rb): a load of
+%% code_modules_max modules with 255-byte names into a domain named by 255 bytes, and a
+%% put of a whole piece. A stand-in code facet takes each call, says the first blob is
+%% missing, and measures the call as a facet of another domain receives it, from a pid
+%% and a reference of the longest node name.
+largest_requests_fit_the_request_bound_test() ->
+    Dir = filename:join(filename:basedir(user_cache, "erx_cmd_load_tests"), integer_to_list(erlang:unique_integer([positive]))),
+    ok = filelib:ensure_path(Dir),
+    Names = [[integer_to_list(I), lists:duplicate(255 - length(integer_to_list(I)), $m)]
+             || I <- lists:seq(1, ?ERX_CODE_MODULES_MAX)],
+    ok = file:write_file(filename:join(Dir, "in"), [binary:copy(<<0>>, ?ERX_CODE_PIECE_MAX), lists:duplicate(length(Names) - 1, 0)]),
+    %% A line holds at most 4,096 bytes, so the arguments gather in a list line by line.
+    Source = iolist_to_binary(["a=()\n", [["a=($a -m ", Name, ":1)\n"] || Name <- tl(Names)],
+                               "cat in | load -d ", lists:duplicate(255, $d), " -m ", hd(Names), $:,
+                               integer_to_list(?ERX_CODE_PIECE_MAX), " $a\n"]),
+    Node = binary:copy(<<$n>>, 255),
+    Pid = binary_to_term(<<131, 88, 119, 255, Node/binary, 1:32, 0:32, 1:32>>),
+    Ref = binary_to_term(<<131, 90, 5:16, 119, 255, Node/binary, 1:32, 1:32, 2:32, 3:32, 4:32, 5:32>>),
+    Me = self(),
+    Facet = spawn(fun Loop() ->
+                          receive
+                              {'$gen_call', From, Request} ->
+                                  Me ! {request, element(1, Request), erlang:external_size({'$gen_call', {Pid, [alias | Ref]}, Request})},
+                                  gen_server:reply(From, case Request of
+                                                             {missing, [Hash | _]} -> {ok, [Hash]};
+                                                             {put, _, _, _, _} -> {ok, stored};
+                                                             {load, _, _} -> ok
+                                                         end),
+                                  Loop()
+                          end
+                  end),
+    Result = run_line(Source, list_to_binary(Dir), #{code => Facet}),
+    exit(Facet, kill),
+    file:del_dir_r(Dir),
+    Sizes = [receive {request, Kind, Size} -> {Kind, Size} after 0 -> none end || _ <- [missing, put, load]],
+    ?assertEqual({<<"|">>, <<>>, <<>>}, Result),
+    ?assertMatch([{missing, _}, {put, _}, {load, _}], Sizes),
+    [?assert(Size =< ?ERX_CODE_REQUEST_MAX) || {_, Size} <- Sizes].
 
 %%% Helpers
 
