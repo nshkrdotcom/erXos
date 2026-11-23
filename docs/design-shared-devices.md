@@ -296,8 +296,8 @@ slices of other processes, as the Raspberry Pi 4 mini UART's
 eight-byte receive FIFO does in 0.7 ms, is not held deaf behind its
 domain's busy processes. On Fiasco the priority is also what takes the
 owner's and such a driver's scheduler above every domain's ordinary
-work, since an executor holding work of priority `high` runs at its
-band's ceiling ([design-fiasco.md](design-fiasco.md#urgency)); what
+work, since work of priority `high` runs on the runtime's urgent
+scheduler, at its band's ceiling ([design-fiasco.md](design-fiasco.md#urgency)); what
 that leaves of the delay is measured on the board (docs/todo-drivers.md,
 the mini UART item). The priority starves no process of priority `normal` while the
 owner's work stays bounded: it runs only when a message arrives and

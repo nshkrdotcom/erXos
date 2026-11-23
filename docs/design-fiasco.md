@@ -214,11 +214,10 @@ its own task, which hold nothing but what the root placed:
 | `Register_doorbell_irq` | `ENOSYS` without `IRQ_DIRECT_INJECT` (`thread_object.cpp:830-833`) | `IRQ_DIRECT_INJECT` off |
 | `Pf_tramp_control` | a one-shot page-fault trampoline in its own thread | `PAGEFAULT_TRAMPOLINE` off (`src/Kconfig:452-454`, on by default) |
 | the architecture's operations (`arm/thread-arm.cpp:342-351`) | its own `TPIDRURO` | on |
-| `Urgency`, the fork's ([Urgency](#urgency)) | whether it runs at its band's base or its ceiling, the two levels the holder of the scheduler capability gave it; one argument word, 0 or 1, and any other length or value `EInval`; on another thread `EInval` | on |
 
-The operation list is the dispatch's, with the fork's `Urgency`; the bodies of `Switch`, `Stats`,
-`Register_del_irq`, `Modify_senders` and the architecture's operations are not read, and
-`Urgency`'s is this design's, so their column is unverified and the system-call fuzz campaign's
+The operation list is the dispatch's; the bodies of `Switch`, `Stats`,
+`Register_del_irq`, `Modify_senders` and the architecture's operations are not read,
+so their column is unverified and the system-call fuzz campaign's
 self-selector cases are what check it.
 The worst a thread does with itself is point its faults at an object that does not answer them and
 stop, which the root sees when the thread does not arrive at a pause or its space ends. The
@@ -535,9 +534,9 @@ holds:
 
 The root creates every thread, so it knows every thread of every task. Each task's row records its band
 and names its domain's row, which holds the domain's CPU set and slice, from its grant ([Bands](#bands)); the root starts each thread at its task's band's base,
-with the band's ceiling and the domain's slice as its quantum, and within
+with the domain's slice as its quantum, and within
 its domain's CPU set through `l4_scheduler_run_thread`, which takes the priority, the quantum and the CPU set
-(`scheduler.cpp:63-110`) and, in the fork, the ceiling ([Urgency](#urgency)), and checks nothing about the caller beyond its holding the scheduler. Since
+(`scheduler.cpp:63-110`) and checks nothing about the caller beyond its holding the scheduler; a thread that set its own urgency it runs at the band's ceiling from then on ([Urgency](#urgency)). Since
 Fiasco picks a CPU from whatever mask it is given and knows no domain (`scheduler.cpp:96-103`), the
 domain's CPU set is the root's ceiling, applied in one place: every mask the root hands Fiasco for a
 thread is the thread's requested mask, or every CPU when none was requested, intersected with its
@@ -663,17 +662,17 @@ callers as it says.
 | cache maintenance, the code barrier | BeamAsm | local: asmjit's and ERTS's sequences unchanged ([design-arch-aarch64.md](design-arch-aarch64.md)) | correct | none |
 | `erx_mem_create_physical` | `erx_device`: the console UART (M3) and the host link's; through a give in its holder's creation, each device's register window for its holder, and the root's own give at boot for each such device the system domain holds ([Device records](#device-records)) | service, from the root only: `l4sigma0_map_iomem` into a fresh range of the root's device window, over the base and size its caller reads from the manifest's device entry; each map is then `l4_task_map` from there into the space named, as for a shared object; for the console UART also [the handoff](#the-console) | RAM, which `sigma0` keeps, `ERX_ERANGE`; execute `ERX_ERIGHTS`; no free range of the device window that holds it `ERX_ENOMEM`, asked before `sigma0`; a create from a task other than the root `ERX_ENOTSUP`, since the domain library makes every device's objects and passes them | FD13 |
 | `erx_mem_create_contiguous`, `erx_mem_create_contiguous_in`, `erx_mem_dma_addr` | a device's one memory for the boot, which the device NIF carves its rings and buffers from, in whichever domain holds the device | service: a create from the root only, first fit from the [contiguous pool](#the-pool), aligned to a page, which no cache-writeback granule exceeds, at most `ERX_MEM_CONTIGUOUS_MAX` (16 MiB), wholly inside the DMA range the device tree gives the device it is made for ([design-device-tree.md](design-device-tree.md#facts-into-records)), cached, zeroed, and never given back; the domain library passes it to the device's holder, and the root makes one at boot for each device of a kind the system domain holds ([Device records](#device-records)). `dma_addr`, from any task holding the object, is physical address plus offset plus that device's `dma_bus - dma_cpu`, or, for a device the root confines ([Devices](#devices)), the address its DMA space maps the object at; no device on QEMU `virt` as the harness starts it or on the Pi 4 is behind an IOMMU ([design-device-dma.md](design-device-dma.md#device-addresses-and-reach)) | no such run `ERX_ENOMEM`; `dma_addr` of another kind of object `ERX_ETYPE`, past the object `ERX_ERANGE`; execute `ERX_ERIGHTS`; a create from a task other than the root `ERX_ENOTSUP`; unconfined unless the root confines the device; `erx_dma_map`, windows `ERX_ENOTSUP` | FD12, FD13 |
-| `erx_irq_create`, `erx_irq_bind`, `erx_irq_ack`, `erx_irq_trigger` | device lines, in whichever domain holds the device; a connection's bells; a channel's and a pipe end's doorbells; ERTS's wakes | service: `l4_factory_create_irq`, from any task for a doorbell (`ERX_IRQ_SOFT`); for a line, from the root only, `l4_icu_bind`; for an MSI (`ERX_IRQ_MSI`), from the root only, a free line of the range the platform's MSI frame serves, bound the same way, answering, beside the object, its `erx_msi_message`: the doorbell address, the frame's base plus `0x40`, and the data, the line's interrupt id ([design-pcie.md](design-pcie.md#the-msi-frame-on-fiasco)); a bind to a group, from the root into any group it holds and from another task holding the object only into the group that task is the home of or a group it created, as a session binds a program's doorbell into the program's group ([design-programs.md](design-programs.md#the-channel)), gives the object a free entry of the group, records the label and runs `l4_rcv_ep_bind_thread(irq, dispatcher, entry)` on the group's home task's line dispatcher for a line or an MSI, where the task has one, and on its dispatcher otherwise, once both exist, a bind again to the same group moves the label, and an unbind runs `l4_irq_detach` ([Interrupts and readiness](#interrupts-and-readiness)); the object's destroy runs `l4_irq_detach`; an ack and a trigger are the holder's own `l4_irq_unmask` and `l4_irq_trigger` on the capability the root placed at the IRQ slot the handle's number fixes, without Fiasco's special right, so only the root binds or detaches, and they make no request ([Handles](#handles)); a bind checks `BIND` in the caller's entry; a delivery goes from Fiasco to the dispatcher directly | each label once, the line masked until acked; `erx_irq_route` `ERX_ENOTSUP`; a target that is not a group the caller holds `ERX_ETYPE`, or a thread, `ERX_ENOTSUP` unless [vCPU upcalls](#vcpu-upcalls-on-fiasco) are carried; a bind of a bound object to another group `ERX_ENOTSUP`; from a task other than the root, a bind to a group it neither created nor is the home of, or a bind or an unbind of an object bound to such a group, `ERX_ETYPE`; a group's 65th bound object `ERX_ELIMIT`; a create past the domain's object limit `ERX_ELIMIT`; a line's second object `ERX_EBUSY`; a line or an MSI created from a task other than the root `ERX_ENOTSUP`; an MSI with no free line of the frame `ERX_ELIMIT`; the resource ignored | FD13, FD14, FD23 |
+| `erx_irq_create`, `erx_irq_bind`, `erx_irq_ack`, `erx_irq_trigger` | device lines, in whichever domain holds the device; a connection's bells; a channel's and a pipe end's doorbells; ERTS's wakes | service: `l4_factory_create_irq`, from any task for a doorbell (`ERX_IRQ_SOFT`); for a line, from the root only, `l4_icu_bind`; for an MSI (`ERX_IRQ_MSI`), from the root only, a free line of the range the platform's MSI frame serves, bound the same way, answering, beside the object, its `erx_msi_message`: the doorbell address, the frame's base plus `0x40`, and the data, the line's interrupt id ([design-pcie.md](design-pcie.md#the-msi-frame-on-fiasco)); a bind to a group, from the root into any group it holds and from another task holding the object only into the group that task is the home of or a group it created, as a session binds a program's doorbell into the program's group ([design-programs.md](design-programs.md#the-channel)), gives the object a free entry of the group, records the label and runs `l4_rcv_ep_bind_thread(irq, dispatcher, entry)` on the group's home task's dispatcher, once both exist, a bind again to the same group moves the label, and an unbind runs `l4_irq_detach` ([Interrupts and readiness](#interrupts-and-readiness)); a bind to a worker thread of the caller's own task gives the object a free entry of the task's label page and runs `l4_rcv_ep_bind_thread(irq, thread, entry)`, so its deliveries reach that thread's `erx_ipc_wait` ([Urgency](#urgency), "A bind to a thread"); the object's destroy runs `l4_irq_detach`; an ack and a trigger are the holder's own `l4_irq_unmask` and `l4_irq_trigger` on the capability the root placed at the IRQ slot the handle's number fixes, without Fiasco's special right, so only the root binds or detaches, and they make no request ([Handles](#handles)); a bind checks `BIND` in the caller's entry; a delivery goes from Fiasco to the dispatcher, or to the thread the object is bound to, directly | each label once, the line masked until acked; `erx_irq_route` `ERX_ENOTSUP`; a target that is neither a group the caller holds nor a thread `ERX_ETYPE`, and so is an executor, whose group's ready list is its wait; a thread of another task `ERX_ENOTSUP`; in a task of the root or driver band, a bind to a thread of a doorbell another task holds `ERX_ENOTSUP`, and so is a pass of a doorbell bound to a thread ([Urgency](#urgency), "No untrusted party makes urgent work"); a delivery to a thread armed for [vCPU upcalls](#vcpu-upcalls-on-fiasco) is an upcall; a bind of a bound object to another group `ERX_ENOTSUP`; from a task other than the root, a bind to a group it neither created nor is the home of, or a bind or an unbind of an object bound to such a group, `ERX_ETYPE`; a group's 65th bound object `ERX_ELIMIT`; a create past the domain's object limit `ERX_ELIMIT`; a line's second object `ERX_EBUSY`; a line or an MSI created from a task other than the root `ERX_ENOTSUP`; an MSI with no free line of the frame `ERX_ELIMIT`; the resource ignored | FD13, FD14, FD23 |
 | `erx_group_create`, `_configure`, `_info`, `_take_ready` | the adapter's five changes (M3); the domain library's group and sub-space group for each domain; a session's group for each program | service for `create`, from any task under a budget it holds or its own, and for `configure`, local for `info` in the root, on the root's own group only (`ERX_EINVAL` on another group there, `ERX_ENOTSUP` in a task), and local for `take_ready` in the group's home task: [Budgets and groups as records](#budgets-and-groups-as-records), [Interrupts and readiness](#interrupts-and-readiness). `configure` keeps only the CPU set of the grant in the caller's UTCB, narrowed to the group's domain's CPU set ([Threads, bands and stops](#threads-bands-and-stops)), a set with no CPU of it `ERX_EINVAL`, and `info` writes an `erx_info_group` there, with that set as `cpuset` and the root's status page's `parked` and `ready`, and only their bits of `reported` set, `cpuset`'s only once a set was configured ([Reporting kernel objects](#reporting-kernel-objects)) | correct readiness; everything else `unsupported`; no guarantee, quota or throttling; budget and parent recorded, and a group goes with its budget; every thread of a group runs in one task, its home, so a thread created in another task `ERX_ENOTSUP`; a task's second home group `ERX_ENOTSUP` | FD6, FD14, FD15 |
 | `erx_park`, `erx_executor_wake`, `erx_yield` | ERTS's schedulers (M3) | local: [The park protocol](#the-park-protocol); `l4_thread_yield` | no lost wake; a worker `ERX_ETYPE` | FD16 |
 | a blocking call from an executor | ERTS's executors | local: `liberx`'s stub | `ERX_EWOULDBLOCK`, which the domain's own code can bypass | FD18 |
-| `erx_thread_set_urgency` | the ERTS adapter, for an executor that holds work of priority `high` or `max` | local: one thread operation of the fork on the caller itself ([Urgency](#urgency)) | on the caller's own thread: its band's ceiling for an urgency above its group's base, its band's base otherwise, kept until the thread's next call whatever affinity change the root makes, and no change and no kernel entry in a band whose ceiling is its base; above `ERX_URGENCY_MAX` `ERX_EINVAL`; on any other thread `ERX_ENOTSUP`; no refresh of other threads and no clamp along a group path | FD15, FD16 |
+| `erx_thread_set_urgency` | the ERTS adapter, once, for a runtime's urgent scheduler | service: the root records the level in the thread's row and runs the thread at it with `l4_scheduler_run_thread` ([Urgency](#urgency), "The level") | on the caller's own thread: its band's ceiling for an urgency above its group's base, its band's base otherwise, kept whatever affinity change follows, and no change in a band whose ceiling is its base; above `ERX_URGENCY_MAX` `ERX_EINVAL`; on any other thread `ERX_ENOTSUP`; no refresh of other threads and no clamp along a group path | FD15, FD16 |
 | `erx_umtx_wait`, `erx_umtx_wake` | musl's futexes | local: [The umtx table](#the-umtx-table) | correct within a task | FD22 |
 | `erx_thread_create`, `_start`, `_exit`, `_set_affinity` | `pthread_create`, ERTS's threads, `libc-test` | [Thread creation](#thread-creation), [Deletion](#deletion); affinity is `l4_scheduler_run_thread` | no free index `ERX_ENOMEM`; a create past the domain's thread limit `ERX_ELIMIT`; an empty mask, or one naming no online CPU of the thread's domain's CPU set, `ERX_EINVAL`; affinity runs the thread on one CPU of the mask within that set, its own if the mask holds it, and a mask naming CPUs outside the set is narrowed to it, as erXos's kernel narrows a thread's affinity to its group's CPUs; a thread with no mask runs on its domain's set; in a space the caller created, only that space's first thread, so a second `ERX_ENOTSUP`; a handle naming another task's thread names one only for the root or that task's creator, else `ERX_EINVAL`; a start of a started thread, a faulted one included, `ERX_EINVAL`; a thread's own-task handle, and a creator's handle to the first thread of a space it created, names no thread once it is reaped, and the index's next thread after that; an affinity change keeps the thread's urgency ([Urgency](#urgency)) and refills its quantum ([Scheduling](#scheduling)); `erx_thread_stop`, `_read`, `_write` `ERX_ENOTSUP` | FD2, FD14, FD15, FD16, FD19 |
 | `erx_pthread_create_executor` | ERTS's normal and dirty CPU schedulers, through `ethr_thr_create`; a program's event executor, in `liberx`'s program layer | natively musl's `pthread_create` with the executor class, in the row above; hosted a start wrapper ([Making an executor](design-runtime.md#threads-and-synchronisation)) | `pthread_create`'s; no free index or slot `EAGAIN` | FD14 |
 | `erx_release_entry` | `erx_prim_file.c` | in the root and hosted, local: `erx_pack_entry_at` and `erx_pack_path_at` over the archive `erx_pack_open` accepted, counting from the first path under `system/`. In a task, a service request naming the boot information's `release` and the index, answered from the slice's record: `index` counts from the slice's first entry, the path comes without its `domains/<name>/` prefix ([The production image](#the-production-image)), and it arrives in the caller's public UTCB in pieces of at most `utcb_bytes_max` bytes, so the stub loops for a longer one | path, size, offset from `release_addr` and the entry's kind, a file, an image or an empty directory; an index past the run `ERX_ERANGE`; in a task, a `release` that is not a slice `ERX_ETYPE` | FD6, FD11 |
 | `erx_space_create`, `erx_space_stop`, `erx_space_pause`, `_resume` | the domain library, for every domain, through `erx_space_create_domain`, the root-only form whose request, `domain_space_create` of `fiasco_call`, is `space_create`'s followed by the domain's band, its sub-spaces' band, its thread, object and mapping limits and its grant's CPU set ([Bands](#bands)); a session's port driver, for each program's anchor and image; the test-task launcher in the root (`libc-test` M3), through `test_space_create`, which also marks the task as a test task ([The console](#the-console)); job control and `fork`'s copy, for a pause ([design-programs.md](design-programs.md)) | service, from any task: `l4_factory_create_task`, with a handle table of `cap_limit` entries; `parent`, `fault`, `label` and the budget recorded ([Spaces, parents and exit records](#spaces-parents-and-exit-records)); the task's domain row and band recorded, a new domain row with the request's band for `domain_space_create`, else the creator's domain row and its sub-space band ([Bands](#bands)); a stop is [task exit](#task-exit) of the space and of every space below it, children first | the exit record at the fault gate once every thread of the space is deleted; a `parent` or `fault` handle that fails the lookup answers that failure unchanged ([Handles](#handles)), a stale one `ERX_ESTALE`, and one naming a live object other than a space for `parent` or a gate for `fault` `ERX_ETYPE`; a space handle is only ever in its creator's table, so a `parent` that passes the lookup is the caller's space or one it created; `cap_limit` past `ERX_CAPS_MAX`, or one whose window of IRQ slots would pass Fiasco's object space ([Handles](#handles), FD1), `ERX_EINVAL`; `ERX_SPACE_JIT` from a task other than the root whose own space is not a JIT space `ERX_ERIGHTS`; `domain_space_create` from a task other than the root `ERX_ENOTSUP`, as `test_space_create`, and a band outside the limits record's band enum `ERX_EINVAL`; `erx_space_pause` answers once every thread of the space is held at its gate, or `ERX_EDEAD` once the pause's deadline has ended the space, and `_resume` lets each held thread go on ([The pause](#threads-bands-and-stops)); a space past the domain's object limit `ERX_ELIMIT`; `_clear_caps`, `_quiesce` and `_copy` `ERX_ENOTSUP` | FD1, FD9, FD17, FD20, FD21 |
-| `erx_gate_create`, `erx_gate_bind`, `erx_ipc_wait` | the domain library's fault thread and each domain's gate worker, serving fault gates | service: a gate is a record with a queue of fault and exit records and the one thread bound to it; a wait takes the oldest record, or sleeps on the thread's semaphore until the service queues one ([Fault gates](#fault-gates)) | the record's words in the message registers of the caller's public UTCB, its space's label as the label; the deadline as for every wait; a bind replaces the gate's thread, and `ERX_CAP_NULL` unbinds it, as on erXos's kernel; a bind to a thread of another task `ERX_ENOTSUP`; a wait by a thread no gate is bound to waits until its deadline; `erx_ipc_call`, `_send`, `_reply`, `_reply_wait` `ERX_ENOTSUP`, so no gate carries a message | FD3, FD19 |
+| `erx_gate_create`, `erx_gate_bind`, `erx_ipc_wait` | the domain library's fault thread and each domain's gate worker, serving fault gates; a runtime's urgent scheduler, for the objects bound to it | service: a gate is a record with a queue of fault and exit records and the one thread bound to it; a wait takes the oldest record, or sleeps on the thread's semaphore until the service queues one ([Fault gates](#fault-gates)); a wait by a thread that IRQ objects are bound to is local, `l4_ipc_wait` with the deadline, and returns the label of the one delivery it took ([Urgency](#urgency), "A bind to a thread") | the record's words in the message registers of the caller's public UTCB, its space's label as the label; the deadline as for every wait; a bind replaces the gate's thread, and `ERX_CAP_NULL` unbinds it, as on erXos's kernel; a bind to a thread of another task `ERX_ENOTSUP`; a wait by a thread that neither a gate nor an IRQ object is bound to waits until its deadline; a gate bound to a thread that IRQ objects are bound to, or an IRQ object to a gate's thread, `ERX_ENOTSUP`; `erx_ipc_call`, `_send`, `_reply`, `_reply_wait` `ERX_ENOTSUP`, so no gate carries a message | FD3, FD19 |
 | `erx_cap_dup`, `erx_cap_close`, `erx_cap_pass`, `erx_object_destroy`, `erx_object_info` | Erlang NIF handles, the launcher, the inspector; the domain library installing a domain's capabilities (`erx_dom_install`); a session installing a program's budget, group, channel, data area, code objects and pipe ends | service: the handle tables ([Handles](#handles)); a duplicate or a pass makes an entry at the rights of the source entry intersected with the mask, a pass in a space the caller created, from any task, and for an IRQ object calls the one placement function, which places the capability at the new entry's IRQ slot only when the entry's rights hold `TRIGGER` or `ACK` ([Handles](#handles), [Passing a handle](#passing-a-handle)); a close frees the entry and advances its generation; destroy deletes the Fiasco objects, for memory revokes every mapping first, and for a budget deletes everything charged to it; `erx_object_info` as [Reporting kernel objects](#reporting-kernel-objects) says | a stale handle, a handle used after its own close, and a value that names no entry `ERX_ESTALE`, in every service call, but at the reserved values a call's row names ([Handles](#handles)); a close of an entry whose object was destroyed frees the entry, and takes a holder off the record only while the record's generation is the entry's; a ring or an acknowledgement through an IRQ handle after its own close reaches what the root has placed at its slot since (FD1); a right the source entry lacks stays absent whatever the mask; destroying a started thread, or a group that still has a thread, `ERX_ENOTSUP`; destroying an object from a task other than its creator's `ERX_ERIGHTS`, since no pass conveys the delete right; a pass from a space other than the caller's own, into its own, or of a space or gate handle `ERX_ENOTSUP`, as is an item naming the type its handle must have; a thread handle is no entry of the table, so no thread passes; a pass stops at its first refused item with that item's error, an item past a full table `ERX_ELIMIT`, and leaves the items before it passed, which the caller undoes (the domain library by its budget's destroy); the topics and fields that section names `ERX_ENOTSUP` or clear | FD1, FD3, FD4, FD5, FD6 |
 | `erx_budget_create`, `_resize`, `_watch`; `erx_object_destroy` of a budget | the domain library: each domain's own and outer budgets and each connection's child budget; a session: each program's budget; the inspector | service, a create from any task and a resize from the root: a budget is a record of its parent and its wall, one number that is both its guarantee and its cap, with `used` and `carved` under `used + carved <= wall`: its user pages are charged to the record and refused past the wall, and its kernel memory is a Fiasco factory carved from its parent's ([Memory and budgets](#memory-and-budgets), [Budgets and groups as records](#budgets-and-groups-as-records)); its destroy deletes the budgets carved from it and everything charged to them | a handle per create; an elastic kind `ERX_ENOTSUP`, and a wall whose cap is not its guarantee `ERX_EINVAL`; a carve, or a resize that grows, past the parent's unspent wall `ERX_ENOMEM`; resize records the one wall, below the pages held plus the guarantees carved `ERX_EINVAL`, and a task's resize `ERX_ENOTSUP`; `used` partial (user pages, not kernel memory), `guarantee`, `cap` and `carved` exact, every other field `unsupported` ([Reporting a budget](#reporting-a-budget)); watch `ERX_ENOTSUP`; a charge past the cap, or past the kernel memory of the budget's factory, `ERX_ENOMEM`; a resize of the kernel-memory part `ERX_ENOTSUP` | FD25 |
 | the time page, `erx_time_set_offset` | ERTS's time, deadlines | service: one pool page, recorded as a memory object of the root budget, holding the scale of the architecture's user-readable counter and the wall offset. The service maps it read-only into every task at the task's creation, at a constant address just above the task area, the thread table and its label page, that no `erx_vm_reserve` hands out; `erx_time_page` returns that address in a task and the page's window address in the root. Reading is local. `erx_time_set_offset(time_page, offset)` is a service call whose body checks the handle against the caller's entry, as every service call does: a handle that is not the time page `ERX_ETYPE`, and one without `WRITE`, which only the system domain holds, `ERX_ERIGHTS`, as on erXos's kernel; it then stores the offset as the page's, refusing one outside `0..time_offset_max` with `ERX_EINVAL` ([design-time.md](design-time.md#on-fiasco)) | correct layout; the boot information's `time_page` names the object and nothing maps from it | FD27 |
@@ -785,7 +784,7 @@ that kernel, and otherwise stays a published downside.
 | FD13 | none (missing calls) | resources are carved (`erx_resource_carve`) and a domain makes physical objects and lines within a carved resource's rights; `erx_irq_route` applies a route; an IRQ object moves between groups | the root alone makes physical memory, contiguous memory, lines and MSIs, from the manifest's device entries; no carve, route or move between groups; every holder of an IRQ object can acknowledge it, since Fiasco's acknowledgement checks no right ([Rights](#rights)), where erXos's pass set gives `trigger` without `ack` | a device reaches a domain only by the domain library's give; a ringer's acknowledgement of a peer's doorbell does nothing, since a software object has no line to mask, and a device line is placed only in the domain that holds its device | narrowed by stage F3 of [Track F](plan.md#track-f-fiasco-improved-to-the-decision) (the acknowledgement's right); erXos's kernel |
 | FD14 | D12, K3 | a domain's objects are bounded by its budget alone | they are bounded also by its row's thread, object and mapping limits ([Memory and budgets](#memory-and-budgets)); a task holds at most 128 threads, a record waits for Fiasco's marker write before reuse, and a failed start that did not reach Fiasco's kill path loses its index until the task ends ([Table sizes](#table-sizes)) | a domain is refused at a limit while its budget has memory free, so its row is sized at its largest; D12's bounds hold at those limits | narrowed by stage F2 of [Track F](plan.md#track-f-fiasco-improved-to-the-decision); erXos's kernel |
 | FD15 | CLAUDE.md "Trust placement", CLAUDE.md "ERTS is a parts bin" | CPU grants to runtime groups, quotas charged up the group tree, own-group charging, `erx_group_configure` enforced with usage reported, a group's threads in any space, a thread on any CPU of its mask | per-domain priority bands, CPU sets and thread limits ([Threads, bands and stops](#threads-bands-and-stops)); a group's grant is a record, of which Fiasco honours the CPU set and the slice; its threads run in its home task, and affinity runs a thread on one CPU of its mask, narrowed to its domain's CPU set | the configured domains' ordinary work shares each CPU round robin in proportion to its ready threads, whatever a grant's quota; a root- or driver-band runtime whose urgent work does not end takes its CPU from everything below the urgent level; while configured domains keep a CPU busy, the app level's threads placed on it do not run, and an app spinning shares the app level in proportion to its threads; CPU use per domain is reported as `unsupported`; M10's "one runs out of CPU alone" holds between the app level and the levels above it, not within a level | stage 5 of [the scheduler](#stages-beyond-bands), in stage F5 of [Track F](plan.md#track-f-fiasco-improved-to-the-decision), or erXos's kernel |
-| FD16 | none (performance) | the cooperation ladder: status words, deferred preemption, published urgency within the group's ceiling, group park in the kernel with the executor switched, capacity advice the kernel stands behind | urgency by a thread's call on itself and nothing else ([Urgency](#urgency)); park and wake go through semaphores and a dispatcher thread per task ([The park protocol](#the-park-protocol)) | ERTS behaves as stock BEAM does on a general-purpose kernel: it spins briefly and backs off on a lock whose holder is preempted, and a wake, a doorbell's included, goes through one more thread switch; its schedulers park without busy waiting, so every idle moment pays that path ([Scheduling](#scheduling)) | stages 1 to 4 of [the scheduler](#stages-beyond-bands), in stage F5 of [Track F](plan.md#track-f-fiasco-improved-to-the-decision), or erXos's kernel |
+| FD16 | none (performance) | the cooperation ladder: status words, deferred preemption, published urgency within the group's ceiling, group park in the kernel with the executor switched, capacity advice the kernel stands behind | urgency as a thread's fixed level alone, its band's base or ceiling, which no hint moves, so a runtime's urgent work runs on a scheduler of its own ([Urgency](#urgency)); park and wake go through semaphores and a dispatcher thread per task ([The park protocol](#the-park-protocol)) | ERTS behaves as stock BEAM does on a general-purpose kernel: it spins briefly and backs off on a lock whose holder is preempted, and a wake, a doorbell's included, goes through one more thread switch; its schedulers park without busy waiting, so every idle moment pays that path ([Scheduling](#scheduling)) | stages 1 to 4 of [the scheduler](#stages-beyond-bands), in stage F5 of [Track F](plan.md#track-f-fiasco-improved-to-the-decision), or erXos's kernel |
 | FD17 | K31, CLAUDE.md "Untrusted input" | a kernel call runs on the caller's own thread and is charged to its own group, so what one domain makes another spend is bounded and declared; a fault of the root task ends the machine at once (K31) | setup, faults, copies and every service call run on the root service's one thread at the base level, which it shares with every configured domain's ordinary work ([Bands](#bands)), or on a same-CPU caller's remaining slice and at its level until the first reschedule ([Scheduling](#scheduling), "A call's slice"), and a program's start costs one service request per object; a long body (a space's release, which finishes its tree's teardown, a budget's destroy and its sweeps of the object table, and a stopped task's deletion, the teardown's longest piece) delays every other | an app flooding the root with requests or faults takes CPU from the configured domains' ordinary work on the root's CPU, the drivers' and the display's included, which shares the root service's level round robin, and from the app level there, and delays every other domain's setup and faults, which 0.2 accepts; a fault of the root service hangs every client until the watchdog or the harness's deadline ends the run | erXos's kernel |
 | FD18 | K20 | the executor rule refused by the kernel | `liberx`'s stub refuses it | a runtime that bypasses `liberx` can stall its own executors, harming only itself | erXos's kernel |
 | FD19 | none (missing calls) | threads are backed and charged at their create, any number run in a space the caller holds, a start resumes a repaired thread, and `erx_thread_stop`, `_read` and `_write` work | a creator starts only a space's first thread; a faulting thread waits until its space stops; no stop, read or write of a thread; a gate's thread is of the gate's own task | no debugger or pager repairs a thread | stage F3 of [Track F](plan.md#track-f-fiasco-improved-to-the-decision), or erXos's kernel |
@@ -816,7 +815,7 @@ follows.
 | --- | --- |
 | ERTS's run queues, priorities, reductions, stealing (L2) | unchanged |
 | park and wake, epochs, the group's ready list ([Park and wake](design-scheduler.md#park-and-wake)) | the backend's park protocol over a semaphore per thread and a dispatcher per task ([The park protocol](#the-park-protocol)), unchanged; doorbells are triggered directly |
-| urgency per executor ([Urgency resolution](design-scheduler.md#urgency-resolution)) | the thread's Fiasco priority, its band's base or ceiling ([Bands](#bands)), which `erx_thread_set_urgency` on the caller's own thread moves ([Urgency](#urgency)); no hint is sampled |
+| urgency per executor ([Urgency resolution](design-scheduler.md#urgency-resolution)) | the thread's Fiasco priority, its band's base or ceiling ([Bands](#bands)): a thread runs at the base unless it set its own urgency above its group's base, once, with `erx_thread_set_urgency` ([Urgency](#urgency)); no hint is sampled, and no executor's level moves |
 | ready queues by urgency, round robin within a level | Fiasco's fixed-priority scheduler: priorities 1 to 255, round robin within a level, a quantum per thread, its grant's slice (`sched_context-fixed_prio.cpp`) |
 | quotas and charging up the group tree ([Charging and quota](design-scheduler.md#charging-and-quota)) | none: Fiasco charges a thread's own scheduling context only |
 | deferred preemption ([Deferred preemption](design-scheduler.md#deferred-preemption)) | none |
@@ -854,8 +853,8 @@ There are four priorities:
 | Level | Priority | What runs at it |
 | --- | --- | --- |
 | watchdog | 255 | the root's watchdog, which takes no lock |
-| urgent | 3 | a thread doing urgent work ([Urgency](#urgency)): the line dispatcher of a task whose band reaches it, and an executor while the most urgent work it holds is urgent |
-| base | 2 | the ordinary work of the root task and of every configured domain: the root service, and every runtime's threads that hold no urgent work |
+| urgent | 3 | a thread that waits for urgent work ([Urgency](#urgency)): the urgent scheduler of a runtime whose band reaches the level |
+| base | 2 | the ordinary work of the root task and of every configured domain: the root service, and every thread of a runtime but its urgent scheduler |
 | app | 1 | code the system does not trust: an app's session, the programs of every session, and a domain a principal requests |
 
 A **band** is the range of levels a task's threads may run at, a base and a ceiling. A thread
@@ -864,7 +863,7 @@ starts at its band's base and never runs above its band's ceiling:
 | Band | Base | Ceiling | Whose threads |
 | --- | --- | --- | --- |
 | watchdog | watchdog | watchdog | the root's watchdog |
-| root | base | urgent | the root task's own: the root service, which never raises itself ([Scheduling](#scheduling), "A call's slice"), and the system domain's threads |
+| root | base | urgent | the root task's own: the root service, which stays at the base ([Scheduling](#scheduling), "A call's slice"), and the system domain's threads |
 | driver | base | urgent | the driver and device domains, and the spaces below them |
 | interactive | base | base | the display, web and session domains |
 | app | app | app | an app's session, the programs of every session, a domain a principal requests |
@@ -880,9 +879,10 @@ configured at them. This is L4Re's shape: ned gives each program a range of prio
 
 **What the bands give.**
 
-* *An interrupt's driver gets the CPU promptly.* Its line dispatcher, blocked at the urgent level,
-  and an executor that runs the driver's process at the urgent level wait only for the watchdog
-  and for other urgent work on their CPU ([Urgency](#urgency)).
+* *An interrupt's driver gets the CPU promptly.* The urgent scheduler its line is bound to waits
+  for it blocked at the urgent level, so the delivery takes its CPU from every thread but the
+  watchdog and other urgent work there, and the driver's process runs on that thread
+  ([Urgency](#urgency)).
 * *No domain's busy threads starve a driver, or any configured domain.* Nothing but the watchdog
   and urgent work runs above a configured domain's ordinary work, and urgent work starts only from
   a device's line or from a trusted runtime's own priorities, never from what an untrusted party
@@ -920,8 +920,8 @@ pasted bytes. With five strictly ordered priorities, the system domain at the to
 processes).
 
 **How a task gets its band.** The root service records a band in every task row, beside the row of
-the task's domain, starts every thread of the task at the band's base and gives Fiasco the band's
-ceiling with it ([Threads, bands and stops](#threads-bands-and-stops)). A task's band is fixed when
+the task's domain, starts every thread of the task at the band's base and runs at the band's
+ceiling only a thread that set its own urgency ([Threads, bands and stops](#threads-bands-and-stops)). A task's band is fixed when
 the task is made, from its domain row, and nothing the task or its creator sends afterwards
 changes it:
 
@@ -973,144 +973,211 @@ band says and the numbers do not. Of a grant Fiasco honours the CPU set and the 
 
 ### Urgency
 
-Urgent work is work an event started and that finishes: a line dispatcher's trigger, and in an
+Urgent work is work an event started and that finishes: the handling of a device's line, and in an
 ERTS runtime a process of priority `high` or `max`, which is what a driver's interrupt path runs at
 ([design-shared-devices.md](design-shared-devices.md), "The owner"). The runtime decides what is
-urgent, as under erXos's kernel, where an executor publishes the urgency of the most urgent work it
-holds ([design-scheduler.md](design-scheduler.md#urgency-resolution)); the band decides whether the
-thread may run above the base for it. Fiasco has no hint the kernel samples, so the urgency reaches
-Fiasco by a call the thread makes on itself.
+urgent, as under erXos's kernel; the band decides whether a thread may run above the base for it.
 
-**The call.** `erx_thread_set_urgency(thread, urgency)` on the caller's own thread raises it to its
-band's ceiling when `urgency` is above its group's base, and lowers it to its band's base
-otherwise. In a band whose ceiling is its base the call succeeds and changes nothing, so a runtime
-in the interactive or app band runs the same code and stays where it is. On any other thread it is
-`ERX_ENOTSUP`: no consumer raises another thread, and a raise through the root service would wait
-on a thread at the base level, the wait the raise exists to end. The task's backend learns from its
-dispatchers' registration whether its band's ceiling is above its base, and its home group's base,
-so the call makes no request to the root, and in a band whose ceiling is its base no kernel entry
-either.
+**The construction.** Urgent work has a thread of its own, which waits for it blocked at its
+band's ceiling. Fiasco gives a CPU at once to a thread that leaves a wait and to no thread that is
+merely ready ([Bands](#bands)), so the one thread sure to run when an event arrives is a thread
+that was waiting for it, at a level above the work the event must interrupt. In an ERTS runtime
+that thread is the **urgent scheduler**: a scheduler thread that runs every process of priority
+`high` or `max` and no other, has the runtime's device lines bound to itself, and with nothing to
+run waits for them in Fiasco. Three things follow, and the rest of this section is their detail:
 
-**In Fiasco.** The call is one new operation of a thread on itself, `Urgency` in the self table of
-[Who holds what](#who-holds-what), and a ceiling in the scheduling parameter:
+* No thread's level moves. A thread is at its band's base or at its ceiling from its start to its
+  end, so no thread ever has to raise itself, or be raised, to do urgent work.
+* Urgent work is never held by a base-level thread. A line's delivery, its label and the `high`
+  process it wakes pass only through the urgent scheduler, so nothing urgent waits for a thread
+  that is awake at the base to get its turn there, which is the wait the Raspberry Pi 4 measured
+  ([Bands](#bands), "The evidence").
+* Fiasco is unchanged. A priority set by the holder of the scheduler capability and an IRQ object
+  bound to a thread are both upstream's.
 
-* The fixed-priority parameter `L4_sched_param_fixed_prio` (`ready_queue_fp.cpp:58-63`) gains a
-  `ceiling` beside `prio`, which is the band's base. `Sched_context::check_param`
-  (`sched_context-fixed_prio.cpp:150-173`) refuses a ceiling below the priority, and
-  `Sched_context::set` (`sched_context-fixed_prio.cpp:186-222`) stores both; the legacy form's
-  ceiling is its priority. The root's one call of `l4_scheduler_run_thread` passes the band's base
-  as the priority and the band's ceiling ([Threads, bands and stops](#threads-bands-and-stops)).
-* The scheduling context also holds one bit, *raised*, which only the operation writes. Its level
-  is the ceiling while the bit is set and the priority otherwise, and the ready queue files it at
-  that level. A new thread's context starts with the bit clear, and `Sched_context::set` leaves it
-  as it is, so `l4_scheduler_run_thread`, whether it starts a thread or moves it to other CPUs,
-  never changes whether the thread is raised: each of its paths reaches the context only through
-  `Sched_context::set` (`Thread::set_sched_params`, `thread.cpp:695-711`, which a run on the same
-  CPU reaches through `Thread::start_migration`, `:790-806`, and the two migration paths,
-  `:1022-1023` and `:1319-1320`). The level is derived from the two, and each has one owner: the
-  band is the root's, which holds the scheduler capability, and the bit is the thread's own. So an affinity
-  change made while an executor is raised, or while the line dispatcher runs, leaves it raised, and
-  the adapter's memory of what it last set stays true.
-* The operation, a case of `Thread_object::invoke`'s dispatch (`thread_object.cpp:203-239`), takes
-  one word, 1 to raise and 0 to lower; a message of another length, or another value, is `EInval`,
-  and so is any thread but the caller, which only a holder of a thread capability could name and no
-  task is. When the bit already holds the value asked, it changes nothing and touches no queue.
-  Otherwise, on the caller's home CPU, the scheduling context leaves the ready queue, the bit
-  changes and the context joins the queue again, as `Thread::set_sched_params` moves it, and when
-  the level fell the thread calls `schedule`, so a ready thread that now outranks it runs. It does
-  not refill the quantum, as `set_sched_params` does (`sc->replenish()`, `thread.cpp:704`), so a
-  thread cannot outlast its slice by calling it.
-* It acts on the thread's own scheduling context. The one thread of erXos that runs on another
-  thread's is the root service, during a call ([Scheduling](#scheduling), "A call's slice"), and
-  it never makes the operation, so the level it changes is always the one that runs.
-* Choosing the level from the base, the ceiling and the bit is the policy and lives in the C17
-  cores Fiasco links ([Interfaces](#interfaces)); the operation is C++ glue of the fork, estimated
-  at 60 to 100 lines, unverified.
+**What the proven kernels do.** None of them raises a ready thread for an event; each has the
+event's handler wait for it at the handler's own priority.
 
-A thread moves only between the two levels the holder of the scheduler capability gave it, so the
-operation gives a domain nothing its band did not: a thread of the app band has a base and a
-ceiling of 1 and the operation moves it nowhere, and no argument names a priority. That
-`Thread::set_sched_params`'s sequence is right for the running thread when its scheduling context
-is the CPU's current one, and what the operation must do for a thread that priority inheritance
-has raised (`Sched_context::sync_pi_prio`, `sched_context-fixed_prio.cpp:292-321`; erXos makes no
-priority-inheritance mutex), are read and not run, and are unverified until the operation's case
-runs ([Verification](#verification)).
+* *Fiasco* delivers an interrupt as a message to the one thread its IRQ object is bound to, which
+  takes it in an open wait at its fixed priority (`Irq_sender::send_local` and `send`,
+  `irq.cpp:925-1009`). Only a holder of the scheduler capability sets a priority
+  (`Scheduler::sys_run`, `scheduler.cpp:63-110`), and a thread runs above its own only on the time
+  of a caller that waits for it ([Scheduling](#scheduling), "A call's slice").
+* *seL4* signals an interrupt to a notification that a handler thread waits on
+  (`seL4_IRQHandler_SetNotification`), under MCS lends a passive handler the notification's
+  scheduling context while it handles the signal (`seL4_SchedContext_Bind`), and changes a thread's
+  priority only for a holder of its capability, within the maximum controlled priority of an
+  authority thread (`seL4_TCB_SetPriority`).
+* *Zircon* has a thread wait for an interrupt object in `zx_interrupt_wait`, and applies a
+  scheduling profile to a thread only for a holder of the thread's handle with
+  `ZX_RIGHT_MANAGE_THREAD` and of a profile object (`zx_object_set_profile`). A waiter's priority
+  reaches another thread only through the ownership of a futex (`zx_futex_wait`'s owner), whose
+  rules were not read.
 
-**Who raises, and when.**
+The files and lines are in [Read in source, never run](#read-in-source-never-run).
 
-* *The line dispatcher* raises itself once, at its start and before it registers, since all it
-  ever does is turn a line's delivery into a trigger ([Interrupts and readiness](#interrupts-and-readiness)). *The
-  dispatcher*, which takes every doorbell, never raises itself.
-* *An ERTS executor* sets its urgency at its safe point, where the adapter of
-  [design-runtime.md](design-runtime.md#scheduling) publishes it under erXos's kernel: the wanted
-  urgency is the higher of the priority of the process it is about to run and the highest priority
-  queued on its run queue, `high` and `max` being urgent and `normal` and `low` not, and the
-  executor calls only when the wanted urgency differs from the one it last set. It lowers itself
-  before it runs ordinary work and before it parks, so an executor parks at the base. Dirty
-  schedulers never raise themselves.
-* *Any other thread* stays at its band's base.
+**The level.** `erx_thread_set_urgency(thread, urgency)` on the caller's own thread is a request
+to the root service. The root records the thread's level in its thread row, the band's ceiling when
+`urgency` is above its group's base and the band's base otherwise, and runs the thread at it with
+`l4_scheduler_run_thread`, which changes a started thread's priority on its own CPU
+(`Thread::start_migration` and `Thread::set_sched_params`, `thread.cpp:790-806`, `:695-711`). One
+function builds every scheduling parameter the root hands Fiasco from the thread's row, so an
+affinity change passes the same level again and a thread's level has one owner, the root. In a band
+whose ceiling is its base the call succeeds and changes nothing. On any other thread it is
+`ERX_ENOTSUP`: no consumer sets another thread's level. A thread makes the call once, at its start,
+so what the request waits behind at the root service, the base level's requests, costs only that
+start. That the sequence is right when the root service is running on the caller's own scheduling
+context ([Scheduling](#scheduling), "A call's slice") is read and not run
+([Verification](#verification), the urgent thread case at one CPU).
 
-**No untrusted party makes urgent work.** A thread reaches the urgent level in two ways, and an
-untrusted party controls neither:
+**A bind to a thread.** `erx_irq_bind(irq, thread, label)` binds an IRQ object to a worker thread
+of the caller's own task, as the kernel interface binds one to a worker
+([design-kernel.md](design-kernel.md#messages-gates-and-irq-objects)). The root, which alone binds,
+gives the object a free entry of the task's label page, stores the label there and runs
+`l4_rcv_ep_bind_thread(irq, thread, entry)`, as it does for a group with the dispatcher
+([Interrupts and readiness](#interrupts-and-readiness)); the 64 entries are the task's, shared by
+its group's objects and its threads'. The thread takes its deliveries with `erx_ipc_wait(deadline)`,
+which is `l4_ipc_wait` with the deadline and returns the label of the entry Fiasco's label names.
+A device line stays masked until `erx_irq_ack`, as for a group. A fire while the thread runs, or
+blocks in a umtx wait or a request, stays queued at the thread and arrives at its next wait, one
+delivery a wait (Fiasco's sender queue, read and not run). Nothing stands between Fiasco and the
+thread: no dispatcher, no ready list and no semaphore.
 
-* *A line's delivery.* Only device lines and MSIs reach a line dispatcher. The root alone creates
-  and binds them, and installs each only in the domain the manifest names, which can pass it only
-  to the spaces it created ([The call table](#the-call-table), `erx_irq_create` and `erx_cap_pass`),
-  so only that domain and the devices, which can write the MSI frame ([Devices](#devices)), fire
-  one. A line
-  stays masked from its next delivery until its holder acknowledges it (`irq.cpp:1013-1037`), so
-  the line dispatcher runs once for each acknowledgement of each line its task holds. A doorbell,
-  which any task creates and an app may ring as often as it likes, is delivered to the holder's
-  dispatcher at the base level, where a ringer that keeps firing takes its turn with the rest of the
-  base level's work and starves none of it (FD31).
-* *A runtime's priorities.* Only the root and driver bands reach the urgent level, and only trusted
-  code runs there. Their runtimes run at `high` and `max` only work a line started, as the line
-  owner and the drivers of design-shared-devices.md do; a process at those priorities that serves
-  requests an untrusted party sends would carry that party's load to the urgent level, and that is
-  a defect of the runtime's code, recorded with FD31's load.
+**The urgent scheduler.** ERTS's part is in
+[design-runtime.md](design-runtime.md#scheduling); what it rests on in ERTS's source:
+
+* *The thread.* One more scheduler thread, of the worker class, which the adapter starts when the
+  runtime's boot information gives its group a ceiling above its base (`urgency_ceiling`,
+  `urgency_base`; [Boot information](#boot-information)), which on this backend is a task of the
+  root or driver band. It sets its own urgency to the ceiling at its start and is pinned to the
+  first CPU of the runtime's run. It is not one of `schedulers` or `schedulers_online`, and no
+  capacity change suspends it. A runtime in the interactive or app band starts none and runs
+  `high` and `max` as stock ERTS does, on its normal schedulers.
+* *Its run queue.* Every enqueue on a normal run queue passes `select_enqueue_run_queue` with the
+  priority the process is enqueued at (`erl_process.c:6500-6553`, called at a schedule-out, `:6675`,
+  and from `add2runq`, `:6743`). There a priority of `max` or `high` chooses the urgent scheduler's
+  run queue and `normal` or `low` any other, as ERTS's balancer already sends a priority to another
+  run queue there (`erts_check_emigration_need`, `erl_process.h:2499-2516`). Balancing and stealing
+  leave the queue alone, and no port is queued on it. So the queue holds exactly the runtime's
+  runnable `high` and `max` processes, and no normal scheduler ever holds one. A process whose
+  priority changes moves at its next enqueue.
+* *Its wait.* With an empty queue it waits in `erx_ipc_wait` until its next timer. Another
+  scheduler that queued it a process wakes it with `erx_irq_trigger` on a doorbell the adapter
+  created and bound to it, the **wake bell**, where it wakes a normal scheduler with
+  `erx_executor_wake` (`erl_process.c:1572`).
+* *Its lines.* `erx_device` binds a line to the urgent scheduler's thread in a runtime that has
+  one, and to the group otherwise. The wait returns the line's label, the event table sends the
+  driver's process its message, and a process of priority `high` is then the next on this
+  scheduler's own queue.
+* *What Erlang code sees.* `high` and `max` keep their order, `max` first. They run on one thread
+  for the runtime, so two `high` processes never run at once, where stock ERTS may run them on
+  several schedulers. They no longer wait for a `normal` process's slice of reductions or for its
+  garbage collection, which stock ERTS makes them do. `normal` and `low` processes run meanwhile
+  on the other CPUs, as with several schedulers of stock ERTS. A `high` process's dirty work stays
+  on the dirty schedulers, at the base. `erlang:system_info(scheduler_id)` in a `high` process
+  names a scheduler past `schedulers`, a difference from stock OTP that `check-oracle` records
+  with its test. What `erlang:system_flag(multi_scheduling, block)` leaves running is not read,
+  and the package that builds the scheduler settles and tests it.
+
+The size of the change to ERTS is an estimate from the functions named, 300 to 600 lines of
+`erl_process.c`, unverified.
+
+**No untrusted party makes urgent work.** A thread is above the base only in a task of the root or
+driver band, where only trusted code runs: in the app band and the interactive band the ceiling is
+the base, so `erx_thread_set_urgency` moves nothing there, an object bound to a thread there is
+delivered at the task's own level, and neither an app nor a session gains a CPU by either call.
+What reaches a thread at the ceiling is what is bound to it and what its runtime queues it:
+
+* *A device line or an MSI.* The root alone creates and binds them, and installs each only in the
+  domain the manifest names, which can pass it only to the spaces it created
+  ([The call table](#the-call-table), `erx_irq_create` and `erx_cap_pass`), so only that domain
+  and the devices, which can write the MSI frame ([Devices](#devices)), fire one. A line stays
+  masked from its delivery until its holder acknowledges it (`irq.cpp:1013-1037`), so the urgent
+  scheduler takes one delivery for each acknowledgement of each line.
+* *A doorbell no one else holds.* In a task of the root or driver band the root binds a doorbell
+  to a thread only while the task that created it is its only holder, and refuses the pass of a
+  doorbell bound to a thread, both from the object's count of holders
+  ([Passing a handle](#passing-a-handle)). So the wake bell is rung only by its own runtime, and a
+  doorbell that any other task can ring is bound to a group, whose dispatcher runs at the base
+  (FD31).
+* *A runtime's priorities.* Root- and driver-band runtimes run at `high` and `max` only work a
+  line started, as the line owner and the drivers of design-shared-devices.md do. A process at
+  those priorities that serves requests an untrusted party sends would carry that party's load to
+  the urgent level; that is a defect of the runtime's code, recorded with FD31's load, and the
+  urgent roster case names every process the release runs at them
+  ([Verification](#verification)).
 
 **The path of an interrupt.**
 
-1. The line fires and Fiasco delivers it to the task's line dispatcher, which is blocked at the
-   urgent level and so takes its CPU from any thread but the watchdog.
-2. The line dispatcher's trigger lists the object and ups the semaphore of the longest-parked
-   executor ([The park protocol](#the-park-protocol)). That executor wakes at the base, which takes
-   its CPU from a thread at the base or app level at once; an urgent thread there finishes first.
-3. At its safe point the executor takes the ready list and sends the driver's process its message.
-   If the process is on its own run queue, its wanted urgency is now urgent: it raises itself, one
-   kernel entry, runs the process, which drains and acknowledges the device, and lowers itself when
-   no urgent work is left.
-4. If the process is on another executor's run queue, that executor is woken if it is parked, and
-   does as step 3; if it is running, it finds the process at its next safe point, at most one
-   process's slice of reductions later, and raises itself there.
+1. The line fires and Fiasco delivers it to the urgent scheduler it is bound to. A scheduler that
+   was waiting takes its CPU from any thread but the watchdog and an urgent thread running there.
+2. Its wait returns the label, the event table sends the driver's process its message, and the
+   process, of priority `high`, runs on that scheduler, drains and acknowledges the device.
+3. A scheduler that was running takes the delivery at its next wait, which it reaches once its own
+   queue is empty; a `high` process it is running finishes its slice of reductions first, and
+   `max` processes run before `high` ones.
+4. What the driver hands on, a message to a `normal` process, goes to a normal scheduler's queue
+   and wakes that scheduler at the base.
 
-What urgency does not reach is an executor that is awake but not running when urgent work arrives
-for it, or when a delivery arrives and no executor is parked: nothing tells Fiasco, so it runs when
-its turn at the base level comes, behind whatever urgent work its CPU has. That wait has no bound
-but the base level's load on its CPU: it waits a slice (1 ms, [Scheduling](#scheduling)) for each
-ready thread ahead of it there, and a thread that wakes in the meantime goes ahead of it, since
-Fiasco puts a woken thread at the front of its level (`Sched_context::Ready_queue::ready_enqueue`,
-`sched_context.cpp:15-24`; `Ready_queue_fp::enqueue`, `ready_queue_fp.cpp:122-125`), so threads
-that wake again and again keep it waiting as long as they keep waking. One slice alone is longer
-than the 0.7 ms the Raspberry Pi 4's mini UART buffers, so on that path the console can lose
-bytes, and the wake-load cell of the Pi measurement counts how often it is taken
-([Verification](#verification)). erXos's kernel resolves an executor's urgency at that executor's
-own transitions too, and bounds the same wait by the slice and the group's quota. With one normal
-scheduler pinned to each CPU ([Scheduling](#scheduling)) an awake executor is off its CPU only for
-another task's thread or its own runtime's dirty scheduler on that CPU, never for another normal
-scheduler. Past Fiasco, the driver's process still waits for ERTS: a process of priority `high`
-does not interrupt the process its executor is running, nor a garbage collection. So the bands and
-urgency give no bound on an interrupt's handling; what they give is measured
-([Verification](#verification)).
+**What it bounds, and what it does not.** From the line's firing to the driver's process, a
+scheduler that was waiting costs Fiasco's delivery and ERTS's dispatch; on the Raspberry Pi 4 the
+kernel's path took under 10 us and a blocked thread ran within 3 us of its wake
+([Bands](#bands), "The evidence"). Ahead of the driver's process there can be only:
 
-**What it costs.** Two kernel entries for each urgent episode of an executor, none for ordinary
-work; the operation above in the fork, with its case and a place in the system-call fuzz
-campaign's self-selector cases; a line dispatcher in each task of the root and driver bands; and
-threads of one task at two priorities, which is why a backend lock blocks ([Locks](#locks)).
+* the watchdog, and the urgent schedulers of other runtimes on the same CPU, each doing work that
+  ends;
+* on its own scheduler, the `max` processes and the `high` process already running, to the end of
+  its slice of reductions or of its own garbage collection;
+* a lock the scheduler needs while a base-level thread holds it. A holder it preempted on its own
+  CPU runs on to its unlock at once ([Scheduling](#scheduling), "Locks and priorities"); a holder
+  on another CPU that is itself off its CPU keeps the scheduler waiting for that holder's turn at
+  the base. ERTS's run-queue and process locks and the backend's locks are held for a few
+  instructions, so this is rare and not excluded, and the Pi measurement's longest receipt shows
+  it.
+
+The base level's load, an ordinary process's slice of reductions and its garbage collection are no
+longer in that list, on any CPU. No figure is promised: the bands and urgency give no bound on an
+interrupt's handling, and what they give is measured against the 0.7 ms the Raspberry Pi 4's mini
+UART buffers ([Verification](#verification)). A runtime whose `high` work does not end still takes
+its CPU from everything below the urgent level (FD15).
+
+**erXos's kernel has the same gap for a hint.** It loads an executor's published urgency only at
+that executor's own transitions and never in a pick, and a trigger with no executor parked raises
+no one, so an executor that is ready when its work turns urgent waits at the level it was queued
+at ([design-scheduler.md](design-scheduler.md#urgency-resolution)). That wait is bounded there, a
+slice of each thread ahead at the level, since a woken thread joins the tail, within the groups'
+quotas, and it is still longer than a FIFO of 0.7 ms. The same construction closes it with calls
+that kernel already has, a worker whose base `erx_thread_set_urgency` set and an IRQ object bound
+to it, and whether ERTS then still publishes a hint is an open decision
+([Open decisions](#open-decisions)).
+
+**What was weighed.**
+
+* *The thread raises itself.* An executor that sets its own level when it picks up `high` work
+  cannot do so while it is ready and not running, which is the gap, and the call costs two kernel
+  entries for each urgent episode and an operation and a bit in the fork.
+* *The waker raises it.* The thread that signals an executor, a dispatcher or another scheduler,
+  could raise it first. It needs a way to name a sibling thread in Fiasco, where no task holds a
+  thread capability ([Who holds what](#who-holds-what)); it gives a thread's level two writers,
+  the waker and the thread lowering itself, whose order decides whether a raise is lost; a
+  dispatcher cannot know which executor's queue the driver's process is on; and the raised
+  executor still finishes the ordinary process it was running, at the ceiling, before it reaches
+  the urgent one.
+* *The dispatcher drains the device.* A native drain of the device into a ring by the thread that
+  takes the line removes the loss for that device alone, needs device code outside the driver for
+  every such device, and leaves everything else the driver does where it was. It stays what a
+  native driver is: a measured row of the driver table, taken if the Pi measurement still loses
+  bytes with the urgent scheduler in place.
+
+**What it costs.** One thread in each ERTS runtime of the root and driver bands; the change to
+ERTS's enqueue above; one request to the root at that thread's start; a bind to a thread and a
+wait for it in the backend; a kernel entry and a thread switch for each wake of the urgent
+scheduler by another scheduler; and threads of one task at two priorities, which is why a backend
+lock blocks ([Locks](#locks)). Nothing in the fork.
 
 ### Stages beyond bands
 
-Each stage is a contained change to the Fiasco fork, as CLAUDE.md allows for kernel objects and
+Each stage but the third is a contained change to the Fiasco fork, as CLAUDE.md allows for kernel objects and
 scheduler hooks that integrate with Fiasco's C++, with the policy in erXos's C17 cores so it moves
 into erXos's kernel. The sizes are estimates from the files named and are unverified.
 
@@ -1118,13 +1185,13 @@ into erXos's kernel. The sizes are estimates from the files named and are unveri
 | --- | --- | --- | --- |
 | 1, status words | each executor's state, CPU and preemption count written by Fiasco into a kernel-user page beside the UTCB, as Fiasco places a vCPU state area (`thread_object.cpp:578`) | the switch path (`Context::switch_sched` and `schedule`, `context.cpp:887-986`, of a 2,949-line file) | 150 to 300 lines of C++ |
 | 2, deferred preemption | at a slice end with another thread ready, a bounded grace while the executor's `defer` count is raised; never for a higher-priority wake | `Timeslice_timeout::expired` (`timeslice_timeout.cpp:36-48`, a 49-line file) | 50 to 150 lines |
-| 3, urgency within a band | a thread's own move between its band's base and ceiling ([Urgency](#urgency)) | a thread operation (`thread_object.cpp:203-239`), and a ceiling and the raised bit in the scheduling context (`sched_context-fixed_prio.cpp:150-222`) | 60 to 100 lines |
+| 3, urgency within a band | the urgent scheduler: a thread at its band's ceiling that waits for the lines bound to it ([Urgency](#urgency)) | nothing in Fiasco: the root's `l4_scheduler_run_thread` and `l4_rcv_ep_bind_thread`, and ERTS's enqueue (`erl_process.c:6500-6553`) | none in the fork; 300 to 600 lines of ERTS |
 | 4, group park | the group's ready list and epochs in the kernel, removing the dispatcher's thread switch | a new kernel object beside `Irq_sender` | 300 to 600 lines, with the park core |
 | 5, group quotas | charging up the group tree across CPUs, as a new scheduling-context variant beside the fixed-priority one, which Kconfig's scheduler choice selects (`src/Kconfig:330-351`) | the fixed-priority variant is `sched_context-fixed_prio.cpp` (321 lines), `sched_context.cpp` (188) and `ready_queue_fp.cpp` (171); the six variant and queue files total 1,450 lines | 1,500 to 3,000 lines, with its policy in `kernel/sched/sched.c`, the C0 core |
 
-Stage 3 is part of the bands: its consumer is the driver of a device whose buffer fills faster
-than a slice, the Raspberry Pi 4's console first, and the Pi measurement of
-[Verification](#verification) is its test. The other stages follow the first release in the order
+Stage 3 is part of the bands and changes nothing in the fork: its consumer is the driver of a
+device whose buffer fills faster than a slice, the Raspberry Pi 4's console first, and the Pi
+measurement of [Verification](#verification) is its test. The other stages follow the first release in the order
 1, 2, 4, 5, once everything else works, each kept only when its measurement pays, as
 [plan.md](plan.md)'s M8 keeps each feature of the ladder. Stage 4 is also what makes a park cheap
 enough to spin before ([Scheduling](#scheduling), "A wait blocks"). Each stage that lands removes
@@ -1161,7 +1228,7 @@ its own memory and its connections' rings. With them it can:
   once until a take, so the pending state stays bounded, but Fiasco clears the queued state as
   each delivery finishes (`Irq_sender::finish_send`, `irq.cpp:751-755`), so a ringer on another
   CPU makes the peer's dispatcher run, and wake a parked executor, once per delivery, at the
-  peer's base level and never above it, since a doorbell never reaches a line dispatcher
+  peer's base level and never above it, since a doorbell a peer can ring is never bound to a thread above the base
   ([Urgency](#urgency), "No untrusted party makes urgent work"), whether or not the peer has taken
   its readiness since (FD31);
 * spend its own memory and kernel memory to their walls, and fail with `ERX_ENOMEM` there;
@@ -1270,15 +1337,11 @@ Each is backend C with no thread-local storage, and calls no musl function.
 | root service | root | owns the root's tables; serves requests, page faults and exceptions | every call and crash record |
 | watchdog | root | steps `watchdog.c` over the pet word | M1's criteria |
 | reaper | each task, one, its runtime's | deletes exited threads ([Deletion](#deletion)) | `pthread_join`, detached threads |
-| dispatcher | each task, one, its runtime's | turns doorbell deliveries into triggers of the task's groups, at its band's base, and line deliveries too in a task with no line dispatcher | lanes, channels, pipes, ERTS's wakes |
-| line dispatcher | each task of the root and driver bands, one, its runtime's | turns the deliveries of device lines and MSIs into triggers of the task's groups, at its band's ceiling ([Urgency](#urgency)) | drivers |
+| dispatcher | each task, one, its runtime's | turns the deliveries of the objects bound to the task's groups, doorbells and lines alike, into triggers, at its band's base | lanes, channels, pipes, ERTS's wakes, a line no thread takes |
 
 A task's own threads create its reaper and its dispatcher, at backend initialisation, through the
-ordinary calls, and in a band whose ceiling is above its base its line dispatcher with the
-dispatcher; the dispatchers' creation registers them with the service, which takes one of each a
-task, as it takes one dispatcher (`group.c:136-137`). The line dispatcher is started,
-registered and deleted with the dispatcher, as one pair, so what this document says of a task's
-dispatcher's life holds for both. Both live in the image's own data (`thread.c:81-88`, `park.c:45-51`), so a space runs one
+ordinary calls; the dispatcher's creation registers it with the service, which takes one a task
+(`group.c:136-137`). Both live in the image's own data (`thread.c:81-88`, `park.c:45-51`), so a space runs one
 image's backend: the loader `erx_exec` does its work before backend initialisation and starts neither, and the
 executable it enters starts the task's only pair ([Thread creation](#thread-creation), "An exec's entry"). The root's dispatcher starts with the
 root's first group instead, as that group's first thread ([Budgets and groups as records](#budgets-and-groups-as-records))
@@ -1527,6 +1590,7 @@ reason on refusal, with checked arithmetic on every offset. Each entry only gath
 | `space` | `ERX_CAP_SELF`, as every space names itself | the same |
 | `budget`, `group_ctl`, `group_stat`, `spaces_group`, `release`, `crash_area`, `system_connection` | `ERX_CAP_NULL` and zeros: `erx_vm_*` and `erx_group_status` find theirs with no handle, `erx_release_entry` reads the archive, and no Phase 1 caller takes the rest | the same |
 | `cpuset`, `capacity_mcpu` | the manifest's system share's `cpuset` within what `l4_scheduler_info` reports; 1,000 for each CPU, since Phase 1 has no grants | the host's online CPUs; the same |
+| `urgency_base`, `urgency_ceiling` | the base and the ceiling of the system share's grant; a domain's page carries its own group's, and on this backend the domain library writes the base in both for a domain whose band has no level above its base, so a runtime starts an urgent scheduler only where one can run above the base ([Urgency](#urgency)) | the grant's base in both: the hosted backend has one level |
 | node name | `system@` and the manifest's `host` | the same |
 | `args` | the manifest's `system_args`, the console's words, `-erx_record boot VALUE SLOT` ([the booted slot](#the-booted-slot)), `-erx_record build ID`, the boot image's build identifier in decimal, and each [device record](#device-records), then each `erx.arg=WORD` | the manifest's `system_args`, then `-erx_record console stdio`, then the command line after the archive's path |
 | `env` | empty | empty: the host's environment is not inherited, and the entry sets `TZ=UTC` for libSystem |
@@ -2160,7 +2224,7 @@ starts at the base of its task's band and never runs above the band's ceiling ([
 CPU set and with its domain's slice as its quantum, all from the domain's row in the root, which the domain's limits
 record and its grant fill.
 `l4_scheduler_run_thread(L4_BASE_SCHEDULER_CAP, thread, &param)` starts each thread, with `param` holding the
-priority, the ceiling ([Urgency](#urgency)) and the quantum and, in `param.affinity`, the thread's mask within its
+priority and the quantum and, in `param.affinity`, the thread's mask within its
 domain's CPU set ([Threads, bands and stops](#threads-bands-and-stops)): the requested mask, or every CPU when none
 was requested, intersected with the domain's set and the online CPUs, which admission makes non-empty. Within that
 mask Fiasco puts the thread on one CPU: its home CPU if the mask holds it, else the CPU of the thread that starts it,
@@ -2170,8 +2234,8 @@ was placed, and so a domain's threads started with no
 mask share one CPU of its set rather than spread across it, until an affinity request moves them
 ([the performance watch list](todo-performance.md)). `erx_thread_set_affinity` before the start takes effect at the start,
 and after it moves the thread at once, through the same call; a mask whose intersection is empty is
-`ERX_EINVAL` and changes nothing. An affinity change keeps whether the thread is raised, since only
-the thread's own call changes that ([Urgency](#urgency)), and refills its quantum
+`ERX_EINVAL` and changes nothing. An affinity change keeps the thread's level, which the root passes
+again from the thread's row ([Urgency](#urgency)), and refills its quantum
 (`Thread::set_sched_params`, `thread.cpp:704`), so a thread that asks for one every slice keeps its
 CPU from the others of its level; only an app is hostile, and it shares only the app level (FD15).
 
@@ -2189,8 +2253,8 @@ erXos's kernel ([design-runtime.md](design-runtime.md#scheduling)): online norma
 no kernel places it at its wake. The run is the one the group's configured capacity names within the domain's CPU
 set, and a runtime starts as many normal schedulers as the run has CPUs. So on each CPU a runtime has one normal
 scheduler, and no normal scheduler waits behind another; a dirty CPU scheduler shares its CPU with that CPU's normal
-scheduler and takes turns with it at the base level, where dirty work stays, since a dirty scheduler never raises
-itself. Left unpinned, all of a domain's schedulers share the root service's CPU and take turns there, which is the
+scheduler and takes turns with it at the base level, where dirty work stays. The runtime's
+urgent scheduler, where it has one, is pinned to the run's first CPU, above them all ([Urgency](#urgency)). Left unpinned, all of a domain's schedulers share the root service's CPU and take turns there, which is the
 delay the Raspberry Pi 4's probe measured ([Bands](#bands)).
 
 **A wait blocks.** A thread that waits for something another thread does blocks in Fiasco, in `erx_park`, a umtx
@@ -2249,7 +2313,7 @@ on its own context. erXos keeps the loan, because each of its cases is work the 
   above it that wakes moves the service to its own context at the base level, so the root service is never left at
   the app level behind the base level's work.
 
-So the root service never raises itself, and above the base level it runs only its caller's request, on its caller's
+So the root service never sets its own urgency, and above the base level it runs only its caller's request, on its caller's
 time. That the loan ends at the first reschedule is read from `Context::schedule` (`context.cpp:897-972`) and is
 unverified until the donated-call case runs ([Verification](#verification)).
 
@@ -2590,14 +2654,12 @@ thread table at a constant address, holds for each of the group's 64 entries the
 dispatcher that triggers it are all the home task's, so the park protocol below runs inside one task, as it does in the
 root.
 
-* **The dispatchers**, the dispatcher and in a task of the root or driver band the line dispatcher, each block in
-  `l4_ipc_wait`. Every message is one IRQ object firing, whose Fiasco label names an entry of the task's home group.
-  Each runs a trigger for that entry and waits again. Which one an object reaches is fixed at its bind by its kind,
-  which the root recorded at its create: a device line or an MSI reaches the line dispatcher, at the band's ceiling,
-  and a doorbell the dispatcher, at the base; in a task with no line dispatcher, whose band's ceiling is its base,
-  the dispatcher takes both. So a doorbell's ringer, whoever it is, makes only base-level work, and a line's
-  deliveries never queue behind a ringer's ([Urgency](#urgency), "No untrusted party makes urgent work"). The task's
-  own backend initialisation creates both, and their creation tells the service each thread's index.
+* **The dispatcher** blocks in `l4_ipc_wait`. Every message is one IRQ object firing, whose Fiasco label names an entry of the
+  task's home group. It runs a trigger for that entry and waits again, at the band's base, for a doorbell and for a line bound
+  to the group alike. An object bound to a thread does not pass through it: Fiasco delivers that object to the thread's own
+  wait ([Urgency](#urgency), "A bind to a thread"). So a doorbell's ringer, whoever it is, makes only base-level work
+  ([Urgency](#urgency), "No untrusted party makes urgent work"). The task's own backend initialisation creates the
+  dispatcher, and its creation tells the service the thread's index.
 * **A bind** to a group is a service body. The service, which alone knows which of a group's entries are in use, gives
   the IRQ object a free one, stores the caller's label into it through the window with a release store, which the
   home task loads with acquire order, and only then runs `l4_rcv_ep_bind_thread(irq, dispatcher,
@@ -2646,7 +2708,7 @@ Fiasco call, and returns what the caller does after unlocking.
 
 | Operation | Under the park lock | After the lock |
 | --- | --- | --- |
-| **Trigger**(object), by either dispatcher | list the object unless listed; mirror `ready`; advance the group's epoch and mirror it; take the longest-parked slot, if any | up that slot's semaphore |
+| **Trigger**(object), by the dispatcher | list the object unless listed; mirror `ready`; advance the group's epoch and mirror it; take the longest-parked slot, if any | up that slot's semaphore |
 | **Park**(slot, g, s) | if the group's epoch differs from `g` or the slot's from `s`, return `ERX_OK`; otherwise join the parked list | `l4_semaphore_down` with the deadline |
 | **Timeout**(slot) | if still on the list, leave it and return `ERX_ETIMEDOUT`; if taken off, return "owed" | if owed, an unbounded `l4_semaphore_down`, then `ERX_OK` |
 | **Wake**(slot) | advance the slot's epoch and mirror it; if on the list, take it off | if it was taken off, up its semaphore |
@@ -2672,7 +2734,7 @@ no write faults. That file is linked only into the root and the hosted process; 
 | --- | --- | --- |
 | `park` | an executor of the root, after releasing the park lock, when **Park** joined the parked list, before `l4_semaphore_down` | `slot`, `deadline` |
 | `wake` | the same executor, when its park ends: woken, timed out, or after the owed down of a timeout that found it taken off | `slot`, `result` |
-| `irq_deliver` | the root's dispatchers, for each delivery, before its **Trigger** | `label` |
+| `irq_deliver` | the root's dispatcher, for each delivery, before its **Trigger** | `label` |
 | `space_start` | the service, when `erx_space_create` makes a task | `target` |
 | `space_end` | the service, at [task exit](#task-exit) | `target`, `status` |
 
@@ -3740,13 +3802,6 @@ no test can drive the change:
   time slice (`thread-ipc.cpp`, [A yield](#scheduling)). Its test is the native task suite's
   `yield` case: upstream's receive keeps the CPU to the end of its slice, so the case misses its
   deadline.
-* **Urgency within a band.** The fixed-priority scheduling parameter carries a ceiling beside the
-  priority, the scheduling context a raised bit that `Sched_context::set` leaves alone, and a thread
-  moves itself between the two levels with the `Urgency` operation
-  (`sched_context-fixed_prio.cpp`, `thread_object.cpp`, [Urgency](#urgency)), carried as
-  urgency's open decision settles. Its tests are the urgency, urgency ceiling, urgency calls and
-  urgency kept across a move cases of [The release's cases](#the-releases-cases), and the fuzz
-  campaign's `Urgency` seeds.
 * **The semaphore's wake.** A semaphore's down waits for the activation of the up that dequeued it
   (`semaphore.cpp`, [A semaphore's wake across CPUs](#thread-creation)). Its test is the case of
   that name in [The backend's cases](#the-backends-cases).
@@ -3818,10 +3873,7 @@ trigger and unmask, and its bind and detach, which Fiasco refuses without the sp
 `L4_BASE_PAGER_CAP`, with every count of words and typed items the tag can hold); empty slots;
 the open wait and the reply forms; and, through the special selector, which Fiasco resolves to the
 calling thread with `CWS` whatever the slots hold (`thread_object.cpp:61-75`), every operation of
-the self table of [Who holds what](#who-holds-what), the fork's `Urgency` with seeds of its own:
-every message length from none to the 63 message registers, argument words other than 0 and 1 (2,
-the top bit alone, all ones), each value repeated a thousand times, and the operation sent through
-every slot of the object space, none of which holds a thread. The campaign reports how many inputs reached
+the self table of [Who holds what](#who-holds-what). The campaign reports how many inputs reached
 each of those seeds, and a run in which one reached none fails. It runs on QEMU under HVF and TCG at a budget the milestone
 gate sets; a crash or hang of Fiasco is a HIGH finding and its input joins the corpus.
 
@@ -3855,11 +3907,11 @@ ran the code it claims to:
 | **A task's write**, `native_task`: a test task's bytes reach the serial log unchanged; a raw `task_write` from a domain or a session's program is `ERX_ENOTSUP` and writes nothing, and its `test_space_create` `ERX_ENOTSUP`; `erx_debug_log` escapes and refuses as its row says | the write sent through `erx_debug_log`: the bytes are missing; the test-task mark not checked: the domain's escape sequence reaches the serial log; the root check of `test_space_create` removed: the task's create succeeds |
 | **A payload read once**, a host test of the decoder over a public UTCB a second thread rewrites | the length read again from the public UTCB: AddressSanitizer reports the overread |
 | **Task fault**: the record appears and the machine continues | the fault ending the machine |
-| **Interrupt**, `native_irq` and `fiasco_time_test.rb`: a UART line and a software object wake a parked executor across CPUs, the line through the root's line dispatcher and the object through its dispatcher, as the `thread` of each `irq_deliver` record of the trace ring shows; ack opens the line; a holder binds and acks its own line and is refused the root's group | ack removed; the listed flag ignored: a label reported twice; the interlock removed: the early trigger lost; the dispatcher's trigger removed; the hooked trigger removed; the home check of a task's bind removed; the bind's choice by kind removed: the line reaches the dispatcher |
+| **Interrupt**, `native_irq` and `fiasco_time_test.rb`: a UART line and a software object wake a parked executor across CPUs through the root's dispatcher; ack opens the line; a holder binds and acks its own line and is refused the root's group | ack removed; the listed flag ignored: a label reported twice; the interlock removed: the early trigger lost; the dispatcher's trigger removed; the hooked trigger removed; the home check of a task's bind removed; the bind's choice by kind removed: the line reaches the dispatcher |
 | **Trace ring**, `trace_ring_test.rb` and TSan: lapping, overwrite during a read, bounds, a task's call `ERX_ENOTSUP` | the second `seq` load removed; the head start returning 0; the skip counted one short; the cursor check removed: stale slots copied; the `max` bound removed; a read that ignores `max`: a copy past its slot; the terminal check removed; the exhausted head's check removed; the odd store removed; the ring linked into a task in place of the stub: the link lists' test fails |
 | **Trace on four CPUs**, `native_trace`: the kernel row's `unsupported` line, a backend `park` and `wake`, the workload's `in` not `late` | the park core's `trace` effect removed; the clock offset's sign flipped; `erx_trace_read` answering `ERX_OK` with no records: the `unsupported` line is missing |
 | **Watchdog**, `native_watchdog`: pets hold the machine up; once they stop a spinning thread does not keep it from ending and resetting | the end skipped; pets ignored |
-| **A backend lock across CPUs**, `native_lock`, on four CPUs: two threads of a task on two CPUs each take and release one backend lock 100,000 times and add to a counter that only the lock guards, and a thread raised to the ceiling contends on the first one's CPU for the last tenth; the counter ends at 200,000, and with the lock free and no thread waiting a down on the lock's semaphore with a zero timeout times out, so no credit is left; a pause of the task while one thread waits on the lock, and its resume, leave both results unchanged | the unlock's up made when the word was 1 or more: a second holder, so the counter falls short, and the zero-timeout down succeeds; the down after a cancel not retried: the waiter goes on without the lock and the counter falls short |
+| **A backend lock across CPUs**, `native_lock`, on four CPUs: two threads of a task on two CPUs each take and release one backend lock 100,000 times and add to a counter that only the lock guards, and a thread at the ceiling contends on the first one's CPU for the last tenth; the counter ends at 200,000, and with the lock free and no thread waiting a down on the lock's semaphore with a zero timeout times out, so no credit is left; a pause of the task while one thread waits on the lock, and its resume, leave both results unchanged | the unlock's up made when the word was 1 or more: a second holder, so the counter falls short, and the zero-timeout down succeeds; the down after a cancel not retried: the waiter goes on without the lock and the counter falls short |
 | **A semaphore's wake across CPUs**, `native_semaphore_race.rb` under `make check-native-seeds`, on a test kernel that holds the up between dequeue and activation | the bit's wait removed: the IPC wait ends early |
 | **A kernel trap on a release kernel**, `native_kernel_trap.rb` under `make check-native-seeds`: one `Panic: kernel trap` line, then PSCI's reset | the handler that kills the faulting thread and returns, as Fiasco's release build does: trap dumps repeat |
 | **End path**, `native_crash`: each fault's whole crash frame; a root fault's undrained lines; `erx_machine_end` with each `how` | the frame's write removed; the drain removed |
@@ -3908,13 +3960,16 @@ Each test below names the seeded failure that proves it ran:
 | direct doorbell | a ring and its wake make no request to the root (the root's request count is unchanged) | the trigger stub sends a request |
 | band | a fixed piece of a configured domain's ordinary work takes no longer, within a tenth, while an app-band domain spins every thread on its CPU | the spinning domain placed at the base level: the work takes its turns among the spinner's threads and several times as long |
 | base sharing | the `system_domain` suite's load on one CPU, `LOADERS` processes calling each party without pause: the system domain's own facet, the session's and that of a peer whose limits record names `interactive` each answer within `LOAD_MS` | the root band's base one priority above the base level: the session and the peer answer nothing |
-| urgency | a thread of a driver-band task that raised itself with `erx_thread_set_urgency` finishes a fixed piece of work in the same time, within a tenth, while a base-level thread of another task on its CPU is woken every 100 us, and after it lowers itself a wake takes the CPU from it | the stub's kernel entry removed: the wakes preempt the raised thread and the work takes longer |
-| urgency ceiling | a thread of an app-band task makes the raw `Urgency` operation with 1, and an interactive-band task's thread calls `erx_thread_set_urgency` with `ERX_URGENCY_MAX`: a base-level thread's fixed piece of work beside each takes no longer | the root passing the urgent level as every band's ceiling: the app thread runs above the base and the work waits |
-| urgency calls | a raised thread of a driver-band task raises itself 1,000 times more and lowers itself once, after which a base-level thread's wake on its CPU takes the CPU at once; a lowered thread making the lowering call 10,000 times beside a base-level spinner on its CPU gets half the CPU, within a tenth; the root's `Urgency` on that task's thread's capability answers `EInval` and leaves the thread where it was | raises counted, so one lowering leaves the thread raised: the wake waits; a call that changes nothing refilling the quantum: the caller takes nearly all the CPU; the operation acting on the thread it names: the root's call lowers a raised thread and a wake preempts it |
-| urgency kept across a move | a raised thread of a driver-band task moved by `erx_thread_set_affinity` to another CPU of its set finishes a fixed piece of work there in the same time, within a tenth, while a base-level thread on the new CPU is woken every 100 us | `Sched_context::set` clearing the raised bit: after the move the wakes preempt the thread and the work takes longer |
-| donated call | a raised thread of a driver-band task on the root service's CPU makes 10,000 `erx_object_info` calls while a base-level thread there is woken every 100 us, in no longer, within a tenth, than with no wakes | the stub's tag given the `Schedule` flag: each body runs on the service's own context at the base level, the wakes preempt it, and the calls take longer |
+| urgent thread | at one CPU and at four, a thread of a driver-band task that set its urgency above its group's base finishes a fixed piece of work in the same time, within a tenth, while a base-level thread of another task on its CPU is woken every 100 us | the service's body answering without its `l4_scheduler_run_thread`: the wakes preempt the thread and the work takes longer |
+| urgency ceiling | a thread of an app-band task and one of an interactive-band task each call `erx_thread_set_urgency` with `ERX_URGENCY_MAX`: a base-level thread's fixed piece of work beside each takes no longer | the root's table giving every band the urgent level as its ceiling: the app thread runs above the base and the work waits |
+| line to a thread | in a driver-band task, a worker at the ceiling waits in `erx_ipc_wait` for a doorbell of its own task bound to it, while base-level threads of the task and of a neighbour task on its CPU spin and one of them is woken every 100 us; a base-level thread fires the doorbell 1,000 times, and after each receipt the worker does 200 us of work: every receipt returns the label the bind gave, and from each fire to the end of its work no more than 400 us pass | the worker's `erx_thread_set_urgency` dropped: the wakes and the spinners' turns interrupt its work and receipts pass a quantum; the bind made to the task's group: the worker's wait ends only at its deadline |
+| thread-bound doorbell | a driver-band task's bind to its own thread of a doorbell it passed to a space it created answers `ERX_ENOTSUP`, and so does its pass of a doorbell bound to its thread; in an app-band task both succeed, and its thread stays at the app level | the bind's holder check removed: the bind of the passed doorbell answers `ERX_OK` |
+| urgency kept across a move | a thread at the ceiling of a driver-band task moved by `erx_thread_set_affinity` to another CPU of its set finishes a fixed piece of work there in the same time, within a tenth, while a base-level thread on the new CPU is woken every 100 us | the affinity body passing the band's base in place of the thread's recorded level: after the move the wakes preempt the thread and the work takes longer |
+| donated call | a thread at the ceiling of a driver-band task, on the root service's CPU, makes 10,000 `erx_object_info` calls while a base-level thread there is woken every 100 us, in no longer, within a tenth, than with no wakes | the stub's tag given the `Schedule` flag: each body runs on the service's own context at the base level, the wakes preempt it, and the calls take longer |
 | blocking lock | a base-level thread takes a backend lock and wakes a thread of its task that runs at the ceiling on the same CPU and takes the same lock: both finish | the waiter spinning on the word in place of its down: the holder never runs again and the case's deadline ends it |
 | pinned schedulers | a runtime whose CPU set has four CPUs runs one normal and one dirty CPU scheduler on each, by the one-CPU masks the root holds for its executors | the adapter's pin removed: all report the root service's CPU |
+| urgent scheduler | in a driver-band test domain on one CPU, every normal scheduler runs a `normal` process that loops without a wait and allocates, so that it collects garbage, and a neighbour domain spins at the base on the same CPU; a line the domain holds fires 1,000 times, and a `high` process takes each event and does 200 us of work: from each fire to the end of its work no more than 500 us pass; the `high` process reports the urgent scheduler's id, and a `normal` process it spawned one of the normal schedulers' | the enqueue's rule for `high` removed: the process runs on a normal scheduler, behind the loop's slice of reductions and the neighbour's turns, and receipts pass 1 ms; its rule for `normal` removed: the spawned process reports the urgent scheduler's id |
+| urgent roster | at the release's boot to the shell, the processes of priority `high` or `max` in each runtime that has an urgent scheduler are those a checked-in list names | a process started at `high` during the system domain's boot: the case names it |
 | sub-space band | a session's program spinning every thread delays its own session's echo, in the interactive band, by no more than one quantum | the root gives a new space its creator's own band: the program runs in the interactive band and the echo waits out the spin |
 | app session band | an app whose session's template names `interactive` spins every thread and delays an interactive domain's echo by no more than one quantum | `erx_dom_plan_app_session` keeps the template's band: the app runs beside the echo |
 | root-only domain form | a domain's `domain_space_create` answers `ERX_ENOTSUP` and makes no task: the domain's object count is unchanged | the root-only check dropped: the domain's request makes a task |
@@ -3930,7 +3985,7 @@ Each test below names the seeded failure that proves it ran:
 | writable peer side | a domain sends a raw `erx_vm_map` request asking for read and write on its peer's side, which it was passed without `WRITE`: `ERX_ERIGHTS`, and after the domain writes through every mapping it holds, the peer's side is unchanged | the map body not asking the lookup for `WRITE`: the mapping is made and the peer's side changes |
 | CPU ceiling | a domain whose CPU set is one CPU, not the root service's, starts its threads with no mask, moves one by a raw affinity request naming every CPU, and spins them all, while a lower band's echo runs on the root service's CPU: the echo answers within one quantum, and a raw request naming only CPUs outside the set answers `ERX_EINVAL`; a domain whose set names only a CPU past the online ones is refused at admission with its diagnostic | the narrowing skipped: a spinner lands on the echo's CPU and the echo waits; the admission check removed: the domain is admitted and its first thread's start fails |
 | repeated delivery | a ringer on another CPU fires a holder's doorbell 10,000 times while the holder's executors postpone `erx_group_take_ready`: the holder's next take returns the object once, and its dispatcher's deliveries and wakes are counted and reported with the run, the load FD31 publishes | the listed flag ignored: the take returns the object more than once |
-| doorbell flood | on four CPUs, an app-band domain's threads on three of them fire doorbells of a system-domain group as fast as they can while a fixed piece of the system domain's ordinary work runs on the CPU of the root's dispatchers: the work finishes within ten times its unloaded time, and the dispatchers' deliveries are counted and reported | the root binding doorbells to its line dispatcher: the urgent level stays busy and the work does not finish before the case's deadline |
+| doorbell flood | on four CPUs, an app-band domain's threads on three of them fire doorbells of a system-domain group as fast as they can while a fixed piece of the system domain's ordinary work runs on the CPU of the root's dispatcher: the work finishes within ten times its unloaded time, and the dispatcher's deliveries are counted and reported | the root's dispatcher started at its band's ceiling: the urgent level stays busy and the work does not finish before the case's deadline |
 | release entropy | a release image booted on QEMU `virt` with no `/chosen` seeds (QEMU's `dtb-randomness=off` machine option, which the harness already passes for deterministic runs, `tools/lib/erx/qemu.rb:39`) prints the refusal line and ends before any domain starts; the Raspberry Pi 4's manual checklist does the same with the RNG200's read made to fail | the refusal skipped: the boot goes on and a domain starts |
 | trial | on QEMU `virt`, an update's `ERX_END_TRIAL` ends with `erx: end trial`, the harness boots the spare slot once, and the committed slot boots after a trial that does not commit; with the boot value `unknown`, `ERX_END_TRIAL` answers `ERX_ENOTSUP` and the machine runs on | trial mapped to a reset: the last line is `erx: end reset` and the harness boots the committed slot; the boot-value check removed: the machine ends |
 
@@ -3941,30 +3996,37 @@ cells, each run for the console's line and for the SD controller's:
 | Cell | Load while it runs |
 | --- | --- |
 | idle | none |
-| system load | in the system domain, one process of priority `normal` for each of its CPUs, looping without a wait |
+| system load | in the system domain, one process of priority `normal` for each of its CPUs, looping without a wait and allocating, so that it collects garbage |
 | neighbour load | the system load, and the same loop in root's session, whose CPU set is the system domain's first CPU |
 | wake load | the system load, and in root's session, whose CPU set is the console driver's CPU, four processes each sleeping 400 us and then working 50 us, so the session's executor there wakes about every 100 us |
 
 In each cell the host pastes 100 lines of 41 bytes into the console at 115200 baud, and a reader
-in the session reads 64 MiB from the SD card. Each of the first three cells passes when the console driver reports no
-receive FIFO overrun and the line editor refuses no line, and when no receipt of the SD line,
+in the session reads 64 MiB from the SD card. A cell passes when the console driver reports no
+receive FIFO overrun and the line editor refuses no line, when no receipt of the console's line,
 timed from Fiasco's interrupt entry to the driver's process by the interrupt probe's stamps, takes
-over 1 ms, of at least 50. Its seeded failures, each run once on the board:
+over 0.7 ms, and when no receipt of the SD line takes over 1 ms, of at least 50. Each cell's
+record holds its longest receipt of each line, which is where a wait for a lock held at the base
+would show ([Urgency](#urgency), "What it bounds, and what it does not").
+
+The measurement runs twice. Before urgency is built, on the levels, the pinned schedulers, the
+1 ms slice and the parks alone, the first three cells pass or fail as above and the wake-load cell
+is reported: its wakes keep putting the session's executor in front of every thread that is awake
+at the base, a wait nothing bounds there, so it records, from the trace ring's park and wake
+records, whether each console receipt was taken by an executor its trigger woke or by one that was
+already awake, with the receipt's delay and the FIFO overruns. Those counts are what the open
+decision on urgency weighs. With the urgent scheduler built, all four cells pass or fail, and the
+wake-load cell is the one that confirms it: the driver's process no longer waits for the base
+level at all. The seeded failures, each run once on the board:
 
 | Seeded failure | What must fail |
 | --- | --- |
-| the adapter built without its raise, so every executor stays at the base | the console loses bytes in the neighbour-load cell |
+| the enqueue's rule for `high` removed, so the driver's process runs on a normal scheduler | console receipts over 0.7 ms, and lost bytes, in the wake-load cell |
+| the console's line bound to the group, so its delivery passes through the dispatcher at the base | console receipts over 0.7 ms in the wake-load cell |
 | the system domain's runtime started with `+sbwt very_short` | SD receipts over 1 ms in the idle cell, as the probe's image F shows 7 of 53 |
 | the adapter's pin removed | console lags over 0.7 ms in the system-load cell, as the probe's images C and E show |
 
 A cell that passes with its seed in place proves nothing about the mechanism the seed removes, and
 is reported so ([Open decisions](#open-decisions), urgency).
-
-The wake-load cell is reported, not passed or failed. Its wakes keep putting the session's
-executor in front of an executor that is awake but not running, a wait the design does not bound
-([Urgency](#urgency)), so the cell records, from the trace ring's park and wake records, whether each console receipt
-was taken by an executor its trigger woke or by one that was already awake, with the receipt's
-delay and the FIFO overruns; those counts are what the open decision on urgency weighs.
 
 ## The hosted backend
 
@@ -4043,10 +4105,34 @@ prediction barriers (`INTEL_IA32_BRANCH_BARRIERS`, `:478-487`) depend on AMD64. 
 4's A72 revision, whether 0.2's BL31 build turns the two workarounds on, and the exposure of the
 Apple cores an HVF guest runs on are unverified.
 
+**Other kernels' interfaces**, fetched 2026-11-23 over HTTPS and read as data, for
+[Urgency](#urgency), "What the proven kernels do". No source of seL4's kernel was opened:
+
+* seL4 13.0.0, `libsel4/include/interfaces/object-api.xml` (BSD-2-Clause), from
+  `https://raw.githubusercontent.com/seL4/seL4/13.0.0/`, SHA-256
+  `92a93445e77037231f4d2d0ab2f63cfe2e0b4da15165d5d6839f46e2f3e97de6`: `seL4_TCB_SetPriority`,
+  lines 269-296; `seL4_IRQHandler_SetNotification`, lines 1262-1270; `seL4_SchedContext_Bind`,
+  lines 1380-1393.
+* Fuchsia at commit `7a9d8a69030a6afacfe970fd3df22fb11fcf0ebb`, from
+  `https://fuchsia.googlesource.com/fuchsia`: `zircon/vdso/interrupt.fidl`, SHA-256
+  `7724c05662cbb16903cae51cb5f149b439e765ed3e2985a767c9735346852dd9`, lines 232-257
+  (`zx_interrupt_wait`); `zircon/vdso/object.fidl`, SHA-256
+  `cd849207c17f42fe4738fde1d924f92cef7e074974541f4977466ec89d4fa0c4`, lines 2405-2422
+  (`zx_object_set_profile`); `zircon/vdso/futex.fidl`, SHA-256
+  `7e6cf3c8789821e572a86c9bbe5129fa4f13715c276c2cd7970ff4caecba8946`, lines 52-58
+  (`zx_futex_wait`'s owner; the document on ownership and priority inheritance it points to was
+  not read).
+
 **Read, not run:**
 
 * A fault never answered blocks its thread until deleted: `thread.cpp:582-584`; the fault paths not read.
 * `enif_send` from a dirty NIF's callback, and its report of a dead receiver: `erl_nif.c:883`.
+* A fire of an IRQ object bound to a thread that is not in an open wait stays queued at the thread and is received at its next
+  `l4_ipc_wait`, one delivery a wait: `Irq_sender::send_local` and `send`, `irq.cpp:925-1009`; the receive side not read.
+* `l4_scheduler_run_thread` on a started thread changes its priority on its own CPU: `thread.cpp:695-711`, `:790-806`; not
+  run for a thread whose scheduling context the root service is running on.
+* ERTS's enqueue chooses a normal run queue in one function, by the priority enqueued at: `erl_process.c:6500-6553`, called
+  at `:6675` and `:6743`; where a port's run queue is chosen, and `multi_scheduling`'s block, not read.
 
 **The rows between tasks**, each read for the first package that carries it:
 
@@ -4073,8 +4159,10 @@ QEMU version, compiler, flags, workload and baseline recorded as CLAUDE.md requi
   [todo-performance.md](todo-performance.md));
 * **a connection's setup** by the domain library: its creations, placements and maps, since they
   move through domain factories;
-* **the urgency-change rate**: how often ERTS would change an executor's urgency under the G5
-  workloads, which prices the two kernel entries of each urgent episode ([Urgency](#urgency);
+* **the urgent scheduler's receipts**, on the Raspberry Pi 4: from Fiasco's interrupt entry to the
+  driver's process in each cell of the interrupt measurement, with each cell's longest
+  ([Verification](#verification)), and the cost of a wake of the urgent scheduler by another
+  scheduler, a trigger and a thread switch ([Urgency](#urgency);
   [todo-performance.md](todo-performance.md));
 * **the boot with parks in place of spinning**, on the Raspberry Pi 4, with `+sbwt none` against
   `very_short`, which prices the rule that a wait blocks ([Scheduling](#scheduling));
@@ -4115,13 +4203,19 @@ hooks.
   work does not end, and the lock that tied the root service to the system domain's priority
   blocks its waiter now ([Locks](#locks)).
 * **Whether urgency is built with the levels or after their measurement.** The levels, the pinned
-  schedulers, the 1 ms slice and the parks change no Fiasco code; urgency adds a thread operation
-  and a raised bit to the fork, a line dispatcher to each task of the root and driver bands, a
-  semaphore to every backend lock and a call to the adapter
+  schedulers, the 1 ms slice and the parks change no Fiasco code and no ERTS scheduling. Urgency
+  changes no Fiasco code either; it adds the urgent scheduler to ERTS, a bind to a thread, its wait
+  and one request for a thread's level to the backend, and a semaphore to every backend lock
   ([Urgency](#urgency)). Recommendation: land the first four, run the Raspberry Pi 4's measurement
   with its loaded cells ([Verification](#verification)), and build urgency when a loaded cell
   loses a byte, as the 1 ms slice against a 0.7 ms FIFO says it will; if no cell does, urgency
   waits for a consumer and stage 3 returns to the ladder.
+* **Whether ERTS publishes a hint under erXos's kernel.** The urgent scheduler closes, with calls
+  that kernel has, the gap a published urgency leaves for an executor that is ready
+  ([Urgency](#urgency)), and with it no normal scheduler holds urgent work, so `ERX_GROUP_HINTS`
+  has no consumer in ERTS. Recommendation: one ERTS on both kernels, with the urgent scheduler and
+  no published urgency, and the hint stays in [design-scheduler.md](design-scheduler.md) as a
+  feature of configuration C2 that M8 keeps only if another runtime's measurement pays for it.
 * **Whether the interactive band reaches the urgent level.** Its ceiling is the base, so a
   session, where a user's Erlang code can run a process at priority `high` without end, cannot
   keep a CPU from the base level. The cost is that the display's and a session's own devices are

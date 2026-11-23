@@ -829,6 +829,25 @@ gains nothing until it is preempted or calls `erx_yield`; one that lowers
 it keeps the higher urgency until the next transition, at most one slice.
 Neither direction needs a kernel call.
 
+**An executor that is ready when its work turns urgent** has no
+transition until it is dispatched, so a hint raised for it is not sampled:
+it waits at the level it was queued at, a slice for each thread ahead of
+it there, since a woken thread joins the tail, within what the groups'
+quotas let those threads take. A trigger with no executor parked raises no
+one either; a running executor finds the work at its next safe point, and
+one that is ready waits the same turn. A refresh does reach a ready
+thread, but `erx_thread_set_urgency` sets a base, which a waker and the
+thread itself would then both write, and no one makes it for a trigger
+from outside the runtime. So work that must not wait that turn is not
+given to an executor at its base. The runtime gives it a thread of its
+own: a worker whose base `erx_thread_set_urgency` set to the group's
+ceiling and to which the event's IRQ object is bound, which waits for it
+in an open wait and so preempts at its delivery (**Preemption**, in
+[Pick and dispatch](#pick-and-dispatch)), as a Fiasco interrupt thread
+does. ERTS's urgent scheduler is that worker
+([design-runtime.md](design-runtime.md#scheduling),
+[design-fiasco.md](design-fiasco.md#urgency)).
+
 The shared areas are read only through the accessors `erx_shared_load_u8`,
 `erx_shared_load_u32` and `erx_shared_load_u64`, one per field width: one
 relaxed atomic load into a local, after
@@ -1907,8 +1926,8 @@ readiness only; quotas, charging, shared areas, published urgency and the
 finishing share are unsupported, per the backend's table
 ([design-fiasco.md](design-fiasco.md#the-call-table)), and threads run on
 Fiasco's fixed priorities, each within its domain's band: at the band's
-base, or at its ceiling while the thread holds urgent work, which it says
-of itself with `erx_thread_set_urgency`, the one form of that call Fiasco
+base, or at its ceiling once the thread has set its own urgency above its
+group's base with `erx_thread_set_urgency`, the one form of that call Fiasco
 serves ([design-fiasco.md](design-fiasco.md#urgency)). A grant's `cpuset`
 and `slice_us` are honoured there, and its `base` only as the value an
 urgency must exceed to be urgent

@@ -1153,10 +1153,29 @@ ERTS's scheduler is the second level, kept whole except at these points:
   priority and the highest priority queued on its run queue, mapped into
   the group's band (`low` and `normal` to the group's base, `high` to base
   plus one, `max` to the ceiling). It republishes when either changes,
-  which ERTS knows at enqueue and at schedule-in. Without hints, as on
-  Fiasco, the executor sets the same value on itself with
-  `erx_thread_set_urgency` at its safe point, when it differs from the
-  one it last set, and lowers itself before it parks
+  which ERTS knows at enqueue and at schedule-in. A hint is sampled only
+  at the executor's own transitions, so it does not reach an executor
+  that is ready and not running
+  ([design-scheduler.md](design-scheduler.md#urgency-resolution)).
+* **The urgent scheduler.** Without hints, as on Fiasco, no executor's
+  level moves, and urgent work has a scheduler of its own. Where the
+  boot information gives the runtime's group a ceiling above its base
+  (`urgency_ceiling`, `urgency_base`), the adapter starts one more
+  scheduler thread, of the worker class and outside `schedulers` and
+  `schedulers_online`, which sets its own base to the ceiling once with
+  `erx_thread_set_urgency` and is pinned to the first CPU of the run.
+  ERTS's enqueue sends every process of priority `high` or `max` to its
+  run queue and no other process there; balancing and stealing leave
+  the queue alone and no port is queued on it. With nothing to run it
+  waits in `erx_ipc_wait` for the IRQ objects bound to it: the device
+  lines, which `erx_device` binds to it in place of the group, and its
+  wake bell, a doorbell the adapter binds to it and other schedulers
+  trigger when they queue it a process. So a line's delivery and the
+  `high` process it wakes never pass through a thread at the group's
+  base, and wait neither for the base level's turn nor for an ordinary
+  process's slice of reductions. Where the ceiling is the base the
+  adapter starts none, and `high` and `max` run on the normal
+  schedulers as in stock ERTS
   ([design-fiasco.md](design-fiasco.md#urgency)).
 * **Deferral.** With `ERX_GROUP_DEFER`, the adapter raises the control
   line's `defer` count around the scheduler's run-queue locks, process
