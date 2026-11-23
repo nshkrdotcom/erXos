@@ -1840,7 +1840,7 @@ downsides table to what it leaves. The stages start after 0.2; a fix a
 another; F5 is Fiasco's scheduler stages, whose group quotas use the
 scheduler core of erXos's C17 cores, and F6 uses their budget core. The
 sizes are unverified estimates, none
-prototyped.
+prototyped ([research-fiasco-vs-kernel.md](research-fiasco-vs-kernel.md)).
 
 * **F1, handles and records** (FD1, FD2, FD4, FD30 closed; FD6 and
   FD15's report narrowed; 700 to 1,600 lines). A generation in Fiasco's
