@@ -63,4 +63,4 @@ realtime 65 126 terminate
 # The signals a tty's shell may end by, as its master hears it (erx_console:shell_ending/1)
 # and the SSH domain's channel sends it (abi/services/ssh.txt, signaled): Ctrl-C alone
 # ends an exec on a tty (docs/design-ssh.md).
-signal_set ssh_line int
+signal_set tty_master int

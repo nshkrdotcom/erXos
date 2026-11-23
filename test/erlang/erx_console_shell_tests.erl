@@ -30,7 +30,7 @@ the_end_of_input_ends_the_runtime_test() ->
 
 %% A tty that exits with its shell waits on the drain at the group's first exit, with
 %% how that exit says the shell ended, whether or not its input has ended: an exec that
-%% Ctrl-C ended by its signal, anything else, a signal the ssh_line set does not list
+%% Ctrl-C ended by its signal, anything else, a signal the tty_master set does not list
 %% too, by an exit status.
 a_console_that_exits_drains_with_the_ending_test() ->
     Exit = {exit, fun(_) -> ok end},

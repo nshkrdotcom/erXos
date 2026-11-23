@@ -502,8 +502,8 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   (`erlang/apps/erx_session/src/erx_ssh_dev_channel.erl`, `ending/3`): the
   tty's ending maps to SSH's signal names by one clause for `sigint`,
   while `erx_console:shell_ending/1` reports `{signaled, S}` for every
-  member of the generated `ERX_SSH_LINE_SIGNAL_MEMBERS`. That set
-  (`abi/signals.txt`, `signal_set ssh_line`) holds only `int`, so a
+  member of the generated `ERX_TTY_MASTER_SIGNAL_MEMBERS`. That set
+  (`abi/signals.txt`, `signal_set tty_master`) holds only `int`, so a
   signal added to it would crash the channel; the name should come from
   that table.
 * [Low] SSH stage 1, the tty relay's messages

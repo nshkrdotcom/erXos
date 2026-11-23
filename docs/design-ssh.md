@@ -924,11 +924,11 @@ through each other's domain envelope and each checked by its receiver:
 | `job_sent` | channel to line | a `job_output` is unanswered; the line then reads the pipes again | ignored, as a late repeat |
 | `job_hangup` | channel to line | that atom; it holds from then on | not applicable; the line closes every end and ends the job's programs, as the relay ends a tty's shells at `tty_hangup` |
 | `{exited, Status}` | line to channel | `Status` is an integer from 0 to 255 | the channel closes |
-| `{signaled, Signal}` | line to channel, for a tty | `Signal` is a member of the signal set `ssh_line` in `abi/signals.txt`, `sigint` alone | the channel closes |
+| `{signaled, Signal}` | line to channel, for a tty | `Signal` is a member of the signal set `tty_master` in `abi/signals.txt`, `sigint` alone | the channel closes |
 
 `{exited, Status}` serves ttys too, and a tty has a second ending,
 `{signaled, Signal}`, for an exec that the tty's `Ctrl-C` ended, with
-`Signal` a name of the signal set `ssh_line` in
+`Signal` a name of the signal set `tty_master` in
 `abi/signals.txt`, `sigint` alone, since `Ctrl-C` is the only
 signal that ends an exec on a tty. A tty's ending has only these two
 shapes, with `Status` from 0 to 255 and `Signal` in that set, because
