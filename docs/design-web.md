@@ -221,7 +221,9 @@ alias of that domain's, and forwards each with the caller to
 with a line has the display named
 `web`: its applications' `erx_ui:open/1` opens there with the browser
 renderer. A session's line has at most one facet, which ends with the
-session domain and with the session's connection to the web domain.
+session domain, with the session's connection to the web domain and
+with the system domain's process that asked for it, the host link's
+`web` facet or the login facet.
 No manifest row grants the line: its interface, `web_line` in
 `abi/services/web.txt`, is `served_by session`, and the system domain
 hands the facet out as the reply of a declared facet's operation,
@@ -500,7 +502,9 @@ answers `{ok, View}`, the view's
 pid, exported to the web domain with the facet's reply, or `{error, busy}` past
 64 views. `open` is the one operation of the `web_line` interface. A
 view answers the web domain's caller of the `open`, which the facet
-hands the line with the request. A view's crash ends that view alone, which the web domain sees
+hands the line with the request, and ends with the line's facet through
+which it was opened, so a replaced facet's views are never the new
+grantee's ([design-system.md](design-system.md#a-sessions-lines)). A view's crash ends that view alone, which the web domain sees
 through its monitor and reports as `ended closed`. The session's boot
 script starts the line's application permanent, before the session
 reports ready, and the line is the application's one process, so the
@@ -688,8 +692,11 @@ host link's `console` reaches, mint its line for the web domain, whose
 facet replaces the one an earlier opening got;
 the session's environment is unchanged, so an application of `root`'s
 opens on the web when it names `web` or when the user sets `display` to
-it. Closing the facet closes its connections and leaves the line and its
-UIs with the session.
+it. The line's facet ends with the host link's `web` facet, which asks
+for it as it opens, so closing the facet closes its connections and
+ends the line's facet and every view opened through it, and the web
+domain keeps no way into `root`'s session; the session and its UIs
+stay.
 
 ### The client
 

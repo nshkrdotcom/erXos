@@ -582,7 +582,9 @@ comment is not decoration. The facet check,
 the interface, and refuses a file that cites no section or one the
 document does not have. It also refuses a manifest service whose
 interface no file declares, and a facet name in Erlang code that no
-manifest service publishes. A new way for one domain to reach another
+manifest service publishes, unless an interface marked `served_by
+session` declares it, as a session's line to a front end is
+([design-system.md, A session's lines](../design-system.md#a-sessions-lines)). A new way for one domain to reach another
 needs a declaration, and the declaration must point at a design.
 
 What the system observes about itself goes the same way.

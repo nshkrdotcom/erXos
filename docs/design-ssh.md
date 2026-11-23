@@ -846,7 +846,7 @@ each with the channel's domain to `erx_ssh_line`; nothing else from
 another domain reaches the line process. The interface `ssh_line` in
 `abi/services/ssh.txt` lists the operations the line serves, an
 operation entering it with the code that serves it, and the messages
-the line sends a channel are no operations of it. `erx_ssh_line` takes two
+the session sends a channel, from a tty or a job's relay, are no operations of it. `erx_ssh_line` takes two
 requests, each from a channel process of the SSH
 domain, and answers each `ok` or
 `{error, limited | badarg}`:
@@ -916,23 +916,25 @@ so the stream still ends when `rc` does. On a tty, the command shell's
 group writes `io` output to the terminal, which is standard error
 there, so output follows one rule in both.
 
-A job's channel and its line exchange seven closed messages, each
-checked by its receiver: the channel's reach the line only through the
-line's facet, which forwards a message in no call's shape with its
-`message/2`, within `in_flight`
-([design-system.md](design-system.md#a-sessions-lines)), and the line's
-reach the channel in the session's envelope:
+A job's channel and its relay exchange seven closed messages, each
+checked by its receiver. The relay's reach the channel in the session's
+envelope, from a name `open_job`'s answer hands the channel, so the line
+process itself sends a front end nothing
+([design-system.md](design-system.md#a-sessions-lines)); how the
+channel's reach their job, named and delivered without loss, is the
+open question "How a job's messages reach their job"
+([Risks and open questions](#risks-and-open-questions)):
 
 | Message | Direction | The receiver's check | If it fails |
 | --- | --- | --- | --- |
-| `{job_input, Bytes}` | channel to line | a binary of at most 32 KiB, the channel's packet size, with no other `job_input` unanswered and no `job_eof` before it; the line writes it to standard input's pipe, waiting for room | the line ends the job, as at `job_hangup` |
-| `job_written` | line to channel | a `job_input` is unanswered; the channel then opens the client's window by its size | the channel closes |
-| `job_eof` | channel to line | none; the line closes standard input's writing end once what came before it is written, and the job's output and status still flow | not applicable |
-| `{job_output, Stream, Bytes}` | line to channel | `Stream` is `stdout` or `stderr`, `Bytes` a binary of at most 32 KiB, with no other `job_output` unanswered; the channel sends it as channel data or extended data within the client's window | the channel closes |
-| `job_sent` | channel to line | a `job_output` is unanswered; the line then reads the pipes again | ignored, as a late repeat |
-| `job_hangup` | channel to line | that atom; it holds from then on | not applicable; the line closes every end and ends the job's programs, as the relay ends a tty's shells at `tty_hangup` |
-| `{exited, Status}` | line to channel | `Status` is an integer from 0 to 255 | the channel closes |
-| `{signaled, Signal}` | line to channel, for a tty | `Signal` is a member of the signal set `tty_master` in `abi/signals.txt`, `sigint` alone | the channel closes |
+| `{job_input, Bytes}` | channel to relay | a binary of at most 32 KiB, the channel's packet size, with no other `job_input` unanswered and no `job_eof` before it; the relay writes it to standard input's pipe, waiting for room | the relay ends the job, as at `job_hangup` |
+| `job_written` | relay to channel | a `job_input` is unanswered; the channel then opens the client's window by its size | the channel closes |
+| `job_eof` | channel to relay | none; the relay closes standard input's writing end once what came before it is written, and the job's output and status still flow | not applicable |
+| `{job_output, Stream, Bytes}` | relay to channel | `Stream` is `stdout` or `stderr`, `Bytes` a binary of at most 32 KiB, with no other `job_output` unanswered; the channel sends it as channel data or extended data within the client's window | the channel closes |
+| `job_sent` | channel to relay | a `job_output` is unanswered; the relay then reads the pipes again | ignored, as a late repeat |
+| `job_hangup` | channel to relay | that atom; it holds from then on | not applicable; the relay closes every end and ends the job's programs, as the relay ends a tty's shells at `tty_hangup` |
+| `{exited, Status}` | relay or tty to channel | `Status` is an integer from 0 to 255 | the channel closes |
+| `{signaled, Signal}` | tty to channel | `Signal` is a member of the signal set `tty_master` in `abi/signals.txt`, `sigint` alone | the channel closes |
 
 `{exited, Status}` serves ttys too, and a tty has a second ending,
 `{signaled, Signal}`, for an exec that the tty's `Ctrl-C` ended, with
@@ -941,7 +943,7 @@ reach the channel in the session's envelope:
 signal that ends an exec on a tty. A tty's ending has only these two
 shapes, with `Status` from 0 to 255 and `Signal` in that set, because
 the console that makes it maps any other end to status 1
-(`erx_console:shell_ending/1`), and the line passes it on unchecked;
+(`erx_console:shell_ending/1`) and sends it to the channel itself;
 the channel checks it against that set and closes on any other. FreeBSD's `sh -c` dies of the SIGINT
 that ends its command (`onint` in `bin/sh/error.c` of FreeBSD 14.2,
 lines 117-123), rather than exiting 130, the `$?` a parent shell gives
@@ -951,7 +953,8 @@ and OpenSSH's `sshd` sends `exit-signal` for a command a signal ended
 not an exit, on both systems. A hangup needs no ending, since the
 channel is gone by then.
 
-The line sends one ending once what it started on the channel, the
+The tty, or the job's relay, sends its channel one ending, as its last
+message, once what it started on the channel, the
 shell on the tty or the job, has ended, every process it started has
 ended with it, and its last output has been taken, by `tty_taken` or
 `job_sent`, so the ending arrives after every byte of output. The
@@ -970,7 +973,7 @@ it sends, so a client that types faster than the program reads loses the
 excess as on a line's overrun ([design-live.md](design-live.md#paths)).
 
 At the end of the connection every channel's tty gets `tty_hangup` and
-every job's line `job_hangup`; the SSH domain then calls `logout(Line)`,
+every job's relay `job_hangup`; the SSH domain then calls `logout(Line)`,
 and the session ends as a console session ends at log-out. If the SSH
 domain ends first, the facet ends with it and every session its logins
 started ends, as the web's do.
@@ -1508,8 +1511,8 @@ boots the card and logs in.
 | Interface | Between | Declared in |
 | --- | --- | --- |
 | `erx_ssh_login`: `cookie`, `key_ok`, `login_key`, `login_passphrase`, `logout` | the SSH domain and the system domain | `abi/services/ssh.txt`, citing [Logging in](#logging-in) |
-| the `ssh_line` facet in front of `erx_ssh_line`: `open_tty`, `open_job`, and a job's `job_input`, `job_eof`, `job_sent` and `job_hangup` | the SSH domain and a session it logged in | `abi/services/ssh.txt`, `served_by session`, citing [Sessions, ttys and shells](#sessions-ttys-and-shells), each operation as the line serves it ([design-system.md](design-system.md#a-sessions-lines)) |
-| the line's messages to a channel: a job's `job_written` and `job_output`, `exited`, and a tty's `signaled` | a session and a channel of the SSH domain | this document's table in [Sessions, ttys and shells](#sessions-ttys-and-shells), and `abi/signals.txt`'s signal set `tty_master` |
+| the `ssh_line` facet in front of `erx_ssh_line`: `open_tty` and `open_job` | the SSH domain and a session it logged in | `abi/services/ssh.txt`, `served_by session`, citing [Sessions, ttys and shells](#sessions-ttys-and-shells), each operation as the line serves it ([design-system.md](design-system.md#a-sessions-lines)) |
+| a job's messages, `job_input`, `job_eof`, `job_sent` and `job_hangup` to the job, `job_written`, `job_output` and `exited` from its relay, and a tty's ending, `exited` or `signaled` | a channel of the SSH domain, and the job's relay or the tty | this document's table in [Sessions, ttys and shells](#sessions-ttys-and-shells), routed as [Risks and open questions](#risks-and-open-questions) settles, and `abi/signals.txt`'s signal set `tty_master` |
 | the console interface's six messages | a channel and a tty | `abi/services/console.txt` ([design-live.md](design-live.md#paths)) |
 | the credentials facet: `login_keys`, `add_login_key`, `del_login_key` | a session and the principal service | the principal service's service file, citing [Login keys](#login-keys) |
 | `{ssh_host, Name}` key facet | the SSH domain and the vault | [design-system.md](design-system.md#the-vault) |
@@ -1640,6 +1643,26 @@ boots the card and logs in.
   only stops the printers, and its hangup ends the group whatever it is
   running. A bound per channel would need the printers to wait before
   they send, which the io protocol does not offer.
+* **How a job's messages reach their job.** The channel's `job_input`,
+  `job_eof`, `job_sent` and `job_hangup` must reach the job they belong
+  to, of up to ten on a connection, and none may be lost: a lost
+  `job_eof`, `job_hangup` or `job_sent` leaves a job stuck. Through the
+  line's facet they would arrive by `message/2`, which names the grantee
+  but not the sender, and the facet drops such a message once `in_flight`
+  forwards are outstanding
+  ([design-system.md](design-system.md#a-sessions-lines)), so routing
+  and delivery are settled together, and `open_job` and these messages
+  stay out of `ssh_line`'s interface until they are. Two ways fit what
+  exists: `open_job`'s answer hands the channel the job's relay, a
+  process acting for the facet's grantee as a web view does, which takes
+  the four messages from its grantee alone, ends with the facet and is
+  bounded by the one unanswered message each way the table above holds;
+  or the messages keep going through the facet, tagged with the alias the
+  channel makes for the job, as stage 1's relay takes them
+  (`erx_ssh_job`), bound to the admitted grantee and a live job, with an
+  admission that never drops one of the four. Recommended: the relay as
+  the endpoint, which needs no change to the facet behaviour and routes
+  by the process the message is sent to.
 * **Session creation per login** costs a domain's start; the latency of
   an SSH login is on the watch list
   ([todo-performance.md](todo-performance.md)),

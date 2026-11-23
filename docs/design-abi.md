@@ -1825,8 +1825,8 @@ domains and is unique as an unordered pair; it creates the existing
 connection, with no additional capabilities or transitive authority.
 
 Within `service NAME NUMBER`, the members are `operation NAME NUMBER`,
-`liveness OPERATION_NAME`, `served_as message|tree`, `quantity KEY
-VALUE` and `parameter NAME NUMBER KIND CARDINALITY BOUND checked_by
+`liveness OPERATION_NAME`, `served_as message|tree`, `served_by
+session`, `quantity KEY VALUE` and `parameter NAME NUMBER KIND CARDINALITY BOUND checked_by
 HELPER`.
 
 * `served_as` is stated by every interface, so no interface is served
@@ -1892,9 +1892,20 @@ HELPER`.
   [design-packaging.md](design-packaging.md#the-apps-row) derives from
   the `apps` row, take each quantity from their service's declaration,
   and the manifest check refuses an `apps` row naming a service whose
-  interface leaves one out. A source's own facet rows state every
+  interface leaves one out; and a session's line, whose grant no row
+  states, takes all five from its interface, which must declare them. A
+  source's own facet rows state every
   quantity themselves; no declared quantity fills a field a source row
   leaves out.
+* `served_by session`, at most once, marks a message interface that a
+  session serves as its line to a front end, which the domain service
+  grants only on a request naming the grantee and no manifest row grants
+  ([design-system.md](design-system.md#a-sessions-lines)). It is the one
+  source of which services are lines: the generator lists them, each
+  with its quantities, for Erlang as `?ERX_LINES`; the facet-name check
+  takes their names as lines; and the manifest check refuses a `service`
+  or `facet` row of one. An interface without it is served by the holder
+  its manifest `service` row names.
 
 `max_request` is a byte ceiling, `in_flight` a count, `reductions` a
 positive share per positive `period_ns`, `max_heap_size` the grant

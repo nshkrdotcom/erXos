@@ -333,42 +333,48 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
 * [Medium] SSH stage 2, the login facet ([design-ssh.md](design-ssh.md)): the cookie table is keyed by the connection process, but a service behind `erx_facet` sees the facet's forward (a fresh alias, `erx_facet.erl`'s request handling), not the grantee's pid. The stage-2 design must say how the facet learns the connection: carried in the request, or keyed by the facet's forward and its `'DOWN'`.
 * [Medium] session lines, mint each line as a facet (`erlang/apps/erx/src/erx_session_line.erl`, `line/4`;
   [design-system.md](design-system.md#a-sessions-lines)): a line admits its peer's calls with an admission loop of
-  its own, with no `max_request`, no limit in flight and no counts, and the domain service keeps the lines in a
-  registry beside the mint core. The work package, in order, each step with the test and seeded fault of the
-  design's table:
-  1. ABI: the `served_by session` member (`tools/lib/erx/abi_contracts.rb`, with `quantity max_request` and
-     `quantity in_flight` required of it); `abi/services/ssh.txt`'s `ssh_line` keeps `open_tty` alone, marked
-     `served_by session`, with `max_request` 65536 (a 32 KiB `exec` command, a 64-byte TERM, a pid and the
-     envelope, doubled past the sum as `code_objects_max_request` is) and `in_flight` 4, and the job messages,
-     `exited` and `signaled` leave its operations (`abi/signals.txt`'s comment on `tty_master` then cites
-     design-ssh.md's table); `abi/services/web.txt` declares `service web_line 21` with `open 1`, `max_request`
-     8192 (16 segments of 256 bytes and the envelope) and `in_flight` 16; each derivation stated in its file's
-     comment.
-  2. Generation: `?ERX_LINES` as a map from each `served_by session` interface's name to its two limits, from
+  its own, with no `max_request`, no limit in flight and no counts, the domain service keeps the lines in a
+  registry beside the mint core, the SSH line sends a channel its tty's ending itself, which exports the line
+  process, and root's web line outlives the host's closing of its `web` facet. The work package, in order, each
+  step with the test and seeded fault of the design's table:
+  1. ABI: the `served_by session` member (`tools/lib/erx/abi_contracts.rb`, with all five quantities required of
+     it); `abi/services/ssh.txt`'s `ssh_line` keeps `open_tty` alone, marked `served_by session`, with
+     `max_request` 65536, `in_flight` 4, `reductions` 100000, `period_ns` 1000000000 and `max_heap_size` 65536,
+     and the job messages, `exited` and `signaled` leave its operations (`abi/signals.txt`'s comment on
+     `tty_master` then cites design-ssh.md's table); `abi/services/web.txt` declares `service web_line 21` with
+     `open 1`, `max_request` 8192 and the same other quantities but `in_flight` 16. Each file's comment states
+     its `max_request` derivation as design-system.md gives it, by `erlang:external_size/1` of the call without
+     the envelope, over every implemented variant.
+  2. Generation: `?ERX_LINES` as a map from each `served_by session` interface's name to its quantities, from
      the ABI generator, in place of `tools/lib/erx/facet_names.rb`'s `LINES`; the facet-name check reads the
      same set; the manifest check refuses a `service` or `facet` row of such an interface.
   3. Mint core (`erlang/apps/erx_domain/src/erx_domain_mints.erl`): a session's ready report carries its node
-     and `provides`, checked as a provider's are; the line operation (request, `introducing`, `minting`, the
-     answer action, `busy`, the ends of either party, the deadline), in the exhaustive event-order test.
-  4. Domain service: `erx_domain:line/3` becomes one call answered by the core; delete `lines`, `keep_lines/4`,
-     the `{line, Name, Id}` call and `export_line/2`, and the `keep_lines/4` item of
-     [todo-runtime.md](todo-runtime.md).
-  5. `erx_session_line`: the mint (system domain's mint request alone, one facet at a time, `ends_with` the
-     connection and the line) and the facet callback that forwards with the grantee and its caller; delete the
-     peer's call clause and `{export, Peer}`. `erx_web_line` and `erx_ssh_line` take the caller and peer from
-     the forward; `erx_facet`'s moduledoc on lines and `erx_ssh_line`'s naming of a signal set `ssh_line` (the
-     set is `tty_master`) follow.
-  6. Callers: `erx_hostlink_web` takes the facet as root's line; the host tests of both lines, the domain
-     service and the facet-name check; the web QEMU suite once. Repoint the web view scope residual of
-     [todo-web.md](todo-web.md) and the call-admission item of [todo-network.md](todo-network.md), which
-     name `erx_session_line`.
-* [Medium] SSH, which job a job's message names ([design-ssh.md](design-ssh.md#sessions-ttys-and-shells)):
-  the channel's `{job_input, Bytes}`, `job_eof`, `job_sent` and `job_hangup` reach the line through its facet's
-  `message/2` (design-system.md, "A session's lines"), which hands the line the grantee and the message but not
-  the sender, and none of the four names its job, so a line with several jobs cannot tell whose input it got.
-  `open_job`'s design must give each job's messages a name of their job, as stage 1 tags them with an alias the
-  channel makes, or hand the channel the job's relay as a view is handed out; the operations then enter
-  `ssh_line`'s interface with the code that serves them.
+     and `provides`, checked as a provider's are (a bad pid refuses its entry, an undeclared name the map); the
+     line operation (request with its opening, `introducing`, `minting`, the answer action, `busy`, the ends of
+     either party, the deadline, a tagged bad reply failing at once), in the exhaustive event-order test.
+  4. Domain service: `erx_domain:line/4` with its opening becomes one call answered by the core, the opening
+     carried in the mint's limits as a computed parameter; delete `lines`, `keep_lines/4`, the
+     `{line, Name, Id}` call and `export_line/2`, and the `keep_lines/4` item of [todo-runtime.md](todo-runtime.md).
+  5. `erx_session_line`: the mint (system domain's mint request alone; end the facet before and take its
+     `'DOWN'`, then start the new one, none if that fails; `ends_with` the connection, the line and the opening)
+     and the facet callback that forwards with the grantee, its caller and the facet; delete the peer's call
+     clause and `{export, Peer}`. `erx_web_line` and `erx_ssh_line` take the caller, peer and facet from the
+     forward; a web view monitors its facet. The tty sends its channel its ending itself
+     (`erx_console:shell_ending/1`'s caller), and `erx_ssh_line` sends a front end nothing; `erx_facet`'s
+     moduledoc on lines and `erx_ssh_line`'s naming of a signal set `ssh_line` (the set is `tty_master`) follow.
+  6. Callers: `erx_hostlink_web`'s facet process asks for root's line in its own init, naming itself the
+     opening, and takes the facet as the line; the host tests of both lines, the domain service and the
+     facet-name check, among them the request-bound test with node names at their bound; the web QEMU suite once.
+     Repoint the web view scope residual of [todo-web.md](todo-web.md) and the call-admission item of
+     [todo-network.md](todo-network.md), which name `erx_session_line`.
+* [Medium] SSH, how a job's messages reach their job ([design-ssh.md](design-ssh.md#risks-and-open-questions)):
+  the channel's `job_input`, `job_eof`, `job_sent` and `job_hangup` name no job, and through the line's facet they
+  would arrive by `message/2`, which names the grantee and not the sender and is dropped once `in_flight` forwards
+  are outstanding, so a lost `job_eof`, `job_hangup` or `job_sent` would leave a job stuck. `open_job`'s design
+  settles routing and delivery together, by the open question's two ways: the job's relay handed to the channel
+  as the endpoint (recommended), or the channel's alias for the job as its key through the facet, bound to the
+  admitted grantee and a live job, with an admission that never drops them. `open_job` and the four messages stay
+  out of `ssh_line`'s interface until then.
 
 ## Security residuals
 
