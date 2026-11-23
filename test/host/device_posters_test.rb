@@ -6,7 +6,7 @@ require_relative 'chokepoints_helper'
 
 # The chokepoint "only the block driver's one write path issues writes", held by
 # construction: a call of erx_device:post/4 outside erx_blk_write fails, in the driver's
-# own modules too, whether a remote call, a fun, an apply, or an import.
+# own modules too, in every spelling of ErlangCallSpellings.
 class DevicePostersTest < Minitest::Test
   include ChokepointsHelper
 
@@ -27,16 +27,12 @@ class DevicePostersTest < Minitest::Test
 
   def test_a_seeded_post_outside_the_write_path_is_refused
     assert_equal [[DRIVER, 2]], lines_of(DRIVER => "%% erx_device:post/4 in a comment is not code\n#{SEEDED}")
-    {
-      'a fun' => "f() -> fun erx_device:post/4.\n",
-      'a quoted atom' => "f(D, Q, T, S) -> 'erx_device':'post'(D, Q, T, S).\n",
-      'an apply' => "f(A) -> erlang:apply(erx_device, post, A).\n",
-      'a call split across lines' => "f(D, Q, T, S) ->\n    erx_device:\n        post(D, Q, T, S).\n"
-    }.each do |form, source|
-      line = source.lines.index { |text| text.include?('erx_device') } + 1
-      assert_equal [[DRIVER, line]], lines_of(DRIVER => source), form
+    ErlangCallSpellings.all('erx_device', 'post').each do |spelling|
+      assert_equal [['device-posters', DRIVER, spelling.line]], erlang_found(%w[device-posters], DRIVER => spelling.source),
+                   spelling.form
     end
-    # An import names every issuing call by its bare name, so each rule refuses it.
+    ErlangCallSpellings.unrelated('erx_device', 'post').each { |source| assert_empty lines_of(DRIVER => source), source }
+    # An import or a macro of the module reaches every issuing call, so each rule refuses it.
     assert_equal [['device-posters', DRIVER, 1], ['device-commands', DRIVER, 1]],
                  erlang_found(RULES, DRIVER => "-import(erx_device, [read/2, post/4]).\n")
     assert_equal [['erlang/apps/erx_uart/src/seeded.erl', 1]], lines_of('erlang/apps/erx_uart/src/seeded.erl' => SEEDED)
@@ -48,8 +44,10 @@ class DevicePostersTest < Minitest::Test
   COMMANDED = "c(D, W) -> erx_device:command(D, W).\n"
 
   def test_a_seeded_command_outside_the_write_path_is_refused
-    assert_equal [[DRIVER, 1]], lines_of(DRIVER => COMMANDED)
-    assert_equal [[DRIVER, 1]], lines_of(DRIVER => "f(A) -> erlang:apply(erx_device, command, A).\n")
+    ErlangCallSpellings.all('erx_device', 'command').each do |spelling|
+      assert_equal [['device-commands', DRIVER, spelling.line]], erlang_found(%w[device-commands], DRIVER => spelling.source),
+                   spelling.form
+    end
     net = 'erlang/apps/erx_net/erxos/erx_virtio_net.erl'
     assert_equal [[net, 1]], lines_of(net => COMMANDED)
     assert_equal [[net, 1]], lines_of(net => "-import(erx_device, [command/2]).\n")

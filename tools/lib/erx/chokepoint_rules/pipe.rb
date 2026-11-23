@@ -13,16 +13,6 @@ module Erx
     PIPE_NIF_MODULE = 'erlang/apps/erx/src/erx_pipe_nif.erl'
     PIPE_SERVER = 'erlang/apps/erx/src/erx_pipe_srv.erl'
 
-    # A call of one of erx_pipe_nif's names in the forms a module can write it.
-    PIPE_NIF_CALLS = lambda do |names|
-      nif = ErlangText::ATOM.call('erx_pipe_nif')
-      /
-          #{nif} \s* (?: : | , ) \s* (?:#{names.map { |name| ErlangText::ATOM.call(name) }.join('|')})
-        | -\s*import\s*\(\s*#{nif}
-        | -\s*define\s*\(\s*[^,()]+,\s*#{nif}\s*\)
-      /x
-    end
-
     # The generated accessors that load a field of a page a pipe lane or
     # lock uses: its reader page, lock page and ring header. The published
     # positions' acquire loads are the exception: a write end's of rpos and
@@ -100,16 +90,15 @@ module Erx
         # Only the pipe server makes a pipe's objects (PI1) and the hand-offs
         # that give them to programs; only a program's handler makes and
         # drops the holder entry it speaks for its program by; only the pipe
-        # server hears a program's gone. A call rule refuses erx_pipe_nif
-        # followed by one of its names, as a remote call or a fun and as an
-        # apply passes them, any import from erx_pipe_nif, and a macro whose
-        # body is the module. erx_pipe_srv itself calls through a variable,
-        # its nif option, which the rules do not see.
+        # server hears a program's gone. A call rule refuses the call in
+        # every form ErlangText.calls refuses; erx_pipe_srv itself calls
+        # through a variable, its nif option.
         Chokepoints::ErlangForbidden.new(
           name: 'pipe-makers', rule: "only the session's pipe server, erx_pipe_srv, calls erx_pipe_nif's make_lock/1, " \
                                      'make_lane/1, make_bell/3 and hand_make/2, which make a pipe\'s lock, lanes and ' \
                                      'bells and the hand-offs that give them to programs',
-          design: "#{PIPES}#invariants", pattern: PIPE_NIF_CALLS.call(%w[make_lock make_lane make_bell hand_make]),
+          design: "#{PIPES}#invariants",
+          pattern: ErlangText.calls(module_name: 'erx_pipe_nif', functions: %w[make_lock make_lane make_bell hand_make]),
           sites: [PIPE_SERVER, PIPE_NIF_MODULE],
           seed: { 'erlang/apps/erx/src/seeded.erl' => "f(L) -> erx_pipe_nif:make_lane(L).\n",
                   'erlang/apps/erx/src/seeded_import.erl' => "-import(erx_pipe_nif, [make_lock/1]).\n" }
@@ -118,7 +107,8 @@ module Erx
           name: 'pipe-holders', rule: "only a program's handler, erx_prog_handler, calls erx_pipe_nif's " \
                                       'program_holder/1 and holder_drop/1, which make and let go the holder entry ' \
                                       'by which it speaks for its program',
-          design: "#{PIPES}#hand-offs", pattern: PIPE_NIF_CALLS.call(%w[program_holder holder_drop]),
+          design: "#{PIPES}#hand-offs",
+          pattern: ErlangText.calls(module_name: 'erx_pipe_nif', functions: %w[program_holder holder_drop]),
           sites: ['erlang/apps/erx/src/erx_prog_handler.erl', PIPE_NIF_MODULE],
           seed: { 'erlang/apps/erx/src/seeded.erl' => "f(H) -> apply(erx_pipe_nif, holder_drop, [H]).\n" }
         ),

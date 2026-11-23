@@ -10,8 +10,6 @@ module Erx
     # The registry's writers: a domain's connection agent, and the domain service, which
     # writes the system domain's own registry.
     FACETS_WRITERS = %w[erlang/apps/erx/src/erx_connections.erl erlang/apps/erx_domain/src/erx_domain_srv.erl].freeze
-    ERX_FACETS = ErlangText::ATOM.call('erx_facets')
-    FACETS_INSTALL = ErlangText::ATOM.call('install')
 
     # The domain's facet registry's two rules. Each catches a slip, not a
     # determined bypass: a key or a call built at run time passes. Strings are
@@ -34,19 +32,12 @@ module Erx
         ),
         # A facet's rights are the manifest's, which only the system domain
         # sends, so only the registry's two writers install: refused outside
-        # them, install/1 after erx_facets and a colon or a comma (a remote
-        # call, a fun, a {Module, Function} pair), an apply of it, an import
-        # from erx_facets and a macro defined as erx_facets.
+        # them, in every form ErlangText.calls refuses.
         Chokepoints::ErlangForbidden.new(
           name: 'facet-registry-writers', rule: 'only erx_connections and erx_domain_srv call erx_facets:install/1, ' \
                                                 'the facet registry\'s writer',
           design: FACETS_DESIGN, strings: :blanked,
-          pattern: /
-              #{ERX_FACETS}\s*[:,]\s*#{FACETS_INSTALL}
-            | #{ErlangText::ATOM.call('apply')}\s*\(\s*#{ERX_FACETS}\s*,\s*#{FACETS_INSTALL}
-            | -\s*import\s*\(\s*#{ERX_FACETS}
-            | -\s*define\s*\(\s*[^,()]+(?:\([^()]*\))?\s*,\s*#{ERX_FACETS}\s*\)
-          /x,
+          pattern: ErlangText.calls(module_name: 'erx_facets', functions: %w[install]),
           sites: FACETS_WRITERS,
           seed: { 'erlang/apps/erx/src/erx_ns.erl' => "f(F) -> erx_facets:install(\#{data => F}).\n",
                   'erlang/apps/erx_shell/src/erx_shell_runner.erl' => "f() -> fun erx_facets:install/1.\n" }

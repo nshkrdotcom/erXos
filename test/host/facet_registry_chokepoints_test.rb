@@ -36,16 +36,10 @@ class FacetRegistryChokepointsTest < Minitest::Test
   end
 
   def test_every_spelling_of_the_writer_outside_the_writers_is_refused
-    {
-      'a remote call' => "f(F) -> erx_facets:install(F).\n",
-      'a fun' => "f() -> fun erx_facets:install/1.\n",
-      'a pair' => "f() -> {erx_facets, install}.\n",
-      'an apply' => "f(F) -> apply(erx_facets, install, [F]).\n",
-      'an import' => "-import(erx_facets, [install/1]).\n",
-      'a macro naming the module' => "-define(REGISTRY, erx_facets).\n"
-    }.each do |form, source|
-      assert_equal [['facet-registry-writers', OTHER, 1]], found(OTHER => source), form
+    ErlangCallSpellings.all('erx_facets', 'install').each do |spelling|
+      assert_equal [['facet-registry-writers', OTHER, spelling.line]], found(OTHER => spelling.source), spelling.form
     end
+    ErlangCallSpellings.unrelated('erx_facets', 'install').each { |source| assert_empty found(OTHER => source), source }
   end
 
   def test_the_owner_the_writers_and_the_readers_pass

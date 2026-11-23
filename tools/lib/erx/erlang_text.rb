@@ -41,6 +41,24 @@ module Erx
 
     module_function
 
+    # A call of one of a module's functions in the forms a slip writes, the one pattern
+    # each Erlang rule of the form "only X calls M:F" refuses: the function after
+    # the module and a colon or a comma (a remote call, a fun, an apply, a {Module,
+    # Function} pair); the function after a variable or macro module (?MODULE aside) and
+    # in an apply whose module is not the atom; any import from the module; and a macro
+    # defined as the module or as the function. A module held in a variable reaches the
+    # function unrefused through spawn, erpc, make_fun or a {Module, Function} pair, and so
+    # does a parenthesised module expression; the header says why that is acceptable.
+    def calls(module_name:, functions:)
+      mod = ATOM.call(module_name)
+      function = "(?:#{functions.map { |name| ATOM.call(name) }.join('|')})"
+      Regexp.new(["#{mod}\\s*[:,]\\s*#{function}",
+                  "#{INDIRECT}\\s*:\\s*#{function}",
+                  "#{ATOM.call('apply')}\\s*\\(\\s*[^,()]+,\\s*#{function}",
+                  "-\\s*import\\s*\\(\\s*#{mod}",
+                  "-\\s*define\\s*\\(\\s*[^,()]+(?:\\([^()]*\\))?\\s*,\\s*(?:#{mod}|#{function})\\s*\\)"].join('|'))
+    end
+
     def matches?(globs, path) = globs.any? { |glob| File.fnmatch?(glob, path, GLOB_FLAGS) }
 
     # Whether a path is an Erlang source the checks read.

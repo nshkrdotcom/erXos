@@ -5,8 +5,6 @@
 module Erx
   module ChokepointRules
     RELAY_DESIGN = 'docs/design-shell.md#the-terminal-relays-protocol'
-    ERX_SESSION_RELAY = ErlangText::ATOM.call('erx_session_relay')
-    OPEN_READER = ErlangText::ATOM.call('open_reader')
     # The registered name of the relay of the domain's line, which the
     # runtime's writers look for.
     TTY_OWNER = ErlangText::ATOM.call('erx_tty_owner')
@@ -36,22 +34,13 @@ module Erx
         # Every reader of a job passes a scheduler pick between its ready
         # report and its read, which erx_cmd does, and the console belongs to
         # no job; a program's handler and a command domain's stream relay
-        # open write-only. Refused outside erx_cmd and erx_console, in the
-        # forms of the display rules: the name after erx_session_relay and a
-        # colon or a comma (a remote call, a fun, an apply, a {Module,
-        # Function} pair), through a variable or macro module, in an apply,
-        # an import from erx_session_relay, and a macro defined as either.
+        # open write-only. Refused outside erx_cmd and erx_console, in every
+        # form ErlangText.calls refuses.
         Chokepoints::ErlangForbidden.new(
           name: 'relay-readers', rule: 'only erx_cmd and erx_console call erx_session_relay:open_reader, ' \
                                        'the one way to an open of the terminal made for reading',
           design: RELAY_DESIGN, strings: :blanked,
-          pattern: /
-              #{ERX_SESSION_RELAY}\s*[:,]\s*#{OPEN_READER}
-            | (?:#{ErlangText::INDIRECT})\s*:\s*#{OPEN_READER}
-            | #{ErlangText::ATOM.call('apply')}\s*\(\s*[^,()]+,\s*#{OPEN_READER}
-            | -\s*import\s*\(\s*#{ERX_SESSION_RELAY}
-            | -\s*define\s*\(\s*[^,()]+(?:\([^()]*\))?\s*,\s*(?:#{ERX_SESSION_RELAY}|#{OPEN_READER})\s*\)
-          /x,
+          pattern: ErlangText.calls(module_name: 'erx_session_relay', functions: %w[open_reader]),
           sites: %w[erlang/apps/erx_shell/src/erx_cmd.erl erlang/apps/erx/src/erx_console.erl],
           seed: { 'erlang/apps/erx_shell/src/seeded.erl' => "f(R, Job) -> erx_session_relay:open_reader(R, Job).\n" }
         ),

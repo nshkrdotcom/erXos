@@ -6,11 +6,11 @@ require_relative 'chokepoints_helper'
 
 # The Erlang halves of the pipe's chokepoints (tools/lib/erx/chokepoint_rules/pipe.rb). pipe-makers (PI1):
 # a call of erx_pipe_nif's make_lock/1, make_lane/1, make_bell/3 or hand_make/2 outside
-# erx_pipe_srv fails, whether a remote call, a fun, an apply, a macro naming the module or any
-# import. pipe-holders: a call of program_holder/1 or holder_drop/1 outside erx_prog_handler
-# fails. pipe-holder-gone-erlang: the atom erx_pipe_holder_gone outside erx_pipe_srv fails. The
-# NIF's other calls and the tests' own modules are not refused. The seeds are the design's
-# (docs/design-pipes.md, Verification, build checks of the hand-offs).
+# erx_pipe_srv fails, in every spelling of ErlangCallSpellings. pipe-holders: a call of
+# program_holder/1 or holder_drop/1 outside erx_prog_handler fails. pipe-holder-gone-erlang:
+# the atom erx_pipe_holder_gone outside erx_pipe_srv fails. The NIF's other calls and the
+# tests' own modules are not refused. The seeds are the design's (docs/design-pipes.md,
+# Verification, build checks of the hand-offs).
 class PipeCallersTest < Minitest::Test
   include ChokepointsHelper
 
@@ -31,16 +31,12 @@ class PipeCallersTest < Minitest::Test
   def test_a_seeded_make_outside_the_pipe_server_is_refused
     assert_equal [['pipe-makers', SESSION, 2]],
                  found(SESSION => "%% erx_pipe_nif:make_lock() in a comment is not code\n#{SEEDED}")
-    {
-      'a lane' => "f(S) -> erx_pipe_nif:make_lane(S).\n",
-      'a bell' => "f(P, I, E) -> erx_pipe_nif:make_bell(P, I, E).\n",
-      'a fun' => "f() -> fun erx_pipe_nif:make_bell/3.\n",
-      'a quoted atom' => "f() -> 'erx_pipe_nif':'make_lock'(1).\n",
-      'an apply' => "f() -> erlang:apply(erx_pipe_nif, make_lane, [4096]).\n",
-      'a call split across lines' => "f() ->\n    erx_pipe_nif:\n        make_lock(1).\n"
-    }.each do |form, source|
-      line = source.lines.index { |text| text.include?('erx_pipe_nif') } + 1
-      assert_equal [['pipe-makers', SESSION, line]], found(SESSION => source), form
+    %w[make_lock make_lane make_bell hand_make].each do |make|
+      ErlangCallSpellings.all('erx_pipe_nif', make).each do |spelling|
+        assert_equal [['pipe-makers', SESSION, spelling.line]], erlang_found(%w[pipe-makers], SESSION => spelling.source),
+                     "#{spelling.form} of #{make}"
+      end
+      ErlangCallSpellings.unrelated('erx_pipe_nif', make).each { |source| assert_empty found(SESSION => source), source }
     end
     assert_equal [['pipe-makers', 'otp/lib/stdlib/src/seeded.erl', 1]], found('otp/lib/stdlib/src/seeded.erl' => SEEDED)
     # The design's seed: a hand-off made in the handler.
@@ -61,8 +57,15 @@ class PipeCallersTest < Minitest::Test
   def test_a_seeded_holder_call_outside_the_handler_is_refused
     # The design's seed: the pipe server making a program's holder entry.
     assert_equal [['pipe-holders', SERVER, 1]], found(SERVER => "f(P) -> erx_pipe_nif:program_holder(P).\n")
-    assert_equal [['pipe-holders', SESSION, 1]], found(SESSION => "f(P) -> erx_pipe_nif:holder_drop(P).\n")
-    assert_equal [['pipe-holders', SESSION, 1]], found(SESSION => "f() -> fun erx_pipe_nif:program_holder/1.\n")
+    %w[program_holder holder_drop].each do |holder|
+      ErlangCallSpellings.all('erx_pipe_nif', holder).each do |spelling|
+        assert_equal [['pipe-holders', SESSION, spelling.line]], erlang_found(%w[pipe-holders], SESSION => spelling.source),
+                     "#{spelling.form} of #{holder}"
+      end
+      ErlangCallSpellings.unrelated('erx_pipe_nif', holder).each do |source|
+        assert_empty erlang_found(%w[pipe-holders], SESSION => source), source
+      end
+    end
     assert_empty found(HANDLER => "f(P) -> ok = erx_pipe_nif:program_holder(P), erx_pipe_nif:holder_drop(P).\n")
   end
 

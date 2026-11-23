@@ -28,14 +28,6 @@ module Erx
     UART_DRIVERS = %w[erx_pl011 erx_mini_uart erx_virtio_console].freeze
     XHCI = 'erlang/apps/erx_usb/src/erx_xhci.erl'
 
-    # A call of erx_device's issuing function name: erx_device followed by
-    # the name after a colon (a remote call or fun) or a comma (an apply),
-    # or any import from erx_device, which names it bare.
-    DEVICE_ISSUE = lambda do |name|
-      device = ErlangText::ATOM.call('erx_device')
-      /#{device} \s* (?: : | , ) \s* #{ErlangText::ATOM.call(name)} | -\s*import\s*\(\s*#{device}/x
-    end
-
     DEVICE_SCOPE = Chokepoints::Scope.new(own: true, extra: ['otp/**/*'], except: ['otp/erts/emulator/asmjit/**/*'])
     # The accessors tools/gen_hw.rb writes for each SVD peripheral, and their headers, read from
     # the generator, so a new device or register is covered as it is generated. A runtime reaches
@@ -327,13 +319,13 @@ module Erx
         # (docs/design-usb.md, "The controller process"), and the virtio-console driver
         # the line's bytes and its empty receive buffers, to a device handed no medium
         # (docs/design-bluetooth.md, "The line on QEMU `virt`"). Refused
-        # outside them: erx_device:post as a remote call or fun, erx_device with
-        # post as an apply's next argument, and any import from erx_device.
+        # outside them in every form ErlangText.calls refuses.
         Chokepoints::ErlangForbidden.new(
           name: 'device-posters', rule: "only the block driver's one write path, erx_blk_write, the network transports, the " \
                                         'virtio-gpu, virtio-input and virtio-console drivers and the xHCI controller process call ' \
                                         'erx_device:post/4, and each builds every request it posts',
-          design: 'docs/design-storage.md#data-model', pattern: DEVICE_ISSUE.call('post'),
+          design: 'docs/design-storage.md#data-model',
+          pattern: ErlangText.calls(module_name: 'erx_device', functions: %w[post]),
           sites: [BLK_WRITE, 'erlang/apps/erx_net/erxos/erx_virtio_net.erl', 'erlang/apps/erx_net/erxos/erx_genet.erl',
                   'erlang/apps/erx_fb/src/erx_virtio_gpu.erl', 'erlang/apps/erx_fb/src/erx_virtio_input.erl',
                   'erlang/apps/erx_uart/src/erx_virtio_console.erl', XHCI],
@@ -345,7 +337,9 @@ module Erx
         # word, and only its write function CMD24 or CMD25.
         Chokepoints::ErlangForbidden.new(
           name: 'device-commands', rule: "only the block driver's one write path, erx_blk_write, calls erx_device:command/2",
-          design: 'docs/design-storage.md#data-model', pattern: DEVICE_ISSUE.call('command'), sites: [BLK_WRITE],
+          design: 'docs/design-storage.md#data-model',
+          pattern: ErlangText.calls(module_name: 'erx_device', functions: %w[command]),
+          sites: [BLK_WRITE],
           seed: { 'erlang/apps/erx_net/erxos/erx_virtio_net.erl' => "f(D) -> apply(erx_device, command, [D, 0]).\n" }
         )
       ],

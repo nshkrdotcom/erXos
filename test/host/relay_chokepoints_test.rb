@@ -46,11 +46,12 @@ class RelayChokepointsTest < Minitest::Test
     assert_empty found('erlang/apps/erx_session/src/erx_session_relay.erl' => text)
   end
 
-  def test_indirect_forms_fail
-    text = "f(M, J) -> M:open_reader(J).\ng(J) -> apply(erx_session_relay, open_reader, [J]).\n" \
-           "h() -> 'erx_tty_owner' ! x.\n-define(R, erx_session_relay).\n"
-    assert_equal [['relay-readers', HANDLER, 1], ['relay-readers', HANDLER, 2], ['relay-name', HANDLER, 3],
-                  ['relay-readers', HANDLER, 4]], found(HANDLER => text).sort_by { |_, _, line| line }
+  def test_every_spelling_of_open_reader_fails
+    ErlangCallSpellings.all('erx_session_relay', 'open_reader').each do |spelling|
+      assert_equal [['relay-readers', HANDLER, spelling.line]], found(HANDLER => spelling.source), spelling.form
+    end
+    ErlangCallSpellings.unrelated('erx_session_relay', 'open_reader').each { |source| assert_empty found(HANDLER => source), source }
+    assert_equal [['relay-name', HANDLER, 1]], found(HANDLER => "h() -> 'erx_tty_owner' ! x.\n")
   end
 
   # The name in a string is a site, since list_to_atom/1 could make it the atom;

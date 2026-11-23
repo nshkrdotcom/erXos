@@ -21,17 +21,10 @@ class ClockChokepointsTest < Minitest::Test
   end
 
   def test_every_spelling_of_the_call_outside_the_service_is_refused
-    {
-      'a remote call' => "f(W) -> erx_clock_nif:set_offset(W).\n",
-      'a fun' => "f() -> fun erx_clock_nif:set_offset/1.\n",
-      'an apply' => "f(W) -> apply(erx_clock_nif, set_offset, [W]).\n",
-      'a variable module' => "f(M, W) -> M:set_offset(W).\n",
-      'a macro module' => "f(W) -> ?NIF:set_offset(W).\n",
-      'an import' => "-import(erx_clock_nif, [set_offset/1]).\n",
-      'a macro naming the module' => "-define(NIF, erx_clock_nif).\n"
-    }.each do |form, source|
-      assert_equal [['clock-setter', OTHER, 1]], found(OTHER => source), form
+    ErlangCallSpellings.all('erx_clock_nif', 'set_offset').each do |spelling|
+      assert_equal [['clock-setter', OTHER, spelling.line]], found(OTHER => spelling.source), spelling.form
     end
+    ErlangCallSpellings.unrelated('erx_clock_nif', 'set_offset').each { |source| assert_empty found(OTHER => source), source }
   end
 
   def test_the_service_and_the_reading_side_pass

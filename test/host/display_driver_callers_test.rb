@@ -28,25 +28,26 @@ class DisplayDriverCallersTest < Minitest::Test
 
   def test_a_seeded_call_outside_the_screen_is_refused
     assert_equal [[WM, 2]], lines_of(WM => "%% erx_display:flush_request/3 in a comment is not code\n#{SEEDED}")
-    {
-      'a power request' => "f(D) -> erx_display:power_request(D, off).\n",
-      'a macro of a function' => "-define(F, flush_request).\n",
-      'a fun' => "f() -> fun erx_display:flush_request/3.\n",
-      'a quoted atom' => "f(D, I) -> 'erx_display':'flush_request'(D, [], I).\n",
-      'an apply of the module' => "f(A) -> erlang:apply(erx_display, power_request, A).\n",
-      'an apply through a variable' => "f(M, A) -> apply(M, flush_request, A).\n",
-      'a module in a variable' => "f(M, D) -> M:power_request(D, dim).\n",
-      'a module in a macro' => "f(D) -> ?DISPLAY:power_request(D, on).\n",
-      'a module and function pair' => "f() -> {erx_display, flush_request}.\n",
-      'an import' => "-import(erx_display, [power_request/2]).\n",
-      'a macro of the module' => "-define(DISPLAY, erx_display).\n",
-      'a call split across lines' => "f(D, I) ->\n    erx_display:\n        flush_request(D, [], I).\n"
-    }.each do |form, source|
-      # Each form is one line long but the split call, which is refused at its module.
-      assert_equal [[WM, form == 'a call split across lines' ? 2 : 1]], lines_of(WM => source), form
+    %w[flush_request power_request].each do |request|
+      ErlangCallSpellings.all('erx_display', request).each do |spelling|
+        assert_equal [[WM, spelling.line]], lines_of(WM => spelling.source), "#{spelling.form} of #{request}"
+      end
+      ErlangCallSpellings.unrelated('erx_display', request).each { |source| assert_empty lines_of(WM => source), source }
     end
     assert_equal [[DRIVER, 1]], lines_of(DRIVER => SEEDED)
     assert_equal [['otp/lib/stdlib/src/seeded.erl', 1]], lines_of('otp/lib/stdlib/src/seeded.erl' => SEEDED)
+  end
+
+  # ui-raw-texts: encode_raw/2 writes texts unescaped, so only the codec calls it.
+  def test_the_raw_writer_outside_the_codec_is_refused
+    ui = 'erlang/apps/erx_ui/src/erx_ui.erl'
+    ErlangCallSpellings.all('erx_ui_wire', 'encode_raw').each do |spelling|
+      assert_equal [['ui-raw-texts', ui, spelling.line]], erlang_found(%w[ui-raw-texts], ui => spelling.source), spelling.form
+    end
+    ErlangCallSpellings.unrelated('erx_ui_wire', 'encode_raw').each do |source|
+      assert_empty erlang_found(%w[ui-raw-texts], ui => source), source
+    end
+    assert_empty erlang_found(%w[ui-raw-texts], 'erlang/apps/erx_ui/src/erx_ui_wire.erl' => "f(R) -> ?MODULE:encode_raw(R, p).\n")
   end
 
   def test_definitions_types_and_the_screen_are_not_refused

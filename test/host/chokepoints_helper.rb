@@ -5,6 +5,7 @@
 require 'minitest/autorun'
 require 'tmpdir'
 require_relative '../../tools/lib/erx/chokepoint_rules'
+require_relative 'erlang_call_spellings'
 
 # What every chokepoint test shares: the machinery's and the cross-cutting
 # rules' cases are in chokepoints_test.rb, and each group's own cases in

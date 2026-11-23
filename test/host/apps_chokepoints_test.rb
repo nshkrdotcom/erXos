@@ -79,21 +79,12 @@ class AppsChokepointsTest < Minitest::Test
     assert_empty found(KEEPER => START)
     assert_equal [['start-callers', OTHER, 1]], found(OTHER => START)
     assert_equal [['start-callers', STARTER, 1]], found(STARTER => START)
-    {
-      'a fun' => "s() -> fun erx_domain:start_session/2.\n",
-      'a quoted atom' => "s(P) -> 'erx_domain':'start_session'(P, \#{}).\n",
-      'an apply' => "s(A) -> erlang:apply(erx_domain, start_session, A).\n",
-      'a variable module' => "s(M, P) -> M:start_session(P, \#{}).\n",
-      'a variable apply' => "s(M, A) -> apply(M, start_session, A).\n",
-      'an import' => "-import(erx_domain, [info/1]).\n",
-      'a macro' => "-define(DOMAIN, erx_domain).\n",
-      'a function-like macro' => "-define(D(), erx_domain).\n",
-      'the service' => "s(P, S) -> gen_server:call(erx_domain_srv, {start_session, P, S}, infinity).\n",
-      'a call split across lines' => "s(P) ->\n    erx_domain:\n        start_session(P, \#{}).\n"
-    }.each do |form, source|
-      line = source.lines.index { |text| text.match?(/erx_domain|start_session/) } + 1
-      assert_equal [['start-callers', OTHER, line]], session_found(OTHER => source), form
+    ErlangCallSpellings.all('erx_domain', 'start_session').each do |spelling|
+      assert_equal [['start-callers', OTHER, spelling.line]], session_found(OTHER => spelling.source), spelling.form
     end
+    ErlangCallSpellings.unrelated('erx_domain', 'start_session').each { |source| assert_empty session_found(OTHER => source), source }
+    assert_equal [['start-callers', OTHER, 1]],
+                 session_found(OTHER => "s(P, S) -> gen_server:call(erx_domain_srv, {start_session, P, S}, infinity).\n")
     assert_equal [['start-callers', 'otp/lib/stdlib/src/seeded.erl', 1]], found('otp/lib/stdlib/src/seeded.erl' => START)
     assert_empty found('test/erlang/seeded_tests.erl' => START)
     assert_empty found('erlang/apps/erx_domain/src/erx_domain.erl' => "s(P, S) -> gen_server:call(erx_domain_srv, {start_session, P, S}).\n")
@@ -114,29 +105,22 @@ class AppsChokepointsTest < Minitest::Test
     assert_empty found(OTHER => "d(D) -> \#{display => D}.\n")
   end
 
-# The keeper alone starts an app's session; erx_domain's own definition and its call
-# of its service pass, and the console, which starts sessions, does not start apps.
-def test_only_the_keeper_starts_an_app_session
-  assert_empty found(KEEPER => APP_START)
-  assert_empty found('erlang/apps/erx_domain/src/erx_domain.erl' =>
-                       "-export([start_app/2]).\nstart_app(P, S) -> gen_server:call(erx_domain_srv, {start_app, P, S}).\n")
-  assert_equal [['app-starters', CONSOLE, 1]], found(CONSOLE => APP_START)
-  assert_equal [['app-starters', STARTER, 1]], found(STARTER => APP_START)
-  {
-    'a fun' => "s() -> fun erx_domain:start_app/2.\n",
-    'a quoted atom' => "s(P) -> 'erx_domain':'start_app'(P, \#{}).\n",
-    'an apply' => "s(A) -> erlang:apply(erx_domain, start_app, A).\n",
-    'a variable module' => "s(M, P) -> M:start_app(P, \#{}).\n",
-    'a variable apply' => "s(M, A) -> apply(M, start_app, A).\n",
-    'a call split across lines' => "s(P) ->\n    erx_domain:\n        start_app(P, \#{}).\n"
-  }.each do |form, source|
-    line = source.lines.index { |text| text.match?(/erx_domain|start_app/) } + 1
-    assert_equal [['app-starters', CONSOLE, line]], found(CONSOLE => source), form
+  # The keeper alone starts an app's session; erx_domain's own definition and its call
+  # of its service pass, and the console, which starts sessions, does not start apps.
+  def test_only_the_keeper_starts_an_app_session
+    assert_empty found(KEEPER => APP_START)
+    assert_empty found('erlang/apps/erx_domain/src/erx_domain.erl' =>
+                         "-export([start_app/2]).\nstart_app(P, S) -> gen_server:call(erx_domain_srv, {start_app, P, S}).\n")
+    assert_equal [['app-starters', CONSOLE, 1]], found(CONSOLE => APP_START)
+    assert_equal [['app-starters', STARTER, 1]], found(STARTER => APP_START)
+    ErlangCallSpellings.all('erx_domain', 'start_app').each do |spelling|
+      assert_equal [['app-starters', CONSOLE, spelling.line]], found(CONSOLE => spelling.source), spelling.form
+    end
+    ErlangCallSpellings.unrelated('erx_domain', 'start_app').each { |source| assert_empty found(CONSOLE => source), source }
+    assert_equal [['app-starters', CONSOLE, 1]],
+                 found(CONSOLE => "s(P, S) -> gen_server:call(erx_domain_srv, {start_app, P, S}).\n")
+    assert_empty found(CONSOLE => "s() -> \"erx_domain:start_app\".\n")
   end
-  assert_equal [['app-starters', CONSOLE, 1]],
-               found(CONSOLE => "s(P, S) -> gen_server:call(erx_domain_srv, {start_app, P, S}).\n")
-  assert_empty found(CONSOLE => "s() -> start_app(x), {start_app, 1}, \"erx_domain:start_app\".\n")
-end
 
   # The source check runs the rules over the files git lists.
   def test_the_source_check_refuses_a_seeded_violation
