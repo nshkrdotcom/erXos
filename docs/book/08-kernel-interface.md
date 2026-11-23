@@ -498,9 +498,8 @@ Every service call that takes a handle looks it up with
 `erx_backend_handle_find`, which checks in order the number within
 the table, the entry in use, the value's generation against the
 entry's, and the record still at the entry's generation. A failure of
-any of these answers `ERX_ESTALE`, as erXos's kernel answers every value
-that names no live slot, so a forged, closed and stale handle look
-alike. Only then does an object of the wrong kind for the call answer
+any of these answers `ERX_ESTALE`, whatever the reason the value names
+no live slot, so a forged, closed and stale handle look alike. Only then does an object of the wrong kind for the call answer
 `ERX_ETYPE`. Otherwise the lookup returns the record.
 
 So a handle is meaningless outside its table, as chapter 2's slot

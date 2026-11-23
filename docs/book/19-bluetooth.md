@@ -1,16 +1,22 @@
 # Chapter 19. Bluetooth
 
-> **Status.** Built, with host tests, but run on no board: the H4
-> framing and the HCI codec, the controller process with its
+> **Status.** Built, with host tests, and its bring-up also on QEMU
+> `virt` against a Bumble virtual controller, but run on no board: the
+> H4 framing and the HCI codec, the controller process with its
 > supervision, the patch reader, the advertising data and identity
-> address, and the line tree with its keeper in the system domain; and
-> the `ble` interface, its manifest check and the facet's mint with
-> its one request check, which has a fuzz target.
-> Designed: running the Bluetooth domain on the Raspberry Pi 4, the
-> controller's power cycle, serving the line to a file grant, the
-> GATT server with its access gate, an installed app's own `ble` grant
-> and the handler that owns each service, the serial service,
-> pairing and bonding, and tests against a Bumble peer.
+> address, the line tree with its keeper in the system domain, its
+> power cycle and its service as a `line` file grant; the `ble`
+> interface, its manifest check and the facet's mint with its one
+> request check, which has a fuzz target; the GATT server, its
+> attribute table and its access gate, with the registry that
+> attaches a handler to a service and delivers each write to it; the
+> serial service's declaration and its table; and pairing and bonding
+> with the pairing window and the bond store. Designed: running the
+> Bluetooth domain on the Raspberry Pi 4, advertising a service's
+> UUID, an installed app's own `ble` grant, the rule that a service's
+> state belongs to its handler, the app that handles the serial
+> service, and tests against a Bumble peer that scans, connects, reads
+> and pairs.
 
 **Background needed.** [Chapter 3](03-erlang.md), sections 3.3 and
 3.4: links, supervisors and restart strategies.
@@ -76,7 +82,10 @@ The design offers a phone four things
    that key, so the phone and the machine recognize each other next
    time.
 
-Of these, only the advertising data of the first is built.
+Of these, the advertised name, the table of characteristics with the
+level each requires, and pairing and bonding are built. Advertising a
+service's UUID, the app side of characteristics and the serial stream
+are designed and not built.
 
 The central role, which scans and connects, belongs to the design
 of HID over GATT, for keyboards and mice. Classic Bluetooth, the older
@@ -135,30 +144,35 @@ between the files and the UART driver, `erx_pl011`, parsing only
 by the keeper and holds up no write. If the controller overruns the 64 KiB receive buffer, the line
 is **broken**: the buffer is dropped and every read answers `eio`
 until the next `reset`. The tree and its keeper are **Built**, with
-host tests. Serving them as a **file grant** of the `line` interface
-([chapter 11](11-security.md#1171-a-namespace-of-grants)) is
-Designed; the manifest check already allows at most one such grant,
-since one line service serves one line.
+host tests. The keeper serves its trees as the system domain's `line`
+service, and a **file grant** of the `line` interface
+([chapter 11](11-security.md#1171-a-namespace-of-grants)) hands one
+to the Bluetooth domain; both are **Built**, and the QEMU suite of
+section 19.7 runs the domain over a grant. The manifest check allows
+at most one such grant, since one line service serves one line.
 
 A `reset` puts the line in one known state, whatever the last run
 left ([design-bluetooth.md, A reset](../design-bluetooth.md#a-reset)):
 it stops the UART driver, turns the controller off, restarts the
 driver with the UART programmed from nothing, turns the controller
-on, and discards what the controller sent while it powered up. The
-steps without power are **Built** in `erx_line.erl` and
-`erx_pl011.erl`, with host tests over a model driver. The power steps
-are Designed: the enable line is `BT_ON`, a pin of the firmware's
-GPIO expander
+on, and discards what the controller sent while it powered up. All
+the steps are **Built** in `erx_line.erl` and `erx_pl011.erl`, with
+host tests over a model driver and a model device service; a line
+with no power line, as on QEMU `virt`, skips the two power steps. The
+enable line is `BT_ON`, a pin of the firmware's GPIO expander
 ([research-wifi-pi4.md](../research-wifi-pi4.md#f3-host-wake-out-of-band-interrupt)),
-whose pin and polarity a board probe settles.
+which the keeper asks the device service to switch; its pin and
+polarity are a board probe's question, and no board has run it.
 
-In the design, the Bluetooth domain mounts its grant of the line at
-`/line` and opens `/line/data` and `/line/ctl` as ordinary files. Its
-manifest row holds that grant, a store for its bonds (19.4.5) and,
-when the machine offers a login console over the serial service, the
-system domain's login facet. The manifest check is designed to refuse
+The Bluetooth domain mounts its grant of the line at `/line` and
+opens `/line/data` and `/line/ctl` as ordinary files. Its manifest
+row holds that grant, a store for its bonds (19.6) and, when the
+machine offers a login console over the serial service, the system
+domain's login facet. The manifest check is designed to refuse
 anything more, because a stranger in radio range reaches whatever the
-domain holds through a parser defect. Figure 19.1 shows the path.
+domain holds through a parser defect; that check is designed and not
+built, so the row's contents rest on the manifest text. Figure 19.1
+shows the path.
 
 ```mermaid
 flowchart LR
@@ -183,8 +197,11 @@ chip. The system domain moves bytes and parses none; every byte from
 the chip is decoded in the Bluetooth domain, which holds no device.*
 
 The build makes a release of the stack, `erx_bt`, for a domain named
-`bt`, but no manifest erXos ships names that domain or grants a line,
-so no boot runs it. An app's own `ble` grant is Designed (section 19.6).
+`bt`. The Raspberry Pi 4's development manifest names that domain and
+grants it UART0's line, and the QEMU suite names it in a manifest of
+its own; QEMU `virt`'s development manifest does not. No board has run
+the Pi 4's row. No manifest grants `ble` to any domain, so no domain
+reaches the domain's GATT table (section 19.6).
 
 ## 19.3 The HCI codec
 
@@ -348,16 +365,16 @@ sequenceDiagram
 
 *Figure 19.2. Advertising, connecting and one attribute read. The
 controller process owns the handle and the controller credits; the
-link process owns the conversation. Service UUIDs in the advertising
-and the attribute read itself are Designed: the built link processes
-drop every ACL packet and count it.*
+link process owns the conversation, handing each ATT request to the
+GATT server. The advertising carries the name and no service UUID;
+advertising a service's UUID is designed and not built.*
 
 When the controller reports a connection, it has already stopped
 advertising. The core starts a link process named `{Handle, Serial}`,
 the serial counting the core's connections, and checks that name on
 every request the link makes. If handle 1 passes to the next phone, a
 request the old link sent late changes nothing. The link also gets a
-fresh Erlang reference, its `Conn`, the name apps use in the design.
+fresh Erlang reference, its `Conn`, the name apps use.
 It is the rule of
 [chapter 15](15-devices.md#1572-a-name-dies-at-once-hardware-later):
 a name dies at once, and the hardware's resource, here the handle's
@@ -372,7 +389,8 @@ appearance (a number that tells a phone what kind of device to
 show), are a pure function, `erx_bt_adv:data/1`. Each is at most 31
 bytes; a name that does not fit is shortened at a character
 boundary. The function can carry service UUIDs, but the controller
-process passes none, since no service is declared yet.
+process passes none: advertising the UUID of a served service is
+designed and not built.
 
 The machine's address on the air is a **static random address**, made
 from the system's random generator, which the root service keeps.
@@ -393,9 +411,12 @@ starts from one state.
 
 The supervision tree in `erlang/apps/erx_bt` is **Built**:
 
-`erx_bt_sup`, the top, is `rest_for_one` with the store first and the
-controller group second, so a restart of the group leaves the store
-and its address alone. The group, `erx_bt_host_sup`, is
+`erx_bt_sup`, the top, is `rest_for_one` with four children in order:
+the store, the registry of GATT services, the file service with the
+pairing window, and the controller group. A restart of the group
+leaves the store, its address, the handlers' attachments and a
+pairing wait alone; a restart of the store or the registry restarts
+everything after it. The group, `erx_bt_host_sup`, is
 `one_for_all`, at most five restarts in 60 seconds, over the link
 supervisor, the line's reader and writer, and the controller process,
 so all four always belong to one run of the core. Links are temporary
@@ -416,8 +437,11 @@ controller can be left in; the reset removes all of them.
 
 What does an app write to offer a phone a characteristic, and who
 decides whether the phone may read it? The design answers with
-configuration and one function. Everything in this section is
-Designed.
+configuration and one function. The declarations, the table, the gate,
+the registry and pairing are **Built**, with host tests. What is
+designed and not built is said where it comes up: an installed app's
+own grant, the rule that a service's state belongs to its handler, and
+the app that handles the serial service.
 
 An app declares its services as data, one checked-in file per service
 under `abi/gatt/`
@@ -431,10 +455,12 @@ characteristic tx 6e400003-b5a3-f393-e0a9-e50e24dcca9e 244 notify open
 ```
 
 Each characteristic names its accesses and the level each requires:
-`open`, `encrypted` or `authenticated`. The domain serves every service
-that some `ble` grant of the machine names, a configured domain's or the
-one every installed app's grant is cut from (below). The Bluetooth domain builds its attribute
-table once at its start, and nothing adds or moves an attribute while
+`open`, `encrypted` or `authenticated`. The design has the domain serve
+every service that some `ble` grant of the machine names, a configured
+domain's or the one every installed app's grant is cut from (below);
+the domain serves every declared service, and reading the
+served set from the manifest's rows is designed and not built. The
+Bluetooth domain builds its attribute table once at its start, and nothing adds or moves an attribute while
 the domain lives, so no attribute handle moves under a connected
 phone.
 
@@ -451,8 +477,9 @@ Who may offer a service to phones? Whoever holds a **`ble` grant**, a
 facet of the Bluetooth domain whose one parameter names the services
 its holder handles
 ([design-bluetooth.md, The `ble` facet](../design-bluetooth.md#the-ble-facet)).
-A configured domain holds one by a row of the manifest. An installed
-app holds its own, without anyone editing the manifest: the board's
+A configured domain holds one by a row of the manifest; the facet and
+its request check are built, and no shipped manifest grants it to a
+domain. An installed app holds its own, without anyone editing the manifest: the board's
 `apps` row says which GATT services apps may handle (the Raspberry Pi 4's
 development row offers `nus` alone), the package names the ones it
 handles in its own `gatt` field, and install checks that every name is
@@ -466,9 +493,17 @@ app therefore never changes the table or the advertising data. The Pi 4's
 development card carries the terminal echo as a second package, so the
 board's checklist exercises this path
 ([design-bluetooth.md, Decisions](../design-bluetooth.md#decisions)); the
-published card carries the kiosk alone.
+published card carries the kiosk alone. The `apps` row's `gatt` field,
+the package's own field, install's checks and the narrowing of each
+session are designed and not built, and so is the app that handles the
+serial service: the service's declaration and its table are built, and
+no app attaches to it.
 
-A service has at most one handler, the process that attached to it, and
+A service has at most one handler, the process that attached to it. The
+registry's `attach` makes the caller the handler, refuses a second one,
+monitors it, hands it each write from a phone and takes the answer only
+from it; a service with no handler answers a write Unlikely Error at
+once. These are built. The rest of the rule is designed and not built:
 everything about the service that changes while the domain lives
 belongs to that handler. The registry accepts `set`, `notify` and
 `indicate` only from the handler. A write from a phone reaches the
@@ -485,6 +520,14 @@ next attempt waits, from 2 up to 64 seconds, and the wait outlives
 every window. A pairing never replaces a bond; only an explicit
 `forget` ends one
 ([design-bluetooth.md, The pairing window](../design-bluetooth.md#the-pairing-window)).
+The pairing itself, LE Secure Connections in `erx_smp_core` over the
+crypto of `erx_smp_crypto`, is a pure state machine run by the link's
+core; the window, the control tree and the bond store, `erx_bt_store`,
+are processes of `erx_bt_sup`. All are built, with host tests and fuzz
+targets (`erx_bt_smp_tests`, `erx_bt_window_tests`, `erx_bt_store_tests`,
+`erx_bt_smp_fuzz`, `erx_bt_pair_fuzz`). The store keeps its bonds in a
+development state file; a store behind the system's vault is designed
+and not built.
 
 ## 19.7 Testing a radio without a lab
 
@@ -510,18 +553,26 @@ Over a model of the line (`test/erlang/erx_bt_group_tests.erl`), the
 controller group reaches `ready` again after its controller process
 is killed, keeps its address, and turns a killed link into one
 disconnect command. The patch reader, the line tree and the PL011
-programming have host tests too. All of these tests are **Built**.
+programming have host tests too, and so do the ATT server and its
+gate (`erx_bt_gatt_tests`), the link's core and process, the registry,
+pairing, the window and the store, with fuzz targets for the ATT, SMP,
+link, control-file and state decoders. All of these tests are
+**Built**.
 
 For the protocol above HCI, the design uses Bumble, a Bluetooth stack
 written in Python, whose virtual controllers
 speak H4 over a TCP socket
 ([design-bluetooth.md, On QEMU against Bumble](../design-bluetooth.md#on-qemu-against-bumble)).
-erXos runs on QEMU `virt`, whose controller's line is a virtio-console
-port joined through a socket to one virtual controller, while a Bumble
-peer on another scans, connects,
-reads and pairs. Each test has a seeded fault, such as advertising
-data built wrong, which must make the UUIDs vanish from the peer's
-scan. This harness is Designed.
+Two uses are **Built**. `test/host/erx_bt_bumble_test.rb` feeds one
+corpus of frames to erXos's ATT, SMP, HCI and L2CAP decoders and to
+Bumble's, and every difference must be listed with its reason in
+`test/bt/differences.txt`. The QEMU suite `bluetooth` boots the
+Bluetooth domain on QEMU `virt`, whose controller's line is a
+virtio-console port joined through a socket to one Bumble virtual
+controller, and checks that the bring-up reaches advertising. A Bumble
+peer on a second socket that scans, connects, reads and pairs, with
+a seeded fault in each test, such as advertising data built wrong,
+which must make the UUIDs vanish from the peer's scan, is Designed.
 
 What only a board answers, the design lists as board probes
 ([design-bluetooth.md, Board probes](../design-bluetooth.md#board-probes)):
@@ -566,8 +617,12 @@ moves them through a two-file line tree and parses none. A pure core
 drives a fixed bring-up, derives its controller credits from the live
 handles and names each connection by handle and serial. Almost every
 failure ends the controller group, whose restart resets the line and
-the controller. This is built and tested on the host, on no board;
-the GATT table, its gate and pairing are designed.
+the controller. Above the controller, a table built once from checked-in
+declarations, one gate and pairing in a window someone opens decide
+what a phone may do. This is built and tested on the host, and its
+bring-up on QEMU against a Bumble controller, but on no board; an
+installed app's grant, a service's handler as the owner of its state
+and advertised service UUIDs are designed.
 
 ## Where to read next
 

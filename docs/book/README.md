@@ -1616,13 +1616,14 @@ Erlang, with Low Energy and the peripheral role first.
 **Background needed.** Chapters 3 and 6 (supervised processes, pure
 cores), chapter 15 (drivers and devices).
 
-**Status.** Built, with host tests, but run on no board: the H4 framing
-and HCI codec, the controller process with its supervision, the patch
-reader, advertising data and the identity address, and the line tree
-with its keeper. Designed: running the domain on the Pi 4, the
-controller's power cycle, serving the line to a file grant, the GATT
-server and its gate, the `ble` facet, the serial service, pairing and
-bonding, and tests against a Bumble peer.
+**Status.** Built, with host tests, and its bring-up also on QEMU `virt` against a Bumble
+virtual controller, but run on no board: the H4 framing and HCI codec, the controller
+process with its supervision, the patch reader, advertising data and the identity address,
+the line tree with its keeper, its power cycle and its `line` file grant, the `ble`
+facet's mint, the GATT server with its table and gate, the registry, the serial
+service's declaration, and pairing and bonding. Designed: running the domain on the Pi 4,
+advertised service UUIDs, an installed app's `ble` grant, a service's state belonging to
+its handler, the app that handles the serial service, and tests against a Bumble peer.
 
 1. **Bluetooth Low Energy, peripheral first.** What the role is, what
    erXos offers a phone that connects to it, and what it does not offer.
