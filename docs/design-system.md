@@ -2657,21 +2657,28 @@ parameters are its facet row's, except a parameter the domain service
 computes at the mint: a value no facet row may set, which the domain
 service derives from its own records, with a pure function, each time it
 mints the grant or starts its facet, and carries in that mint. It is one
-mechanism, with three uses: `inspect`'s scope, which
+mechanism, with four uses: `inspect`'s scope, which
 `erx_domain_core:inspect_scope/4` gives from the grantee's principal, the
 manifest's system-shell principals, its development flag and whether
 the grantee holds `start`
 ([design-live.md](design-live.md#the-inspect-service)); the `windows`
 grant's `session`, the session mark the domain service fixes for the
 display's session and copies into every mint of that grant
-([design-display.md](design-display.md#the-pixel-area)); and the
+([design-display.md](design-display.md#the-pixel-area)); the
 `machine`, `windows` and `inspect` grants' `principal`, the grantee's
 user name, the one name every grant carries (`root` for the system
 principal, as in a mint request), which the tree's log line names ([A session's request](#a-sessions-request)),
 the display's trusted overlay shows for each window
 ([design-display.md](design-display.md#windows-and-the-window-system))
 and the inspector reads to decide who sees a window's tree
-([design-live.md](design-live.md#inspection)). A service that
+([design-live.md](design-live.md#inspection)); and an app's `ble`
+grant's `services`, the one computed value that narrows a value its row
+sets: the app template's `ble` row names the services apps may handle,
+and `erx_domain_core:app_session/4` gives each app's session that row
+with `services` replaced by the intersection of the row's set and the
+GATT services the app's record holds, which admission kept apart from
+every other app's ([design-packaging.md](design-packaging.md#an-apps-session),
+[design-bluetooth.md](design-bluetooth.md#the-ble-facet)). A service that
 needs a value only the domain service knows takes it the same way, never
 through a facet row or a protocol of its own.
 

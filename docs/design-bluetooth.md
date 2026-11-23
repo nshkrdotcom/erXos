@@ -1563,7 +1563,8 @@ readable, and a byte above 0x7f or a control byte. Nothing
 reads a declaration at run time, so it is not an input to fuzz.
 
 Which services a machine serves is the manifest's: each `ble` facet row
-names, in its `services` parameter, the services its grantee handles, and
+names, in its `services` parameter, the services its grantee handles,
+the app template's row those installed apps may handle, and
 the Bluetooth domain's row names its console's; the domain serves exactly
 these. The packer sorts a `services` set into strict byte order and
 refuses a name twice or more than 8 names, and the boot view takes the
@@ -1576,9 +1577,12 @@ the line service's is named `line`
 name the mint provides and the interface the check reasons from pick one
 service; a service of the `ble` interface served by no configured
 domain; a `ble` grant to the system domain, whose handler would take a
-phone's bytes (B8); a `ble` grant to a session template, which every
-session made from it would hold, so that two sessions would contend for
-one service's handler, as `line_grant` refuses one; a service no file
+phone's bytes (B8); a `ble` grant to a session template other than the
+app template, which every session made from it would hold, so that two
+sessions would contend for one service's handler, as `line_grant`
+refuses one (the app template's one `ble` row is the build's, from the
+`apps` row's `gatt`, and each app's session holds it narrowed to its
+own services, [Who holds `ble`](#the-ble-facet)); a service no file
 declares, a service two rows name,
 two served services of one UUID, and advertising data that do not fit.
 Every served set is thus a subset of `abi/gatt`'s services with none
@@ -1696,6 +1700,99 @@ the row's limits, that ends with the mint
 The mint outlives every restart of the registry, and its end ends the
 domain ([Concurrency](#concurrency)), whose restart mints every grant
 anew.
+
+**Who holds `ble`.** A service has one handler at a time, so every
+served service has at most one grantee that can attach to it at a time,
+and the rules below follow from that:
+
+* **A configured domain** holds `ble` by a facet row of its own, whose
+  `services` names the services it handles. A domain runs one
+  incarnation at a time, so the row's services have one grantee.
+* **An installed app** holds `ble` through the one row the build
+  derives for the app template when the `apps` row's `services` names
+  `ble`. That row's `services` is the `apps` row's `gatt` field, the
+  GATT services the board lets apps handle
+  ([design-packaging.md](design-packaging.md#the-apps-row)). An app's
+  grant is that row narrowed to the services its package declares in
+  its own `gatt` field
+  ([design-packaging.md](design-packaging.md#the-declaration)).
+  Admission keeps the declaration when every name is one the row
+  offers and no other admitted app declares it
+  ([design-packaging.md](design-packaging.md#admission)), and the
+  install's commit records it in the app's principal record. Each
+  session of the app then holds the template's row with `services`
+  replaced by the intersection of the row's set and the record's, which
+  the domain service computes as it plans the session
+  ([design-system.md](design-system.md#facets-a-configured-domain-serves),
+  "Parameters the domain service computes at the mint"). An app's
+  principal has a `domains` quota of 1, so an app runs one session at a
+  time, and its services have one grantee too.
+* **No other grantee** holds it: not the system domain (B8), and not a
+  session template a principal names, every session of which would hold
+  the same services and contend for their handlers.
+
+So the scope of an app's grant is fixed at its install, in its record,
+and its facet is minted for each session of the app, as every template
+grant is ([design-system.md](design-system.md#facets-a-configured-domain-serves));
+an installed app that is not running holds no facet. The mint, the
+facet and its one check are the same for both kinds of grantee: the
+facet's `init/1` keeps the `services` its mint carries, here the
+narrowed set, and its `admit/3` refuses any other service with `{error,
+not_granted}`.
+
+The Bluetooth domain serves every service of every `ble` row, the app
+template's included, whether or not an app that declares it is
+installed. A service no app handles serves reads from its declared
+values and answers writes Unlikely Error, as any service with no handler
+does, and is advertised if its declaration says `advertise`. So
+installing, updating or removing an app never changes the attribute
+table, its hash or the advertising data, and `ble_grant`'s checks over
+the manifest's rows ([Declarations](#declarations-abigatt)) cover every
+app that can be installed.
+
+What happens to an app's grant at each event:
+
+* **Install.** A package whose `gatt` names a service the template's row
+  does not offer is refused `{gatt_not_offered, S}`, and one naming a
+  service another admitted app declares, `{gatt_taken, S, Other}`; `cp`
+  sees `EPERM` and `EEXIST` at its close
+  ([design-packaging.md](design-packaging.md#interfaces)), and an
+  installed package of the name goes on running as before.
+* **A service a configured domain holds.** `ble_grant` refuses a service
+  two rows name, so the `apps` row's `gatt` never names a service a
+  configured domain's row names, and a package declaring one is refused
+  `{gatt_not_offered, S}`. No run-time rule decides between a domain and
+  an app.
+* **Removal.** The publication without the app ends its session, its
+  facet ends with it, and the registry's monitor detaches its handler.
+  The package leaves the admitted set, so its services are free for the
+  next install. The record keeps its `gatt` until the reboot, as it
+  keeps the rest, but no session of a removed app starts
+  ([design-packaging.md](design-packaging.md#invariants), PK7). The
+  values its handler set stay and are served to phones until the next
+  handler sets its own, as after any handler's end.
+* **Update.** The update ends the app's session before its package's
+  name changes; admission of the new package counts the services of
+  every admitted app but the one of the name, so an update keeps its own
+  services, may add free ones and may drop some, which are free from its
+  commit on. The next session's facet names the new set.
+* **A restart of the app's session.** The new session's grant is minted
+  anew and its handler attaches again. Its attach is answered `{error,
+  attached}` if the end of the previous session's handler has not yet
+  reached the registry. That fails safe: no other app can hold the
+  service, so an attach made again once the end has arrived succeeds,
+  and until then the service answers writes as any service without a
+  handler does.
+* **The Bluetooth domain's restart.** The new mint mints the grant of
+  every live session again, as it mints every configured grant.
+* **Boot.** The recovery admits the image's packages first and then the
+  installed ones in name order, each against the services the packages
+  admitted before it declare
+  ([design-packaging.md](design-packaging.md#boot-and-recovery)). Two
+  admitted packages of one service arise only when a system update gives
+  an image package, or takes from the `apps` row's `gatt`, a service an
+  installed app declared; the installed package is then refused and
+  shown `refused` with its reason at `/proc/packages`.
 
 **The one check.** A facet's `init/1` keeps its grant's `services`, and
 its `admit/3` refuses a request naming any other service with `{error,
@@ -2508,7 +2605,7 @@ a radio peer can do:
 | Adversary | Can | Cannot |
 | --- | --- | --- |
 | A radio peer, anyone in range | send any packet the controller forwards; connect while a slot is free and so hold it; read and write `open` characteristics; pair during a `nodisplay` window and so reach `encrypted` characteristics | reach an `encrypted` characteristic without a bond made in a window, or an `authenticated` one without the passkey the window showed; make the system domain parse a radio byte, since no `ble` grant names it; make the Bluetooth domain hold more than its bounds; replace a bond |
-| An app holding a `ble` grant | attach to, set, notify and indicate the services its grant names, and answer the writes handed to it; keep its facet's requests in flight up to the row's `in_flight` | handle, set or notify a service its grant does not name, which its facet refuses before the registry sees it; answer a write handed to another process; reach a link, the store or the controller except through the registry |
+| An app holding a `ble` grant | attach to, set, notify and indicate the services its grant names, and answer the writes handed to it; keep its facet's requests in flight up to the row's `in_flight` | handle, set or notify a service its grant does not name, which its facet refuses before the registry sees it, an installed app's grant naming only the services admission gave it and no other app; take a service another app or a configured domain holds by installing a package that declares it, which admission refuses; answer a write handed to another process; reach a link, the store or the controller except through the registry |
 | The controller, its closed firmware | everything a radio peer can; read every LTK erXos gives it; forge what a bonded peer could send | reach anything erXos does not send it: it sees the line, not the machine |
 | A compromised Bluetooth domain | everything the controller can; read the bonds; act as any bonded phone toward the apps it serves; see every byte of the console's lines, passphrases included | reach a device, a partition or a facet beyond its row's; log anyone in without the passphrase, which the vault checks |
 
@@ -2719,7 +2816,7 @@ and stops in the reverse order, the controller process first.
 | | `eio` | `forget ADDRESS` while the store stays `unknown`, or any `forget` whose `put` is unconfirmed |
 | | `enoent` | no bond has that identity |
 | `ble` facet | `{error, not_granted}` | a service the grant does not name, refused by the facet before the registry sees it |
-| | `{error, attached}` | the service already has a handler |
+| | `{error, attached}` | the service already has a handler: for an app, only its previous session's, whose end has not yet reached the registry |
 | | `{error, badarg}` | an operation of another shape, or a `reply` whose answer is not `ok`, `{error, value_not_allowed}` or `{error, Code}` with `Code` in `16#80..16#9F`, refused by the facet |
 | | `{error, unavailable}` | no registry is registered: before the row's `-eval` has started it, or while it restarts |
 | | `{error, no_such_characteristic}`, `{error, not_allowed}` | an unknown name; an access the declaration does not allow |
@@ -2728,6 +2825,8 @@ and stops in the reverse order, the controller process first.
 | | `{error, gone}` | a dead `Conn` |
 | | `{error, not_subscribed}`, `{error, insufficient_security}` | the phone did not subscribe; the gate refused |
 | | `{error, timeout}` | an indication unconfirmed in 30 s, after which the link ends (ATT 3.3.3) |
+| installing a package, at `cp`'s close (admission, [design-packaging.md](design-packaging.md#admission)) | `eperm`, `{gatt_not_offered, S}` in the log | the package's `gatt` names a service the `apps` row's `gatt` does not offer, a service a configured domain's row names among them |
+| | `eexist`, `{gatt_taken, S, Other}` in the log | another admitted app, `Other`, declares `S` |
 | a pairing, on `pair` | `failed ADDR secure_connections_required`, `key_size`, `method`, `confirm`, `dhkey`, `bonding`, `invalid`, `unexpected`, `peer`, `timeout`, `already_bonded`, `bonds_full`, `unavailable`, `disconnected` | SMP's reasons and the store's, each mapped from one Pairing Failed code or one event |
 | a Pairing Request during the pairing wait | Pairing Failed, Repeated Attempts (`0x09`) | the wait has not passed; no line on `pair`, the window stays open |
 | a configuration write on a bonded link | Unlikely Error (`0x0E`) | the store is `unknown` or its `put` was not `ok` |
@@ -2777,7 +2876,7 @@ Each core's test is paired with the seeded faults it must catch.
 | the line keeper's core (`erx_line_core`), explored | from a fresh line, with and without a power line, every event in every reachable state up to three requests and two power-cycling resets, each start both answering and refusing: no driver of flow `none` outside a reset, the one live driver of the grant's flow the core's and the only one sent bytes, a reset always waiting on an event still to come, `ok` only at the fresh start and `eio` only with the line broken | a failed reset answered while its holding driver still runs; a failing reset that never takes its holding driver's end |
 | the mailbox core's answer check, `erx_vc_answer`, over buffers the test writes | `set_gpio_state` with response word 0, and with bit 31 set, and pin word 0 is `ERX_OK` with no bytes; with either word and the pin word left at 128, as an untouched buffer has it, `ERX_ENOTSUP`; `notify_xhci_reset` with word 0 is `ERX_ENOTSUP`; a nonzero word without bit 31 is `ERX_ENOTSUP` for both; a wrong code or first tag is `ERX_EPROTO`; both request words of a `set_gpio_state` row reach the buffer, and one of a `notify_xhci_reset` row | `result_word` ignored, so the power line's answer is refused as the probe saw; `result_word` taken as true for every tag, so an ignored VL805 notification reads as performed; the pin word's check dropped, so an untouched buffer reads as performed; the request built from the row's first word alone |
 | the manifest generator's firmware request rows | the Pi 4's record packs UART0's power row as `bt_off`, words 128 and 0, at index 0 and `bt_on`, words 128 and 1, at index 1, and the VL805's row with its one word; a row that names `set_gpio_state` itself, a power row naming a power line `fw_power_line` does not declare, a device other than a placed UART, or a device another row names, and `arguments` longer or shorter than a tag's request are refused | the refusal of a row that names `set_gpio_state` itself removed, so a record row with pin 131, `GLOBAL_RESET`, packs |
-| the manifest check's `ble` rows (`ble_grant`) and the identifier sets of the packer and the boot view | a `ble` grant to a suite domain packs, and the boot view reads it; each refusal of [Declarations](#declarations-abigatt) fires on a manifest that differs from a passing one in it alone: a service of the `ble` interface named otherwise, a `ble` grant to the system domain, one to a session template, an undeclared name, a name two rows give, two served services of one UUID, a ninth name, advertising data one octet too long; the packer packs `nus`, `nusb`, `nv` in that order from every order of its lines and refuses a name twice; the boot view takes that packed set and refuses a name twice and every other packed order | the system domain's refusal removed (a manifest granting `ble` to the system domain packs); identifiers compared length first (`nv` before `nusb`); a prefix ordered after its extension; the duplicate check dropped from the boot view (a forged packed set with a name twice reaches the mint) |
+| the manifest check's `ble` rows (`ble_grant`) and the identifier sets of the packer and the boot view | a `ble` grant to a suite domain packs, and the boot view reads it; each refusal of [Declarations](#declarations-abigatt) fires on a manifest that differs from a passing one in it alone: a service of the `ble` interface named otherwise, a `ble` grant to the system domain, one to a session template a principal names, an undeclared name, a name two rows give, an `apps` row whose `gatt` names a service a configured domain's row names, `gatt` without `ble` in the `apps` row's `services` and `ble` there without `gatt`, two served services of one UUID, a ninth name, advertising data one octet too long; the packer packs `nus`, `nusb`, `nv` in that order from every order of its lines and refuses a name twice; the boot view takes that packed set and refuses a name twice and every other packed order | the system domain's refusal removed (a manifest granting `ble` to the system domain packs); identifiers compared length first (`nv` before `nusb`); a prefix ordered after its extension; the duplicate check dropped from the boot view (a forged packed set with a name twice reaches the mint); the template refusal widened to the app template (the development manifest with `ble` and `gatt nus` in its `apps` row fails to pack); the app template's exception widened to every template (a source row granting `ble` to `@session.system` packs) |
 | the line service through a real `erx_fs` grant, reader and writer on one `data` file | a write is answered within 1 s while a read waits, and the driver's answer reaches the read once; a `reset` answers a waiting read `eio`; a clunk during a waiting read is answered within 1 s and the next reader gets the next bytes whole | a `read` that waits inside its callback; a dropped flush of a waiting read |
 | flushes of begun and buffered requests, with power notifications held by the test | a `reset` flushed at any step is answered once its last step is done, then the flush; a write flushed after the driver took its bytes answers its count; a read flushed with bytes buffered answers with them, and before bytes arrive `eintr`, the next read getting them whole | a flushed `reset` answered `eintr` while its steps run; a read held while bytes are buffered |
 | the identity address | 10,000 addresses have the static form and parse in Bumble's `Address` as static | the top bits cleared |
@@ -2792,6 +2891,7 @@ Each core's test is paired with the seeded faults it must catch.
 | the link's backlog through the controller group, a link held at its start by a store that does not answer while the model line delivers 40 ACL packets for its handle | `HCI_Disconnect` with `0x14` is written after the 32nd; the link's mailbox never holds more than 32 of the controller's messages | the bound removed (all 40 delivered) |
 | a pairing's outcome, with the link, the window process and the store running | a window closed after the link's `keeping` leaves the bond kept, the window process logging `bonded` and counting no failure; a window closed before it fails the pairing `withdrawn`, and the store gets no `keep`; a link killed after `keeping` leaves the store's outcome as the pairing's; a window opened before that outcome answers `ebusy` | the window's monitor kept past `keeping` (the killed link counted `disconnected` while its bond is kept); the store's outcome sent to the link alone (the window waits) |
 | the store against a backend that never answers | a `put` is unconfirmed at `bt_store_timeout_ms`: the pairing fails `unavailable`, the window gets that outcome, a configuration write answers Unlikely Error, and the store is `unknown`; a `get` at the start leaves the store `unknown` at the same deadline | the backend called with no deadline (the test's own deadline passes with `keep` unanswered) |
+| an app's `ble` grant, through the session plan (`erx_domain_core:app_session/4`) over a template `ble` row whose `services` is `nus` and `nusb` | an app whose record holds `gatt nus` gets a `ble` row whose `services` is `[nus]`, and one whose record holds no `gatt` gets no `ble` row; the install refusals are admission's ([design-packaging.md](design-packaging.md#verification-and-testing)) | the row's `services` passed whole (the session's facet admits `nusb`, which the app did not declare) |
 
 ### Fuzz targets
 
@@ -2848,6 +2948,7 @@ stages' peers:
 | 2 | `examples/run_gatt_client.py` and `apps/gatt_dump.py` | every attribute of the expected table is discovered, with its handle; `open` values read as set; `encrypted` ones answer Insufficient Authentication | the gate allows every read: the `encrypted` value is read |
 | 2 | `test/bt/peer/gatt_peer.py`: writes, a write past the maximum, a subscription, notifications, an indication and its confirmation, a long write | each answers as declared; the handler sees each write once, in order | the link takes a second request before the handler answered the first |
 | 3 | `test/bt/peer/serial_peer.py`: 64 KiB through `erx_gatt_echo_test` with `write` with response | every byte comes back in order | `erx_gatt_serial:send/2` cutting at `Mtu` rather than `Mtu - 3` |
+| 3 | an app's grant, in a cell whose manifest offers `ble` and `gatt nus` in its `apps` row in place of the echo domain's grant: two test packages over `erx_gatt_echo_test`, `echo_a` and `echo_b`, each declaring `gatt nus`; `cp echo_a.app /apps/`, `service echo_a start`, then `serial_peer.py`; `cp echo_b.app /apps/`; `rm /apps/echo_a.app`, `cp echo_b.app /apps/`, `service echo_b start`, then `serial_peer.py` again | the bytes come back through `echo_a`; `echo_b`'s first copy fails with `EEXIST` and `/apps` holds no `echo_b.app`; after the removal its copy succeeds and the bytes come back through it | admission's check of the other apps' services removed: `echo_b`'s first copy succeeds |
 | 4 | `apps/pair.py --mode le --sc true --mitm true --io keyboard C tcp-client:...`, where the device configuration `C` fixes the peer's address and names its key store, `"keystore": "JsonKeyStore:K"` (`bumble/keys.py:198-206`, `:272-285`); the harness reads the passkey from the `pair` file and writes it to `pair.py`'s standard input, which `input()` reads (`apps/pair.py:102-107`, `:159-168`) | `bonded ... authenticated`; then `apps/gatt_dump.py --device-config C --encrypt` reads an `authenticated` value; after the Bluetooth domain restarts, it reads it again | the LTK reply sending a key of the wrong bond: encryption fails |
 | 4 | `apps/pair.py --sc false` | `failed ... secure_connections_required` | the Secure Connections flag check removed |
 | 4 | `apps/pair.py` while no window is open | Pairing Not Supported | the window check removed |
@@ -2869,7 +2970,7 @@ USB dongle on the development host, which makes the peer side scripted:
 the machine appears in the phone's scanner with its name; nRF-style GATT
 browsers show the declared table; a terminal app for Nordic's UART
 service echoes through an app, once the board has a home for one
-([Decisions](#decisions), 6); the phone pairs by typing the passkey the
+([Decisions](#decisions), 7); the phone pairs by typing the passkey the
 `pair` file shows, reboots the machine, and reads an `authenticated`
 value again; the console logs in from the phone; a `reset` written
 while a phone is connected is followed by a bring-up that reaches
@@ -2906,7 +3007,7 @@ list ([todo-performance.md](todo-performance.md)):
 * a phone's write reaching a handler and its answer coming back across
   two domains, measured by a peer script that times write requests
   through the suite's echo handler on QEMU, and on the board once it
-  has one ([Decisions](#decisions), 6);
+  has one ([Decisions](#decisions), 7);
 * `erx_pl011`'s wait of 1 ms at a time while its transmit FIFO is full
   (`erx_pl011.erl:45`, `:236-243`), which bursts of notifications and a
   patch download meet.
@@ -2919,9 +3020,33 @@ list ([todo-performance.md](todo-performance.md)):
   change-unaware clients within a connection, run-time conflicts between
   apps, a run-time parser of declarations with its fuzz target, and
   advertising data that may stop fitting. Declarations as configuration
-  remove all of these; an app installed later brings its declaration
-  with its package, and the table changes at the Bluetooth domain's next
-  start.
+  remove all of these; an installed app names, in its package, which of
+  the services the `apps` row offers it handles, and the table does not
+  change ([Who holds `ble`](#the-ble-facet)).
+* **A package that brings its own service declarations.** An app
+  would carry `abi/gatt`-style files in its package, and the Bluetooth
+  domain would rebuild its table at its next start from the installed
+  packages. It brings back a run-time parser of declarations with its
+  fuzz target, a table and advertising data that change with every
+  install, a restart of the Bluetooth domain to apply one, which ends
+  every link, and the whole-manifest checks of `ble_grant` redone at
+  each install. A service an app needs is declared in the tree and
+  offered by the board's `apps` row instead, as every other service an
+  app takes is.
+* **Only configured domains hold `ble`.** An app that handles a
+  service would need a configured domain of its own in the board's
+  manifest, so adding one would mean editing the manifest and
+  rebuilding, against the model in which apps are installed at run time
+  with checked declared needs
+  ([design-packaging.md](design-packaging.md)).
+* **A grant to the app template, the first attach winning.** Every
+  app's session would hold every service the row names, and the
+  registry's `{error, attached}` would decide between them by timing:
+  which app handles a phone's writes would depend on which started
+  first, any app could take another's service while it restarts, and
+  nothing would record which app a service belongs to. Narrowing each
+  app's grant to the services admission gave it alone leaves the
+  registry's refusal for the one case of a session restarting.
 * **Reads answered by the handler.** A read that waits on an app needs a
   deadline, a policy for a missing handler and a consistency rule across
   Read Blob requests. A value the handler sets covers the constants,
@@ -3064,25 +3189,38 @@ list ([todo-performance.md](todo-performance.md)):
    design's ([design-wifi.md](design-wifi.md#facts-this-design-does-not-have), F1).
    A fixed line in the writer would be a second source of pins, which
    that design rules out.
-6. **Open: where the board's echo app runs.** The Bluetooth track's
-   demo ([plan.md](plan.md#track-b-bluetooth)) and the board's
+6. **Decided: an installed app holds its own `ble` grant, scoped to the
+   GATT services its package declares, and a second app declaring a
+   service already held is refused at install.** Apps are installed at
+   run time with checked declared needs, never by editing the board's
+   manifest or rebuilding, so an app that handles a service gets its
+   grant from its package. The board's `apps` row offers the services
+   apps may handle in its `gatt` field, the build gives them to the app
+   template's one `ble` row, admission keeps a package's `gatt` only
+   within that set and disjoint from every other admitted app's, and the
+   domain service narrows each app's session's grant to it ([Who holds
+   `ble`](#the-ble-facet)). The rejected choices were to let only
+   configured domains hold `ble`, and to grant the app template every
+   offered service with the first attach winning ([Alternatives
+   considered](#alternatives-considered)). The QEMU suite's echo stays a
+   test-only configured domain, which its release, carried only by a
+   test image, runs.
+7. **Open: how the board's echo app reaches the Pi 4.** The Bluetooth
+   track's demo ([plan.md](plan.md#track-b-bluetooth)) and the board's
    checklist have a terminal app on the phone echo through an app on
-   the Pi 4, and no row of the Pi 4's manifests can grant one `ble`. An
-   app takes a service only through the `apps` row, whose facet rows
-   state no parameter and take each its service's default
-   ([design-packaging.md](design-packaging.md#the-apps-row)); `services`
-   has no default, and one would give every app the same services, of
-   which only one app at a time can handle each. The QEMU
-   suite's domain of its own runs from a release only a test image
-   carries. The choices: a configured domain in the Pi 4's development
-   manifest that runs the echo, granted `ble` with `services` naming
-   `nus`, from a release the development card carries; or an app's
-   package declaring the GATT services it handles, checked when it is
-   installed, which packaging's design would have to give a facet
-   parameter of an app's own. Recommendation: the configured domain,
-   as the QEMU suite has it, since it needs no new mechanism and the
-   demo's configuration is fixed; the package's declaration waits for
-   an installed app that handles a service of its own.
+   the Pi 4. Under decision 6 the echo is a package declaring `gatt
+   nus`, and the Pi 4's development manifest's `apps` row offers it with
+   `services display net ble` and `gatt nus`. But that row has `max 1`,
+   and its card trusts no key and carries the kiosk alone, whatever its
+   kind ([design-packaging.md](design-packaging.md#the-apps-row)), so no
+   second package can reach the board. The choices: the board's
+   development card carries the echo as a second package of the image,
+   enabled, with `max 2`, which the display pays for with one more
+   pixel area of 8 MiB; or a configured domain in the Pi 4's development
+   manifest runs the echo with a `ble` row of its own naming `nus`, as
+   the QEMU suite does. Recommendation: the second package, since it is
+   the path an app takes on every other machine and exercises the
+   install check on the board; the published card keeps the kiosk alone.
 
 ## Board probes
 

@@ -203,6 +203,17 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   registry's monitor of a handler in another domain fires when that handler or its domain ends is unverified,
   and so is the mint's success path: no suite grants `ble`, so no test sees the boot view's `services` and limits
   reach `init/1` in the shape it takes.
+* [High] bluetooth and packaging, an installed app's `ble` grant (docs/design-bluetooth.md "The `ble` facet", "Who
+  holds `ble`"; docs/design-packaging.md "The `apps` row", "The declaration", "Admission", PK13): designed, not built.
+  Missing: the `apps` row's `gatt` field and its derived `ble` row for the app template (`tools/lib/erx/manifest.rb`,
+  property 19 clause 1, with `check_ble_grants` taking that one template row and refusing every other); the
+  declaration's `gatt` field in `abi/formats/package.txt`, the SDK packer and the generated reader, its bound taken
+  from `abi/services/ble.txt`; admission's `Held` input and steps 7 and 8 (`erx_app_admit:admit/4`), kept by
+  `erx_pkg` from its committed admissions and run in the recovery's and the build's order; the record's GATT
+  services (`erx_principal`) and the narrowing in `erx_domain_core:app_session/4`; the `EPERM` and `EEXIST` closes;
+  the tests the two designs pair with seeded faults, the Bluetooth suite's two-package case among them. Unverified:
+  whether a restarted app session's attach can reach the registry before the end of its previous session's handler,
+  which answers `{error, attached}`; a `service NAME restart` in the Bluetooth suite settles it.
 * [Medium] bluetooth, what a handler hears (`erx_gatt_registry`; docs/design-bluetooth.md "The `ble` facet"):
   `write` and `subscribed` name the characteristic without its service, though a handler may handle several
   services whose characteristics share a name; and a handler that attaches while a phone is connected hears

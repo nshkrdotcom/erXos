@@ -863,7 +863,8 @@ since it reads its code from its package, whose name then holds
 another
 ([design-packaging.md](design-packaging.md#invariants), PK7 and PK12).
 How a package declares what it needs, which of the `apps` row's
-services it may take, how it is authenticated, added to an image,
+services it may take and which GATT services it handles, one app to a
+service, how it is authenticated, added to an image,
 installed and removed, and what that does to its data, is
 [design-packaging.md](design-packaging.md).
 

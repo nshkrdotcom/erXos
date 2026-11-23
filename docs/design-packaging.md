@@ -259,7 +259,7 @@ clock restart` starts it on the new package. `rm
 
 | Invariant | Why it holds | What would break it | How it is checked |
 | --- | --- | --- | --- |
-| **PK1.** An app holds no grant the `apps` row does not offer, and its memory comes only from the row's budget | the declaration grammar names services and one amount of memory; admission keeps a need only if it is one of the row's services; the session's facets are the `packages` and `system` grants and the kept needs, all rows of the manifest, and the `code_objects` facet the domain service grants every session, which reaches only the session's own budget, through the domain service's one funnel (A10); the app's principal budget is a child of the `apps` budget, so every session it starts is carved there or refused | a declaration field that carries a parameter or a grant; an admission that keeps a need the row lacks; a session plan that grants a row the app did not name; an app budget carved from the root | admission's corpus with a seeded admission that drops the subset test; the session plan's host test with a seeded plan that grants every row of the template |
+| **PK1.** An app holds no grant the `apps` row does not offer, and its memory comes only from the row's budget | the declaration grammar names services, GATT services and one amount of memory; admission keeps a need only if it is one of the row's services, and a GATT service only if the row's `gatt` offers it; the session's facets are the `packages` and `system` grants and the kept needs, all rows of the manifest, and the `code_objects` facet the domain service grants every session, which reaches only the session's own budget, through the domain service's one funnel (A10); the app's principal budget is a child of the `apps` budget, so every session it starts is carved there or refused | a declaration field that carries a parameter or a grant; an admission that keeps a need the row lacks; a session plan that grants a row the app did not name; an app budget carved from the root | admission's corpus with a seeded admission that drops the subset test; the session plan's host test with a seeded plan that grants every row of the template |
 | **PK2.** The build's proof for the board's own domains holds with every app present | property 19 counts the app template as `max` principals in every sum that counts a principal or a template's rows (display pixel areas and connections, domain slots, start rows, principal table, name atoms), each holding every service of the row | a sum that counts the app template once; a service an app may take that no sum counts | the seeded violations of [The build's check](#the-builds-check) |
 | **PK3.** Every block of a package's image that a session reads, at `/app` or at a mount of a file of `/apps`, matched the root hash of a header the system domain authenticated | every package mount is the one EROFS mount, through `erx_verity`, and takes no layout from its caller: for `/app`, `erx_ns`'s process takes the root hash, salt and tree layout from the app's record, which the domain service fills only from a header the file check accepted; for the shell's `mount`, from the header bytes that `erx_verity:header/1` reads through the same open as the image, which it takes only for a file it reached through the `apps` grant, and the `apps` tree serves header bytes only once their SHA-256 is the one it recorded when the file check accepted them | a form of the mount that takes a layout or a root hash from its caller; a `header` mount of a file reached through any grant but `apps`; a header read the tree answers without its hash check; a mount that reads the header and the image through two opens; a read path around `erx_verity` | a QEMU test that flips one byte of an installed package's image and finds the read refused at `/app` and at a mount of it; the `apps` tree's host test of a header changed on the medium after the check, answered `eio`; a test that a `header` mount of a file of `/tmp` or `/data` is refused with `einval`; E1's build check, `Erx::ErofsReads` ([design-storage.md](design-storage.md#invariants)): no module but `erx_verity` reads a file mount's fid or the `system` window, the reader reaches a block only through `erx_verity:read/3`, and no module but `erx_ns` and `erx_storage_system` opens an image in it |
 | **PK4.** Two apps see nothing of each other, and two signers' apps of one name share no directory | each is its own principal; the domain service computes every scope from the session's principal, the app's; the storage service roots each app's `data` grant at `apps/NAME/SIGNER/`, both parts from the principal's record | a scope, storage root or name pool derived from the template's key; a data root that leaves out the signer; two apps registered under one principal | a QEMU test with two apps; the mint's host test of one name under two signers, two roots; seeded: the mint's scope taken from the template's key, and a root of the name alone |
@@ -268,9 +268,10 @@ clock restart` starts it on the new package. `rm
 | **PK7.** No session of an app runs while its package's name changes, by a removal or an update | the start service's keepers are the only starters of an app's sessions (AP2: an app principal has no credentials, so no login starts one); before the package process deletes an app's file or renames another over it, it publishes a package set without the app, which the start service answers only once the app's sessions have ended, and it starts none until a set with the app arrives | a second starter of app sessions; a publication answered before the sessions end; an update that renames over a published package | the start table's host test of a publication that drops a running app; a QEMU test that removes a running app and one that updates it, each finding no session of it once the publication has answered; the build check that only `erx_starter_keeper` calls `erx_domain:start_app/2` (`app-starters`, `tools/lib/erx/chokepoint_rules/apps.rb`) |
 | **PK8.** A removal or a purge reaches only what belongs to an app | a removal deletes one `NAME.app` inside the package directory, after a publication that drops only that package's row; a purge sends the storage service's `remove_app`, which reaches only the directory of app directories; a name that fails the app-name rule is refused before any effect | a removal that stops domains by principal name; a data removal through a grant wider than the app directories | the purge's host test with names `root`, a configured domain and a manifest principal, each refused with nothing stopped or deleted |
 | **PK9.** The system domain's atoms, tables and recovery work stay within the build's bounds | an app principal lives for the boot in one of `max` entries, which removal does not free until the next boot; its sessions take pooled names within its `names` quota; at most `max` copies are open at once and each holds its temporary file until its close is decided or its lifetime ends; the directory holds at most `max` installed packages, admitted, refused or shadowed, so a directory the package process wrote fits the recovery's bound, and recovery reads at most `pkg_scan_max` entries; the package process keeps a header's SHA-256, not its bytes | an unregister that frees an entry within the boot; a slot freed before its file is deleted; an install bound that counts admitted packages alone; a recovery that reads the directory unbounded | a host test that installs and removes `max` + 1 distinct names in one boot and finds the last refused with `apps_full`; the host test of `max` packages left refused by an ABI change; the recovery's fuzz target over listings past the bound |
-| **PK10.** A package of the image and one installed at run time give the same session | both pass the file check, `erx_app_admit:admit/3` and the same session plan; only what authenticates the header differs | a second admission or plan for one of them | the session plan's host test over one header admitted both ways |
+| **PK10.** A package of the image and one installed at run time give the same session | both pass the file check, `erx_app_admit:admit/4` and the same session plan; only what authenticates the header differs | a second admission or plan for one of them | the session plan's host test over one header admitted both ways |
 | **PK11.** No effect of an ended package lifetime happens once the next lifetime's recovery has begun | a lifetime is one run of `erx_pkg`; `erx_pkg_io` takes every file operation on `packages` and the start service every publication, each one at a time, finishing the one it began before taking the next, and each refuses an effect whose lifetime has ended; the recovery's first request is taken after every earlier one; copy handles name their lifetime, so they end with it; `erx_pkg_io` is never restarted: its end resets the machine | an executor that takes a request without checking its lifetime; a restarted `erx_pkg_io` while a request of its predecessor may be in flight; a copy handle that outlives its lifetime | the lifetime's host test: a package process killed with two copies writing and a close queued, after which no request of the ended lifetime reaches the simulated storage after the recovery's listing; seeded: an `erx_pkg_io` without the lifetime check |
 | **PK12.** An open of a package of `/apps`, and a mount over one, reads that package's bytes or `eio`, never another package's | the `apps` tree gives each package it publishes or admits a qid path drawn from the system domain's file version counter, which no restart of the tree resets, so no path names a second file while the system domain runs, as every server keeps its paths ([design-files.md](design-files.md#identity-and-version)); an open records the path of the package it opened, and `erx_pkg_io` serves a read only while its path table holds that path for the name, checked as it takes the read; it drops the name's entry as it takes the rename over the name or its deletion, and records a new entry only from the checkpoint request that makes the rename durable, when that checkpoint succeeds, or from the recovery's `path_entry` requests, all in its one-at-a-time order, in which the tree's walks and opens also learn their paths; a mount reads only through its one fid, one open of the tree; the session's export names each mount's tree when it is mounted, so a program's file table never joins a file of an old mount to one of a new mount at the same point ([design-files.md](design-files.md#narrowing-for-a-program)) | a qid path drawn from the name, the listing's order or a counter the tree's restart resets; a read that reopens the name instead of checking the open's package; a path taken out after the rename is sent, or checked before the read is taken; a `path_entry` request sent apart from the checkpoint; a path table that a second process writes or copies; a mount that reopens the name; an export tree named by its mount point | the `apps` tree's host tests of an open across an update and across a removal and reinstall, and of an old open's read queued around the rename; the export's host test of a point mounted again with an image whose inode numbers repeat |
+| **PK13.** Each GATT service is handled through at most one grant at a time: no two admitted apps declare one, and none declares one a configured domain's `ble` row names | the build derives one `ble` row for the app template, whose `services` is the `apps` row's `gatt`, and `ble_grant` refuses a service two rows name; admission keeps a package's `gatt` only within that row's set and apart from every other admitted app's (steps 7 and 8), at install, at boot and in the build's run over the `package` rows alike; the session plan narrows the row to the intersection of its set and the app's record; an app runs one session at a time | an admission that checks `Held` against the registry, which keeps a removed app's services, or not at all; a step 8 that counts the app's own name, refusing every update; a session plan that passes the row's set whole; a source `ble` row granted to another template | admission's corpus with each step seeded out; the session plan's host test ([design-bluetooth.md](design-bluetooth.md#host-tests-of-the-cores)); the manifest check's seeded rows; the Bluetooth suite's two-package case ([design-bluetooth.md](design-bluetooth.md#on-qemu-against-bumble)) |
 
 ## Data model
 
@@ -284,6 +285,7 @@ machine takes no packages. Its fields:
 | `memory` | the budget all apps share, in bytes; property 4 counts it within `root_memory` as it counts a principal's budget | none: required |
 | `services` | the services an app may name in `needs`, each a service of the manifest | none, so an app holds only its `packages` and `system` grants |
 | `max` | how many apps a boot can hold, the image's and the installed ones together, 1 to `apps_max_limit`, 64 | 8 |
+| `gatt` | the GATT services of `abi/gatt` that apps may handle, when `services` names `ble` ([design-bluetooth.md](design-bluetooth.md#the-ble-facet)) | none; required exactly when `services` names `ble` |
 
 From the row the build derives, as rows of the image's manifest that the
 board's source does not hold and the build record lists:
@@ -333,6 +335,11 @@ board's source does not hold and the build record lists:
   refused until the data partition's storage service roots a grant at
   `tree apps`, since without it its grant would reach the whole tree
   rather than the app's own directory.
+  The default rule's one exception is `ble`, whose `services` has none: its row
+  carries `services` with the names of the `apps` row's `gatt`, the
+  services apps may handle, so `ble_grant` checks it as it checks every
+  `ble` row, and each app's session holds it narrowed to the services
+  its own package declares ([An app's session](#an-apps-session)).
   A row of the data partition's storage service carries the parameter
   `tree apps`, which roots its grants among the app directories ([Where
   an app's files lie](#where-an-apps-files-lie));
@@ -470,7 +477,14 @@ the packages are well formed**, beside those of
 [design-system.md](design-system.md#the-manifest):
 
 1. at most one `apps` row; each name of `services` is a service of the
-   manifest whose ABI file gives every parameter a default, other than
+   manifest whose ABI file gives every parameter a default, or `ble`,
+   whose row takes `services` from `gatt`; `gatt` is present exactly
+   when `services` names `ble`, so no row offers apps a `ble` grant that
+   names nothing and no `gatt` is written that no row carries, and
+   `ble_grant` checks the derived row as any `ble` row: each name
+   declared in `abi/gatt`, none named by another row, a configured
+   domain's included, at most 8, and the advertising data still fitting
+   ([design-bluetooth.md](design-bluetooth.md#declarations-abigatt)); other than
    `packages` and `system`, which every app holds already, and `start`, `apps`, `etc`
    and `machine`, which would let an app command the start table, install
    packages, rewrite `/etc/start.conf` and end the machine
@@ -496,7 +510,9 @@ the packages are well formed**, beside those of
    beside the principal's wall of one that ended and has not retired,
    which holds that session's default memory and outer budget;
 5. every `package` row's package passes the file check and admission on
-   the host against this manifest ([Admission](#admission)); the
+   the host against this manifest ([Admission](#admission)), in the
+   order the recovery admits them, each against the GATT services the
+   packages before it declare, so no two image packages declare one; the
    `package` rows number at most `max`; the declared memory and the
    session's outer budget, as the resource policy sizes it, of every
    enabled package sum within the `apps` budget, so the image's enabled
@@ -548,7 +564,7 @@ Each clause has a seeded violation: a check that counts the app template
 once in property 18, which admits a row whose apps together pass the
 display's budget; an `apps` row whose `max` plus the manifest's start
 rows pass 256; `apps` in `services`; `etc` in `services`; a service
-in `services` whose ABI file gives a parameter no default; two enabled packages whose memory
+in `services` whose ABI file gives a parameter no default; `ble` in `services` with no `gatt`; a `gatt` with no `ble` in `services`; a `gatt` naming the service a configured domain's `ble` row names; two `package` rows whose declarations name one GATT service; two enabled packages whose memory
 passes the `apps` budget; a `package` row whose declaration needs a
 service the row lacks; a configured domain's `data` row carrying `tree
 apps`; an `apps` row in a manifest with no `system_service`; a
@@ -586,12 +602,22 @@ app doom
   program "bin/doom" "-iwad" "/app/share/freedoom1.wad"
 ```
 
+An app that handles a phone's serial line names the GATT service it
+handles, which the board's `apps` row must offer:
+
+```text
+app echo
+  gatt nus
+  applications erx_echo
+```
+
 | Field | Value | Default and bound |
 | --- | --- | --- |
 | `app NAME` | the app's name, which is its principal's | required; an app name ([Admission](#admission)) |
 | `applications` | the OTP applications `erx_app` starts | at most `pkg_applications_max`, 16, names of the form `[a-z][a-z0-9_]*`, 63 bytes each |
 | `program` | a path under `bin/` of the image, then its arguments | the path at most `pkg_program_max`, 255, bytes of plain names; at most `pkg_args_max`, 32, arguments, `pkg_args_bytes_max`, 16 KiB, together |
 | `needs` | the services of the `apps` row it takes | none; at most `pkg_needs_max`, 16, identifiers, none twice |
+| `gatt` | the GATT services the app handles, through its own `ble` grant ([design-bluetooth.md](design-bluetooth.md#the-ble-facet)) | none; names of `abi/gatt`, none twice, at most as many as the `ble` interface's `services` set holds, 8, the bound the generator takes from `abi/services/ble.txt` |
 | `serves` | `svc`: the app's sessions serve its own tree at `/svc/NAME` ([design-app-trees.md](design-app-trees.md#the-declaration)) | none; `svc` is the field's one value, and only with `applications` |
 | `memory` | what its session's own budget holds, in bytes | `app_memory_default`, 64 MiB; at least `app_memory_min`, 4 MiB |
 | `version` | a decimal number the inspector shows, which decides nothing | 1; 1 to 2^32 - 1 |
@@ -604,7 +630,13 @@ app that needs a native helper starts it itself with
 session's default display whenever the session has one, and otherwise
 without one. A declaration names no facet parameter, quota,
 CPU share, environment or grant, and there is no field through which it
-could: the illegal declaration is one the grammar cannot write. `serves
+could: the illegal declaration is one the grammar cannot write. `gatt`
+is no parameter either: it chooses among the names the `apps` row's
+`gatt` offers, as `needs` chooses among the row's services, and it is
+how an app takes `ble`: admission keeps the app template's `ble` row
+for an app whose declaration names `gatt`, and `needs` never names
+`ble`, which the packer and admission refuse, so no app holds a `ble`
+grant that names nothing. `serves
 svc` grants the app nothing: it lets the sessions that may command the
 start table read and command the app's tree, and the domain service
 derives its grants ([design-system.md](design-system.md#facets-a-configured-domain-serves),
@@ -1019,7 +1051,9 @@ The principal service registers an app's principal with
 a free entry of the `max` the domain library's principal table holds for
 apps. Its record holds the app's name, its signer (`image` for one of
 the image's), its declared memory and the app template's facet rows its
-admission kept, which its sessions hold, and it is written only when a
+admission kept, which its sessions hold, with the GATT services its
+`gatt` declares, to which they hold the `ble` row narrowed, and it is
+written only when a
 package of the name is committed: at an install or an update, once the
 rename is durable, and at the recovery, for each package it admits. A
 refused or failed install or update leaves the record as it was. A
@@ -1109,7 +1143,13 @@ third from the package the entry was registered from:
   ([design-system.md](design-system.md#creating-a-domain), "The
   `code_objects` facet"), and no others; each mint computes its parameters from
   the session's principal, the app's, as every mint does
-  ([design-system.md](design-system.md#facets-a-configured-domain-serves));
+  ([design-system.md](design-system.md#facets-a-configured-domain-serves)),
+  and the plan gives the `ble` row, when the admission kept it, with its
+  `services` replaced by the intersection of the row's set and the GATT
+  services the record holds, so an app's grant never names a service the
+  row does not offer, whatever a record holds, and names only the
+  services admission gave that app
+  ([design-bluetooth.md](design-bluetooth.md#the-ble-facet));
 * its environment holds its default display, which its planning sets,
   and `serves=svc` when the app's entry records that its package
   declares it ([design-app-trees.md](design-app-trees.md#serving-erx_svc)),
@@ -1167,20 +1207,24 @@ runs after a reboot is exactly its package's.
 
 ### Admission
 
-`erx_app_admit:admit(Checked, Manifest, Registry)` is a pure function
+`erx_app_admit:admit(Checked, Manifest, Registry, Held)` is a pure function
 of the file check's answer, a header it accepted with the signer it
 named; what it
 reads of the manifest through `erx_manifest`: the `apps` row with the
 indices of the app template's `packages` and `system` rows and of the
 facet row of each of its services, the names of the manifest's principals,
 configured domains, services and facet rows, and the names of the
-image's packages; and the boot's registry of app principals, each
-name's entry and signer. It reserves no entry and answers none:
+image's packages; the boot's registry of app principals, each
+name's entry and signer; and `Held`, the GATT services each admitted
+package declares, by its app's name, which the package process keeps
+from the admissions it has committed and drops for a package it
+removes, refuses or replaces. It reserves no entry and answers none:
 registration takes the entry the same rule (`erx_app_admit:entry/4`)
 gives the name when the package is committed, the one check 4 found,
 since the package process alone admits and registers, one package at a
 time. It answers `{ok, Admitted}`, the indices of the facet rows kept,
-the `packages` and `system` rows and one for each need, the start row's
+the `packages` and `system` rows, one for each need and the `ble` row
+for a declaration that names `gatt`, the GATT services it names, the start row's
 display, the declared memory, its `serves`, which the registry entry
 keeps for the session's plan
 ([design-app-trees.md](design-app-trees.md#serving-erx_svc)), and the
@@ -1210,10 +1254,21 @@ for check 4 to compare, or `{error, Reason}`, the first of these that fails:
    at most the `apps` budget: `{memory, M}`; the domain library's plan of
    the app's session refuses memory that is not page-aligned, so admission
    refuses it first;
-6. each need is a service of the `apps` row: `{not_offered, S}`.
+6. each need is a service of the `apps` row other than `ble`, which
+   only `gatt` takes: `{not_offered, S}`;
+7. each name of `gatt` is one the `apps` row's `gatt` offers, which
+   leaves out every service a configured domain's row names, since
+   `ble_grant` refuses a service two rows name: `{gatt_not_offered, S}`;
+8. no name of `gatt` is held by the admitted package of another app,
+   `Other`: `{gatt_taken, S, Other}`. The app's own name is left out,
+   so an update keeps the services its package held.
 
 Nothing else is judged: a declaration can only name what the row
 offers, so the build's proof over the row is the proof over the app.
+Step 8 is the one judgment that depends on other apps, and its input
+is the package process's own record of what it admitted, not the
+registry, whose entries outlive a removal: a removed app's services are
+free at once, and no session of it starts to use them (PK7).
 Whether an app's session fits beside the others' is the kernel's to
 judge when the session starts. The packer runs the same modules, the
 file check and admission, on the host, under the stock OTP 29.1.2 the
@@ -1650,7 +1705,8 @@ reads the listing of `installed/` and acts on it:
 3. otherwise, each
    `NAME.app` whose NAME is an identifier gets its length and its first
    `pkg_header_max` bytes read, the file check with `{signers, Keys}` and
-   admission, in name order, a `path_entry` request for each package it lists, as
+   admission, in name order, each against the GATT services the image's
+   packages and the installed ones admitted before it declare, a `path_entry` request for each package it lists, as
    the file check judges it, and the registration of each admitted
    package; a package refused stays on the medium, listed in `/apps`,
    removable there and shown `refused` with its reason at
@@ -1896,7 +1952,7 @@ takes no command.
 
 | Operation | Result |
 | --- | --- |
-| `cp NAME.app /apps/` | installs, or updates the installed app of the name, whether `cp` creates the name (`lcreate`), as the shell's does, or opens the installed package write-only and truncating (`lopen`), as a native FreeBSD `cp` does. Errnos at the create or the open: `einval` for a name not of the form `NAME.app` with NAME an identifier, or an open that appends, also reads or, at an `lopen`, does not truncate; `eio` at an `lopen` of a node whose name holds another package since its walk, or none; `erofs` for a name of the image, and for every name on a trial boot; `eexist` for an exclusive create of a name `/apps` holds; `enospc` while `max` copies are open; `eagain` while the `packages` grant is not in place; `eio` while the directory is past the scan bound. A write past `pkg_bytes_max`, 1 GiB, answers `efbig`. Errnos at the close: `efbig` for a file past the size bound; `einval` for a file the file check refuses for its header, its length or its name, or whose name is not an app name; `eacces` for a header that names no trusted signer or carries a bad signature; `eperm` for an admission refused by `no_apps`, ABI, architecture, memory or need; `eexist` for a name of the manifest, or one another signer holds in this boot; `enospc` for no free entry, or for a new name while `/apps` holds `max` installed packages, admitted, refused or shadowed; `eio` for a failed read, write, publication, rename or checkpoint of `packages`, or a lifetime that ended. After every refusal the installed package of the name, if any, is published and running as before |
+| `cp NAME.app /apps/` | installs, or updates the installed app of the name, whether `cp` creates the name (`lcreate`), as the shell's does, or opens the installed package write-only and truncating (`lopen`), as a native FreeBSD `cp` does. Errnos at the create or the open: `einval` for a name not of the form `NAME.app` with NAME an identifier, or an open that appends, also reads or, at an `lopen`, does not truncate; `eio` at an `lopen` of a node whose name holds another package since its walk, or none; `erofs` for a name of the image, and for every name on a trial boot; `eexist` for an exclusive create of a name `/apps` holds; `enospc` while `max` copies are open; `eagain` while the `packages` grant is not in place; `eio` while the directory is past the scan bound. A write past `pkg_bytes_max`, 1 GiB, answers `efbig`. Errnos at the close: `efbig` for a file past the size bound; `einval` for a file the file check refuses for its header, its length or its name, or whose name is not an app name; `eacces` for a header that names no trusted signer or carries a bad signature; `eperm` for an admission refused by `no_apps`, ABI, architecture, memory, need or a GATT service the row does not offer; `eexist` for a name of the manifest, or one another signer holds in this boot, or a GATT service another admitted app declares; `enospc` for no free entry, or for a new name while `/apps` holds `max` installed packages, admitted, refused or shadowed; `eio` for a failed read, write, publication, rename or checkpoint of `packages`, or a lifetime that ended. After every refusal the installed package of the name, if any, is published and running as before |
 | `rm /apps/NAME.app`, `rm /apps/.NAME.app` | removes the installed package, or the installed package of the name that an image package shadows, and answers `ok`; `enoent` for no package of the name; `erofs` for a package of the image, and on a trial boot; `eio` for a failed deletion or checkpoint, a directory past the scan bound, or a lifetime that ended |
 | `ls /apps` | every package, installed or of the image, admitted or refused, each a regular file; with `-a`, each shadowed package too, as `.NAME.app` |
 | `cat`, `cp` from `/apps/NAME.app` | the package's bytes; `eio` for a header changed on the medium since its check, for every read of a package the file check refused, or once the name holds another package or none since the open, for every read that reaches the tree |
@@ -1962,7 +2018,7 @@ declaration; the limits `app_memory_default`, `app_memory_min`,
 
 **Erlang**: `erx_pkg_header:decode/2` and `check_file/2`,
 `erx_verity_tree:blocks/1`,
-`erx_app_admit:admit/3`, `erx_pkg_plan:install/3`, `remove/2` and
+`erx_app_admit:admit/4`, `erx_pkg_plan:install/3`, `remove/2` and
 `recover/2`, `erx_principal:register_app/1` and `app_registry/0`, the
 boot's registry of app principals that admission reads; in a session, `erx_app`,
 and `erx_ns:mount/3` with `{erofs, app}`, the session's own package from
@@ -2056,14 +2112,15 @@ before it, is refused with `{abi, Have, Want}` or `{arch, Have, Want}`
 and shown so; it stays on the medium, counted among the directory's
 `max` installed packages, until the administrator removes it and copies
 in a rebuilt one. A package whose need an update's `apps` row no longer
-offers is refused with `{not_offered, S}`, and its data stays.
+offers is refused with `{not_offered, S}`, and one whose GATT service
+it no longer offers with `{gatt_not_offered, S}`; its data stays.
 
 ## Failure handling, diagnostics and debuggability
 
 | Failure | Detected by | What happens |
 | --- | --- | --- |
 | a file fails the file check: its size, header, length, name or signer, or its hash differs from its `package` row | `erx_pkg_header:check_file/2`, the package process | a copy's close answers its errno and nothing is published, and an installed package of the name goes on running; a package found on the medium is `refused` with the reason at `/proc/packages`; an image package refused at boot leaves its row out of the table |
-| admission refuses | `erx_app_admit:admit/3` | as above, with the reason |
+| admission refuses | `erx_app_admit:admit/4` | as above, with the reason |
 | an app's session does not fit what is left of the `apps` budget | the kernel's carve, through the domain library | the start answers `no_memory` naming the `apps` budget; the keeper counts an end, and the row goes down past its intensity, with the reason at `/proc/apps` |
 | a block of the image fails its hash | `erx_verity` in the reading session | the read answers `eio` with a log line naming the image and block; in the app's session the code load or file read fails, the session ends, and the row counts an end, with the reason at `/proc/apps`; at a mount of a package the `ls` or `cat` fails |
 | a header changed on the medium after the file check | the `apps` tree's hash check | reads of the header answer `eio`, so a `mount` of it is refused; the app's own session holds the layout from the record and fails at its first block |
@@ -2242,7 +2299,13 @@ request, for the races between a publication and a command.
   row lacks; `root` dropped from the reserved names; the variable names
   compared unmapped, which admits `my-app` beside `my_app`; the
   registry's own entry for the name counted as another's, which refuses
-  an update;
+  an update; over an `apps` row offering `nus` and `nusb`, with the
+  admitted package `a` holding `nus`: the subset test of step 7
+  dropped, which admits a package declaring `nv`; step 8 dropped, which
+  admits `b` declaring `nus`; step 8's own name counted, which refuses
+  `a`'s update declaring `nus` and `nusb`; `Held` taken from the
+  registry, which refuses `b` declaring `nus` after `a`'s removal;
+  `needs ble` admitted, which keeps a `ble` row naming nothing;
 * the planners: an install that renames before the temporary file is
   durable, after which a reordered cut leaves a published name with
   missing bytes; an update that deletes the old package before its
@@ -2277,6 +2340,11 @@ request, for the races between a publication and a command.
   sends `remove_app` on a trial boot, where it answers `erofs`;
 * the recovery's bound: the bound check removed, which reads a listing
   of `pkg_scan_max` + 1 entries whole;
+* the GATT services the package process holds, over an image package
+  and an installed one that both declare `nus`, as a system update can
+  leave them: a recovery that admits the installed packages first, which
+  refuses the image's; a removal that leaves its package in `Held`,
+  which refuses another app's install of `nus` until the next boot;
 * entries and the directory's bound: a removal that frees the entry,
   which lets `max` + 1 names install in one boot; a bound that counts
   admitted packages alone, which installs a new name beside `max`
