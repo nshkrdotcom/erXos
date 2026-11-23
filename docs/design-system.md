@@ -1791,7 +1791,12 @@ each carry a node name of up to 255 bytes, with room to spare; and
 `in_flight` is 4, so the command server can fill a few programs' objects
 at once. A facet row for the service is refused by the build's check of
 the manifest, so no row grants it to a configured domain or changes its
-limits for a template.
+limits for a template. It is policy and not a row because it gives a
+session only its own budget, which no template has reason to withhold
+or limit again, while the facets that are rows reach beyond the
+session, as the code service's install facet loads into the system
+domain and `root_clock` sets the machine's clock
+([design-time.md](design-time.md#who-may-set-it)), so a template must choose them.
 Any process of the session can reach it, an app's own Erlang
 applications among them; that the command server is its one caller in
 erXos's code is no boundary, and the trust above covers them all.

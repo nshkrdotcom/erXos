@@ -107,7 +107,12 @@ module Erx
     def self.load_groups(directory) = GROUP_FILES.load_all(directory)
 
     # A core's group is named after its source. Raises on a core with no
-    # group, whatever the cause.
+    # group, whatever the cause. The failure it prevents: a core whose group is
+    # renamed or deleted, or a new core whose group was never written, would
+    # otherwise lose its rules without a word, since nothing else ties a group
+    # to the core it guards. The check runs from the cores to the groups, not
+    # back: topic groups such as device.rb or other_checks.rb name no core, so
+    # a check for orphaned groups could not stand in for this one.
     def self.require_core_groups(core_sources, group_names)
       missing = core_sources.reject { |source| group_names.include?(File.basename(source, '.c')) }
       return if missing.empty?
