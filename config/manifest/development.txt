@@ -389,8 +389,11 @@ service log
 # by the system domain, where the line's keeper names its tree's grants as its server
 # (erx_line, erx_facet:serve/2). The manifest check requires the system domain's service
 # of the line interface to be named line (design-system.md property 8). No facet row
-# here grants it, so no development boot runs a line; a manifest that grants it also
-# places the line's unit and runs the Bluetooth domain.
+# here grants it. The Raspberry Pi 4's board part grants it to the Bluetooth domain on
+# UART0, whose unit, the host link's, the system domain holds already
+# (config/manifest/raspi4b-development.txt). QEMU virt's part grants it to no domain;
+# only the manifest of QEMU virt's Bluetooth suite places a line's unit, grants the line
+# and runs the Bluetooth domain (tools/lib/erx/bt_domain.rb).
 service line
   server system
   interface line

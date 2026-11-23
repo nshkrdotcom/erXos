@@ -247,6 +247,25 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   line that lands inside a program line which itself looks like a log record (`dmesg`'s output) is not split off:
   the leftmost record start is the program's, so the program's fragment and the log line go on as one line and the
   fragment does not join the rest of its line; the format cannot tell the two apart.
+* [Low] ABI, the boot records' word layouts (`-erx_record given` and `device`, and `function` in part): each form's
+  words are written separately in four places, the C writer (`liberx/backend/core/boot_manifest.c`,
+  `erx_boot_device_words` and its neighbours), the C comment and word maxima of `include/erx/boot_words.h`, the
+  Erlang reader (`erlang/apps/erx/src/erx_device_record.erl`, `spec/2`) and the image packer's word counts
+  (`tools/lib/erx/production_image.rb`, `GIVEN_RECORD_WORDS` and `DEVICE_RECORD_WORDS`), so a word added to a form,
+  as the device record's power times were, is four edits kept in step by hand. Declare each form's words once in
+  the ABI and generate the readers' layouts and the counts. Cost: about 40 to 60 agent calls.
+* [Low] ABI, power lines (`abi/formats/vc_property.txt`, `fw_power_line`): a line's pin and its off and on states
+  are three separately named limits (`vc_bt_power_pin`, `vc_bt_power_off`, `vc_bt_power_on`) that the manifest
+  generator (`tools/lib/erx/manifest.rb`, the power row's firmware rows) finds by names it builds from the line's
+  and each phase's, so a line's facts are a naming convention rather than one row. The ABI language has no
+  construct for rows of constants (`abi/manifest.txt`'s `table` locates records in a binary manifest, and
+  `translation` maps one enum to another, with no numbers), so one would be needed: one row per line with its pin
+  and its state for each phase. Cost not judged.
+* [Medium] QEMU harness, the raspi4b suite's configured lines (`tools/lib/erx/raspi4b_shell.rb`, `check_configured`):
+  each configured domain's line is matched only after the run halts, and the Bluetooth domain's (`bt`), its line
+  writer's first end, arrives about 2 s before the halt on a TCG boot of about 25 s, so a slower host fails the run
+  with "left no line matching" though the domain behaved. Wait for each configured domain's line, bounded, before
+  the step that halts.
 * [Medium] `test/host/book_test.rb`: the design's tool tests "The whole book builds" and "Same bytes" are missing; no test runs cmark-gfm (two builds of the whole book were compared by hand and were identical).
 * [Low] `tools/build_book.rb`: `--out build/site` replaces a built site with a book-only tree (both write the site's marker); two concurrent builds into one directory can fail with a bare `Errno` rather than `Erx::Error`.
 * [Low] build, the native-jit copy's stamp (`tools/lib/erx/native_jit_runtime.rb`, `otp/erts/emulator/Makefile.in`

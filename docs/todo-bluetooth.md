@@ -25,6 +25,11 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
 
 ## Security residuals
 
+* [Medium] bluetooth, the `bt` row's grants (docs/design-bluetooth.md "The Bluetooth domain"): the design has the
+  manifest check hold the Bluetooth domain's row to its `line` grant, the store's grant and the login facet, and
+  refuse a device, a partition window and any other facet, but `tools/lib/erx/manifest.rb` has no such rule, so the
+  radio-facing domain's authority rests on the manifest text alone, the Raspberry Pi 4's development manifest
+  among them. Add the rule with a test that a device or a second facet on the row is refused.
 * [Medium] bluetooth, the line's request clauses (`erlang/apps/erx_uart/src/erx_line.erl`, `take/3`;
   design-bluetooth.md, "The controller's line"): a request of no known kind is a `function_clause`
   crash of the line, whose reason carries the state raw. Fix: a refusal in `take/3` of a request of
@@ -120,6 +125,11 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
 
 ## Planned features
 
+* [Medium] bluetooth, the Pi 4's patch (docs/design-bluetooth.md "The bring-up", step 4, and "Decisions", 4):
+  the Pi 4's development manifest names no patch, so its controller runs on the ROM alone, because no Pi 4 image
+  carries `BCM4345C0.hcd` and the fetch step does not pin it; fetch and pack it into `erx_bt`'s `priv` directory of
+  the Pi 4's images, with its license, and add `-erx_bt patch` and `-erx_bt patch_manufacturer` to the Bluetooth
+  row of `config/manifest/raspi4b-development.txt`.
 * [Medium] bluetooth, the line's service side (docs/design-bluetooth.md "The controller's line"): the keeper, `erx_line`,
   serves its tree's grants as the system domain's `line` service (`erx_facet:serve/2`, with its seeded fault in
   `test/host/erx_line_test.rb`), under the development manifest's `service line`, ungranted; the line grant's device is a
@@ -133,7 +143,8 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   say `line_uart` (`boot_manifest.c`) for what is now any line device's row; the driver's played-device cases (add cases over
   `test/erlang/stand_in/erx_device.erl` for input reaching the owner and the buffer posted again, a write answered only after
   its last buffer is back, and a broken queue stopping the driver); and the stage 1 peer (scanner) cases of the design's table.
-  The Bluetooth domain and its grant stay out of the development manifest (docs/plan.md).
+  The Bluetooth domain and its grant stay out of QEMU virt's development manifest (docs/plan.md); the Raspberry Pi 4's
+  board part runs the domain on UART0.
 * [Medium] bluetooth, the line device's record (`liberx/backend/core/boot_manifest.c`, `tools/lib/erx/manifest.rb`
   `check_serial_devices`): the `serial` kind row makes the root write a given record for every placed serial device,
   so rule serial-device-granted refuses an ungranted one by exclusion. Choosing the line's record by the grant's index
@@ -144,7 +155,7 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   kind row has passes and gets no line (refuse a pair that is not a kind row); a serial device on a shared
   interrupt line never binds (no owner is started for it) and is not refused; no `boot_manifest_test.rb` case
   asserts the given `line virtio_mmio` record for a serial grant; the root's names still say `line_uart`.
-* [Medium] bluetooth, line groups couple the host link to the line tree at the limits
+* [High] bluetooth, line groups couple the host link to the line tree at the limits
   (`erlang/apps/erx_uart/src/erx_uart_sup.erl`): each level (top, group, services) allows 3 restarts in 60 s, so a
   line tree's crash loop exhausts its `services` supervisor, whose restart restarts the host link and ends its
   session, and then the group, `erx_uart_sup` and the permanent `erx_uart` stop and the machine resets; and a line
@@ -152,7 +163,8 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   or a root record `line_grants/1` does not find, which `fresh/2` takes as a bare badmatch) fails `erx_uart`'s start,
   so the host link never comes up to debug it. Decide whether a line tree's failure may end the machine; if not,
   let a line tree's give-up end only that line (a `temporary` child, or a significant child with `auto_shutdown`),
-  and fail a line's start with a stated reason that leaves the host link running.
+  and fail a line's start with a stated reason that leaves the host link running. Every Raspberry Pi 4
+  development boot runs a line tree on UART0 beside the host link on UART3, in one group of line 153.
 * [Medium] bluetooth, `erx_pl011`'s start effects (`run/3`, `discard/2`): `program/1`'s step lists are tested, but no
   test runs the steps over the device stand-in (`test/erlang/stand_in/erx_device.erl`), so a drain that ignores `RXFE`
   or its bound, or a step sent to the wrong register, passes; trace `keep` against the sequence it replaced and the
@@ -170,7 +182,10 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
 * [Medium] bluetooth, `erx_bt_sup`'s restart intensity (`erlang/apps/erx_bt/src/erx_bt_sup.erl`;
   docs/design-bluetooth.md "Concurrency" and "Failure handling"): the design gives none, so OTP's default of
   one restart in 5 s applies; a controller group that exhausts its own 5 restarts in 60 s about every 30 s is
-  restarted by `erx_bt_sup` each time, and the domain never ends as the failure table says. Making the group
+  restarted by `erx_bt_sup` each time, and the domain never ends as the failure table says. On the Raspberry Pi 4's
+  development boot a controller that never answers is reset and power-cycled without end, two firmware requests
+  each time on the device service's one worker, and a line tree's restart leaves `/line` answering `eio` until
+  the next boot, since only a new grant recovers it. Making the group
   `significant` with `auto_shutdown => any_significant`, or a chosen intensity, settles it in the design first.
 * [High] bluetooth, the `ble` facet's side in other domains (docs/design-bluetooth.md "The `ble` facet",
   "Declarations: `abi/gatt`"; `erlang/apps/erx_bt/src/erx_gatt_srv.erl`'s `facet/4`): the registry takes a

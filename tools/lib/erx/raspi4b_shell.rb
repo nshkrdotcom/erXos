@@ -153,6 +153,9 @@ module Erx
     FB_STRIDE = FB::WIDTH * 4
     ROOT_LINE = "erx: device tree: #{FB::PARENT}: framebuffer #{FB::WIDTH}x#{FB::HEIGHT} #{FB_STRIDE} #{FB::FORMAT}".freeze
     DRIVER_LINE = "erx_fb: framebuffer #{FB::WIDTH}x#{FB::HEIGHT} stride #{FB_STRIDE} #{FB::FORMAT}".freeze
+    # The head of the record the Bluetooth domain's line writer leaves when it ends, up to
+    # its pid.
+    BT_WRITER_END = 'error: label: {gen_server,terminate}, name: erx_bt_line_tx, process: <'
     # The least share of the screen the background shows under the splash: erx_splash's mark
     # and dots fit in 384 by 189 pixels, under a quarter of FB's 640 by 480, so a screen
     # painted only in part, or in other colours, falls short of it.
@@ -205,12 +208,18 @@ module Erx
     # ends it the same way. Any other fault kind is a bug and fails the run. The line is not
     # anchored at its start: a restart's line can follow other output on the same serial
     # line. A memory fault's line names where it struck (erx_domain_core:fault_where/2), its
-    # address always a number.
+    # address always a number. The model has no Bluetooth controller, and the Bluetooth
+    # domain's line writer ends with line_write, a record of the domain's space, at its first
+    # item, which is always the bring-up's reset (erx_bt_line_tx); why that reset fails on the
+    # model is not read, since the record prints only the reason's first element. The domain's
+    # groups restart within their intensities and the record repeats
+    # (docs/design-bluetooth.md, "Failure handling").
     CONFIGURED_LINES = {
       'storage' => /#{NativeRoot::DOMAIN_RECORD.source}erx_blk: the SD card is not driven: /n,
       'network' => memory_fault_restart('network'),
       'pcie' => memory_fault_restart('pcie'),
-      'display' => /#{NativeRoot::DOMAIN_RECORD.source}#{Regexp.escape(DRIVER_LINE)}\r*$/n
+      'display' => /#{NativeRoot::DOMAIN_RECORD.source}#{Regexp.escape(DRIVER_LINE)}\r*$/n,
+      'bt' => /#{NativeRoot::DOMAIN_RECORD.source}#{Regexp.escape(BT_WRITER_END)}[\d.]+>, reason: line_write/n
     }.freeze
     # The configured domains whose line a boot logs once, since they start once and never end.
     STARTED_ONCE = %w[display].freeze

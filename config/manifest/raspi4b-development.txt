@@ -4,12 +4,12 @@
 # The Raspberry Pi 4 Model B's part of its development manifest on Fiasco
 # (config/platforms/raspi4b.json; docs/plan.md, 1b-I). The manifest is the records every
 # board takes, config/manifest/development.txt, followed by these (Platform#manifest_source).
-# Together they configure the system domain, five configured domains, storage, network,
-# display, pcie and usb, and the system principal's session template, from which the console
+# Together they configure the system domain, six configured domains, storage, network,
+# display, pcie, usb and bt, and the system principal's session template, from which the console
 # starts root's session at boot (docs/design-system.md, "Boot"). This part holds the
 # machine, the system principal, the apps row, the display domain's limits, the units and
 # windows of the board's devices, the network domain's row, whose driver is the board's,
-# and the USB domain's rows. The common part holds the storage, display and PCIe domains'
+# the USB domain's rows and the Bluetooth domain's. The common part holds the storage, display and PCIe domains'
 # rows, the shares,
 # runtime limits and the other limits, and the services and facets; QEMU virt's part
 # (config/manifest/qemu-virt-development.txt) gives their measurements.
@@ -55,14 +55,14 @@
 # own memory, one 1920x1080 screen of 32 bits (8,294,400 bytes), with 8 MiB of headroom; a
 # larger screen, 4K's 31.6 MiB among them, does not fit, and the driver ignores it. Its
 # outer budget is 1 MiB and one pixel area of windows_pixels_default, 8 MiB, with its
-# 4 KiB lane, for the apps row's one app, and seven more for the sessions of root's
+# 4 KiB lane, for the apps row's one app, and eight more for the sessions of root's
 # template that the system principal's domains quota lets live at once, which display_root
-# grants the display (development.txt), 56 MiB and 28 KiB; its quota of four connections is that
+# grants the display (development.txt), 64 MiB and 32 KiB; its quota of four connections is that
 # app's, root's session's, its replacement's and the USB domain's input tree's.
 # Its memory and the display share's 100 mcpu are measured on neither board (TODO.md).
 limits display
   memory 41943040
-  outer 68190208
+  outer 76582912
   grant @share.display
   spaces none
   lane 4096
@@ -75,18 +75,19 @@ limits display
 # The system principal holds root's one session, 36 MiB and outer 1 MiB, and 1 MiB for
 # the outer budget of a domain that has ended while another still holds a connection to
 # it, as QEMU virt's comment explains; the storage domain, 30 MiB and outer 1 MiB; the
-# network domain, 36 MiB and outer 1 MiB; the display domain, 40 MiB and outer 65 MiB
-# and 32 KiB; the PCIe domain, 25 MiB and outer 1 MiB; and the USB domain, 32 MiB and
-# outer 1 MiB: 270 MiB and 32 KiB in all. The system baseline is QEMU virt's 46 MiB.
-# root_memory, 391 MiB and 32 KiB before ntpd's principal adds its own (its comment),
-# admits the baseline, the principal's 270 MiB and 32 KiB, the apps row's 66 MiB, the SD
+# network domain, 36 MiB and outer 1 MiB; the display domain, 40 MiB and outer 73 MiB
+# and 36 KiB; the PCIe domain, 25 MiB and outer 1 MiB; the USB domain, 32 MiB and outer
+# 1 MiB; and the Bluetooth domain, 32 MiB and outer 1 MiB: 311 MiB and 36 KiB in all.
+# The system baseline is QEMU virt's 46 MiB.
+# root_memory, 432 MiB and 36 KiB before ntpd's principal adds its own (its comment),
+# admits the baseline, the principal's 311 MiB and 36 KiB, the apps row's 66 MiB, the SD
 # controller's 1 MiB of DMA memory, GENET's 1 MiB of device memory and the VL805's 1 MiB
 # of contiguous memory with 6 MiB no one is promised, and lies well below what the
 # smallest Pi 4 the record names leaves the root: RAM less fiasco_reserve is 890 MiB there.
 principal system
-  memory 283148288
+  memory 326144000
   grant @share.users
-  domains 7
+  domains 8
   names 64
   default_limits @limits.native
   ceiling_limits @limits.native
@@ -95,7 +96,7 @@ principal system
 # the card's one app, the dashboard, so the display domain's outer budget pays for one
 # pixel area; and the display and net, which the build grants the app template. The app
 # is a principal with a domains quota of one, so max_domains is the system principal's
-# seven and the one app. max_connections, 21 with ntpd's session's, holds the 14 of the
+# eight and the one app. max_connections, 22 with ntpd's session's, holds the 15 of the
 # network domain's comment and the app's session's four: its system connection, packages,
 # the display and net, and two more for root's session's display connection and its
 # replacement's.
@@ -109,13 +110,13 @@ machine
   console "/soc/serial@7e215040"
   hostlink "/soc/serial@7e201600"
   platform "raspi4b"
-  root_memory 448823296
+  root_memory 491819008
   system_baseline 48234496
   system_share @share.system
   users_share @share.users
   system_principal @principal.system
-  max_domains 9
-  max_connections 21
+  max_domains 10
+  max_connections 22
   system_lane 4096
   system_queue 16384
   peer_held 4096
@@ -198,9 +199,9 @@ system_image
 #
 # Its quota of two connections holds root's session and one more while a session is
 # replaced; its system connection counts against no quota (life_connections,
-# liberx/system/dom_life.c). At rest the machine holds nine of the 14 these rows take: the
-# system connections of root's session and of the storage, network, display, PCIe and USB
-# domains, the session's data and net, and the display's usb_input; the other five are the
+# liberx/system/dom_life.c). At rest the machine holds ten of the 15 these rows take: the
+# system connections of root's session and of the storage, network, display, PCIe, USB and
+# Bluetooth domains, the session's data and net, and the display's usb_input; the other five are the
 # three a replacement session makes beside its predecessor's closing rows and the two a
 # restarted configured domain makes, as on QEMU virt. The apps row's one app takes four more (the apps row's comment).
 domain network
@@ -342,3 +343,83 @@ facet usb_input
   reductions 100000
   period_ns 1000000000
   max_heap_size 262144
+# The Bluetooth domain's rows (docs/design-bluetooth.md, "The Bluetooth domain"): a service
+# domain whose release, bt, only loads erx_bt and crypto, and whose -eval starts both once
+# init holds the ready answer's facets, the line grant among them. They are the rows of
+# QEMU virt's Bluetooth suite (tools/lib/erx/bt_domain.rb, whose comment explains the
+# runtime limits, the share and the limits) with four differences:
+#
+# * runtime: the BeamAsm image, as the design names, where the suite runs the
+#   interpreter; its 32 MiB and its boot time are measured on BeamAsm on neither board;
+# * args: no name, so it advertises its default, the host part of its node name, erxos,
+#   and no patch, which no Pi 4 image carries (docs/todo-bluetooth.md, "the Pi 4's
+#   patch"): the controller's ROM advertises and accepts a connection without one
+#   (docs/research-bluetooth-pi4.md, B-P3 and B-P4);
+# * restarts: 5 in 600 s, so the domain service restarts it within its intensity
+#   (docs/design-bluetooth.md, "Failure handling");
+# * the line grant's device: UART0, below.
+#
+# Its system connection is one more of the machine's max_connections; the line grant,
+# of a system-domain service, travels on it.
+#
+# line: the controller's line (docs/design-bluetooth.md, "The controller's line"):
+# UART0, the first PL011, in the host link's unit, which the system domain holds, at
+# 115200 with RTS/CTS flow. Its device row carries the power row's off and on times
+# (config/platforms/raspi4b.json), which the line's reset waits between the firmware's
+# power notifications. Its quantities are a files tree's: requests of the floor
+# files_max_frame_min, 16 in flight.
+runtime_limits bt
+  max_frame 131072
+  max_message_heap 131072
+  funnel_depth 64
+  exports 256
+  tmp 0
+  overlay 0
+  atoms 16384
+  foreign_atoms 1024
+  processes 1024
+share bt
+  quota_ns 500000
+  period_ns 10000000
+  cpuset 1
+  capacity_mcpu 50
+  capacity_first 0
+  slice_us 1000
+  grace_us 5
+  base 16
+  ceiling 31
+  flags none
+limits bt
+  memory 33554432
+  outer 1048576
+  grant @share.bt
+  spaces none
+  lane 4096
+  connections 1
+  crash 0
+  flags none
+  runtime_limits @runtime_limits.bt
+  peer_held 4096
+  peer_held_total 4096
+domain bt
+  principal @principal.system
+  limits @limits.bt
+  kind service
+  flags none
+  runtime @artifact.jit
+  release @artifact.bt
+  restarts 5
+  restart_period_s 600
+  args "-- -root / -bindir /bin -progname erl -home / -nouser -nocookie -no_epmd -proto_dist erx -eval {ok,_}=application:ensure_all_started(erx_bt,permanent)"
+facet line
+  grantee @domain.bt
+  service @service.line
+  operations none
+  max_request 131072
+  in_flight 16
+  reductions 100000
+  period_ns 1000000000
+  max_heap_size 262144
+  parameter device "/soc/serial@7e201000"
+  parameter rate 115200
+  parameter flow "rts_cts"

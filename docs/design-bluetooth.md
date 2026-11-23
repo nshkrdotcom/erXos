@@ -102,8 +102,8 @@ sees it (4.8.1); the Report Map is at most 512 octets (HIDS 2.6.1).
   pull from power-on (a `gpio=` line makes only the changes it names,
   Raspberry Pi documentation, `config_txt-gpio.adoc`); the probe set the
   same function with the pulls untouched, and UART0 carried the
-  controller's answers at once. Where that line comes from is an open
-  decision ([Decisions](#decisions), 5).
+  controller's answers at once. That `gpio=` line comes from the
+  platform record's on-board pin rows ([Decisions](#decisions), 5).
 * **UART0 is held, undriven.** The five PL011s share one register page
   and one interrupt line, 153, so they are one unit, which the system
   domain holds for UART3, the host link
@@ -921,10 +921,12 @@ On QEMU `virt` the line's driver is `erx_virtio_console`, the driver
 of port 0 of a virtio console (virtio 1.2, section 5.3), over a
 virtio-mmio transport, of a unit the system domain holds, whose device
 row, of role `serial`, the line grant's `device` names. The
-development manifest declares the system domain's `line` service, which
-the line's keeper names, but grants it to no domain; only the manifest
-of QEMU `virt`'s Bluetooth suite places the unit, grants `line` and runs
-the Bluetooth domain, so no development boot meets an empty transport.
+development manifest's common part declares the system domain's `line`
+service, which the line's keeper names, but grants it to no domain, and
+on QEMU `virt` only the manifest of its Bluetooth suite places the unit,
+grants `line` and runs the Bluetooth domain, so no development boot meets
+an empty transport. The Raspberry Pi 4's board part grants it on UART0,
+whose unit, the host link's, the system domain holds already.
 Its record is a `given` one, with the window, the line and the DMA
 memory the root makes for it, and the peripheral of the `serial` kind
 row, the transport alone, since the driver reads no configuration field
@@ -2937,19 +2939,18 @@ list ([todo-performance.md](todo-performance.md)):
    [The bring-up](#the-bring-up)). The cost is some eleven seconds of
    every bring-up at 115200 baud, on the watch list
    ([Performance](#performance)).
-5. **Open: where the line `gpio=30-33=a3` comes from.** The Pi 4's
-   `config.txt` gets its `gpio=` lines from the header map, whose rows
-   are GPIO 0 to 27, the 40-pin header's
-   ([design-header-io.md](design-header-io.md#the-construction-one-map-of-the-header)),
-   and UART0's pins, GPIO 30 to 33, are on the board, not the header;
-   WiFi's slot needs the same for GPIO 34 to 39
-   ([design-wifi.md](design-wifi.md#facts-this-design-does-not-have), F1). Recommendation: the pin table
-   `hw/pins/bcm2711.txt` gains the bank's on-board pins from Table 94,
-   and the platform record a list of on-board pin rows beside the header
-   map, each a pin, its function and the device that uses it, from which
-   the `config.txt` writer derives lines as it does from the header map;
-   design-header-io decides its shape. A fixed line in the writer would
-   be a second source of pins, which that design rules out.
+5. **Decided: the line `gpio=30-33=a3` comes from the platform
+   record's on-board pin rows.** The Pi 4's `config.txt` gets its
+   `gpio=` lines from the header map. UART0's pins, GPIO 30 to 33, are
+   on the board, not the header, so the map's on-board rows name each
+   with UART0's device path and its function, and the `config.txt`
+   writer derives the line from them as it does from the header rows
+   ([design-header-io.md](design-header-io.md#on-board-pins)); the pin
+   table `hw/pins/bcm2711.txt` carries the four pins from Table 94.
+   Whether WiFi's slot sets GPIO 34 to 39, and with what pulls, is that
+   design's ([design-wifi.md](design-wifi.md#facts-this-design-does-not-have), F1).
+   A fixed line in the writer would be a second source of pins, which
+   that design rules out.
 
 ## Board probes
 

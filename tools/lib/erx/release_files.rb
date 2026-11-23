@@ -190,7 +190,8 @@ module Erx
     # * bt, the Bluetooth domain's (docs/design-bluetooth.md, "The Bluetooth domain"): the
     #   Bluetooth stack, erx_bt (DOMAIN_ONLY), so no other domain parses what a controller
     #   writes, and crypto, which its Security Manager calls, both only loaded; the row's
-    #   -eval starts them. QEMU virt's Bluetooth suite's manifest names it (BtDomain).
+    #   -eval starts them. QEMU virt's Bluetooth suite's manifest names it (BtDomain), and
+    #   the Raspberry Pi 4's development manifest for its Bluetooth domain.
     # * pcie, the PCIe domain's (docs/design-pcie.md, "The PCIe domain"): the enumerator,
     #   erx_pcie, so no other domain parses what a function writes to its configuration
     #   space. The pcie QEMU suite's manifest names it (Erx::PcieDomain).

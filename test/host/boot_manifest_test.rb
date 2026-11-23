@@ -305,6 +305,29 @@ def test_the_raspberry_pi_s_power_row_times_are_uart0_s_device_row_s
   assert_equal [['/soc/serial@7e201000', 300, 500]], powered
 end
 
+# The Raspberry Pi 4's development manifest runs the Bluetooth domain on the board's
+# controller (docs/design-bluetooth.md, "The Bluetooth domain", "The controller's line"):
+# its one line grant names UART0 at 115200 with RTS/CTS flow, and the root writes UART0's
+# line record, which carries the power row's times, from the host link's unit, which the
+# system domain holds.
+def test_the_raspberry_pi_s_development_manifest_grants_uart0_s_line_to_the_bluetooth_domain
+  pi = Erx::Platform.load(root: ROOT, name: 'raspi4b').manifest_source(ROOT)
+  facets = Erx::Manifest::Frontend.read(pi).records.fetch('facet').select { |row| row.reference('service') == '@service.line' }
+  assert_equal ['@domain.bt'], facets.map { |row| row.reference('grantee') }
+  parameters = facets.first.to_h.fetch(:parameters).to_h { |key, value| [key.value, value.value] }
+  assert_equal({ 'device' => '/soc/serial@7e201000', 'rate' => '115200', 'flow' => 'rts_cts' }, parameters)
+  bytes = admitted(pi, platform: 'raspi4b')
+  view = @codec.open('manifest', bytes)
+  paths = view.count('devices').times.map { |index| view.string(view.fetch('devices', index).fetch('path')) }
+  output, status = read(bytes, stdout_path: '/soc/serial@7e215040')
+  assert status.success?, output
+  records = output.lines.grep(/^device line /)
+  assert_equal 1, records.size, output
+  # UART0's 512-byte register window and its interrupt line, 153, shared with the host link.
+  assert_includes records.first, "words-erx_record device line pl011 /soc/serial@7e201000 #{0xfe20_1000} 512 153 "
+  assert_includes records.first, " #{paths.index('/soc/serial@7e201000')} 300 500 "
+end
+
   # A missing disk is a normal state: a manifest with no block unit, and so no windows, no
   # system_image row, none of the services the windows' holder serves from them, and no
   # apps row, which needs the system tree (property 19), reads, and has no record.

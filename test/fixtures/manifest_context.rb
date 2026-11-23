@@ -49,9 +49,10 @@ module ManifestContextFixture
   # (which domain_source's domains also name), the display, storage, network and web
   # boot scripts its domain rows name, the ntpd boot script of the ntpd session template
   # the raspi4b manifest and the net_device suite add, the pcie boot script of the pcie
-  # suite's PCIe domain, the usb boot script of the USB domain, the domain runtime images, runtimes/emu and
+  # suite's PCIe domain, the usb boot script of the USB domain, the bt boot script of the
+  # raspi4b manifest's Bluetooth domain, the domain runtime images, runtimes/emu and
   # runtimes/jit, and the system release's generated files and root.
-  def arguments(codec) = archive_arguments(codec, boots: %w[app display network ntpd pcie session storage usb web])
+  def arguments(codec) = archive_arguments(codec, boots: %w[app bt display network ntpd pcie session storage usb web])
 
   # An archive of the domain release, with a boot script for each of boots and one
   # library file, then runtimes/emu, then system/, the order the archive's sorted paths
