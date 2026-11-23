@@ -128,6 +128,22 @@ class BenchRecordTest < Minitest::Test
     assert_match(/top of a git work tree/, error.message)
   end
 
+  # A second clone of erXos has its own common git directory and is in no listed
+  # worktree; it shares erXos's root commit, and that is what refuses it.
+  def test_a_second_clone_of_erxos_is_refused
+    clone = File.join(@scratch, 'clone')
+    git(@scratch, 'clone', '-q', @erxos, clone)
+    error = assert_raises(Erx::Error) { write(clone) }
+    assert_match(/root commit/, error.message)
+    refute File.exist?(File.join(clone, 'bench'))
+  end
+
+  def test_a_separate_repository_with_its_own_history_is_written
+    git(@history, '-c', 'user.name=t', '-c', 'user.email=t@example.invalid', 'commit', '-q', '--allow-empty',
+        '-m', 'history')
+    assert File.directory?(write(@history))
+  end
+
   def test_a_missing_root_is_refused
     error = assert_raises(Erx::Error) { write(File.join(@scratch, 'absent')) }
     assert_match(/does not exist/, error.message)

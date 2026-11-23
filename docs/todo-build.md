@@ -30,10 +30,8 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   the three fixes of [Fixing the existing tools](design-bench.md#fixing-the-existing-tools) (`g3`'s TCG ratio,
   `otp-switch`'s observed switches, every runner's output under `build/bench`), with the guide's table in
   `docs/guide/tracing.md` brought to match. Tests: the remaining tool rows of design-bench.md's Verification,
-  each with its seed. Open review points of the first slice: a second clone of erXos (its own common git
-  directory, in no listed worktree) is accepted as a history root, which a root-commit check would refuse but
-  the design does not name; `slower` and `faster` are not yet held to a paired run; a cell's summary is
-  supplied beside its histogram rather than derived from it, and it has no sample count.
+  each with its seed. Open review points of the first slice: `slower` and `faster` are not yet held to a paired
+  run; a cell's summary is supplied beside its histogram rather than derived from it, and it has no sample count.
 * [High] benchmarks, `wake` ([design-bench.md](design-bench.md#1-wake-how-late-a-waiting-thread-runs)): the
   histogram and the periodic schedule of `test/guest/bench/` and the `bench` QEMU suite, whose cells are pending,
   exist; still to build are the library's calibration and `BENCH` lines, the native bench guest

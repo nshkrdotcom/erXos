@@ -424,7 +424,10 @@ a diagnostic, never read.
 writer. It refuses the history root unless it exists, is the top of a
 git work tree whose common git directory is not the erXos repository's,
 and lies, by real path, outside every worktree `git worktree list` gives
-for the erXos repository. It then checks the destination itself, not
+for the erXos repository. It also refuses a history root whose `HEAD`
+shares a root commit (`git rev-list --max-parents=0 HEAD`) with the
+erXos repository's, so a second clone of erXos, which has a common git
+directory of its own, is never a history root. It then checks the destination itself, not
 only the root: it walks from the root to the run directory one
 component at a time, refuses any component that is a symbolic link, and
 refuses unless the run directory's real path lies under the root's and
@@ -950,7 +953,7 @@ cells that place work on two CPUs are expected `unsupported` there.
 | --- | --- |
 | `tools/erx bench NAME` for a name no file declares | refused: `unknown benchmark NAME` |
 | an environment the benchmark does not declare | refused, naming the environments it declares |
-| a history root that does not exist, is not the top of a git work tree, shares the erXos repository's common git directory, or lies inside any of its worktrees | refused before anything runs, naming which |
+| a history root that does not exist, is not the top of a git work tree, shares the erXos repository's common git directory or a root commit, or lies inside any of its worktrees | refused before anything runs, naming which |
 | a comparison of records whose environments or cells differ (operation, load cell, placement, workload parameters, clock, batch size, profile sizes) | refused, naming the first difference |
 | a comparison of TCG or deterministic records with any other kind | refused: `TCG numbers are not compared with HVF or native numbers` |
 | a replayed boot offered as a calibration, baseline or paired run | refused: `a replayed log is not a new run` |

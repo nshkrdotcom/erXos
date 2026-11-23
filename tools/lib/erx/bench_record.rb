@@ -303,8 +303,8 @@ module Erx
     # The checks on where a record may be written (docs/design-bench.md, "Where records
     # are written"). The history root must exist, be the top of a git work tree whose
     # common git directory is not the erXos repository's, and lie by real path outside
-    # every worktree of the erXos repository; the run directory is then made one
-    # component at a time from the root, refusing any symbolic link, and its real path
+    # every worktree of the erXos repository, and share no root commit with it; the run
+    # directory is then made one component at a time from the root, refusing any symbolic link, and its real path
     # must lie under the root's and outside every erXos worktree.
     class Destination
       def initialize(history:, erxos_root:)
@@ -316,6 +316,8 @@ module Erx
         common = git(@root, 'rev-parse', '--path-format=absolute', '--git-common-dir')
         refuse("shares the erXos repository's common git directory: #{@root}") if
           real_path(common, 'common git directory') == real_path(erxos_common, 'common git directory')
+        refuse("shares a root commit with the erXos repository: #{@root}") unless
+          (roots(@root) & roots(erxos_root)).empty?
         @worktrees = worktrees(erxos_root)
         outside_worktrees(@root)
       end
@@ -368,6 +370,16 @@ module Erx
         refuse("cannot list the erXos repository's worktrees at #{erxos_root}") unless listing
         listing.split("\0").filter_map { |field| field.delete_prefix('worktree ') if field.start_with?('worktree ') }
                .map { |tree| File.exist?(tree) ? File.realpath(tree) : File.expand_path(tree) }
+      end
+
+      # The root commits of directory's HEAD, none for a repository with no commit yet. A
+      # second clone of erXos has a common git directory of its own but erXos's roots.
+      def roots(directory)
+        return [] unless git(directory, 'rev-parse', '--verify', '--quiet', 'HEAD')
+
+        listing = git(directory, 'rev-list', '--max-parents=0', 'HEAD')
+        refuse("cannot list the root commits at #{directory}") unless listing
+        listing.split("\n")
       end
 
       def real_path(path, what)
