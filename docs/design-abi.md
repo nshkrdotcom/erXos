@@ -1590,13 +1590,21 @@ cannot change a configured domain at runtime.
 
 `threads`, `objects`, `mappings` and `band` are Fiasco's
 ([design-fiasco.md](design-fiasco.md#memory-and-budgets), FD14 and
-FD15). The domain library hands them to the backend, which bounds by
-them what the domain can make the root hold for it and starts the
-domain's threads at the band's priority within the grant's `cpuset`, so
-the CPU set has one source on both kernels. They live in the limits
-record, not the configured-domain row, so that a session takes them from
-its template's limits as it takes every other limit, an app's session
-from the manifest's `limits session` record. Nothing above the domain
+FD15). `band` is one of `driver`, `interactive` and `app`; the bands
+above them belong to the root task's own threads and have no name here
+([design-fiasco.md](design-fiasco.md#bands)). The domain library hands
+the four, with the grant's `cpuset` and the band of the domain's
+sub-spaces, to the root in the Fiasco backend's root-only form of the
+domain's space create, and the root bounds by them what the domain can
+make it hold and starts the domain's threads at the band's priority
+within the `cpuset`, so the CPU set has one source on both kernels. They
+live in the limits record, not the configured-domain row, so that a
+session takes them from its template's limits as it takes every other
+limit, an app's session from the manifest's `limits session` record,
+except its band: the domain library plans an app's session in the `app`
+band whatever that record names, as it plans it with the `memory` of the
+app's entry, so an app's untrusted code never runs above an interactive
+domain. Nothing above the domain
 library reads them, and they leave the record with Fiasco, since erXos's
 kernel bounds a domain by its budget and its grant alone.
 

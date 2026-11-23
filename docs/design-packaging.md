@@ -307,7 +307,8 @@ board's source does not hold and the build record lists:
   and whose limits are the manifest's `limits session` record, the
   defaults every session template takes, which enables `SPACES`
   (property 14), the template's sessions drawing their memory from the
-  row's `memory`; a manifest with an `apps` row and no `limits session`
+  row's `memory` and running, on Fiasco, in the `app` band whatever the
+  record names ([An app's session](#an-apps-session)); a manifest with an `apps` row and no `limits session`
   record is refused. Its words are one fixed recipe,
   `DomainStartup::APP_TEMPLATE` in `tools/lib/erx/domain_startup.rb`,
   which the release scripts also take the `app` script's name from: the
@@ -1131,8 +1132,10 @@ third from the package the entry was registered from:
 
 * the domain library's plan takes the app template and the app's
   principal: `erx_dom_plan_app_session` plans the app template under the
-  app's entry, with the template's limits and the `memory` its record
-  carries, and plans no other template; `erx_dom_plan_session` plans a
+  app's entry, with the template's limits but the `memory` its record
+  carries and, on Fiasco, the `app` band, below every interactive domain
+  ([design-fiasco.md](design-fiasco.md#bands)), and plans no other
+  template; `erx_dom_plan_session` plans a
   template under its own principal only, and the app template names none,
   so it refuses that template, and neither entry can pair an app
   principal with another template or the app template with another

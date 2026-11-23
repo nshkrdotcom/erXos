@@ -155,7 +155,7 @@ placed at fixed slots, and no handle names them.
 | a doorbell, a device line | an IRQ object (`Irq_sender`) | the owning domain's factory | `L4_CAP_FPAGE_RO`, at the IRQ slot of the holder's entry ([Handles](#handles)): trigger and acknowledgement only, with no special right, so `sys_bind` and `sys_detach` refuse (`irq.cpp:1104-1137`) and the root alone binds | `l4_irq_trigger`; the line's `l4_irq_unmask` |
 | a thread's wait object | a semaphore | the thread's domain's factory | the rights `l4_semaphore_up` and `_down` take | umtx, park and the reaper |
 | a task's request gate | an IPC gate bound to the root service | the task's domain's factory | the send right, at `L4_BASE_PAGER_CAP` | every service call and fault |
-| a thread | a thread | the domain's factory, started by the root through the scheduler with its domain's band and CPU set | nothing: no task holds a thread capability | none |
+| a thread | a thread | the domain's factory, started by the root through the scheduler with its task's band and its domain's CPU set | nothing: no task holds a thread capability | none |
 | a space (a domain's task, a sub-space) | a task | the domain's factory | nothing | none |
 | a budget | a factory for the domain's kernel memory, and the root's page record for its user pages | the parent budget's factory | nothing | none |
 | a memory object, a mapping | pages of the root's pool, mapped by flexpage | the root's pool; page tables charged to the task's factory | a mapping at the rights the call allows, never writable and executable | loads and stores |
@@ -531,9 +531,9 @@ holds:
 
 ### Threads, bands and stops
 
-The root creates every thread, so it knows every thread of every task. Each domain's limits record
-names a priority band, and its grant a CPU set; the root starts each thread at its band's priority and within
-its CPU set through `l4_scheduler_run_thread`, which takes the priority, the quantum and the CPU set
+The root creates every thread, so it knows every thread of every task. Each task's row records its band
+and names its domain's row, which holds the domain's CPU set, from its grant ([Bands](#bands)); the root starts each thread at its task's band's priority and within
+its domain's CPU set through `l4_scheduler_run_thread`, which takes the priority, the quantum and the CPU set
 (`scheduler.cpp:63-110`) and checks nothing about the caller beyond its holding the scheduler. Since
 Fiasco picks a CPU from whatever mask it is given and knows no domain (`scheduler.cpp:96-103`), the
 domain's CPU set is the root's ceiling, applied in one place: every mask the root hands Fiasco for a
@@ -547,8 +547,8 @@ diagnostic naming the domain and its set, so the narrowed mask of a thread with 
 never empty. So no start or affinity change places a thread outside its domain's set, and a thread
 runs on the root service's CPU only when its domain's set holds that CPU. A group's
 configured CPU set is recorded narrowed to the domain's set, as erXos's kernel narrows a group's set
-down the tree, and places no thread (FD15). The root counts a domain's threads across its tasks
-against the domain's thread limit, and a create past it answers `ERX_ELIMIT`. This is L4Re's own shape: ned gives each program a scheduler proxy that
+down the tree, and places no thread (FD15). The root counts a domain's threads across its tasks, its sub-spaces' included,
+against the domain's thread limit in its domain row, and a create past it answers `ERX_ELIMIT`. This is L4Re's own shape: ned gives each program a scheduler proxy that
 restricts its threads to a CPU set and to a range of priorities, `prio_offset` to `prio_limit`
 ([L4Re's ned documentation](https://l4re.org/doc/l4re_servers_ned.html), "Control scheduling",
 fetched 2026-11-15, SHA-256 `57b4c33485cf6a8ea404fd4471d4250eb62c2f57268cd5b4f7eb7e5a8eacb06f`).
@@ -668,7 +668,7 @@ callers as it says.
 | `erx_thread_create`, `_start`, `_exit`, `_set_affinity` | `pthread_create`, ERTS's threads, `libc-test` | [Thread creation](#thread-creation), [Deletion](#deletion); affinity is `l4_scheduler_run_thread` | no free index `ERX_ENOMEM`; a create past the domain's thread limit `ERX_ELIMIT`; an empty mask, or one naming no online CPU of the thread's domain's CPU set, `ERX_EINVAL`; affinity runs the thread on one CPU of the mask within that set, its own if the mask holds it, and a mask naming CPUs outside the set is narrowed to it, as erXos's kernel narrows a thread's affinity to its group's CPUs; a thread with no mask runs on its domain's set; in a space the caller created, only that space's first thread, so a second `ERX_ENOTSUP`; a handle naming another task's thread names one only for the root or that task's creator, else `ERX_EINVAL`; a start of a started thread, a faulted one included, `ERX_EINVAL`; a thread's own-task handle, and a creator's handle to the first thread of a space it created, names no thread once it is reaped, and the index's next thread after that; `erx_thread_stop`, `_read`, `_write`, `_set_urgency` `ERX_ENOTSUP` | FD2, FD14, FD15, FD16, FD19 |
 | `erx_pthread_create_executor` | ERTS's normal and dirty CPU schedulers, through `ethr_thr_create`; a program's event executor, in `liberx`'s program layer | natively musl's `pthread_create` with the executor class, in the row above; hosted a start wrapper ([Making an executor](design-runtime.md#threads-and-synchronisation)) | `pthread_create`'s; no free index or slot `EAGAIN` | FD14 |
 | `erx_release_entry` | `erx_prim_file.c` | in the root and hosted, local: `erx_pack_entry_at` and `erx_pack_path_at` over the archive `erx_pack_open` accepted, counting from the first path under `system/`. In a task, a service request naming the boot information's `release` and the index, answered from the slice's record: `index` counts from the slice's first entry, the path comes without its `domains/<name>/` prefix ([The production image](#the-production-image)), and it arrives in the caller's public UTCB in pieces of at most `utcb_bytes_max` bytes, so the stub loops for a longer one | path, size, offset from `release_addr` and the entry's kind, a file, an image or an empty directory; an index past the run `ERX_ERANGE`; in a task, a `release` that is not a slice `ERX_ETYPE` | FD6, FD11 |
-| `erx_space_create`, `erx_space_stop`, `erx_space_pause`, `_resume` | the domain library, for every domain; a session's port driver, for each program's anchor and image; the test-task launcher in the root (`libc-test` M3), through `test_space_create`, which also marks the task as a test task ([The console](#the-console)); job control and `fork`'s copy, for a pause ([design-programs.md](design-programs.md)) | service, from any task: `l4_factory_create_task`, with a handle table of `cap_limit` entries; `parent`, `fault`, `label` and the budget recorded ([Spaces, parents and exit records](#spaces-parents-and-exit-records)); a stop is [task exit](#task-exit) of the space and of every space below it, children first | the exit record at the fault gate once every thread of the space is deleted; a `parent` or `fault` handle that fails the lookup answers that failure unchanged ([Handles](#handles)), a stale one `ERX_ESTALE`, and one naming a live object other than a space for `parent` or a gate for `fault` `ERX_ETYPE`; a space handle is only ever in its creator's table, so a `parent` that passes the lookup is the caller's space or one it created; `cap_limit` past `ERX_CAPS_MAX`, or one whose window of IRQ slots would pass Fiasco's object space ([Handles](#handles), FD1), `ERX_EINVAL`; `ERX_SPACE_JIT` from a task other than the root whose own space is not a JIT space `ERX_ERIGHTS`; `erx_space_pause` answers once every thread of the space is held at its gate, or `ERX_EDEAD` once the pause's deadline has ended the space, and `_resume` lets each held thread go on ([The pause](#threads-bands-and-stops)); a space past the domain's object limit `ERX_ELIMIT`; `_clear_caps`, `_quiesce` and `_copy` `ERX_ENOTSUP` | FD1, FD9, FD17, FD20, FD21 |
+| `erx_space_create`, `erx_space_stop`, `erx_space_pause`, `_resume` | the domain library, for every domain, through `erx_space_create_domain`, the root-only form whose request, `domain_space_create` of `fiasco_call`, is `space_create`'s followed by the domain's band, its sub-spaces' band, its thread, object and mapping limits and its grant's CPU set ([Bands](#bands)); a session's port driver, for each program's anchor and image; the test-task launcher in the root (`libc-test` M3), through `test_space_create`, which also marks the task as a test task ([The console](#the-console)); job control and `fork`'s copy, for a pause ([design-programs.md](design-programs.md)) | service, from any task: `l4_factory_create_task`, with a handle table of `cap_limit` entries; `parent`, `fault`, `label` and the budget recorded ([Spaces, parents and exit records](#spaces-parents-and-exit-records)); the task's domain row and band recorded, a new domain row with the request's band for `domain_space_create`, else the creator's domain row and its sub-space band ([Bands](#bands)); a stop is [task exit](#task-exit) of the space and of every space below it, children first | the exit record at the fault gate once every thread of the space is deleted; a `parent` or `fault` handle that fails the lookup answers that failure unchanged ([Handles](#handles)), a stale one `ERX_ESTALE`, and one naming a live object other than a space for `parent` or a gate for `fault` `ERX_ETYPE`; a space handle is only ever in its creator's table, so a `parent` that passes the lookup is the caller's space or one it created; `cap_limit` past `ERX_CAPS_MAX`, or one whose window of IRQ slots would pass Fiasco's object space ([Handles](#handles), FD1), `ERX_EINVAL`; `ERX_SPACE_JIT` from a task other than the root whose own space is not a JIT space `ERX_ERIGHTS`; `domain_space_create` from a task other than the root `ERX_ENOTSUP`, as `test_space_create`, and a band outside the limits record's band enum `ERX_EINVAL`; `erx_space_pause` answers once every thread of the space is held at its gate, or `ERX_EDEAD` once the pause's deadline has ended the space, and `_resume` lets each held thread go on ([The pause](#threads-bands-and-stops)); a space past the domain's object limit `ERX_ELIMIT`; `_clear_caps`, `_quiesce` and `_copy` `ERX_ENOTSUP` | FD1, FD9, FD17, FD20, FD21 |
 | `erx_gate_create`, `erx_gate_bind`, `erx_ipc_wait` | the domain library's fault thread and each domain's gate worker, serving fault gates | service: a gate is a record with a queue of fault and exit records and the one thread bound to it; a wait takes the oldest record, or sleeps on the thread's semaphore until the service queues one ([Fault gates](#fault-gates)) | the record's words in the message registers of the caller's public UTCB, its space's label as the label; the deadline as for every wait; a bind replaces the gate's thread, and `ERX_CAP_NULL` unbinds it, as on erXos's kernel; a bind to a thread of another task `ERX_ENOTSUP`; a wait by a thread no gate is bound to waits until its deadline; `erx_ipc_call`, `_send`, `_reply`, `_reply_wait` `ERX_ENOTSUP`, so no gate carries a message | FD3, FD19 |
 | `erx_cap_dup`, `erx_cap_close`, `erx_cap_pass`, `erx_object_destroy`, `erx_object_info` | Erlang NIF handles, the launcher, the inspector; the domain library installing a domain's capabilities (`erx_dom_install`); a session installing a program's budget, group, channel, data area, code objects and pipe ends | service: the handle tables ([Handles](#handles)); a duplicate or a pass makes an entry at the rights of the source entry intersected with the mask, a pass in a space the caller created, from any task, and for an IRQ object calls the one placement function, which places the capability at the new entry's IRQ slot only when the entry's rights hold `TRIGGER` or `ACK` ([Handles](#handles), [Passing a handle](#passing-a-handle)); a close frees the entry and advances its generation; destroy deletes the Fiasco objects, for memory revokes every mapping first, and for a budget deletes everything charged to it; `erx_object_info` as [Reporting kernel objects](#reporting-kernel-objects) says | a stale handle, a handle used after its own close, and a value that names no entry `ERX_ESTALE`, in every service call, but at the reserved values a call's row names ([Handles](#handles)); a close of an entry whose object was destroyed frees the entry, and takes a holder off the record only while the record's generation is the entry's; a ring or an acknowledgement through an IRQ handle after its own close reaches what the root has placed at its slot since (FD1); a right the source entry lacks stays absent whatever the mask; destroying a started thread, or a group that still has a thread, `ERX_ENOTSUP`; destroying an object from a task other than its creator's `ERX_ERIGHTS`, since no pass conveys the delete right; a pass from a space other than the caller's own, into its own, or of a space or gate handle `ERX_ENOTSUP`, as is an item naming the type its handle must have; a thread handle is no entry of the table, so no thread passes; a pass stops at its first refused item with that item's error, an item past a full table `ERX_ELIMIT`, and leaves the items before it passed, which the caller undoes (the domain library by its budget's destroy); the topics and fields that section names `ERX_ENOTSUP` or clear | FD1, FD3, FD4, FD5, FD6 |
 | `erx_budget_create`, `_resize`, `_watch`; `erx_object_destroy` of a budget | the domain library: each domain's own and outer budgets and each connection's child budget; a session: each program's budget; the inspector | service, a create from any task and a resize from the root: a budget is a record of its parent and its wall, one number that is both its guarantee and its cap, with `used` and `carved` under `used + carved <= wall`: its user pages are charged to the record and refused past the wall, and its kernel memory is a Fiasco factory carved from its parent's ([Memory and budgets](#memory-and-budgets), [Budgets and groups as records](#budgets-and-groups-as-records)); its destroy deletes the budgets carved from it and everything charged to them | a handle per create; an elastic kind `ERX_ENOTSUP`, and a wall whose cap is not its guarantee `ERX_EINVAL`; a carve, or a resize that grows, past the parent's unspent wall `ERX_ENOMEM`; resize records the one wall, below the pages held plus the guarantees carved `ERX_EINVAL`, and a task's resize `ERX_ENOTSUP`; `used` partial (user pages, not kernel memory), `guarantee`, `cap` and `carved` exact, every other field `unsupported` ([Reporting a budget](#reporting-a-budget)); watch `ERX_ENOTSUP`; a charge past the cap, or past the kernel memory of the budget's factory, `ERX_ENOMEM`; a resize of the kernel-memory part `ERX_ENOTSUP` | FD25 |
@@ -782,7 +782,7 @@ that kernel, and otherwise stays a published downside.
 | FD14 | D12, K3 | a domain's objects are bounded by its budget alone | they are bounded also by its row's thread, object and mapping limits ([Memory and budgets](#memory-and-budgets)); a task holds at most 128 threads, a record waits for Fiasco's marker write before reuse, and a failed start that did not reach Fiasco's kill path loses its index until the task ends ([Table sizes](#table-sizes)) | a domain is refused at a limit while its budget has memory free, so its row is sized at its largest; D12's bounds hold at those limits | narrowed by stage F2 of [Track F](plan.md#track-f-fiasco-improved-to-the-decision); erXos's kernel |
 | FD15 | CLAUDE.md "Trust placement", CLAUDE.md "ERTS is a parts bin" | CPU grants to runtime groups, quotas charged up the group tree, own-group charging, `erx_group_configure` enforced with usage reported, a group's threads in any space, a thread on any CPU of its mask | per-domain priority bands, CPU sets and thread limits ([Threads, bands and stops](#threads-bands-and-stops)); a group's grant is a record, its threads run in its home task, and affinity runs a thread on one CPU of its mask, narrowed to its domain's CPU set | a domain spinning at its band's top takes its CPUs from every lower band and shares its band round robin in proportion to its threads; CPU use per domain is reported as `unsupported`; M10's "one runs out of CPU alone" holds between bands, not within one | stage 5 of [the scheduler](#stages-beyond-bands), in stage F5 of [Track F](plan.md#track-f-fiasco-improved-to-the-decision), or erXos's kernel |
 | FD16 | none (performance) | the cooperation ladder: status words, deferred preemption, published urgency within the group's ceiling, group park in the kernel with the executor switched, capacity advice the kernel stands behind | none in the first release; park and wake go through semaphores and a dispatcher thread per task ([The park protocol](#the-park-protocol)) | ERTS behaves as stock BEAM does on a general-purpose kernel: it spins briefly and backs off on a lock whose holder is preempted, and a wake, a doorbell's included, goes through one more thread switch | stages 1 to 4 of [the scheduler](#stages-beyond-bands), in stage F5 of [Track F](plan.md#track-f-fiasco-improved-to-the-decision), or erXos's kernel |
-| FD17 | K31, CLAUDE.md "Untrusted input" | a kernel call runs on the caller's own thread and is charged to its own group, so what one domain makes another spend is bounded and declared; a fault of the root task ends the machine at once (K31) | setup, faults, copies and every service call run on the root service's one thread at the root's band, and a program's start costs one service request per object; a long body (a space's release, which finishes its tree's teardown, a budget's destroy and its sweeps of the object table, and a stopped task's deletion, the teardown's longest piece) delays every other | an app flooding the root with requests or faults takes CPU from every lower band on the root's CPU, the system domain, the drivers and the display included, and delays every other domain's setup and faults, which 0.2 accepts; a fault of the root service hangs every client until the watchdog or the harness's deadline ends the run | erXos's kernel |
+| FD17 | K31, CLAUDE.md "Untrusted input" | a kernel call runs on the caller's own thread and is charged to its own group, so what one domain makes another spend is bounded and declared; a fault of the root task ends the machine at once (K31) | setup, faults, copies and every service call run on the root service's one thread at the system band, which it shares with the system domain's threads ([Bands](#bands)), and a program's start costs one service request per object; a long body (a space's release, which finishes its tree's teardown, a budget's destroy and its sweeps of the object table, and a stopped task's deletion, the teardown's longest piece) delays every other | an app flooding the root with requests or faults takes CPU from the system domain's threads on the root's CPU, which share the root service's band round robin, and from every lower band there, the drivers and the display included, and delays every other domain's setup and faults, which 0.2 accepts; a fault of the root service hangs every client until the watchdog or the harness's deadline ends the run | erXos's kernel |
 | FD18 | K20 | the executor rule refused by the kernel | `liberx`'s stub refuses it | a runtime that bypasses `liberx` can stall its own executors, harming only itself | erXos's kernel |
 | FD19 | none (missing calls) | threads are backed and charged at their create, any number run in a space the caller holds, a start resumes a repaired thread, and `erx_thread_stop`, `_read` and `_write` work | a creator starts only a space's first thread; a faulting thread waits until its space stops; no stop, read or write of a thread; a gate's thread is of the gate's own task | no debugger or pager repairs a thread | stage F3 of [Track F](plan.md#track-f-fiasco-improved-to-the-decision), or erXos's kernel |
 | FD20 | D7, D17, K18, K27, K28 | a stop's bounded finishing path (K18, K27) and fault and exit records from the kernel with the thread's identity (K28) | the root stops a tree children first and posts each exit record, at the gate fixed at creation, after every thread's deletion has returned and the space's teardown has given its memory back; a fault's record comes from a pool of its space; a fault message's words are the task's own | an exit record arrives when the root's teardown of the space completes, with no bound under hostile load, so D7 and D17 hold without their bound; a dead domain's write position is final when its end is reported; a task that reaps faulted threads and faults again can run its own pool out and lose its own records, and its raw IPC can put stale numbers in its own crash record | erXos's kernel |
@@ -812,7 +812,7 @@ follows.
 | --- | --- |
 | ERTS's run queues, priorities, reductions, stealing (L2) | unchanged |
 | park and wake, epochs, the group's ready list ([Park and wake](design-scheduler.md#park-and-wake)) | the backend's park protocol over a semaphore per thread and a dispatcher per task ([The park protocol](#the-park-protocol)), unchanged; doorbells are triggered directly |
-| urgency per executor ([Urgency resolution](design-scheduler.md#urgency-resolution)) | the thread's Fiasco priority, fixed at its start from its domain's band; `erx_thread_set_urgency` refused |
+| urgency per executor ([Urgency resolution](design-scheduler.md#urgency-resolution)) | the thread's Fiasco priority, fixed at its start from its task's band ([Bands](#bands)); `erx_thread_set_urgency` refused |
 | ready queues by urgency, round robin within a level | Fiasco's fixed-priority scheduler: priorities 1 to 255, round robin within a level, a quantum per thread (`sched_context-fixed_prio.cpp`) |
 | quotas and charging up the group tree ([Charging and quota](design-scheduler.md#charging-and-quota)) | none: Fiasco charges a thread's own scheduling context only |
 | deferred preemption ([Deferred preemption](design-scheduler.md#deferred-preemption)) | none |
@@ -822,15 +822,67 @@ follows.
 
 ### Bands
 
-A band is a run of Fiasco priorities a domain's threads start in, from its limits record. The first
-release needs one priority per band, since nothing changes a thread's urgency. There are six bands,
-from the top: the watchdog at 255; the root service; the system domain; the driver and device
-domains; interactive domains (the display, web and session domains); and apps and programs, the
-lowest, so no priority lies below it. A band is a domain's, not a thread's, so a domain's
-background work runs in its own band. A spinning
+A band is the Fiasco priority every thread of a task starts at. The first release needs one
+priority per band, since nothing changes a thread's urgency. There are five, from the top:
+
+| Band | Priority | Whose threads |
+| --- | --- | --- |
+| watchdog | 255 | the root's watchdog, which takes no lock |
+| system | 4 | the root task's own: the root service and the system domain's threads |
+| driver | 3 | the driver and device domains, and the spaces below them |
+| interactive | 2 | the display, web and session domains |
+| app | 1 | an app's session, and the programs of every session |
+
+The priorities are one table of the Fiasco backend, which every thread start reads, the root
+service's and the watchdog's included, and no priority leaves the backend: the manifest names a
+band, never a number. Priority 1 is the lowest Fiasco gives a thread, so no thread runs below the
+app band. The table leaves no gaps between bands, since the one change that would put priorities
+between them, stage 3, waits for a consumer ([Stages beyond bands](#stages-beyond-bands)). The
+domain-limits record's band enum holds only the three bands a domain may run at, `driver`,
+`interactive` and `app`; the system and watchdog bands belong to the root task's own threads and
+have no name in the manifest, so no domain can be configured at them.
+
+**How a task gets its band.** The root service records a band in every task row, beside the row of
+the task's domain, and starts every thread of the task at it
+([Threads, bands and stops](#threads-bands-and-stops)). A task's band is fixed when the task is made,
+from its domain row, and nothing the task or its creator sends afterwards changes it:
+
+* The domain library makes each domain's space through `erx_space_create_domain`, the Fiasco
+  backend's root-only form of `erx_space_create`, declared beside its other root-only calls in
+  `liberx/backend/api.h`; erXos's kernel has no such call, and the hosted backend refuses it as it
+  refuses `erx_space_create`. Its request, `domain_space_create` of `fiasco_call`, is
+  `space_create`'s followed by the domain's band, the band of every space below the domain, the
+  domain's thread, object and mapping limits and its grant's CPU set, and the service answers it
+  only for the root, as it answers `test_space_create` ([The call table](#the-call-table)). The
+  task it makes is a **domain row**, which holds those values and the domain's counts against its
+  limits.
+* Every other task names its creator's domain row and runs at that row's band for the spaces below
+  it. The root service gives that band to every space a task creates and never takes one from the
+  creating task.
+* The root's own row is the system domain's domain row: the system band for its own threads, the
+  app band for the spaces it makes with `erx_space_create` (the native suites' tasks and the
+  launcher's test tasks), and no limits but the root's own tables.
+
+So no task exists without a band, and a domain's band, limits and CPU set reach the root in the one
+request that makes the domain, which the domain library sends from its own thread while the root
+service alone writes the root's tables ([Helper threads](#helper-threads)). The domain library
+derives both bands of a domain from its limits record and its kind:
+
+* a configured domain runs at its record's band, and so does every space below it, since its
+  sub-spaces are its own work: a driver's native shim is a sub-space of the driver's domain
+  ([design-system.md](design-system.md#sub-spaces));
+* a session runs at its template's band, and its programs, the user's code, at the app band;
+* an app's session runs at the app band whatever its template's record names, as
+  `erx_dom_plan_app_session` plans it with the `memory` the app's entry carries rather than the
+  template's ([design-packaging.md](design-packaging.md#an-apps-session)), so an app, whose code is
+  untrusted, and its programs never run above an interactive domain.
+
+A band is a domain's, not a thread's, so a domain's background work runs in its own band. A spinning
 domain therefore delays only its own band and those below.
-What a domain asks of a service or of the root runs at that service's band or the root's, not its
-own, so a flood of requests is not held to the band it comes from (FD17, FD31).
+What a domain asks of a service or of the root runs at that service's band or the system band, not its
+own, so a flood of requests is not held to the band it comes from (FD17, FD31). The root service
+shares the system band with the system domain's threads because they take the same locks, and a
+lock is safe only among threads of one priority ([Scheduling](#scheduling)).
 
 ### Stages beyond bands
 
@@ -849,7 +901,8 @@ into erXos's kernel. The sizes are estimates from the files named and are unveri
 The first release ships bands alone. The stages follow it in the order 1, 2, 4, 5, once everything
 else works, each kept only when its measurement pays, as [plan.md](plan.md)'s M8 keeps each feature
 of the ladder. Stage 3 waits for a consumer or for the urgency-change rate of
-[todo-performance.md](todo-performance.md) to show that bands alone cost latency. Each stage that
+[todo-performance.md](todo-performance.md) to show that bands alone cost latency; its priorities
+within a band are then a change to the backend's one table of [Bands](#bands). Each stage that
 lands removes its row's part of the downsides table.
 
 ### Consumers that name grants
@@ -885,13 +938,14 @@ its own memory and its connections' rings. With them it can:
   CPU makes the peer's dispatcher run, and wake a parked executor, once per delivery, at the
   peer's band, whether or not the peer has taken its readiness since (FD31);
 * spend its own memory and kernel memory to their walls, and fail with `ERX_ENOMEM` there;
-* spin every thread it may create at its band's priority (FD15);
+* spin every thread it may create, and every thread of its sub-spaces, at the app band's priority,
+  which nothing it sends can change (FD15);
 * flood its session, or a file, storage or network server it holds a grant of, which serve it at
   their own bands (FD31);
 * send requests and take faults as fast as its threads can, which the root service serves on its
-  own thread at the root's band, above the system domain and the drivers: the root's time spent
-  on them is taken from every band below it on the root's CPU, and every other domain's setup and
-  faults wait behind them (FD17);
+  own thread at the system band, above the drivers: the root's time spent on them is taken from
+  the system domain's threads on the root's CPU, which share that band round robin, and from every
+  band below it there, and every other domain's setup and faults wait behind them (FD17);
 * invoke every slot index of its object space with any arguments, and itself through the special
   selector, reaching only Fiasco's code for the objects placed there, for empty slots and for its
   own threads: this is the surface the fuzz campaign covers (FD24).
@@ -1833,8 +1887,8 @@ factory, and what the root holds for every domain from the root's own quota, whi
 ### Scheduling
 
 Fiasco's fixed-priority scheduler schedules every thread; ERTS schedules its processes within them. Every thread
-runs at the priority of its domain's band, within its domain's CPU set, from the domain's manifest row; within a band a
-spinner never outranks a preempted lock holder on its CPU ([Bands](#bands)). The watchdog, which takes no lock, runs at 255.
+runs at the priority of its task's band ([Bands](#bands)), within its domain's CPU set, both from the domain's
+row in the root, which the domain's limits record fills.
 `l4_scheduler_run_thread(L4_BASE_SCHEDULER_CAP, thread, &param)` starts each thread, with `param` from
 `l4_sched_param(priority, 0)` and, in `param.affinity`, the thread's mask within its domain's CPU set
 ([Threads, bands and stops](#threads-bands-and-stops)): the requested mask, or every CPU when none was
@@ -1855,9 +1909,19 @@ keeps its CPU to the end of its time slice: a spinner waiting for a thread on it
 turn. The fork changes one thing in `Thread::do_ipc_receive` (`thread-ipc.cpp`): a receive from the thread itself whose
 timeout hit before it would wait calls `Thread::yield_timeslice`, which puts the thread's own scheduling context behind
 the other ready ones of its priority, as a receive from itself with a timeout to wait does, and schedules. The thread
-stays ready and gets the timeout result when it runs again. With every thread at priority 1, a yield hands the CPU to
-the next ready thread on its CPU, and a thread alone on its CPU runs on at once. The native task suite's `yield` case
-is its test.
+stays ready and gets the timeout result when it runs again. So a yield hands the CPU to the next ready thread of its
+priority on its CPU, a thread alone at its priority there runs on at once, and no yield reaches a thread of a lower
+priority. The native task suite's `yield` case is its test.
+
+**Locks and priorities.** A backend lock ([Locks](#locks)) is safe because every thread that takes it runs at one
+priority. A failed attempt yields, a yield reaches only threads of the yielder's own priority, and Fiasco moves no
+thread between CPUs, so a waiter above a holder it had preempted on their CPU would yield back to itself forever.
+Each lock lives in one task's memory and is taken only by that task's threads: a task's thread, umtx and park locks
+by threads that all run at the task's band, and the root's trace and mailbox locks by the root service and the
+system domain's threads, which is why both run at the system band, from the one entry of the band table, so their
+priorities cannot differ. The watchdog, at 255, takes no lock. A waiter on the holder's CPU therefore yields to it,
+and a waiter on another CPU yields until the holder runs again, which waits only on higher bands' work on the
+holder's CPU, never on the waiter.
 
 ### Thread creation
 
@@ -2341,7 +2405,7 @@ through the object's window addresses. The caller's task can write its public UT
 copies what a request takes from it, the length first and then at most that many bytes, into the service's own buffer once, and
 every check and the body read only that copy; nothing is read from the public UTCB a second time for the same request.
 
-**The loop.** `l4_ipc_wait_ext` into one of the service's reply slots; decode; run the body; run one piece of a pending teardown; end what the body and the piece marked; empty the reply slot of every fault whose task has stopped; `l4_ipc_reply_and_wait_ext` from the slot the message came in and into the same slot, with `L4_IPC_SEND_TIMEOUT_0`, or with `L4_IPC_BOTH_TIMEOUT_0` while a teardown is pending. A body never calls a stub, and never hashes an image entry: the root's caller checks one in its own thread first ([The call table](#the-call-table), `erx_image_map`), because a hash a whole image long would hold every other call of every task and of the root behind it. For the same reason a stopped task's teardown is no body but pieces ([Task exit](#task-exit)): the stopping tasks are the service's pending work, taken in the order of their stops, and while any is pending every receive has a zero timeout, and one that finds no message yields the CPU to the ready threads of the service's priority before the next piece. So a call waits behind at most one piece, the longest of which is the task object's deletion, unless it comes behind a space's release or a budget's destroy, which finish the teardown of the spaces they delete in their own body. A body that stays long holds every call all the same, and a root thread that waits on it holds what it runs: on the root's normal scheduler, the watchdog pet ([The watchdog](#the-watchdog)). So the NIFs a runtime calls all through its life whose call is a service round trip, `erx_log`'s three calls, `erx_object_info`'s report and `erx_clock_nif`'s setter, are dirty I/O NIFs in every domain's runtime, and the domain library's entries are dirty CPU NIFs.
+**The loop.** `l4_ipc_wait_ext` into one of the service's reply slots; decode; run the body; run one piece of a pending teardown; end what the body and the piece marked; empty the reply slot of every fault whose task has stopped; `l4_ipc_reply_and_wait_ext` from the slot the message came in and into the same slot, with `L4_IPC_SEND_TIMEOUT_0`, or with `L4_IPC_BOTH_TIMEOUT_0` while a teardown is pending. A body never calls a stub, and never hashes an image entry: the root's caller checks one in its own thread first ([The call table](#the-call-table), `erx_image_map`), because a hash a whole image long would hold every other call of every task and of the root behind it. For the same reason a stopped task's teardown is no body but pieces ([Task exit](#task-exit)): the stopping tasks are the service's pending work, taken in the order of their stops, and while any is pending every receive has a zero timeout, and one that finds no message yields the CPU to the ready threads of the service's priority, the system band, which the system domain's threads share ([Bands](#bands)), before the next piece. So a call waits behind at most one piece, the longest of which is the task object's deletion, unless it comes behind a space's release or a budget's destroy, which finish the teardown of the spaces they delete in their own body. A body that stays long holds every call all the same, and a root thread that waits on it holds what it runs: on the root's normal scheduler, the watchdog pet ([The watchdog](#the-watchdog)). So the NIFs a runtime calls all through its life whose call is a service round trip, `erx_log`'s three calls, `erx_object_info`'s report and `erx_clock_nif`'s setter, are dirty I/O NIFs in every domain's runtime, and the domain library's entries are dirty CPU NIFs.
 
 **Reply slots.** The service receives into Fiasco's explicit reply slots (`EXPLICIT_REPLY_CAPS`, a reply space charged to the
 root's quota), so that no receive fills a slot that still holds a caller: Fiasco answers such a receive by emptying the slot and
@@ -2363,7 +2427,8 @@ row is `ERX_ENOTSUP`. The decoder has a fuzz target. Addresses cross as values, 
 ### Spaces, parents and exit records
 
 `erx_space_create`, from any task, makes a task and a **space record**: its budget, its parent, its fault gate, its label, its
-flags, its handle table of `cap_limit` entries, and its list of children. In 1b-A the parent is the root's own space, and from 1b-B, where sessions make sub-spaces, it is the caller's own space or a space the
+flags, its handle table of `cap_limit` entries, its list of children, and its domain row and band, its creator's
+([Bands](#bands)); the domain library's `erx_space_create_domain` makes a domain's space with a domain row of its own. In 1b-A the parent is the root's own space, and from 1b-B, where sessions make sub-spaces, it is the caller's own space or a space the
 caller created, so the records form the tree of [design-kernel.md](design-kernel.md#creating-spaces): the system domain's
 space at the root, every domain below it, a session's anchors and images below the session. The creator then builds the space
 with the calls that serve its own: it reserves and maps in it, maps image entries and slices into it, passes it handles,
@@ -3486,6 +3551,9 @@ Each test below names the seeded failure that proves it ran:
 | no task capability | a probe of every slot of a domain finds no task, factory, thread or scheduler | a placement of the domain's own task capability, kept as a build that must fail |
 | direct doorbell | a ring and its wake make no request to the root (the root's request count is unchanged) | the trigger stub sends a request |
 | band | a domain spinning every thread delays a higher band's echo by no more than one quantum | the spinning domain placed in the higher band |
+| sub-space band | a session's program spinning every thread delays its own session's echo, in the interactive band, by no more than one quantum | the root gives a new space its creator's own band: the program runs in the interactive band and the echo waits out the spin |
+| app session band | an app whose session's template names `interactive` spins every thread and delays an interactive domain's echo by no more than one quantum | `erx_dom_plan_app_session` keeps the template's band: the app runs beside the echo |
+| root-only domain form | a domain's `domain_space_create` answers `ERX_ENOTSUP` and makes no task: the domain's object count is unchanged | the root-only check dropped: the domain's request makes a task |
 | thread limit | a create past the domain's limit answers `ERX_ELIMIT` | the count skips a sub-space's threads |
 | whole-space pause | a paused space's write counter stops advancing until the resume, with one thread parked on its semaphore, one in a umtx wait and one faulted and held; a space with a thread that repointed its exception handler ends at the deadline and the requester gets `ERX_EDEAD`; the root serves another domain's request while the pause is pending | the root skips the last thread it created; `Exr_cancel` dropped: the parked thread never arrives and the deadline ends the space; the root waiting for the arrivals: the other domain's request is not answered before the deadline |
 | the wall clock | a task's `erx_time_set_offset` on the time page's handle without `WRITE` answers `ERX_ERIGHTS`, and the page's offset is unchanged | the body's right check removed: the offset moves |
@@ -3689,8 +3757,9 @@ Decided, and applied above:
   its generator checks them.
 * **0.2's features** are Phase 1b and track A, and M9's devices, the rest of track P, M10, M12, track D's
   parts 5 and 9, and the security closure in its Fiasco form; track Q follows 0.2 (FD9).
-* **Bands**: the six of [Bands](#bands), fixed in the manifest's schema, with no per-domain choice
-  of priority beyond the band.
+* **Bands**: the five of [Bands](#bands): three a limits record names from the manifest's schema,
+  and two the root task's own; their priorities are one table of the backend, with no per-domain
+  choice of priority beyond the band.
 * **The pause**: the root's, stopping each thread, with no Fiasco patch
   ([Threads, bands and stops](#threads-bands-and-stops)).
 * **The writable-or-executable patch** is carried
