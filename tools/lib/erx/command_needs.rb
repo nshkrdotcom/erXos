@@ -16,8 +16,9 @@ module Erx
   # all, since neither the shell nor its helpers have authority of their own.
   #
   # A service's modules are the modules of its sources, path globs read from the
-  # listing: the network stack's applications, the start service's application behind
-  # `start`, and the machine tree with its coordinator, the two modules of the domain
+  # listing: the network stack's applications as erXos builds them (not erx_net/portable,
+  # built only outside erXos, whose erx_bytes stands in for the erx application's), the
+  # start service's application behind `start`, and the machine tree with its coordinator, the two modules of the domain
   # service behind `machine`. Each counts wherever its name stands as an atom: in a
   # call, a remote fun or type, an -import or an apply. The OTP modules and functions
   # through which any domain reaches the service count as Module:Function: for the
@@ -41,7 +42,7 @@ module Erx
     GLOB_FLAGS = File::FNM_PATHNAME | File::FNM_EXTGLOB
     Service = Data.define(:sources, :modules, :functions)
     SERVICES = {
-      'net' => Service.new(sources: %w[erlang/apps/erx_net/**/*.erl erlang/apps/erx_net_client/**/*.erl],
+      'net' => Service.new(sources: %w[erlang/apps/erx_net/{src,erxos}/**/*.erl erlang/apps/erx_net_client/**/*.erl],
                            modules: %w[gen_tcp gen_udp gen_sctp socket net inet_res],
                            functions: %w[inet:getaddr inet:getaddrs inet:gethostbyname inet:gethostbyaddr
                                          inet:getifaddrs]),
