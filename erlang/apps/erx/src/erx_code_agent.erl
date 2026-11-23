@@ -17,19 +17,28 @@ a domain whose boot information carries `supervised` it returns from its start o
 its start load has loaded and erx_code has confirmed it, so every application after
 `kernel` starts over the published overlay; in any other domain it returns at once.
 
-The decisions are erx_code_agent_core's; this module applies their effects: sends,
-loads, the lifeline's monitor and the exit. It takes erx_code's messages only in the
-system domain's envelope, `{erx_origin, SystemId, Msg}`, and drops and counts every
-other message. A load that arrives while another is in flight waits in the mailbox.
+It is a gen_statem in one of two states: `idle`, ready to take a load, and `loading`,
+with a load in flight whose deadline is the state's timeout. A load that arrives while
+another is in flight is postponed until the server is idle again. The decisions are
+erx_code_agent_core's; this module applies their effects: sends, loads, the lifeline's
+monitor, the start's acknowledgement and the stop. It takes erx_code's messages only in
+the system domain's envelope, `{erx_origin, SystemId, Msg}`, and drops every other
+message, counting it in its state (`sys:get_state/1`).
 
-Each message is entered through an external call, `?MODULE:loop/1`, as a gen_server
-enters its callbacks, so a load that replaces this module or erx_code_batch leaves the
-server running: by the time a later load purges the old code, the server is not running
-any of it. The state holds no fun for the same reason.
+It is started by proc_lib and enters gen_statem's loop with `gen_statem:enter_loop/5`,
+so that a supervised domain's start is acknowledged only after its start load; it has
+no `init/1` and declares no behaviour. No frame of this module's code stays on the stack
+between events: enter/1 enters the loop with a tail call, gen_statem enters each
+callback through an external call, and the state holds no fun. So a load that replaces
+this module or erx_code_batch leaves the server running: by the time a later load
+purges the old code, the server is not running any of it.
+
+A crash report shows the server's state without the core or the postponed loads, which
+carry module bytes and manifests (format_status/1).
 """.
 
 -export([start_link/0, start_link/1]).
--export([init/2, loop/1]).
+-export([enter/1, callback_mode/0, handle_event/4, format_status/1]).
 -export_type([env/0]).
 
 -include("generated/erx_abi.hrl").
@@ -47,6 +56,11 @@ gives a module of the release.
 -type env() :: #{system := pos_integer(), domain_pid := pid(), supervised := boolean(),
                  limits := erx_code_agent_core:limits(), floors := #{atom() => non_neg_integer()},
                  release => module() | none, wait => pos_integer()}.
+
+%% The domain, the core, and how many messages the server dropped.
+-type data() :: #{env := env(), core := erx_code_agent_core:core(), dropped := non_neg_integer()}.
+
+-type state() :: idle | loading.
 
 -doc """
 Starts the code server of the domain this runtime is; `ignore` in the system domain,
@@ -70,7 +84,7 @@ start_link() ->
 -doc "Starts a code server in the domain Env describes.".
 -spec start_link(env()) -> {ok, pid()} | {error, term()}.
 start_link(Env) ->
-    proc_lib:start_link(?MODULE, init, [self(), Env], infinity).
+    proc_lib:start_link(?MODULE, enter, [Env], infinity).
 
 %% The runtime does not yet report its limits (erx:limits/0), the code protocol's floors
 %% are not yet generated into abi/services/code.txt, and the boot information carries no
@@ -81,69 +95,85 @@ erxos_env(SystemId, DomainPid) ->
       limits => unknown, floors => #{}}.
 
 -doc false.
-init(Parent, Env) ->
+enter(Env) ->
     case erx_code_agent_core:floor_check(maps:get(limits, Env), maps:get(floors, Env)) of
         {below, Limit, Value, Floor} ->
             logger:error("erx_code_agent: ~s is ~b, below the code protocol's floor of ~b", [Limit, Value, Floor]),
             proc_lib:init_fail({error, {below_floor, Limit}}, {exit, normal});
         unknown ->
             logger:notice("erx_code_agent: the runtime's limits are unknown; the code protocol's floors are not checked"),
-            serve(Parent, Env);
+            serve(Env);
         ok ->
-            serve(Parent, Env)
+            serve(Env)
     end.
 
-serve(Parent, Env) ->
-    begin
-            put(dropped, 0),
-            maps:get(domain_pid, Env) ! {erx_code_agent, self()},
-            {Core, Effects} = erx_code_agent_core:new(maps:get(supervised, Env)),
-            loop(apply_effects(Effects, #{parent => Parent, env => Env, core => Core}))
-    end.
+%% The start's acknowledgement is the core's `started` effect, now in any other domain
+%% and after the confirmed start load in a supervised one. The loop is entered with a tail
+%% call, so no frame of this module stays below it.
+serve(Env) ->
+    maps:get(domain_pid, Env) ! {erx_code_agent, self()},
+    {Core, Effects} = erx_code_agent_core:new(maps:get(supervised, Env)),
+    {Data, Actions} = effects(Effects, #{env => Env, core => Core, dropped => 0}),
+    gen_statem:enter_loop(?MODULE, [], idle, Data, Actions).
 
 -doc false.
--spec loop(map()) -> no_return().
-loop(#{env := #{system := SystemId}, core := Core} = State) ->
-    Idle = erx_code_agent_core:idle(Core),
-    Lifeline = erx_code_agent_core:lifeline(Core),
-    Next = case remaining(Core) of
-        0 ->
-            %% Past the deadline: the load ends before any message still queued for it.
-            step(timeout, State);
-        Wait -> receive
-        {erx_origin, SystemId, {erx_code_load, Alias, Manifest}} when Idle, is_reference(Alias) ->
-            take(Alias, Manifest, State);
-        {erx_origin, SystemId, {erx_code_piece, Alias, Hash, Offset, Bytes}}
-          when is_reference(Alias), is_binary(Hash), is_integer(Offset), is_binary(Bytes) ->
-            step({piece, Alias, Hash, Offset, Bytes}, State);
-        {erx_origin, SystemId, {erx_code_published, Alias, Lifeline1}} when is_reference(Alias), is_pid(Lifeline1) ->
-            step({published, Alias, Lifeline1}, State);
-        {'DOWN', Lifeline, process, _Pid, _Reason} ->
-            step({down, Lifeline}, State);
-        Other when Idle orelse not (is_tuple(Other) andalso tuple_size(Other) =:= 3
-                                    andalso element(1, Other) =:= erx_origin
-                                    andalso is_tuple(element(3, Other)) andalso tuple_size(element(3, Other)) =:= 3
-                                    andalso element(1, element(3, Other)) =:= erx_code_load) ->
-            %% A load waits in the mailbox while another is in flight; anything else
-            %% of another origin or shape is dropped.
-            apply_effects([dropped], State)
-    after Wait ->
-        step(timeout, State)
-    end
-    end,
-    ?MODULE:loop(Next).
+callback_mode() ->
+    handle_event_function.
+
+-doc false.
+-spec handle_event(gen_statem:event_type(), term(), state(), data()) ->
+          gen_statem:event_handler_result(state(), data()).
+handle_event(state_timeout, deadline, loading, Data) ->
+    step(timeout, Data, []);
+handle_event(internal, {loaded, Result}, loading, Data) ->
+    step({loaded, Result}, Data, []);
+handle_event(info, Message, loading, #{core := Core} = Data) ->
+    case erlang:monotonic_time(millisecond) >= erx_code_agent_core:deadline(Core) of
+        true ->
+            %% Past the deadline: the load ends before any message still queued for it,
+            %% which is handled again in the state the end leads to.
+            step(timeout, Data, [postpone]);
+        false ->
+            message(Message, loading, Data)
+    end;
+handle_event(info, Message, idle, Data) ->
+    message(Message, idle, Data);
+handle_event(_Type, _Content, _State, Data) ->
+    dropped(Data).
+
+message({erx_origin, SystemId, Message}, State, #{env := #{system := SystemId}} = Data) ->
+    from_system(Message, State, Data);
+message({'DOWN', Monitor, process, _Pid, _Reason}, _State, Data) ->
+    step({down, Monitor}, Data, []);
+message(_Message, _State, Data) ->
+    dropped(Data).
+
+from_system({erx_code_load, Alias, _Manifest}, loading, _Data) when is_reference(Alias) ->
+    {keep_state_and_data, [postpone]};
+from_system({erx_code_load, Alias, Manifest}, idle, Data) when is_reference(Alias) ->
+    take(Alias, Manifest, Data);
+from_system({erx_code_piece, Alias, Hash, Offset, Bytes}, _State, Data)
+  when is_reference(Alias), is_binary(Hash), is_integer(Offset), is_binary(Bytes) ->
+    step({piece, Alias, Hash, Offset, Bytes}, Data, []);
+from_system({erx_code_published, Alias, Lifeline}, _State, Data) when is_reference(Alias), is_pid(Lifeline) ->
+    step({published, Alias, Lifeline}, Data, []);
+from_system(_Message, _State, Data) ->
+    dropped(Data).
+
+dropped(#{dropped := Dropped} = Data) ->
+    {keep_state, Data#{dropped := Dropped + 1}}.
 
 %% Step 1's facts from the runtime: which modules are current and which blobs the release
 %% holds. A name with no atom yet names no loaded module, so no atom is made for it.
-take(Alias, Manifest, #{env := Env} = State) ->
+take(Alias, Manifest, #{env := Env} = Data) ->
     Release = maps:get(release, Env, none),
     Deadline = erlang:monotonic_time(millisecond) + maps:get(wait, Env, ?ERX_CODE_LOAD_WAIT),
     case erx_code_agent_core:is_manifest(Manifest) of
         true ->
             Plan = [{Name, Hash, Size, source(Name, Hash, Release)} || {Name, Hash, Size} <- Manifest],
-            step({take, Alias, Plan, Deadline}, State);
+            step({take, Alias, Plan, Deadline}, Data, []);
         false ->
-            apply_effects([dropped], State)
+            dropped(Data)
     end.
 
 source(Name, Hash, Release) ->
@@ -185,31 +215,40 @@ file_hash(Base, Module, Release) ->
             none
     end.
 
-step(Event, #{core := Core} = State) ->
-    {Next, Effects} = erx_code_agent_core:step(Core, Event),
-    apply_effects(Effects, State#{core := Next}).
-
-apply_effects(Effects, State) ->
-    lists:foldl(fun apply_effect/2, State, Effects).
-
-apply_effect({send, Alias, Message}, State) ->
-    Alias ! Message,
-    State;
-apply_effect({load_batch, Batch}, State) ->
-    step({loaded, erx_code_batch:load(Batch)}, State);
-apply_effect({monitor, Lifeline}, #{core := Core} = State) ->
-    State#{core := erx_code_agent_core:monitoring(Core, erlang:monitor(process, Lifeline))};
-apply_effect(started, #{parent := Parent} = State) ->
-    proc_lib:init_ack(Parent, {ok, self()}),
-    State;
-apply_effect(dropped, State) ->
-    put(dropped, get(dropped) + 1),
-    State;
-apply_effect({exit, Reason}, _State) ->
-    exit(Reason).
-
-remaining(Core) ->
-    case erx_code_agent_core:deadline(Core) of
-        infinity -> infinity;
-        Deadline -> max(0, Deadline - erlang:monotonic_time(millisecond))
+%% One event through the core and its effects, then the state the core is in: `loading`,
+%% with its deadline as the state's timeout, while a load is in flight, else `idle`.
+step(Event, #{core := Core} = Data, Postpone) ->
+    case erx_code_agent_core:step(Core, Event) of
+        {stop, Reason, Effects} ->
+            {Last, []} = effects(Effects, Data),
+            {stop, Reason, Last};
+        {Next, Effects} ->
+            {Applied, Actions} = effects(Effects, Data#{core := Next}),
+            case erx_code_agent_core:deadline(Next) of
+                infinity -> {next_state, idle, Applied, Postpone ++ Actions};
+                Deadline -> {next_state, loading, Applied,
+                             [{state_timeout, Deadline, deadline, [{abs, true}]} | Postpone ++ Actions]}
+            end
     end.
+
+%% The effects in order, and the gen_statem actions they lead to: a batch load's result
+%% is the next event the core takes, before any message.
+effects(Effects, Data) ->
+    lists:foldl(fun effect/2, {Data, []}, Effects).
+
+effect({send, Alias, Message}, Acc) ->
+    Alias ! Message,
+    Acc;
+effect({load_batch, Batch}, {Data, Actions}) ->
+    {Data, Actions ++ [{next_event, internal, {loaded, erx_code_batch:load(Batch)}}]};
+effect({monitor, Lifeline}, {#{core := Core} = Data, Actions}) ->
+    {Data#{core := erx_code_agent_core:monitoring(Core, erlang:monitor(process, Lifeline))}, Actions};
+effect(started, Acc) ->
+    proc_lib:init_ack({ok, self()}),
+    Acc;
+effect(dropped, {#{dropped := Dropped} = Data, Actions}) ->
+    {Data#{dropped := Dropped + 1}, Actions}.
+
+-doc false.
+format_status(Status) ->
+    erx_report:status(Status, #{data => fun(Data) -> maps:remove(core, Data) end}).

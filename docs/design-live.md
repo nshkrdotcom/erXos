@@ -2659,11 +2659,12 @@ as step 4 does. By that time
 `erx_code` has already ended the load, because its own 30 s started
 earlier, at the send, and it publishes nothing for a load it has ended.
 The alias is gone, so an answer would be dropped anyway. A load that
-arrives while another is in progress waits in the mailbox. This can
-happen only just after a deadline, because `erx_code` sends a target's
-next load only once it has ended the previous one. The code server
-enters each load through an external call, as a `gen_server` enters its
-callbacks. So a load that replaces the code server's own modules, or
+arrives while another is in progress waits, postponed, until the load
+in progress ends. This can happen only just after a deadline, because
+`erx_code` sends a target's next load only once it has ended the
+previous one. The code server is a `gen_statem`, which enters each
+callback through an external call. So a load that replaces the code
+server's own modules, or
 `erx_code_batch`, leaves it running: when a later load purges old code,
 the code server is not running any of it.
 
@@ -3889,9 +3890,9 @@ faults that must make its tests fail where it has any.
     that replaces `erx_code_agent` itself, then a second one that
     replaces it again, then a probe, all succeed with the same code
     server process running throughout. Seeded: the hash check removed,
-    under which the bad blob loads; a loop that calls itself by a local
-    call, under which the second self-replacing load's purge ends the
-    code server.
+    under which the bad blob loads; a frame of the code server's own
+    code left below `gen_statem`'s loop, under which the second
+    self-replacing load's purge ends the code server.
   * The domain pid keeps a code server report only from the domain's own
     incarnation. A report naming a pid of another creation is refused,
     and a supervised domain's boot ends at its boot timeout. Seeded: the

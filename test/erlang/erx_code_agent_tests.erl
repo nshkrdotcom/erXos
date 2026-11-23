@@ -40,7 +40,83 @@ code_server_test_() ->
       fun a_load_whose_pieces_stop_is_abandoned_at_its_deadline/0,
       fun a_message_of_another_origin_is_dropped/0,
       fun replacing_its_own_module_twice_leaves_it_running/0,
-      fun a_runtime_below_a_floor_fails_its_start/0]}.
+      fun replacing_erx_code_batch_twice_leaves_it_running/0,
+      fun a_runtime_below_a_floor_fails_its_start/0,
+      fun a_load_that_arrives_during_another_waits_for_it/0,
+      fun stale_and_stray_pieces_are_dropped_and_counted/0,
+      fun a_supervised_start_returns_only_once_its_start_load_is_confirmed/0,
+      fun a_piece_queued_before_the_deadline_is_not_taken_after_it/0]}.
+
+%% A load sent while another is in flight is taken only once the first has answered:
+%% nothing of it is asked for before then, and both load.
+a_load_that_arrives_during_another_waits_for_it() ->
+    Server = start_free(env(false)),
+    [A, B] = [beam(m_agent_a, 1), beam(m_agent_b, 1)],
+    [First, Second] = [alias(), alias()],
+    to(Server, {erx_code_load, First, [entry(m_agent_a, A)]}),
+    ?assertEqual(ok, receive {erx_code_get, First, _, 0} -> ok after 1000 -> no_request end),
+    to(Server, {erx_code_load, Second, [entry(m_agent_b, B)]}),
+    ?assertEqual(none, receive {erx_code_get, Second, _, _} -> asked after ?WAIT div 3 -> none end),
+    to(Server, {erx_code_piece, First, sha(A), 0, binary:part(A, 0, ?PIECE)}),
+    ?assertMatch({First, ok, _}, serve(Server, First, blobs([A]), [])),
+    ?assertMatch({Second, ok, _}, serve(Server, Second, blobs([B]), [])),
+    ?assertEqual([1, 1], [M:version() || M <- [m_agent_a, m_agent_b]]).
+
+%% A piece of another load, of another blob, at another offset or after the load ended
+%% changes nothing but the server's count of dropped messages, and the load goes on.
+stale_and_stray_pieces_are_dropped_and_counted() ->
+    Server = start_free(env(false)),
+    A = beam(m_agent_a, 1),
+    Hash = sha(A),
+    Alias = alias(),
+    to(Server, {erx_code_load, Alias, [entry(m_agent_a, A)]}),
+    ?assertEqual(ok, receive {erx_code_get, Alias, Hash, 0} -> ok after 1000 -> no_request end),
+    Stray = [{erx_code_piece, alias(), Hash, 0, A},
+             {erx_code_piece, Alias, <<0:256>>, 0, A},
+             {erx_code_piece, Alias, Hash, 1, A}],
+    [to(Server, Piece) || Piece <- Stray],
+    to(Server, {erx_code_piece, Alias, Hash, 0, A}),
+    ?assertEqual(ok, receive {erx_code_loaded, Alias, R} -> R after 1000 -> no_answer end),
+    to(Server, {erx_code_piece, Alias, Hash, 0, A}),
+    ?assertMatch({idle, #{dropped := 4}}, sys:get_state(Server)).
+
+%% A piece that was queued before the deadline but reaches the server after it is not
+%% taken: the load ends first. The server is suspended so the piece waits in its mailbox
+%% ahead of the deadline's timeout.
+a_piece_queued_before_the_deadline_is_not_taken_after_it() ->
+    Server = start_free(env(false)),
+    A = beam(m_agent_a, 1),
+    Alias = alias(),
+    to(Server, {erx_code_load, Alias, [entry(m_agent_a, A)]}),
+    ?assertEqual(ok, receive {erx_code_get, Alias, _, 0} -> ok after 1000 -> no_request end),
+    ok = sys:suspend(Server),
+    to(Server, {erx_code_piece, Alias, sha(A), 0, A}),
+    timer:sleep(2 * ?WAIT),
+    ok = sys:resume(Server),
+    ?assertEqual(none, receive {erx_code_loaded, Alias, R} -> R after ?WAIT -> none end),
+    ?assertEqual(false, code:is_loaded(m_agent_a)),
+    ?assertMatch({idle, #{dropped := 1}}, sys:get_state(Server)).
+
+%% A supervised server's start returns only after erx_code confirms its start load, not
+%% at its answer.
+a_supervised_start_returns_only_once_its_start_load_is_confirmed() ->
+    Server = start(env(true)),
+    {Alias, ok, []} = exchange(Server, [], #{}),
+    ?assertEqual(none, receive {start, Early} -> Early after ?WAIT div 3 -> none end),
+    publish(Server, Alias, spawn_lifeline()),
+    ?assertEqual({ok, Server}, started()).
+
+%% Loads that replace erx_code_batch, the module the server is running while it loads, twice,
+%% leave the server running.
+replacing_erx_code_batch_twice_leaves_it_running() ->
+    Server = start_free(env(false)),
+    {erx_code_batch, Own, _} = code:get_object_code(erx_code_batch),
+    [V1, V2] = [variant(Own, N) || N <- [1, 2]],
+    ?assertMatch({_, ok, _}, exchange(Server, [entry(erx_code_batch, V1)], blobs([V1]))),
+    ?assertMatch({_, ok, _}, exchange(Server, [entry(erx_code_batch, V2)], blobs([V2]))),
+    Probe = beam(m_agent_probe, 1),
+    ?assertMatch({_, ok, _}, exchange(Server, [entry(m_agent_probe, Probe)], blobs([Probe]))),
+    ?assert(is_process_alive(Server)).
 
 cleanup() ->
     persistent_term:erase({?MODULE, release}),

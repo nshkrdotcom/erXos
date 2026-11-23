@@ -115,8 +115,8 @@ class ErxDomainTest < Minitest::Test
     # the creation alone keeps a pid of another domain's node that carries this domain's id.
     Fault.new(name: 'an inspection agent checked by its creation alone',
               file: File.join(APPLICATION, 'erx_domain_pid.erl'),
-              from: '{ok, Inspect} when is_pid(Inspect), node(Inspect) =:= Node ->',
-              to: '{ok, Inspect} when is_pid(Inspect), is_atom(Node) ->',
+              from: 'is_pid(Name) andalso node(Name) =:= Node andalso erx_dist:owner(Name) =:= Id',
+              to: 'is_pid(Name) andalso is_atom(Node) andalso erx_dist:owner(Name) =:= Id',
               tests: 'erx_domain_tests', caught_by: 'inspect_agent_of_another_incarnation_test'),
     # The funnel's gates (docs/design.md, the facet table's chokepoint row): a funnel that
     # hands a name of the table on as the starter's own facet hands the starter's recorded

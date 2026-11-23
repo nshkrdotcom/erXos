@@ -6,8 +6,9 @@
 -moduledoc """
 The decisions of a domain's code server, erx_code_agent (docs/design-live.md, "The code
 server"), as a pure state machine: `step/2` takes the core and one event and returns the
-next core and the effects to apply, in order. The server process applies them and feeds
-back what they produce; nothing here reads the runtime, a clock or a mailbox.
+next core and the effects to apply, in order, or `{stop, Reason, Effects}` when the
+server is to end once those effects are applied. The server process applies them and
+feeds back what they produce; nothing here reads the runtime, a clock or a mailbox.
 
 The server takes one load at a time, in four steps, all before the load's deadline:
 
@@ -25,8 +26,8 @@ The server takes one load at a time, in four steps, all before the load's deadli
 4. Keep, in a supervised domain after `ok` only: the server waits for the word of
    publication, `{published, Alias, Lifeline}`. When it comes the load is done, and if
    the manifest named any module the server monitors the lifeline, once for the domain's
-   life, and exits `{erx_code, down}` when it ends. If the deadline comes first the
-   server exits `{erx_code, unpublished}`. A refusal loaded nothing, and a domain no
+   life, and stops with `{erx_code, down}` when it ends. If the deadline comes first the
+   server stops with `{erx_code, unpublished}`. A refusal loaded nothing, and a domain no
    specification restarts has no overlay to keep in step with, so either is done at its
    answer.
 
@@ -35,7 +36,7 @@ A deadline before the batch is loaded abandons the load: no answer, no bytes kep
 
 In a supervised domain the first load is the start load and the server has not yet
 returned from its start: the start load's confirmation is `started`, and a refusal of it
-ends the server, and so the domain, with `{start_load, Result}`. A start load abandoned
+stops the server, and so the domain, with `{start_load, Result}`. A start load abandoned
 at its deadline leaves the server waiting, as one that never came does, for the
 domain's boot timeout. Any other domain is `started` at once.
 
@@ -44,8 +45,8 @@ publication only for the load in flight, at the cursor, and reports any other as
 `dropped`, which the edge counts.
 """.
 
--export([new/1, step/2, is_manifest/1, idle/1, deadline/1, lifeline/1, monitoring/2, floor_check/2]).
--export_type([core/0, event/0, effect/0, plan/0, limits/0]).
+-export([new/1, step/2, is_manifest/1, deadline/1, monitoring/2, floor_check/2]).
+-export_type([core/0, event/0, effect/0, result/0, plan/0, limits/0]).
 
 -type name() :: binary().
 -type hash() :: <<_:256>>.
@@ -64,19 +65,26 @@ publication only for the load in flight, at the cursor, and reports any other as
                 | {load_batch, [erx_code_batch:module_bytes()]}
                 | {monitor, pid()}
                 | started
-                | dropped
-                | {exit, term()}.
+                | dropped.
+
+-doc """
+The next core and its effects, or, when the server is to end, the reason it ends with and
+the effects to apply before it does. A stopped server has no next core.
+""".
+-type result() :: {core(), [effect()]} | {stop, Reason :: term(), [effect()]}.
 
 %% A load in flight: its alias and deadline, whether its manifest named any module, the
 %% blobs still to fetch in manifest order, the one being fetched with its pieces so far
-%% (newest first) and its next offset, and the batch, in manifest order, newest first.
+%% (newest first) and its next offset, the modules whose bytes are in, newest first, and
+%% the step of the four it is at (its plan is made when it is taken).
+%% code:prepare_loading/1 takes a batch whole, so the batch's order is of no consequence.
 -record(load, {alias :: reference(),
                deadline :: integer(),
                named :: boolean(),
                queue = [] :: [{name(), hash(), pos_integer()}],
                fetching = none :: none | {name(), hash(), pos_integer(), non_neg_integer(), [binary()]},
                batch = [] :: [erx_code_batch:module_bytes()],
-               step = fetch :: fetch | load | keep}).
+               stage = fetch :: fetch | load | keep}).
 
 %% supervised: the domain's boot information's flag; phase: start until the server has
 %% returned from its start; lifeline: the monitor on erx_code's lifeline, once taken.
@@ -103,18 +111,13 @@ of its start: a supervised one waits for its start load, any other is started at
 new(true) -> {#core{supervised = true, phase = start}, []};
 new(false) -> {#core{supervised = false, phase = running}, [started]}.
 
--doc "Whether the server can take a load: none is in flight.".
--spec idle(core()) -> boolean().
-idle(#core{load = Load}) -> Load =:= none.
-
--doc "The monotonic millisecond by which the load in flight must be done, or `infinity`.".
+-doc """
+The monotonic millisecond by which the load in flight must be done, or `infinity` when
+none is in flight and the server can take a load.
+""".
 -spec deadline(core()) -> integer() | infinity.
 deadline(#core{load = none}) -> infinity;
 deadline(#core{load = #load{deadline = Deadline}}) -> Deadline.
-
--doc "The monitor on erx_code's lifeline, or `none` before the first published module.".
--spec lifeline(core()) -> reference() | none.
-lifeline(#core{lifeline = Lifeline}) -> Lifeline.
 
 -doc "Records the monitor the edge took for a `{monitor, Lifeline}` effect.".
 -spec monitoring(core(), reference()) -> core().
@@ -143,19 +146,19 @@ binary name, a 32-byte hash and a positive size. erx_code is the trusted base an
 other; anything else did not come from it and is dropped whole.
 """.
 -spec is_manifest(term()) -> boolean().
-is_manifest(Manifest) when is_list(Manifest) ->
-    lists:all(fun({Name, Hash, Size}) -> is_binary(Name) andalso is_binary(Hash) andalso byte_size(Hash) =:= 32
-                                         andalso is_integer(Size) andalso Size > 0;
-                 (_Entry) -> false
-              end, Manifest);
-is_manifest(_Manifest) ->
+is_manifest([]) ->
+    true;
+is_manifest([{Name, Hash, Size} | Rest])
+  when is_binary(Name), is_binary(Hash), byte_size(Hash) =:= 32, is_integer(Size), Size > 0 ->
+    is_manifest(Rest);
+is_manifest(_Other) ->
     false.
 
--doc "The next core and the effects of one event.".
--spec step(core(), event()) -> {core(), [effect()]}.
+-doc "The next core and the effects of one event, or the server's stop.".
+-spec step(core(), event()) -> result().
 step(#core{load = none} = Core, {take, Alias, Plan, Deadline}) ->
     plan(Core, Alias, Plan, Deadline);
-step(#core{load = #load{alias = Alias, step = fetch,
+step(#core{load = #load{alias = Alias, stage = fetch,
                         fetching = {Name, Hash, Size, Offset, Pieces}} = Load} = Core,
      {piece, Alias, Hash, Offset, Bytes}) ->
     Got = Offset + byte_size(Bytes),
@@ -165,18 +168,18 @@ step(#core{load = #load{alias = Alias, step = fetch,
         false -> {Core#core{load = Load#load{fetching = {Name, Hash, Size, Got, [Bytes | Pieces]}}},
                   [{send, Alias, {erx_code_get, Alias, Hash, Got}}]}
     end;
-step(#core{load = #load{step = load} = Load} = Core, {loaded, Result}) ->
+step(#core{load = #load{stage = load} = Load} = Core, {loaded, Result}) ->
     answered(Core, Load, Result);
-step(#core{load = #load{alias = Alias, step = keep, named = Named}} = Core, {published, Alias, Lifeline}) ->
+step(#core{load = #load{alias = Alias, stage = keep, named = Named}} = Core, {published, Alias, Lifeline}) ->
     Monitor = [{monitor, Lifeline} || Named, Core#core.lifeline =:= none],
     done(Core, Monitor);
-step(#core{load = #load{step = keep}}, timeout) ->
-    {exit_core(), [{exit, {erx_code, unpublished}}]};
+step(#core{load = #load{stage = keep}}, timeout) ->
+    {stop, {erx_code, unpublished}, []};
 step(#core{load = #load{}} = Core, timeout) ->
     %% Abandoned before its batch loaded: no answer, no bytes kept.
     {Core#core{load = none}, []};
 step(#core{lifeline = Monitor}, {down, Monitor}) when is_reference(Monitor) ->
-    {exit_core(), [{exit, {erx_code, down}}]};
+    {stop, {erx_code, down}, []};
 step(Core, _Event) ->
     {Core, [dropped]}.
 
@@ -197,35 +200,31 @@ planned({Name, Hash, Size, {release, Bytes}}, #load{batch = Batch} = Load) ->
         true -> Load#load{batch = [{Name, Hash, Bytes} | Batch]};
         false -> throw({hash_mismatch, Name})
     end;
-planned({Name, Hash, Size, fetch}, #load{queue = Queue, batch = Batch} = Load) ->
-    %% A placeholder holds the blob's place in the batch until its bytes arrive.
-    Load#load{queue = [{Name, Hash, Size} | Queue], batch = [{Name, Hash, fetch} | Batch]}.
+planned({Name, Hash, Size, fetch}, #load{queue = Queue} = Load) ->
+    Load#load{queue = [{Name, Hash, Size} | Queue]}.
 
 %% Step 2: ask for the next blob's first piece, or load the batch once every blob is in.
 next_blob(Core, #load{queue = [{Name, Hash, Size} | Rest], alias = Alias} = Load) ->
     {Core#core{load = Load#load{queue = Rest, fetching = {Name, Hash, Size, 0, []}}},
      [{send, Alias, {erx_code_get, Alias, Hash, 0}}]};
 next_blob(Core, #load{queue = [], batch = Batch} = Load) ->
-    {Core#core{load = Load#load{step = load}}, [{load_batch, lists:reverse(Batch)}]}.
+    {Core#core{load = Load#load{stage = load}}, [{load_batch, lists:reverse(Batch)}]}.
 
-blob(Core, Load, Name, Hash, Size, Bytes) ->
+blob(Core, #load{batch = Batch} = Load, Name, Hash, Size, Bytes) ->
     case checked(Hash, Size, Bytes) of
-        true -> next_blob(Core, Load#load{batch = arrived(Name, Hash, Bytes, Load#load.batch)});
+        true -> next_blob(Core, Load#load{batch = [{Name, Hash, Bytes} | Batch]});
         false -> answered(Core, Load, {error, {hash_mismatch, Name}})
     end.
-
-arrived(Name, Hash, Bytes, Batch) ->
-    lists:keyreplace(Name, 1, Batch, {Name, Hash, Bytes}).
 
 checked(Hash, Size, Bytes) ->
     byte_size(Bytes) =:= Size andalso erx_bytes:sha256(Bytes) =:= Hash.
 
 %% Step 3's answer, and step 4's start in a supervised domain after ok.
 answered(#core{supervised = true} = Core, #load{alias = Alias} = Load, ok) ->
-    {Core#core{load = Load#load{step = keep, queue = [], batch = []}},
+    {Core#core{load = Load#load{stage = keep, queue = [], batch = []}},
      [{send, Alias, {erx_code_loaded, Alias, ok}}]};
 answered(#core{phase = start}, #load{alias = Alias}, Error) when Error =/= ok ->
-    {exit_core(), [{send, Alias, {erx_code_loaded, Alias, Error}}, {exit, {start_load, Error}}]};
+    {stop, {start_load, Error}, [{send, Alias, {erx_code_loaded, Alias, Error}}]};
 answered(Core, #load{alias = Alias}, Result) ->
     done(Core, [{send, Alias, {erx_code_loaded, Alias, Result}}]).
 
@@ -233,7 +232,3 @@ done(#core{phase = start} = Core, Effects) ->
     {Core#core{load = none, phase = running}, Effects ++ [started]};
 done(Core, Effects) ->
     {Core#core{load = none}, Effects}.
-
-%% The core after an exit effect, which the edge never steps again.
-exit_core() ->
-    #core{supervised = false, phase = running}.

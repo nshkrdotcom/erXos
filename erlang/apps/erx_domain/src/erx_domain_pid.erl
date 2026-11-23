@@ -240,15 +240,13 @@ inspect_agent(Report, #{id := Id} = State) ->
             {none, dropped(State)}
     end.
 
-inspect_verdict(Report, #{node := Node} = State) ->
+inspect_verdict(Report, State) ->
     case maps:find(inspect, Report) of
-        {ok, Inspect} when is_pid(Inspect), node(Inspect) =:= Node ->
+        {ok, Inspect} ->
             case is_owned(Inspect, State) of
                 true -> {kept, Inspect};
                 false -> refused
             end;
-        {ok, _Other} ->
-            refused;
         error ->
             absent
     end.
