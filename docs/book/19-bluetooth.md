@@ -3,11 +3,14 @@
 > **Status.** Built, with host tests, but run on no board: the H4
 > framing and the HCI codec, the controller process with its
 > supervision, the patch reader, the advertising data and identity
-> address, and the line tree with its keeper in the system domain.
+> address, and the line tree with its keeper in the system domain; and
+> the `ble` interface, its manifest check and the facet's mint with
+> its one request check, which has a fuzz target.
 > Designed: running the Bluetooth domain on the Raspberry Pi 4, the
 > controller's power cycle, serving the line to a file grant, the
-> GATT server with its access gate and the `ble` facet, the serial
-> service, pairing and bonding, and tests against a Bumble peer.
+> GATT server with its access gate, an installed app's own `ble` grant
+> and the handler that owns each service, the serial service,
+> pairing and bonding, and tests against a Bumble peer.
 
 **Background needed.** [Chapter 3](03-erlang.md), sections 3.3 and
 3.4: links, supervisors and restart strategies.
@@ -181,7 +184,7 @@ the chip is decoded in the Bluetooth domain, which holds no device.*
 
 The build makes a release of the stack, `erx_bt`, for a domain named
 `bt`, but no manifest erXos ships names that domain or grants a line,
-so no boot runs it. The `ble` facet is Designed.
+so no boot runs it. An app's own `ble` grant is Designed (section 19.6).
 
 ## 19.3 The HCI codec
 
@@ -428,8 +431,9 @@ characteristic tx 6e400003-b5a3-f393-e0a9-e50e24dcca9e 244 notify open
 ```
 
 Each characteristic names its accesses and the level each requires:
-`open`, `encrypted` or `authenticated`. The manifest selects which
-services a machine serves. The Bluetooth domain builds its attribute
+`open`, `encrypted` or `authenticated`. The domain serves every service
+that some `ble` grant of the machine names, a configured domain's or the
+one every installed app's grant is cut from (below). The Bluetooth domain builds its attribute
 table once at its start, and nothing adds or moves an attribute while
 the domain lives, so no attribute handle moves under a connected
 phone.
@@ -442,6 +446,37 @@ phone cannot send the link's security: it is set only when the
 controller reports that encryption started, and a link is encrypted
 with at most one key in its lifetime, so the level cannot change
 under it. No app checks security, so none can forget to.
+
+Who may offer a service to phones? Whoever holds a **`ble` grant**, a
+facet of the Bluetooth domain whose one parameter names the services
+its holder handles
+([design-bluetooth.md, The `ble` facet](../design-bluetooth.md#the-ble-facet)).
+A configured domain holds one by a row of the manifest. An installed
+app holds its own, without anyone editing the manifest: the board's
+`apps` row says which GATT services apps may handle (the Raspberry Pi 4's
+development row offers `nus` alone), the package names the ones it
+handles in its own `gatt` field, and install checks that every name is
+offered and that no other app already declares it
+([chapter 23](23-apps.md#2313-one-row-bounds-every-app)). Each session
+of the app then holds the row narrowed to its package's services, so
+the app can handle those services and no others. A service that no
+installed app handles is still in the table; it answers reads from its
+declared values and refuses writes. Installing, updating or removing an
+app therefore never changes the table or the advertising data. The Pi 4's
+development card carries the terminal echo as a second package, so the
+board's checklist exercises this path
+([design-bluetooth.md, Decisions](../design-bluetooth.md#decisions)); the
+published card carries the kiosk alone.
+
+A service has at most one handler, the process that attached to it, and
+everything about the service that changes while the domain lives
+belongs to that handler. The registry accepts `set`, `notify` and
+`indicate` only from the handler. A write from a phone reaches the
+handler that owned the service when the write's first byte arrived, or
+nobody, so bytes sent while one app owned a service never reach the
+next. When a handler ends, each link is told, serves the declared
+values again, and drops the service's queued notifications
+([design-bluetooth.md, A service belongs to its handler](../design-bluetooth.md#a-service-belongs-to-its-handler)).
 
 Pairing happens only in a window that someone opened by opening the
 control tree's `pair` file, and the window ends with its first
@@ -505,8 +540,8 @@ reachable from radio range reaches no driver.
 stacks the design surveyed have an application register its attribute
 table in code, which brings attribute handles allocated while phones
 are connected, announcements that the table changed, and conflicts
-between apps. Configuration removes them; a newly installed app's
-table takes effect at the domain's next start.
+between apps. Configuration removes them: the table is built once from
+the declarations, and installing an app changes no attribute.
 
 **A power cycle and a fresh UART at every reset.** Without them, each
 bring-up would need a case for every state the last one could leave:

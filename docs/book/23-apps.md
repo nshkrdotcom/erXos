@@ -12,7 +12,7 @@
 > **Designed:** installing, updating and removing through `/apps`,
 > `mount` of a package, `service NAME purge`, `/proc/packages`, the
 > app's budget as a wall carved at each session's start, the `flags`
-> field, the SDK's host tools, `erx-app test`, and `/svc/NAME`.
+> and `gatt` fields, the app's own `ble` grant, the SDK's host tools, `erx-app test`, and `/svc/NAME`.
 
 **Background needed.** [Chapter 8](08-kernel-interface.md) (the
 kernel interface), [chapter 11](11-security.md) (facets, file grants,
@@ -164,7 +164,10 @@ It says that all apps together share 66 MiB, that one boot holds at
 most one app, and that an app may ask for the display and the network,
 nothing else ([design-packaging.md, The `apps` row](../design-packaging.md#the-apps-row)).
 QEMU `virt`'s development manifest has a row with four apps and the
-same two services (`config/manifest/qemu-virt-development.txt`).
+same two services (`config/manifest/qemu-virt-development.txt`). A board
+that lets apps handle Bluetooth services adds `ble` to `services` and a
+`gatt` line naming the services it offers; the Raspberry Pi 4's development
+row is designed to offer `nus` alone.
 
 From the row the build derives the **app template**, one session
 template every app's sessions use. Its release boots the system's
@@ -223,6 +226,7 @@ Every other field has a default, as Table 23.1 shows
 | `applications` | the OTP applications to start | one of these two |
 | `program` | a path under `bin/` and its arguments | one of these two |
 | `needs` | services of the `apps` row it takes | none |
+| `gatt` | the GATT services it handles through its own `ble` grant | none |
 | `memory` | what its session's own budget holds | 64 MiB, at least 4 MiB |
 | `version` | a number the inspector shows | 1 |
 | `license` | an SPDX license expression | none |
@@ -231,7 +235,14 @@ Every other field has a default, as Table 23.1 shows
 
 The design adds one more field, `flags`, the default start flags of
 the app's start row; it is designed and not built, and the packer
-refuses it as an unknown field.
+refuses it as an unknown field. The `gatt` field in Table 23.1 is
+designed too: an app that handles a phone's serial line names the
+Bluetooth services it handles, the `apps` row's own `gatt` field lists
+the ones the board offers, and install refuses a name the row does not
+offer or another app already holds. That, not `needs`, is how an app
+takes `ble`: its sessions hold the Bluetooth grant narrowed to the
+services its package names
+([chapter 19, section 19.6](19-bluetooth.md#196-the-design-above-the-controller)).
 
 What the table lacks is the point. A declaration names no facet
 parameter, quota, CPU share, environment variable or grant, and there
