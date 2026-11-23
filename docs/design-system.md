@@ -1008,7 +1008,10 @@ and 6 give way to the partial boot below.
    secure lines. The login asks the domain service, which alone reads the
    system principal from the system manifest, for that principal
    (`erx_domain:system_principal/0`) and then for root's session,
-   from the system principal's session template, and the session takes
+   from the system principal's session template. The domain service
+   holds every session's start until the system release has started its
+   last application, so each session is granted every service the system
+   domain serves, whichever application names it. The session takes
    the line once its tty names itself, with its namespace in place
    ([A session takes the console](#a-session-takes-the-console)); the system shell stays one menu
    key away, and when the session ends the console logs `root` in again

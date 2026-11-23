@@ -179,9 +179,10 @@ A ready answer carries only the services named by then. A service the
 manifest grants a configured domain is named while its application starts,
 before the domain service starts, which creates those domains. A service granted
 only to session templates may be named later, by an application started after
-the domain service, as the start service's `apps` is; a session that reported
-ready before then has none of it until it restarts (TODO.md). A second call for
-Name replaces the first. {error, badarg} for a Name that is no atom or a Pid
+the domain service, as the start service's `start` tree is, but before any
+session starts: the domain service holds every session's start until the
+release's boot has ended (erx_domain_srv). A second call for Name replaces
+the first. {error, badarg} for a Name that is no atom or a Pid
 that is no local process.
 """.
 -spec serve(atom(), pid()) -> ok | {error, badarg}.

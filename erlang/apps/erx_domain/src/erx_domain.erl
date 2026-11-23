@@ -119,6 +119,10 @@ system principal, and the lowest number no living session of the principal
 holds: root_1 and root_2 beside it, or clock_1 for principal clock. {error,
 no_template} for a principal with no template, {error, no_name} for one
 the manifest does not name, and every error of create/1 else.
+
+The service holds the start until the system release's boot has ended
+(erx_domain_srv), so an application's start must never wait on it: the
+boot would never end.
 """.
 -spec start_session(pos_integer(), #{console => term(), display => atom(), default_display => atom()}) ->
           {ok, domain()} | {error, term()}.
@@ -137,7 +141,8 @@ start service's keepers are its only callers (PK7, the build check
 app-starters), since an app principal has no credentials and no login
 starts its session (AP2). {error, no_app} for a name not registered, a
 display the session does not hold refuses it as start_session/2 does, and
-every error of create/1 else.
+every error of create/1 else. The service holds it, as start_session/2's
+start, until the system release's boot has ended.
 """.
 -spec start_app(binary(), #{display => atom(), default_display => atom()}) -> {ok, domain()} | {error, term()}.
 start_app(Name, Start) when is_binary(Name), is_map(Start) ->

@@ -260,13 +260,9 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   deadline, settles that wait as failed: the read answers an error and the manifest's enabled rows start before
   `rc.conf` is known, so a row `rc.conf` disables runs until the read succeeds. Waiting through a storage
   restart within its intensity would close it (`erlang/apps/erx_starter/src/erx_starter.erl`).
-* [Low] The start service's tree, `start` (`erx_starter_fs`), is served once `erx_starter` starts, after
-  `erx_domain`, whose start has the console ask for root's session: root's session gets `/etc/start` only because
-  its boot outlasts the next application's start. A session that reported ready before then has no `/etc/start`
-  until it restarts. Serving the start service's tree before the login (or the login after every application)
-  makes it hold by construction. The grants of `start` also end with a crash of `erx_starter_sup` itself, or of the tree's grants supervisor,
-  and nothing grants a session no keeper kept (root's console session among them) a new one, as for every service
-  the system domain serves.
+* [Low] The grants of the start service's tree, `start` (`erx_starter_fs`), end with a crash of `erx_starter_sup`
+  itself, or of the tree's grants supervisor, and nothing grants a session no keeper kept (root's console session
+  among them) a new one, as for every service the system domain serves.
 * [Medium] The keepers' branch is a permanent child of the start service's top supervisor (`erx_starter_sup`), so
   an end of its records process (`erx_starter_records`) or of its own intensity restarts it with no records, and the
   restarted table applies `rc.conf` to every row again, starting rows no command started. The design makes the

@@ -38,6 +38,13 @@ end has already told the caller it is gone, so a login started again on a
 killed session's end would otherwise be refused. The hold is bounded by
 release_wait, after which the library answers the start as it stands.
 
+A session's or an app's start is held, too, while the system release boots,
+and runs once init reports the boot started (after_boot/3): the
+services of the system domain a session is granted are those named by its
+ready report (served/3), and an application started after the domain service,
+as the start service is, names its own only as it starts. No application's
+start waits on a session's, so the hold ends with the boot.
+
 It also introduces domains (docs/design-domains.md, "Introduction and
 connection down"): introduce/2 has the library connect two domains and
 erx_domain_links, the connection protocol's pure core, decide which
@@ -183,6 +190,7 @@ init(Opts) ->
     ok = erx_facet:serve(code_objects, self()),
     ok = erx_facet:serve(pci_bus, self()),
     ok = erx_facet:serve(pci, self()),
+    ok = watch_release(),
     case principals(Lib, Opts) of
         {ok, Principals} ->
             {ok, booted(state(Lib, Principals, Opts)), {continue, boot}};
@@ -223,9 +231,11 @@ state(Lib, Principals, Opts) ->
     %% from which each session's rows are decided once, as it is planned (session_rows/2).
     %% Boot_timeout is the machine's boot timeout in milliseconds, which bounds every
     %% domain's wait for its init's ready report unless its request sets its own.
+    %% Release is the system release's boot (watch_release/0): booting, with each
+    %% session's or app's start that came early, newest first, or booted.
     MintConfig = maps:merge(#{owner => fun erx_dist:owner/1}, maps:with([owner, deadline], maps:get(mints, Opts, #{}))),
     #{lib => Lib, agent => Agent, exports => Exports, node => erlang:is_alive(), core => undefined,
-      boot_timeout => ?BOOT_TIMEOUT,
+      boot_timeout => ?BOOT_TIMEOUT, release => {booting, []},
       configured => #{}, templates => #{}, waiting => #{}, system_waiting => [], display_waiting => [], grant_waiting => [],
       links => erx_domain_links:new(),
       introducing => #{}, introduce_timeout => maps:get(introduce_timeout, Opts, ?INTRODUCE_TIMEOUT),
@@ -452,9 +462,9 @@ templates(Lib) -> Lib:templates().
 handle_call({create, Spec}, From, State) ->
     {noreply, start({create, Spec}, From, State)};
 handle_call({start_session, Principal, Start}, From, State) ->
-    {noreply, start({start_session, Principal, Start}, From, State)};
+    {noreply, after_boot({start_session, Principal, Start}, From, State)};
 handle_call({start_app, Name, Start}, From, State) ->
-    {noreply, start({start_app, Name, Start}, From, State)};
+    {noreply, after_boot({start_app, Name, Start}, From, State)};
 handle_call({info, Id}, From, #{core := Core} = State) ->
     %% The domain pid answers the caller itself, so a flood in its mailbox delays only
     %% this caller, never the service.
@@ -518,6 +528,31 @@ handle_call({code_drop, Session, Number}, _From, #{lib := Lib} = State) ->
     {reply, Lib:code_drop(Session, Number), State};
 handle_call(_Request, _From, State) ->
     {reply, {error, badarg}, State}.
+
+%% Tells the service release_booted (handle_info/2) once the system release's boot has
+%% ended, after its last application has started: at once after the boot, and else
+%% when init says so. A helper waits for init, so no {init, started} sits in the
+%% service's own mailbox, where an init request of the service would take it.
+watch_release() ->
+    Service = self(),
+    _ = spawn(fun() ->
+                      ok = case init:notify_when_started(self()) of
+                               started -> ok;
+                               ok -> init:wait_until_started()
+                           end,
+                      Service ! release_booted
+              end),
+    ok.
+
+%% A session's or an app's start from From: held while the system release's boot runs,
+%% and run (start/3) once it has ended, so the domain service grants a session the
+%% services of the system domain (served/3) only after every application of the
+%% release has named its own (erx_facet:serve/2), whatever their order. A create is
+%% not held: the manifest grants a domain created on request nothing (served/3).
+after_boot(Start, From, #{release := {booting, Early}} = State) ->
+    State#{release := {booting, [{Start, From} | Early]}};
+after_boot(Start, From, #{release := booted} = State) ->
+    start(Start, From, State).
 
 %% A create or a session's start from From: run now, or held while a domain of its
 %% principal is ending (ending/2) or an earlier start of the principal is held, so the
@@ -673,6 +708,9 @@ handle_info({'EXIT', Pid, _Reason}, #{core := Core} = State) when Core =/= undef
         _ -> ok
     end,
     {noreply, pid_ended(Pid, State)};
+handle_info(release_booted, #{release := {booting, Early}} = State) ->
+    {noreply, lists:foldl(fun({Start, From}, Next) -> start(Start, From, Next) end,
+                          State#{release := booted}, lists:reverse(Early))};
 handle_info(_Message, State) ->
     {noreply, State}.
 

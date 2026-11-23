@@ -68,18 +68,18 @@ module Erx
     ERL = ProductionImage::Run::ERL_LINE
     # The domain ids root's sessions take. The development manifest configures six domains,
     # display, network, pcie, storage, usb and web, and the console's login starts root's
-    # first session as the domain service starts; those seven starts take the ids above the
-    # system domain's, 5 to 11, so root's next session takes 12 (NEXT_SESSION), and each
-    # later start of a session or of a configured domain takes the next, a refused one too,
-    # since admission spends the id.
+    # first session; those seven starts take the ids above the system domain's, 5 to 11, so
+    # root's next session takes 12 (NEXT_SESSION), and each later start of a session or of
+    # a configured domain takes the next, a refused one too, since admission spends the id.
     #
-    # Of the seven, the five configured rows holding no pci device start first, at 5 to 9,
-    # and the login's session takes 10. The boot holds usb, whose xHCI is a pci device,
-    # until the device service has answered the PCIe domain's report (docs/design-pcie.md,
-    # "The hold at boot"), which waits for that domain's runtime to boot and enumerate, so
-    # usb takes 11, after the login's session.
+    # Of the seven, the five configured rows holding no pci device start first, at 5 to 9.
+    # The boot holds usb, whose xHCI is a pci device, until the device service has answered
+    # the PCIe domain's report (docs/design-pcie.md, "The hold at boot"), and the domain
+    # service holds the login's session until the system release's boot has ended
+    # (erx_domain_srv), so the two take 10 and 11 in whichever order their holds end:
+    # root's first session is one of FIRST_SESSIONS.
     BOOT_STARTS = 7
-    FIRST_SESSION = 10
+    FIRST_SESSIONS = [10, 11].freeze
     NEXT_SESSION = MediumBoot::CONFIGURED_ID + BOOT_STARTS
     # A domain id no domain takes in a boot of this cell, which starts far fewer: a path
     # that names it answers `scope` at every scope, root's `all` among them, as a domain
@@ -199,7 +199,7 @@ module Erx
     TOP = "top -b\r"
     TOP_FIRST = /\Arun queue: [0-9]+;  up [0-9]+\+[0-9]{2}:[0-9]{2}:[0-9]{2}    /n
     TOP_MEMORY = /\AMem \(root pool\): [0-9]+[KMG] Total, [0-9]+[KMG] Free\r*\n\z/n
-    TOP_BUDGET = /\ADomain #{FIRST_SESSION} budget(?: \([^)]+\)| \[[a-z ]+\])?: /n
+    TOP_BUDGET = /\ADomain (?:#{FIRST_SESSIONS.join('|')}) budget(?: \([^)]+\)| \[[a-z ]+\])?: /n
     # `cat /proc/status` at root_1's command shell: the machine's record through the
     # session's /proc tree, its uptime line first.
     PROC_STATUS = "cat /proc/status\r"
