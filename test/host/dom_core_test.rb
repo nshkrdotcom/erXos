@@ -23,6 +23,7 @@ class DomCoreTest < Minitest::Test
   ENOMEM = -6
   ELIMIT = -7
   EBUSY = -8
+  ENOTSUP = -12
 
   # The creation order of design-system.md, "Creating a domain", step 2.
   REQUEST_STEPS = %w[CARVE:BUDGET CARVE:OUTER SPACE:SPACE GROUP:GROUP MEM:BOOTINFO MEM:CRASH
@@ -107,7 +108,13 @@ class DomCoreTest < Minitest::Test
        'span > window->size - (bar->address - window->pci))', 'false)'],
     'an unplaced bar is held to the placing bound' =>
       ["\t\treturn (!ready || bar->kind != ERX_PCIE_BAR_MEMORY);\n",
-       "\t\treturn (bar->size_log2 <= ERX_PCIE_BAR_SIZE_LOG2_MAX && (!ready || bar->kind != ERX_PCIE_BAR_MEMORY));\n"]
+       "\t\treturn (bar->size_log2 <= ERX_PCIE_BAR_SIZE_LOG2_MAX && (!ready || bar->kind != ERX_PCIE_BAR_MEMORY));\n"],
+    'a power row resolves for a device with no power line' =>
+      ["\tif (!view->devices[device].power_line)\n\t\treturn (ERX_ENOTSUP);\n", ''],
+    'a bridge notification resolves for a device with no catalogue' =>
+      ['if (view->pci_bridges[at].facts.index == bridge)', 'if (true)'],
+    'a firmware row of another tag resolves' =>
+      ['if (view->firmware[at].tag != tag)', 'if (view->firmware[at].tag != tag && false)']
   }.freeze
 
   def setup
@@ -316,6 +323,22 @@ class DomCoreTest < Minitest::Test
     'pci firmware busy lost=0', 'pci firmware timedout lost=1', 'pci firmware ok lost=1'
   ].freeze
 
+  # Each of the allow-list's checks refuses a case no other does: a power row of a
+  # bridge's notification, and a notification of a power line, are refused by the
+  # tag; a power row of a device with no line by the line; a notification of a
+  # device with no catalogue by the catalogue (docs/design-fiasco.md, "The firmware
+  # request"; docs/design-bluetooth.md, "The power line").
+  FIRMWARE = [
+    'firmware bridge 0 tag=0x30058 argument=0x100000', "firmware bridge_power_tag #{ENOTSUP}",
+    'firmware line 0 tag=0x38041 argument=0x80', "firmware line_notify_tag #{ENOTSUP}",
+    "firmware line_past_rows #{ENOTSUP}", "firmware no_line #{ENOTSUP}", "firmware no_catalogue #{ENOTSUP}",
+    "firmware outside #{EINVAL}", "firmware outside_line #{EINVAL}"
+  ].freeze
+
+  def test_a_firmware_row_resolves_only_on_the_allow_list
+    assert_equal FIRMWARE, run_driver(driver, 'firmware')
+  end
+
   def test_a_pci_report_is_taken_whole_or_refused
     assert_equal PCI, run_driver(driver, 'pci')
   end
@@ -334,7 +357,7 @@ class DomCoreTest < Minitest::Test
 
   private
 
-  MODES = %w[explore cases seeded principal record gives apps pci].freeze
+  MODES = %w[explore cases seeded principal record gives apps pci firmware].freeze
 
   def clean_lines = @clean_lines ||= MODES.flat_map { |mode| run_driver(driver, mode) }
 

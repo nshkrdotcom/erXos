@@ -5,7 +5,7 @@
 
 /*
  * Host driver for the domain library's pure core (liberx/system/dom_core.c),
- * judged by test/host/dom_core_test.rb. Five modes:
+ * judged by test/host/dom_core_test.rb. Nine modes:
  *
  * explore  plans each creation variant, prints its steps, then applies it
  *          to an independent model of budgets and objects, failing at
@@ -20,6 +20,10 @@
  *          "seeded NAME STATUS", after the constructor cases' "ctor" lines.
  * principal  checks one principal configuration per case.
  * record   records plans into the view and prints what each left there.
+ * gives    gives devices to domains and prints each give's status.
+ * apps     plans app sessions against the apps budget.
+ * pci      takes PCIe reports into a bridge's catalogue.
+ * firmware resolves firmware request rows against the allow-list.
  */
 
 #include <stdbool.h>
@@ -1279,6 +1283,54 @@ pcis(void)
 	return (0);
 }
 
+/*
+ * The firmware requests' allow-list (erx_dom_bridge_row, erx_dom_power_row) over a
+ * view built here, so each of its three checks has a case only it refuses: a
+ * device's power line, a bridge's catalogue, and a row's tag. Devices: 0 a bridge
+ * with its notification; 1 a bridge whose first row is a power row; 2 a power line
+ * whose second row is a notification; 3 a device with no line whose row is a power
+ * row; 4 a device with no catalogue whose row is a notification. Each case prints
+ * "firmware NAME STATUS", and an answered one its row's tag and first argument.
+ */
+static void
+firmware_case(const char *name, erx_status_t status, const erx_mf_firmware_request_t *row)
+{
+	if (status == ERX_OK)
+		printf("firmware %s 0 tag=0x%x argument=0x%x\n", name, (unsigned)row->tag,
+		    (unsigned)row->arguments[0]);
+	else
+		printf("firmware %s %d\n", name, (int)status);
+}
+
+static int
+firmwares(void)
+{
+	static const erx_dom_device_entry_t entries[5] = { [2] = { .power_line = true } };
+	static const erx_dom_pci_bridge_t bridges[2] = { { .facts = { .index = 0 } }, { .facts = { .index = 1 } } };
+	static const erx_mf_firmware_request_t rows[] = {
+		{ .device = 0, .tag = ERX_FW_TAG_NOTIFY_XHCI_RESET, .arguments = { 0x100000 } },
+		{ .device = 1, .tag = ERX_FW_TAG_SET_GPIO_STATE, .arguments = { 0x80 } },
+		{ .device = 2, .tag = ERX_FW_TAG_SET_GPIO_STATE, .arguments = { 0x80 } },
+		{ .device = 2, .tag = ERX_FW_TAG_NOTIFY_XHCI_RESET, .arguments = { 0x100000 } },
+		{ .device = 3, .tag = ERX_FW_TAG_SET_GPIO_STATE, .arguments = { 0x80 } },
+		{ .device = 4, .tag = ERX_FW_TAG_NOTIFY_XHCI_RESET, .arguments = { 0x100000 } },
+	};
+	const erx_dom_view_t fw = { .devices = entries, .ndevices = 5, .pci_bridges = bridges,
+	    .npci_bridges = 2, .firmware = rows, .nfirmware = sizeof(rows) / sizeof(rows[0]) };
+	erx_mf_firmware_request_t row;
+
+	firmware_case("bridge", erx_dom_bridge_row(&fw, 0, &row), &row);
+	firmware_case("bridge_power_tag", erx_dom_bridge_row(&fw, 1, &row), &row);
+	firmware_case("line", erx_dom_power_row(&fw, 2, 0, &row), &row);
+	firmware_case("line_notify_tag", erx_dom_power_row(&fw, 2, 1, &row), &row);
+	firmware_case("line_past_rows", erx_dom_power_row(&fw, 2, 2, &row), &row);
+	firmware_case("no_line", erx_dom_power_row(&fw, 3, 0, &row), &row);
+	firmware_case("no_catalogue", erx_dom_bridge_row(&fw, 4, &row), &row);
+	firmware_case("outside", erx_dom_bridge_row(&fw, 5, &row), &row);
+	firmware_case("outside_line", erx_dom_power_row(&fw, 5, 0, &row), &row);
+	return (0);
+}
+
 static int
 apps(void)
 {
@@ -1507,7 +1559,9 @@ main(int argc, char **argv)
 		return (apps());
 	if (argc == 2 && strcmp(argv[1], "pci") == 0)
 		return (pcis());
+	if (argc == 2 && strcmp(argv[1], "firmware") == 0)
+		return (firmwares());
 	fprintf(stderr,
-	    "usage: dom_core_driver explore|cases|seeded|principal|record|gives|apps|pci\n");
+	    "usage: dom_core_driver explore|cases|seeded|principal|record|gives|apps|pci|firmware\n");
 	return (2);
 }
