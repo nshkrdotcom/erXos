@@ -130,6 +130,14 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
 
 ## Planned features
 
+* [Medium] bluetooth, inspection (docs/design-bluetooth.md, "Inspection"): `/proc/bt` (the controller, each
+  connection, each bond with no key, and the counters) is not declared in `abi/inspection.txt`, and the domain
+  serves none of it; declare the path and serve it from the domain's agent, with `unknown` for a value the
+  domain does not know.
+* [Medium] line service, inspection (docs/design-bluetooth.md, "Inspection"): the line service's line at the
+  system domain's `/proc` (bytes each way, breaks, resets) is not declared in `abi/inspection.txt`; declare it,
+  and move counters the line drivers write to the log, such as `erx_mini_uart`'s receive overruns
+  (todo-drivers.md), onto it.
 * [Medium] bluetooth, the Pi 4's patch (docs/design-bluetooth.md "The bring-up", step 4, and "Decisions", 4):
   the Pi 4's development manifest names no patch, so its controller runs on the ROM alone, because no Pi 4 image
   carries `BCM4345C0.hcd` and the fetch step does not pin it; fetch and pack it into `erx_bt`'s `priv` directory of

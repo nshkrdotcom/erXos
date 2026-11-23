@@ -764,6 +764,11 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
 
 ## Planned features
 
+* [Low] DMA check and device NIF, simplicity pass (CLAUDE.md, "Checks stay few and earn their place"): the DMA
+  check is past the 1,000-line mark (`erx_device_ledger.c`, `erx_device_sequencer.c`, `erx_device_rules.c` and
+  their headers, about 3,600 lines), and `otp/erts/emulator/nifs/erxos/erx_device.c` (about 3,250 lines) holds the
+  open, three forms' glue, MSI-X, the xHCI register walk and the virtio and GENET stand-ins. Give both a
+  simplicity pass before either grows further.
 * [Low] line groups (`erx_uart_sup:fresh/2`): a manifest binary whose line-interface service is not named `line`,
   which the manifest check refuses but the root's reader does not, gives a line record with no grant and a badmatch
   that stops `erx_uart`; refuse it with a stated reason.
