@@ -602,9 +602,14 @@ least one key it writes each as one canonical `ssh-ed25519` line, keeping
 only the keys `erx_boot_keys:decode/1` takes back from those lines, in a
 `.ssh` directory of mode 0700, the file 0600, whole and synced under
 another name and renamed into place, so the home copy is absent or
-whole. `eagain`, which the tree answers while the storage domain's reader
-runs, `eio`, which holds until the storage domain restarts, and a
-session without the grant yet write nothing and are tried again, every half second for up to ten minutes. An answer of no
+whole. The import waits for the session's `home` and `login_keys`
+facets with `erx_facets:await/3`
+([design-system.md](design-system.md#waiting-for-a-grant)), as the
+daemon's start waits for `net` and `data`, all within ten minutes of
+the boot. `eagain`, which the tree answers while the storage domain's
+reader runs, and `eio`, which holds until the storage domain restarts,
+write nothing and are tried again every half second within the same
+ten minutes. An answer of no
 key, of no whole number of blobs within 16, or of blobs that are no
 Ed25519 key writes no file, so no empty home copy shuts the medium's
 keys out. A home copy that is there, whatever it holds, is never read

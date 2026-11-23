@@ -762,7 +762,7 @@ the rows of the boot's package set when it arrives
 ([When the file is read](#the-start-table)). The keeper of a row that
 names a display waits, before each start of its session, until that
 display's server has settled: reported ready, or no longer starting
-(`erx_domain:display_settled/1`,
+(`erx_domain:server_settled/1`,
 [design-system.md](design-system.md#a-session-takes-the-console)). So
 the row is kept, and holds its display, from its admission on, while
 its session waits. The rescue configuration starts no row.
@@ -1227,7 +1227,7 @@ durability runs over the storage power-cut harness's simulated medium
   acts without reading the file, which answers `enotsup` to a start the
   file has enabled;
 * a row's supervisor: a keeper that does not link to its session; a
-  keeper that asks `display_settled/1` only before its first start;
+  keeper that asks `server_settled/1` only before its first start;
 * judging a command: a judgement made from the table before the read;
   `one` forms judged as ordinary ones, which refuse `onestart` of a
   disabled row; a display check that counts the row itself, which

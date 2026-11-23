@@ -1940,18 +1940,24 @@ of its input numbers
 
 The display follows its input grants with one supervised process,
 `erx_input_follower`, which `erx_fb_sup` starts after the virtio-input
-drivers. Once a second, the first time as it starts, it reads the
-domain's grants of the `input` interface; the names arrive with the
-ready answer, after the display's applications start, so a first look
-that finds none is normal. For each name it does not follow yet whose
-facet is installed, it resolves the grant once, monitors the grant's
+drivers. It reads the domain's grants of the `input` interface and its
+registry as it starts and again after each installation, which it waits
+for with `erx_facets:changed/1`
+([design-system.md](design-system.md#waiting-for-a-grant)); the names
+arrive with the ready answer, after the display's applications start,
+so a first read that finds none is normal. It keeps, for each name, the
+facet it last followed. For each name whose installed facet is another
+than that one, it stops the tree's readers if it still follows the
+old facet, then resolves the grant once, monitors the grant's
 process, lists the tree, attached by `input_tree`, the name every input
 service serves its tree under, in a process of its own, so a slow server holds
 up no other tree, and starts one reader for each file on that same
-grant. When the grant ends it stops that tree's readers and waits for
+grant. A listing that fails is tried again a second later on the same
+grant: a retry of the server's answer, not a look for grants. When the grant ends it stops that tree's readers and waits for
 each to end before anything else, so no reader of the old grant runs
-beside a replacement, and forgets the tree; the next look
-finds the server's new grant once the domain service installs it. Each
+beside a replacement, and keeps the ended facet as the one it last
+followed, so the installation of the server's new grant starts the
+tree again, whether it comes before or after that end. Each
 tree is followed independently, and a reader's end at its file's end
 alone does not restart the tree. Each reader is the
 source of its file's records: it decodes each read with

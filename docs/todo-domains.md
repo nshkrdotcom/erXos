@@ -600,6 +600,42 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
 
 ## Planned features
 
+* [Medium] grants, one wait per kind of fact ([design-system.md](design-system.md#waiting-for-a-grant);
+  `otp/erts/preloaded/src/erx_facets.erl`, `erlang/apps/erx/src/erx_connections.erl`,
+  `erlang/apps/erx_domain/src/erx_domain_srv.erl`, `erx_domain_mints.erl`, `erx_devices_pci.erl`,
+  `erx_devices_pci_core.erl`): build the design's three waits and delete what they replace. Each step lands
+  with its host tests and the design's seeded faults.
+  1. Registry wait. `erx_facets.erl:67-76`: the value carries a generation that `install/1` raises; add
+     `await/3` and `changed/1`. `erx_connections.erl`: both loops (`sides/3` at :184, `records/3` at :373)
+     answer `changed` and keep the pid-keyed map; `install/1` is a call the system domain's loop takes;
+     :382-390 writes `{erx, granted}` before the install. `erx_domain_srv.erl:1849-1852` installs through
+     `Agent:install/1` and acknowledges on its answer. `tools/lib/erx/chokepoint_rules/facets.rb:12`:
+     `FACETS_WRITERS` is `erx_connections` alone, and the rule's text says so.
+  2. The two polls. `erlang/apps/erx_session/src/erx_ssh_dev.erl:90-93,121-158`: `start_when_granted/2`
+     becomes `await/3` on `net` and `data`, the import's `home` and `login_keys` likewise, within one
+     ten-minute deadline; the retry of `eagain` and `eio` stays. `erlang/apps/erx_display/src/erx_input_follower.erl`:
+     the `look` timer (:52-56 `look_ms`, :65-71, :89-91) becomes `changed/1`, and a tree's entry keeps the facet
+     last followed; a failed listing retries after a second.
+  3. Settlement wait. `erx_domain_srv.erl`: `system_waiting`, `display_waiting` and `grant_waiting`
+     (:210-215, :239), their three `handle_call` clauses (:485-497) and `answer_system/2`,
+     `answer_displays/2`, `answer_grants/1` (:1776-1796) become one `settling` list, one clause taking
+     `{settled, Query}` and `erx_domain_mints:settled/3`. `erlang/apps/erx_domain/src/erx_domain.erl:217-219`:
+     `display_settled/1` becomes `server_settled/1` (callers `erx_starter.erl:562`, the tests
+     `erx_starter_tests.erl:256`, `erx_domain_tests.erl:412`, `erx_domain_mints_srv_tests.erl:55,834-853`,
+     and `docs/todo-apps.md`'s two references).
+  4. The hold moves. Out of `erx_domain_srv.erl`: `PCI_HOLD_AFTER_READY` and its option (:148-151, :172,
+     :243), `pci_hold` (:220-221), `pci_hold/2` through `pci_held/1` (:317-398), the cast and timer clauses
+     (:638-639, :666-667), the calls at :680, :1103, :1658 and :1756, and the moduledoc's paragraph (:26-31).
+     `handle_continue(boot)` (:308-315) asks `erx_devices:held_at_boot/1` and holds the rows it names;
+     `erx_domain:pci_report_answered/0` (`erx_domain.erl:248-250`) becomes `release_held/0`; the forward at
+     :647 becomes `erx_devices:domain_ended(Id, Origin)`. Into the device service: `erx_devices_pci_core:held/2`
+     and the release (report answered, a PCIe row's end, 30 s after `server_settled(<<"pcie">>)`), with
+     `erx_devices_pci.erl:259` casting `release_held/0` as the core's action. The `erx_facet:serve/2` lines
+     for `pci` and `pci_bus` (:191-192) stay.
+  Tests while developing: `erx_connections_tests`, `erx_domain_mints_tests`, `erx_domain_mints_srv_tests`,
+  `erx_devices_pci_core_tests`, `erx_devices_pci_tests`, `erx_input_follower_tests`, `erx_ssh_dev_tests`,
+  `erx_starter_tests`, `erx_domain_tests`. Before landing, once: `make check` and the `pcie`, `usb` and `ssh`
+  QEMU suites.
 * [Medium] code server, the rest of its inputs (`erlang/apps/erx/src/erx_code_agent.erl`,
   `erxos_env/2`; `erlang/apps/erx_code/src/erx_code_target.erl`): the code server reads
   its boot information's `supervised` flag and its runtime's limits, but no reader of the

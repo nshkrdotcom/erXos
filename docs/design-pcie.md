@@ -1789,28 +1789,32 @@ register order, a BAR not placed with no window, written by
 as a device of no kind: its unit's give makes its resource alone, so a
 line only its row names has no object and no holder reads it.
 
-**The hold at boot.** The domain service starts a configured row whose
-units hold a `pci` device only once the device service has answered the
-boot's first report, holding its start as it holds a start for a
-principal's ending domain; rows without one start in boot order
-meanwhile. The PCIe row is the row holding a host bridge some `pci`
-device's place names; it is never held, and a machine with no PCIe row
-holds nothing. The hold is released at the first of four: the device
-service's answer to a report, which it tells the domain service with
-`erx_domain:pci_report_answered/0`; 30 s after a PCIe row's ready
-answer; a PCIe row's end, whatever its restart, so a row that crashes
-before reporting cannot hold the rows for as long as its restarts last;
-and no PCIe row booting, which the domain service derives from its
-domains' states once the boot's other rows have started and again at
-each PCIe row's stop for not reporting ready within its boot timeout. A
-PCIe row whose start was refused, whose domain was ready at its start,
-or which was stopped will never report, so the hold is released then. A held row counts as starting while it waits, so a
-grant it serves is waited for, not settled as failed. A row started
-after a failed hold gets nothing of its `pci` devices.
+**The hold at boot.** A configured row whose units hold a `pci` device
+starts only once the device service has answered the boot's first
+report; rows without one start in boot order meanwhile. The device
+service decides both which rows wait and when they start, so the domain
+service knows nothing of PCIe: before it starts any row it asks
+`erx_devices:held_at_boot/1`, holds the rows the answer names, and
+starts them when the device service casts `erx_domain:release_held/0`
+([design-system.md](design-system.md#waiting-for-a-grant), "The rows
+held at boot"). The PCIe row is the row holding a host bridge some
+`pci` device's place names; it is never held, and a machine with no
+PCIe row holds nothing (`erx_devices_pci_core:held/2`). The device
+service releases at the first of three: its answer to a report; a PCIe
+row's end, which the domain service forwards with the domain's origin,
+whatever its restart, so a row that crashes before reporting cannot
+hold the rows for as long as its restarts last; and 30 s after
+`erx_domain:server_settled(<<"pcie">>)` answers, when the PCIe row is
+ready, stopped for its boot timeout, ended with no restart, or refused
+its start. A restarted PCIe process releases at once. A held row counts
+as starting while it waits, so a grant it serves is waited for, not
+settled as failed. A row started before a report is answered gets
+nothing of its `pci` devices.
 
 **A holder's end.** The device service learns of every domain's end
 from the domain library, whose `{domain_ended, Id, End, Record}` the
-domain service takes and forwards to the PCIe process before it acts on
+domain service takes and forwards to the PCIe process, with the
+domain's origin (`erx_devices:domain_ended/2`), before it acts on
 the end, so before it starts the holder's next incarnation; the process
 keeps no monitor. The process keeps each `pci` row it last read with a
 living holder until that holder's end arrives, since the library's own
