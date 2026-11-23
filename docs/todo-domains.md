@@ -347,8 +347,9 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   configured domain's limits record (memory, outer, lane, connections, crash, flags,
   peer-held bounds) is not held to its principal's `ceiling_limits`, which design-abi.md
   ("Domain identity and placement") asks; only the runtime limits are, by the planner.
-  Data and FAT windows may be held by any configured domain, since nothing identifies a
-  storage domain (property 8); the slot writer's windows are the system domain's.
+  Data windows may be held by any configured domain, since nothing identifies a
+  storage domain (property 8), and `drive` windows only by the media domain
+  ([design-drives.md](design-drives.md#manifest-rows)); the slot writer's windows are the system domain's.
 * [Medium] manifest check, `liberx/system/dom_boot_view.c`, `tools/host/dom_plan.c`: the
   host planner builds the boot view from the packed manifest with the root's own builder,
   but three things still rest on two sides. (1) The boot order and the introductions come
@@ -764,7 +765,7 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   is usable outside erXos.
 * [Medium] system manifest, `abi/manifest.txt` ([design-usb.md](design-usb.md#mass-storage-reaches-the-file-servers)):
   the boot-time reader checks no `windows[].drive`; add the rule that it is not `mf_none` exactly when the window's
-  device row has role `usb` before `erx_blk_drive` reads the field. The number itself is any value below `mf_none`,
+  role is `drive` ([design-drives.md](design-drives.md#manifest-rows)) before `erx_blk_drive` reads the field. The number itself is any value below `mf_none`,
   so nothing may index a table by it.
 * [Low] system manifest, `tools/lib/erx/manifest.rb` ([design-system.md](design-system.md#the-manifest)):
   property 9's USB-domain clause, a release build's USB domain holding its controller's unit alone and running no

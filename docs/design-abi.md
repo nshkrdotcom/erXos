@@ -1789,13 +1789,12 @@ check and the block driver read those attributes. Both fail closed: a
 role that carries neither is the slot writer's and read-only. A
 fixed-medium role's sectors come from the medium layout (`medium.txt`),
 and a `system` window's are those of the system partition of the slot
-that the boot value names, so an `unknown` boot gives none. A FAT window
-names a primary partition 1 through 4 on the selected removable device.
-A window on a USB controller's row is a FAT window whose `drive` names
-one of that controller's drives, `diskN`, numbered across the machine, the partition being the
-primary entry to serve on whatever medium the drive holds; every other
-window names none, `mf_none`
-([design-usb.md](design-usb.md#mass-storage-reaches-the-file-servers)).
+that the boot value names, so an `unknown` boot gives none. A `drive`
+window names no partition: it lies on a `usb` or a `block` device's row,
+its `drive` names a drive, `diskN`, numbered across the machine, and it
+covers whatever medium the drive holds, whole; every other window names
+no drive, `mf_none`
+([design-drives.md](design-drives.md#manifest-rows)).
 A window grants at least read, and a window of a role not marked
 `writable` read alone; a manifest has at most one `system` window. No
 record contains a caller-selected sector range. Role/holder checks

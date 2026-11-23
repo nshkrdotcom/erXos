@@ -122,8 +122,8 @@ Functional:
    holds, and unmount; a native program receives a namespace at its start,
    narrowed from its starter's, by default its starter's whole namespace.
 4. Any service serves a tree by implementing the `erx_fs` behaviour in
-   Erlang, as the storage services, the FAT server, `/proc`, `/dev` and a
-   session's export do.
+   Erlang, as the storage services, the media domain's volumes, `/proc`,
+   `/dev` and a session's export do.
 5. Erlang code opens, reads, writes, lists and inspects files on file
    servers through the ordinary `file` and `prim_file` interfaces.
 6. Native programs do the same through musl's POSIX file functions, over
@@ -1223,7 +1223,8 @@ nothing. Local providers follow links only through the resolver: the EROFS
 reader answers its walks and link reads as a grant does, and the release
 file system holds no links. A link that lies in a tree reached through
 the provider `{facets, svc}`, through which a session reaches an app's
-tree, is never followed: where the resolver would
+tree, or through the facet `media`, through which it reaches a drive's
+volumes ([design-drives.md](design-drives.md#links-and-rights)), is never followed: where the resolver would
 follow it, it answers `eacces`, as FreeBSD's `vfs_lookup` answers on a
 `nosymfollow` mount, and an operation that acts on the link itself acts
 on it. A bind or a program's table on that provider keeps the rule, and
@@ -1342,7 +1343,8 @@ specification: `/` is the release slice, and each entry of the
 specification's `files` map mounts a facet the domain is granted, such as
 `/root` or `/home/NAME` (its user's home on the data partition,
 read-write; [A user's home](#building-binding-and-mounting)), `/data`
-(the whole data partition, root's alone) or `/dev` (the device service's tree, for an administrator principal).
+(the whole data partition, root's alone), `/media` (the drives' volumes, for a session granted `media`;
+[design-drives.md](design-drives.md#the-media-tree)) or `/dev` (the device service's tree, for an administrator principal).
 The local entries follow from the release, `/proc` among them, a tree
 of the domain's own `erx_procfs` that reads through the domain's inspect
 facet ([design-live.md](design-live.md#the-proc-tree)), and the facets
@@ -1535,7 +1537,8 @@ manifest grants it one: the domain service names, in a domain's ready
 answer, the facets of configured domains the manifest grants the
 domain, which arrive later by installation, and the domain mounts each
 facet it is granted or holds that has a mount point, `data` at `/data`,
-read-write on the tree `data`, and each `files` service of the system
+read-write on the tree `data`, `media` at `/media`
+([design-drives.md](design-drives.md#mounting-it)), and each `files` service of the system
 domain at the point its design names (`erx_ns:mount_facets/1`, which a
 session's `erx_session` and the system domain's domain service, once it
 has read the manifest, call). The system domain mounts its own grant of
@@ -1642,8 +1645,8 @@ server's statfs at the entry's root (`erx_file_remote:statfs/2`), whose
 `type` is the number the server chose, a member of the `p9_magic` enum of
 `abi/protocols/9p.txt` for erXos's servers. `mount` prints a member's
 name, which the ABI file gives as FreeBSD's name where FreeBSD has the
-file system (`tmpfs`, `procfs`, `devfs`), the project's own otherwise
-(`littlefs`, `erofs`), and `ramfs` for the made trees with no type of
+file system (`tmpfs`, `procfs`, `devfs`, `msdosfs`), the project's own otherwise
+(`littlefs`, `erofs`, and `media`, the drives' tree), and `ramfs` for the made trees with no type of
 their own (the start service's tree, `/machine` and a display's window
 tree), after
 the Linux number it answers; a number no member names prints in hex,
@@ -3292,7 +3295,7 @@ Interaction with other subsystems:
 | Runtime | `prim_file` resolves through the namespace with `erx_path`, preloaded Erlang; the release provider stays in the NIF, the EROFS reader, preloaded Erlang, serves EROFS mounts ([design-runtime.md](design-runtime.md#files)), `erx_file_remote`, preloaded Erlang too, is the client of every file server, and each domain runs its own RAM file server for `/tmp` ([design-tmp.md](design-tmp.md)) |
 | Programs | a handler keeps each program's namespace, fids and descriptions, relays its requests and moves bytes through the data area; the session's mappers serve its programs' shared mappings ([design-programs.md](design-programs.md#the-handler)) |
 | Live machine | `/proc` and the session's export are `erx_fs` servers ([design-live.md](design-live.md#the-proc-tree)); the host link's bridge and the host-tree domain carry 9P2000.L to and from the host ([design-live.md](design-live.md#files-between-the-host-and-the-machine)) |
-| Storage | the storage services and the FAT server, in Erlang, serve the data partition's and FAT partitions' files through `erx_fs`, behind each principal's facet ([design-storage.md](design-storage.md)) |
+| Storage | the storage services and the media domain, in Erlang, serve the data partition's files and drives' volumes through `erx_fs`, behind each principal's facet ([design-storage.md](design-storage.md), [design-drives.md](design-drives.md)) |
 
 ## Compatibility and migration
 

@@ -70,6 +70,7 @@ evidence, not design contracts.
 | [design-tmp.md](design-tmp.md) | the RAM file system at `/tmp` |
 | [design-storage.md](design-storage.md) | partitions, the boot image, system partitions, EROFS, FAT, A/B updates |
 | [design-f2fs.md](design-f2fs.md) | erXos's F2FS, the main read-write file system, in Erlang |
+| [design-drives.md](design-drives.md) | drives: every medium but the boot medium served whole, its table and its volumes' formats read in the media domain, FAT, EROFS and littlefs volumes at `/media` |
 | [design-usb.md](design-usb.md) | USB: xHCI, hubs, HID and mass storage |
 | [design-network-stack.md](design-network-stack.md) | erXos's TCP/IP stack, translated from FreeBSD into Erlang, and its fast path (runs, receive merging, batching, benchmarks); [Networking](#networking) holds the choices that bound it |
 | [design-wifi.md](design-wifi.md) | WiFi on the Raspberry Pi 4's CYW43455 |
@@ -463,7 +464,7 @@ column names.
 | **The system configuration is one manifest, proved at build time.** Every consumer reads the same packed manifest; `system_reserve` leaves configuration headroom, which is not a temporal guarantee. | Security configuration has one checked source; temporal liveness stays a separate verification obligation. | [design-system.md](design-system.md#the-manifest), [Chokepoint checks](#chokepoint-checks) |
 | **A device goes where its capabilities are installed, and that is configuration.** Each device goes to exactly one domain the manifest names; PCIe configuration space goes only to the PCIe domain; in a release, each unconfined DMA device's unit gets a domain of its own. | Drivers being Erlang makes placement one rule of configuration and no new mechanism; a domain that parses hostile input must never hold a device whose DMA is the whole machine. | [design-system.md](design-system.md#devices), [design-header-io.md](design-header-io.md#the-pin-controller-and-the-console) |
 | **Storage and networking are services in Erlang domains of their own**, each parser in a supervised process. | A crafted medium or packet fails within one process inside one domain. | [design-storage.md](design-storage.md), [Networking](#networking) |
-| **Storage keeps proven formats**: EROFS under a hash tree for read-only images, erXos's own F2FS in Erlang for read-write storage (littlefs its stopgap), FAT for removable media. | Each format has an independent implementation to check against: fsimg for EROFS and FAT, Linux for F2FS ([design-f2fs.md](design-f2fs.md)). | [design-storage.md](design-storage.md#data-model) |
+| **Storage keeps proven formats**: EROFS under a hash tree for read-only images, erXos's own F2FS in Erlang for read-write storage (littlefs its stopgap), and on any drive whatever FAT, EROFS or littlefs volume it carries, each read where its failure ends only its own mount ([design-drives.md](design-drives.md)). | Each format has an independent implementation to check against: fsimg for EROFS and FAT, Linux for F2FS ([design-f2fs.md](design-f2fs.md)). | [design-storage.md](design-storage.md#data-model) |
 | **The system updates through two slots and a supervised trial boot, and the boot-selection record is its whole state.** A spare is bootable only if it verifies against its update manifest at boot. | A power cut at any point leaves a bootable system, and no progress needs recording beyond the two states the firmware keeps. | [design-storage.md](design-storage.md#system-updates) |
 | **The network stack is erXos's own, in Erlang, translated from FreeBSD's default TCP stack, pinned at a FreeBSD 16 commit, with no stopgap before it; loss detection and congestion control are seams. It is an ordinary OTP application, usable outside erXos.** | "take freebsd stack as a reference and translate logic to erlang ... so we don't discover problems from scratch", and a stack "that can be used independently from erXos"; FreeBSD's test suite and test host are ready oracles. Whether TCP's fast path needs native code is measured on erXos's kernel. | [Networking](#networking), [design-network-stack.md](design-network-stack.md) |
 | **A domain that other machines reach is a distribution node there too**, under its own node name; a release build allows only OTP's TLS carrier. | Stock distribution semantics hold per domain and no term is re-encoded in the network domain. It costs one connection per exposed domain per remote node, remote nodes see the machine's domain structure, and a domain not exposed looks unreachable; the plain carrier authenticates by MD5 over a cookie and encrypts nothing. | [design-network-stack.md](design-network-stack.md#distribution-to-other-machines) |
@@ -944,6 +945,17 @@ another domain.
 
 ### Residual risks
 
+* **A drive's volumes are a stranger's bytes.** The media domain parses
+  a drive's table and its FAT and EROFS volumes in Erlang, each volume
+  in a process of its own, and its littlefs volumes with littlefs's C in
+  a sub-space per volume. A crafted volume can fail its mount, serve wrong
+  data from itself or damage itself; a memory error in littlefs that it
+  can steer runs in that sub-space, which reaches its own volume through
+  its owner's checks and, like any sub-space's code, the kernel's calls
+  and the CPU ([design-drives.md](design-drives.md#security)). A
+  drive's EROFS image is read with no hash tree: E1 binds the system's
+  own images, not a stranger's
+  ([design-storage.md](design-storage.md#invariants)).
 * **Speculative and cache side channels** between domains sharing a CPU,
   across CPUs through the read-only pages domains share, such as a runtime
   image's code, since user mode may clean caches by address, which JIT
@@ -1553,7 +1565,7 @@ not offered, since a socket acts for its grant's domain alone
 | The system manifest: every configured domain with its principal, image, budget, grant, devices, facets and introductions | 1 | [design-system.md](design-system.md#the-manifest) | the manifest check at build time, for the properties the security argument rests on; then, in the system domain, the manifest reader, bounded and fuzzed |
 | Read-only images: the EROFS on-disk format, under a dm-verity hash tree | the format's feature bits; dm-verity's format version 1 | [design-storage.md](design-storage.md#data-model) | the EROFS reader in the consuming domain's runtime, on blocks that passed the hash tree |
 | Read-write storage: the F2FS on-disk format, and littlefs's, its stopgap | the superblock's feature bits | [design-f2fs.md](design-f2fs.md#scope-features-and-forms) | erXos's F2FS, which mounts read-write only the features it maintains, read-only those it can read, and refuses the rest, the encryption, compression and atomic-write feature flags among them |
-| Removable media and exchange: FAT12, FAT16 and FAT32 with long names | FAT32's file-system version, 0.0 | [design-storage.md](design-storage.md#removable-media-fat) | the FAT server, which refuses another version |
+| A drive's tables and volumes: an MBR, a GPT or none; FAT12, FAT16 and FAT32 with long names, uncompressed EROFS and littlefs of erXos's geometry | FAT32's file-system version, 0.0; EROFS's feature bits; littlefs's own | [design-drives.md](design-drives.md#reading-a-medium) | the media domain's table reader and probe, which refuse a table whole or name a format they do not serve, and each format's mount, the FAT server refusing another version |
 | Slot images and update manifests | 1 | [design-storage.md](design-storage.md#system-updates) | the update service, after the manifest's signature, which a development build checks against the development key it embeds |
 | The local start table, `/etc/start.conf`, in rc.conf(5)'s assignment syntax: the literal subset of [The file's syntax](design-apps.md#the-start-table), nothing executed | 1 | [design-apps.md](design-apps.md#the-start-table) | `erx_start_conf:read/1` and the settings judgement, `erx_start_settings:judge/2`, bounded and fuzzed, which skip and report each line that is a problem, at every read |
 | App packages: a header with the packed declaration, the image's root hash, signer and signature, then an EROFS image and its dm-verity tree (`abi/formats/package.txt`) | 1, and the `ERX_ABI_VERSION` and architecture the package was built for | [design-packaging.md](design-packaging.md#the-package) | in the system domain, `erx_pkg_header:check_file/2`, the generated reader, bounded and fuzzed, then the signature or the manifest's hash of the header; the image by the reading session's own EROFS reader, the app's or a person's that mounted it, on blocks that passed the hash tree |
@@ -1619,7 +1631,8 @@ erlang/apps/      erx and the system services, the drivers (one
                   application per device class, over erx_device; a native
                   shim the driver table lists lives in its application's
                   c_src/ and runs as a sub-space port), the storage
-                  services (erXos's F2FS, the FAT server, the slot writer)
+                  services (erXos's F2FS, the slot writer), the media
+                  domain's erx_media with the FAT server
                   and the network stack (erx_net, with NOTICE-freebsd)
 toybox/           toybox 0.8.15 and wak as erXos's code (toybox/ORIGIN.md)
 storage/          littlefs's NIF glue, C17, a stopgap
@@ -1923,7 +1936,7 @@ built out of tree, its own build scripts not run unless the row says so.
 | pjdfstest | POSIX file-system semantics over F2FS and littlefs ([design-f2fs.md](design-f2fs.md#posix-suites)) | BSD-2-Clause | test tool | `deps.lock` |
 | `msantos/pkt` | the differential oracle for the stack's codecs | BSD-3-Clause | test tool | `deps.lock` |
 | fsimg | writes and verifies every EROFS image; the FAT server's oracle | BSD-2-Clause | permanent host tool | `deps.lock`; built by `tools/erx build fsimg`, run as a subprocess |
-| littlefs | the read-write file system of the data and vault partitions until erXos's F2FS | BSD-3-Clause | **stopgap**, shipped in 0.2 as a NIF under its [release contract](design-stopgap.md#release-contract) | [littlefs/ORIGIN.md](../littlefs/ORIGIN.md) |
+| littlefs | the read-write file system of the data and vault partitions until erXos's F2FS, and of drives' littlefs volumes, as its port | BSD-3-Clause | **stopgap**, shipped in 0.2 as a NIF under its [release contract](design-stopgap.md#release-contract); on a drive only as the port, [under its own](design-stopgap.md#littlefs-on-a-drive), its status there [an open decision](design-drives.md#open-decisions) | [littlefs/ORIGIN.md](../littlefs/ORIGIN.md) |
 | OpenSSL 3.5 | OTP's `crypto`, `ssl` and `ssh`, never in the system domain's image ([design-crypto.md](design-crypto.md)); the vault's Argon2id, HKDF and AES-GCM | Apache-2.0 | permanent; a long-term-support series ([research](research-boards-storage.md#cryptography-libraries)) | [openssl/ORIGIN.md](../openssl/ORIGIN.md) |
 | Text::Template | the template engine OpenSSL's `Configure` loads ([design-crypto.md](design-crypto.md#building-openssl)) | the terms of Perl 5 | permanent host tool | `deps.lock` |
 | toybox, with `wak` as its awk | the UNIX commands of the shell and of programs | 0BSD | permanent | imported into `toybox/` as erXos's code, with an `ORIGIN.md` |

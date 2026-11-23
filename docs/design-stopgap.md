@@ -2,7 +2,8 @@
 
 Each component here is a stopgap: the roadmap replaces it, and CLAUDE.md's rule for what a
 stopgap promises binds it. 0.2 ships littlefs in its NIF form, under [its release contract](#release-contract), whatever M13's
-gate G13 decides; a release ships no other stopgap of this document. The kernel the first release runs on,
+gate G13 decides, and a release that serves drives runs littlefs on a drive only as
+its port, under [littlefs on a drive](#littlefs-on-a-drive); a release ships no other stopgap of this document. The kernel the first release runs on,
 Fiasco, and `liberx`'s backend over it are [design-fiasco.md](design-fiasco.md)'s, and the
 sections of that backend named below are there.
 
@@ -108,14 +109,15 @@ directory there.
 
 ## Release contract
 
-0.2 ships littlefs as the read-write file system of the data partition and of the vault's partition. Beyond what CLAUDE.md's
+0.2 ships littlefs as the read-write file system of the data partition and of the vault's partition; a drive's
+littlefs volumes have [a contract of their own](#littlefs-on-a-drive). Beyond what CLAUDE.md's
 rule for a stopgap promises, a release commits to this for every domain, trusted or not, and no more; a gap that breaks it
 blocks the release, and every other gap is a published downside below. Each row names its test, which is [Verification](#verification)'s, the fuzz
 campaign's or its own.
 
 | Commitment | What a release does | Test, and the seeded failure that proves it ran |
 | --- | --- | --- |
-| **Placement** | littlefs runs as the NIF of [The NIF form](#littlefs-in-the-storage-domain), in the runtime of the storage domain that holds the partition's window, and in no other domain: the system domain's release names neither `erx_blk` nor `erx_storage`, so no release manifest runs littlefs in the system domain. Its C code shares that runtime's memory, which [Published downsides](#release-contract) states | the release build's check refuses a system release that names `erx_storage`, the application whose `erx_littlefs` loads the NIF; a system release that names it fails it |
+| **Placement** | littlefs runs as the NIF of [The NIF form](#littlefs-in-the-storage-domain), in the runtime of the storage domain that holds the partition's window, and the NIF in no other domain, a drive's volumes reaching littlefs only as [the port](#littlefs-on-a-drive): the system domain's release names neither `erx_blk` nor `erx_storage`, so no release manifest runs littlefs in the system domain. Its C code shares that runtime's memory, which [Published downsides](#release-contract) states | the release build's check refuses a system release that names `erx_storage`, the application whose `erx_littlefs` loads the NIF; a system release that names it fails it |
 | **Input** | the partition's bytes are untrusted, read only through littlefs's own bounds checks and checksums, and a mount that fails never writes or formats the partition ([A mount never formats](design-storage.md#read-write-storage)) | `tools/fuzz/lfs_image_fuzz.c`, built with the NIF's configuration (geometry, cache and lookahead sizes, name length), runs at its full `check-fuzz` budget under AddressSanitizer with no open finding before the release; a seeded bound removed from littlefs's directory-entry read makes it report |
 | **Requests** | what a client sends through its grant (paths, sizes, offsets, and the order of its operations) is untrusted; it reaches littlefs's C code only through the NIF's argument decoding, `get_path` of `otp/erts/emulator/nifs/erxos/erx_littlefs_nif.c` and the size and offset reads beside it, which bounds every path, size and offset before littlefs sees it. `get_path` bounds a path's length (`ERX_LFS_PATH_MAX`), not a name's; littlefs refuses a name longer than its `name_max` itself. The NIF builds littlefs with `erx_lfs_config` of `otp/erts/emulator/nifs/erxos/erx_littlefs.h`, which the image fuzz target already shares | `tools/fuzz/lfs_request_fuzz.c`, with its seed generator `tools/fuzz/lfs_request_target.rb` beside `lfs_image_target.rb`, drives sequences of operations (open, read, write, seek, truncate, rename, remove, sync, directory reads) through that decoder, under a shim of the `enif_*` calls it makes, into littlefs built with `erx_lfs_config`, over an image the sequence starts from, and runs its full `check-fuzz` budget under AddressSanitizer with no open finding before the release; seeded failure: `bin.size >= len` deleted from `get_path`, which AddressSanitizer reports as a write past the path buffer |
 | **Failure** | a littlefs crash, a block failure and a littlefs assertion each end the storage domain, which the domain service restarts within its row's intensity (`restarts 5`, `restart_period_s 600`), and the restarted domain mounts the volume afresh; until then every request answers `{error, eio}`, nothing replays a request, and nothing resets the device in place ([Verification](#verification), [design-storage.md](design-storage.md)'s failure table). Every request answers: a walk of littlefs's directory list meets the cycle check a mount already runs over the list it walks (`lfs_tortoise_detectcycles`, `littlefs/lfs.c`), applied to the walks of `lfs_dir_find` and `lfs_dir_read` (whose walk spans calls, so its check's state lives in the open directory), so a crafted image whose directory tail points back at itself fails that request with `LFS_ERR_CORRUPT`, which the NIF answers as `{error, eio}`, instead of looping on a dirty I/O thread | a seed image of `lfs_image_target.rb` whose directory tail, off the list a mount walks, points back at itself: a lookup and a listing past it answer `{error, eio}` and the volume answers the next request; the check left out of `lfs_dir_find`, so the host test's lookup passes its deadline, fails it. The storage domain ended six times within 600 seconds is restarted five times and then stays down, reported by the domain service; the intensity not applied, so the sixth end is restarted, fails it. The littlefs and block-failure cases of [Verification](#verification) |
@@ -141,3 +143,42 @@ campaign's or its own.
   volume; no 0.2 manifest names one;
 * any block error, deadline or driver restart ends the storage domain, and `/data` is unavailable until its restart has mounted the
   volume again.
+
+### littlefs on a drive
+
+A drive's littlefs volume is a stranger's bytes, which a release that
+serves drives ([design-drives.md](design-drives.md)) reads and writes
+with littlefs. That widens littlefs's input beyond the data and vault
+partitions, so it has a contract of its own, and its placement is the
+port, never the NIF form: a medium's volume must end only its own
+mount, and littlefs's assertions, crashes and memory errors in the NIF
+end or corrupt the whole runtime that holds it. Beyond what CLAUDE.md's
+rule for a stopgap promises, a release that serves drives commits to
+this for littlefs on a drive, for every domain, trusted or not, and no
+more:
+
+| Commitment | What a release does | Test, and the seeded failure that proves it ran |
+| --- | --- | --- |
+| **Placement** | littlefs runs as [the port](#littlefs-in-the-storage-domain), one sub-space of the media domain for each littlefs volume, holding its channel and its data area alone; the media domain holds no device and no window of the boot medium, and its release names no `erx_storage`, so no drive volume reaches the NIF ([design-drives.md](design-drives.md#manifest-rows)) | the port's space read through `/proc` holds no handle but its channel and no mapping but its data area, seeded with a port handed the medium's window; the release check refuses a media domain's release that names `erx_storage`, seeded with one that does |
+| **Input** | the volume's bytes are untrusted, read only through littlefs's own bounds checks and checksums with `erx_lfs_config`'s geometry; a volume of another geometry fails its mount, and a mount that fails writes nothing; every block the port asks for is placed in its volume by its owner, and one past it is refused | the image target above, which builds the same configuration; a host test of the owner over a fake port, seeded with the placement check removed, so a request past the volume reaches the fake window |
+| **Requests** | what a client sends through its `media` grant reaches littlefs's C only through the port's channel decoder, which bounds every path, size and offset as the NIF's `get_path` and its neighbours do; what the port answers reaches its owner only through the owner's decoder, as untrusted input | the port's channel decoder's fuzz target, on each side, run at its full `check-fuzz` budget under AddressSanitizer with no open finding before the release, seeded with the decoder's path bound removed |
+| **Failure** | a littlefs crash, assertion or exit ends its port, which ends that volume's process: its requests answer `eio`, the drive's other volumes and every other drive go on, nothing is restarted for that medium, and nothing counts against the media domain's restart intensity; the port ends with its medium, so no littlefs code that read one medium runs when the next arrives | the drive tests of [design-drives.md](design-drives.md#host-tests): a port killed ends only its volume; seeded, a volume process started as a permanent child, which restarts it |
+| **Durability** | on a medium that flushes, a file synced before the stick is pulled is there when it comes back; on one that cannot flush, the volume is read-only ([design-drives.md](design-drives.md#the-writable-rule)) | the drive cases' written, synced and replugged littlefs stick; sync skipped loses the file |
+| **Grants** | the port serves one volume, reached only through `media` grants, which the manifest gives; no `media` grant is `rx` | the manifest check's refusal of an `rx` `media` row, seeded with one |
+
+**Published downsides** of littlefs on a drive, which a release that
+serves drives states with its notes:
+
+* a crafted littlefs volume can make littlefs fail, which leaves that
+  volume unmounted until the stick is taken out and put back, and can
+  make it lose or damage that volume's files;
+* a memory error in littlefs that a crafted volume can steer runs the
+  stick's choice of code in the port's sub-space. It reaches the port's
+  channel, and through its owner that volume's sectors and the answers
+  to that volume's requests; it reaches no window, device, other volume
+  or runtime. Like any code in a sub-space it can call the kernel and
+  run on the CPU: on Fiasco, FD24's system-call surface and, unless
+  FD32's entry patch is carried, the CPU's branch predictors
+  ([design-fiasco.md](design-fiasco.md#downsides-against-erxoss-kernel)).
+  The image and request fuzz targets running their budgets clean are
+  the defence.

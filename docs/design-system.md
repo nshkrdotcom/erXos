@@ -266,11 +266,12 @@ manifest holds:
   platform's placement table sets
   ([design-platforms.md](design-platforms.md#what-the-manifest-says)), a
   USB host controller's role being `usb`; its
-  partition windows, by role in the medium layout, and on a `usb`
-  device's row a `fat` window whose `drive` field names one of its
-  USB domain's drives, `diskN`, numbered across the machine, and whose partition is the
-  primary entry to serve on whatever medium the drive holds
-  ([design-usb.md](design-usb.md#mass-storage-reaches-the-file-servers));
+  partition windows, by role in the medium layout, and on a `usb` or a
+  `block` device's row a `drive` window, which names no partition and
+  whose `drive` field names a drive, `diskN`, numbered across the
+  machine, whose medium, whatever it is, the device's domain serves
+  whole to the media domain
+  ([design-drives.md](design-drives.md#manifest-rows));
   its **facets**, each
   naming a service that the system release or another configured domain
   serves, with the grant's limits; and its **introductions**, each naming
@@ -398,11 +399,12 @@ violation fails the build with the property, the record and the field:
    to its native children.
 8. **Partitions, devices and the console reach only their holders:** only
    the slot writer holds the windows on the slots, the boot-selection
-   record and the reset count; only storage domains hold windows on data,
-   FAT and vault's partitions; a window names a drive exactly when it
-   lies on a `usb` device's row, no two windows name one partition of
-   one drive, no drive lies on two controllers' rows, and the rows on one
-   domain's controllers name at most `usb_drives_max` drives ([design-usb.md](design-usb.md#refusals-and-error-results));
+   record and the reset count; only storage domains hold windows on data
+   and vault's partitions, and only the media domain, which holds no
+   unit and no other window, holds `drive` windows; a window names a drive
+   exactly when its role is `drive`, no drive is named twice or lies on
+   two controllers' rows, and the rows on one domain's controllers name
+   at most `usb_drives_max` drives ([design-drives.md](design-drives.md#manifest-rows));
    the units of the UARTs that `console` and
    `hostlink` name and of the device each grant of the `line` interface
    names by its `device` parameter, a device of role `uart` or `serial`
@@ -446,13 +448,14 @@ violation fails the build with the property, the record and the field:
    system or network stack that parses what an unconfined `hostile` device
    carries runs in another domain, and no domain holds an unconfined
    device together with a window on a partition that no hash tree checks
-   (a data, FAT or vault's partition) or a `hostile` device of another
+   (a data or vault's partition, or a drive) or a `hostile` device of another
    unit; the diagnostic names that hostile input when the violating holder
    has one. A USB domain, the configured domain that holds a `usb`
    device, holds that controller's unit and nothing else and runs no
-   file system, whether or not its controller is confined: a FAT server
-   in another domain reaches a drive's medium through its drive grant
-   ([design-usb.md](design-usb.md#who-holds-a-controller)). The web domain, the configured domain that holds the
+   file system, whether or not its controller is confined: the media
+   domain reaches a drive's medium through its drive grant
+   ([design-drives.md](design-drives.md),
+   [design-usb.md](design-usb.md#who-holds-a-controller)). The web domain, the configured domain that holds the
    `erx_web_login` facet and parses browsers' bytes, holds no unconfined
    device, its network listener is TLS, and the host link's facets do not
    list `web`, so the web's development paths stay out of a release
@@ -4251,8 +4254,8 @@ file. The device service gives the slots' boot and system partitions,
 the boot-selection record and the reset count to the slot writer alone,
 derived from that layout, and
 the manifest assigns each data partition by its role in the layout, never
-by sectors, to its storage domain, and each FAT partition likewise to a
-FAT server's domain of its own. The holder of the manifest's `system`
+by sectors, to its storage domain, and each drive to the media domain,
+which serves its volumes ([design-drives.md](design-drives.md)). The holder of the manifest's `system`
 window, the storage domain that serves `system`, gets one read-only
 window on the system partition of the slot that the boot value names;
 when the boot value is `unknown`, it gets none

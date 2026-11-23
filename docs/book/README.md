@@ -1475,8 +1475,8 @@ hash tree, read only through blocks that pass the tree, and the
 partition's packages served as the `system` tree; the pure FAT reader
 for root's login keys on the card; the F2FS codec and mount core, tested
 on the host. Designed: the slot writer, updates with a trial boot and a
-commit, the reset count, the vault's storage domain, the FAT server, and
-erXos's F2FS as a mounted file system with its power-cut harness.
+commit, the reset count, the vault's storage domain, the FAT server, drives
+and the media domain, and erXos's F2FS as a mounted file system with its power-cut harness.
 
 1. **Storage as a service.** Storage runs in a domain of its own, in
    Erlang, over the block driver; a bug in a file system crashes a
@@ -1499,9 +1499,12 @@ erXos's F2FS as a mounted file system with its power-cut harness.
    *Draws on:* [design-f2fs.md, The construction](../design-f2fs.md#the-construction),
    [design-f2fs.md, The crash states as the oracle](../design-f2fs.md#the-crash-states-as-the-oracle),
    [design-f2fs.md, The power-cut harness](../design-f2fs.md#the-power-cut-harness).
-5. **Removable media and the SD controller.** FAT for removable media and
-   the card's boot volume; the SD host controller driver on the Pi 4.
+5. **FAT, drives and the SD controller.** FAT and the card's record
+   volume; drives, every other medium, served whole and turned into
+   files by the media domain, a process per volume; the SD host
+   controller driver on the Pi 4.
    *Draws on:* [design-storage.md, Removable media: FAT](../design-storage.md#removable-media-fat),
+   [design-drives.md, The construction](../design-drives.md#the-construction),
    [design-storage.md, The SD host controller](../design-storage.md#the-sd-host-controller).
 6. **Updates through two slots.** An update's whole state is the
    boot-selection record: `normal(C)` boots the committed slot and lets

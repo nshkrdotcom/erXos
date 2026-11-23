@@ -125,6 +125,7 @@ gives the question the document settles.
 | [design-storage.md](../design-storage.md) | Partitions, the boot image, system partitions, EROFS, FAT and updates through two slots |
 | [design-f2fs.md](../design-f2fs.md) | erXos's F2FS, the main read-write file system, in Erlang |
 | [design-stopgap.md](../design-stopgap.md) | littlefs in the storage domain and its contract |
+| [design-drives.md](../design-drives.md) | Drives: every medium but the boot card, served whole; its table, its formats and its volumes at `/media` |
 | [design-shared-devices.md](../design-shared-devices.md) | Devices that share a register page or an interrupt line |
 | [design-device-dma.md](../design-device-dma.md) | DMA by devices that are not cache-coherent, and the descriptor forms the device NIF drives |
 | [design-device-tree.md](../design-device-tree.md) | The firmware's device tree in the root task |
@@ -282,7 +283,7 @@ read next" names.
 | [13](13-native-programs.md) | design-programs.md; design-pipes.md; design-shell.md; design-fiasco.md (vCPU upcalls on Fiasco) |
 | [14](14-files.md) | design-files.md; design-tmp.md; design-app-trees.md; design-live.md (`/proc`) |
 | [15](15-devices.md) | design-system.md (devices and drivers); design-runtime.md (the device NIF); design-device-dma.md; design-device-tree.md; design-shared-devices.md; design-pcie.md; design-usb.md; design-header-io.md; design-board-sensors.md |
-| [16](16-storage.md) | design-storage.md; design-stopgap.md; design-f2fs.md; design-platforms.md; design-fiasco.md (the end path) |
+| [16](16-storage.md) | design-storage.md; design-stopgap.md; design-drives.md; design-f2fs.md; design-platforms.md; design-fiasco.md (the end path) |
 | [17](17-network.md) | design-network-stack.md; design-time.md |
 | [18](18-wifi.md), [19](19-bluetooth.md) | design-wifi.md; design-bluetooth.md; design-shared-devices.md |
 | [20](20-shell.md) | design-shell.md; design-vi.md; design-ssh.md; design-live.md (ttys); design-apps.md |

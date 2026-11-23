@@ -16,9 +16,9 @@
 > the card is built. The F2FS codec and mount core are built and tested
 > on the host.
 > **Designed:** the slot writer, updates with a trial boot and a
-> commit, the reset count, the vault's storage domain, the FAT server
-> for removable media and USB drives, and erXos's F2FS as a mounted
-> file system with its power-cut harness.
+> commit, the reset count, the vault's storage domain, drives, whose
+> FAT, EROFS and littlefs volumes the media domain serves at `/media`,
+> and erXos's F2FS as a mounted file system with its power-cut harness.
 
 **Background needed.** [Chapter 1](01-operating-systems.md) (block
 devices, file systems, journals), [chapter 10](10-domains.md)
@@ -456,7 +456,7 @@ catch, such as a record's first flush dropped ([design-f2fs.md, The
 power-cut harness](../design-f2fs.md#the-power-cut-harness)). The
 harness is designed and not built.
 
-## 16.5 Removable media and the SD controller
+## 16.5 FAT, drives and the SD controller
 
 ### 16.5.1 FAT
 
@@ -471,24 +471,65 @@ loops or leaves the data area, so whatever the card holds, the read is
 bounded. It holds no device: it reads sectors through a function it is
 handed. This reader and its fuzz target are built.
 
-The design adds the **FAT server**, `erx_fat`, which serves a whole FAT
-partition as files, in a storage domain of its own that holds only that
-partition's window ([design-storage.md, Removable media:
+The design adds the **FAT server**, `erx_fat`, which serves one FAT
+volume of a drive as files ([design-storage.md, Removable media:
 FAT](../design-storage.md#removable-media-fat)). It reads FAT12, FAT16
 and FAT32 with long names, writes FAT16 and FAT32 and mounts FAT12
 read-only, matches names without regard to case as Windows does, and
-reports files as mode `0644`, since FAT has no owners. A USB stick
-reaches it the same way: the USB domain runs a block service for each
-medium it finds, and the FAT server holds a **drive grant**, a right to one partition of
-one drive instead of a window. It mounts on access: the first time a
-client walks its tree it asks for the window and mounts what it finds;
-while the drive is empty its root is an empty read-only directory, and
-when the stick is pulled the window ends and the server unmounts
-([design-usb.md, Mass storage reaches the file
-servers](../design-usb.md#mass-storage-reaches-the-file-servers)). The
-FAT server and USB mass storage are designed and not built.
+reports files as mode `0644`, since FAT has no owners. The FAT server
+is designed and not built.
 
-### 16.5.2 The SD host controller
+### 16.5.2 Drives
+
+Every medium but the boot card is a **drive**: a USB stick, an SD
+card in a USB reader, or a second disk a QEMU guest is given. A
+stranger made it, so every byte on it is hostile, and the design
+turns any such medium into files by one path
+([design-drives.md, The construction](../design-drives.md#the-construction)).
+
+The domain that drives the medium's transport, the USB domain for a
+stick, serves the medium **whole**, as one window, and parses none of
+it, so nothing a stranger wrote is read in a domain that holds a
+device. A drive's grant hands that window to the **media domain**,
+which holds no device and nothing but the drives. There the medium
+passes through four steps. A pure reader takes its partition table
+apart, an MBR, a GPT or none at all, by FreeBSD's tests, and refuses
+the whole table when one entry runs past the medium or overlaps
+another. A probe that follows FreeBSD's `fstyp` names each
+partition's file system from its own bytes, so a stick formatted
+as exFAT or ext4 is refused by that name. Each **volume** a served
+format holds gets one process: FAT behind the FAT server, EROFS
+behind the same reader the system uses, littlefs behind its owner and
+a sub-space of its own for littlefs's C. Sessions that hold the
+`media` facet see the drives at `/media/disk0/s1` and so on, beside
+each drive's `status`, which names every volume's format, label and
+mount, and its `ctl`, to which `eject` is written before a stick is
+pulled.
+
+The rule that keeps the design safe is that everything a medium's
+bytes reach belongs to that medium. The reader, the volume processes
+and littlefs's sub-spaces are children of one supervisor per medium,
+which ends when the medium's window does. A crafted volume therefore
+ends at most its own mount; a pulled stick ends its volumes, and an
+open file on it answers `eio`; and the next stick in the same drive
+meets nothing the last one left. A volume is written only when one
+format alone claims it, the medium can flush and the format allows
+it, so a stick formatted twice is never written as the wrong format.
+
+An EROFS image on a stick has no hash tree the boot image vouches
+for, so the media domain reads it unauthenticated, through an entry
+of the reader that lives only in the media domain's own application;
+no domain that mounts a package or serves the `system` tree can make
+one, and the rule of section 16.2.2 holds for the system's own images
+unchanged. Compressed EROFS images are refused by name. littlefs on a
+stick runs only in its sub-space form, never as the NIF of section
+16.3, so a memory error in it reaches its own volume and no runtime
+([design-stopgap.md, littlefs on a
+drive](../design-stopgap.md#littlefs-on-a-drive)). Drives are designed
+and not built; the USB stick's transport and its medium's lifetime
+are built.
+
+### 16.5.3 The SD host controller
 
 On the Raspberry Pi 4, the card sits behind an SD host controller with
 the standard register set, and `erx_blk_sd` drives it in Erlang
@@ -647,6 +688,8 @@ domain. The reset count is designed and not built.
 | A block driver crash | the storage domain, then restarted | the same; files synced before it are kept |
 | A crafted data partition | the storage domain, at every restart | `/data` stays unavailable; the partition is never formatted |
 | A changed block of a system partition | the one read | `eio` on that file; the machine boots, since nothing at boot reads the partition |
+| A crafted stick | that volume's mount, in the design | `eio` in that volume; the stick's other volumes and every other drive go on |
+| A stick pulled out | its volumes, in the design | open files on it answer `eio`; the next stick mounts afresh |
 
 In the design, a trial that faults or hangs ends only the trial boot,
 and the committed system boots again.
@@ -678,6 +721,13 @@ files in a running system; a cut halfway leaves a mixture. Two slots double
 the space the system takes on the card, in return for a running slot
 that is never written and a fallback that needs no repair.
 
+**A drive's bytes end with its medium.** One domain per drive, or per
+stick, would wall each medium off at the cost of a runtime per stick. A
+process per volume under one supervisor per medium, in a domain that
+holds no device, keeps a crafted volume to its own mount and leaves
+nothing of a pulled stick behind, at the cost that a fault of the
+media domain itself ends every drive's mounts at once.
+
 **No recorded progress.** A note saying "spare complete" would
 have to be right after every cut. Checking the spare against a
 manifest written last makes the note unnecessary.
@@ -697,6 +747,9 @@ the designed file system for `/data`; its codec and mount core are
 built. Updates write the spare slot, try it once and commit only from
 a healthy trial, with the boot-selection record as the only state; the
 record's layout is built, and the trial and commit are designed.
+Every other medium is a drive: served whole by its transport's domain,
+its table and formats read in the media domain, each volume behind a
+process of its own, designed.
 
 ## Where to read next
 

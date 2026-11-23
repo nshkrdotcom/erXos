@@ -5,6 +5,35 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
 
 ## Major initiatives
 
+* [High] storage and USB, drives: every medium's FAT, EROFS and littlefs volumes at `/media`
+  ([design-drives.md](design-drives.md), [plan.md](plan.md#track-u-usb), part (e)). Steps, each with
+  the host tests and fuzz target its section names, landing in this order:
+  1. `abi/manifest.txt` and the manifest check: the window role `fat` becomes `drive`, which names no
+     partition and is held only by the media domain; the rules of design-drives.md's "Manifest rows",
+     each with a seeded manifest; `media_volumes_max` and `media_volume_heap_max` as limits; the 9P
+     statfs types `msdosfs` and `media` in `abi/protocols/9p.txt`; the `media` service and its mount
+     point in `erx_ns`.
+  2. The whole-medium window: `erx_usb_bot`'s block service with one window over the medium and
+     `erx_blk_drive`, the drive grant; `erx_blk` serving a `block` device's medium as a drive. Its
+     moduledoc's "not started yet" goes.
+  3. `erx_media_table` (MBR, GPT, none, whole-table refusal, `place/3`) and `erx_media_probe` with
+     `abi/formats/probe.txt`, pure, with their fuzz targets and seeds; littlefs's signature offset
+     pinned by an `lfs-format` seed.
+  4. The `erx_media` application: the drive process, the medium supervisor and reader, the volume
+     process, the media tree with `status` and `ctl`, the writable rule; the release check that
+     `erx_media` lies only in the media domain's release, which names no `erx_storage` or `erx_blk`;
+     the resolver's no-follow rule extended to the `media` facet.
+  5. The FAT server, `erx_fat`, over a volume: its read path, then its batches, dirty flag and eject.
+  6. EROFS: `erx_media_blocks`, `erx_erofs:mount_unauthenticated/2`, `erx_erofs_tree` factored out of
+     `erx_storage_system`, the compression refusal by name, `Erx::ErofsReads` extended, and
+     `erx_verity`'s `unchecked` form deleted, its tests and fuzz target moved to `erx_media_blocks`.
+  7. littlefs through its port, once the port exists (the port item under "Stopgap replacements"):
+     the owner's placement of the port's block requests and the port's channel decoders with their
+     fuzz targets.
+  8. The harness: stick images from a declared tree with their files' SHA-256 (fsimg's FAT16, FAT32
+     and EROFS; a host tool that writes a littlefs volume's files with `erx_lfs_config`; an MBR and a
+     GPT writer; signature-only images of the refused formats), and the QEMU cases of design-drives.md
+     in the `usb` suite, over its stick plumbing.
 * [High] storage and apps, the system partition and the `system` tree
   ([docs/todo-system-partition.md](todo-system-partition.md),
   [design-storage.md](design-storage.md#the-system-tree)): each slot
@@ -28,7 +57,9 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   NIF form's published downside. It waits for track S's port driver (1b-B). With it: the confinement case,
   the port's space read through `/proc` holding no handle but its channel and no mapping but its data area,
   with a port given the storage domain's window as its seeded failure, and the production image's check
-  refusing a release manifest that runs the NIF form. No release waits for it.
+  refusing a release manifest that runs the NIF form. Drives need it too: a drive's littlefs volume runs only in
+  the port ([design-drives.md](design-drives.md#littlefs-through-its-port)), so only a release that serves
+  littlefs volumes on drives waits for it.
 * [Medium] storage: replace littlefs, which runs as a NIF in the storage domains of
   the data partition and of the vault's partition, with erXos's F2FS, written in Erlang, at parity over the file-semantics
   corpus, by gate G13. Nothing written under littlefs is converted: erXos's
@@ -400,12 +431,13 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   card's removable partitions), or a second domain holds USB controllers, design the one allocator
   they share, so a medium takes the lowest free number on the machine, and the bound on drives across
   the machine with it.
-* [Medium] storage, stable names for media
-  ([design-usb.md](design-usb.md#mass-storage-reaches-the-file-servers)): a drive's number names a
-  place, so the same stick may come back as another `diskN`. Scripts and mounts need a name taken
-  from the medium, a partition label or identifier, as FreeBSD's `/dev/gpt/LABEL` and
-  `/dev/diskid/`; design it with the file-system mount work. design-usb.md states only that
-  such names come from the medium.
+* [Low] storage, compressed EROFS images on drives ([design-drives.md](design-drives.md#erofs-unauthenticated)):
+  the media domain serves uncompressed EROFS volumes only and refuses a compressed one by name. LZ4 first,
+  then LZMA, DEFLATE and Zstandard, the other algorithms EROFS defines, would make the images Linux's
+  `mkfs.erofs -z` writes readable. LZ4 is also the decompressor design-storage.md names for the slots'
+  system images should the media lack room, so one per-byte primitive would serve both; on a drive it
+  parses a stranger's compressed bytes in C in the media domain's runtime, which its design must weigh,
+  with a fuzz target of its own.
 * [Medium] storage, a card image that holds only what is written
   ([design-storage.md](design-storage.md), `abi/medium.txt`, the image packer): order the
   partitions with the populated ones first (record, system A, boot A), end the image after boot

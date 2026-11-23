@@ -2891,14 +2891,15 @@ whether the Pi 4's `bootstrap` build serves the Pi 5.
 
 **Place.** In Phase 1b, below the first two apps (Track A, "What comes
 first"): part (a) runs beside every other item, part (b) follows 1b-E,
-and part (c) runs beside 1b-I's board work. Part (d) is Phase 2's. No
-milestone depends on the track.
+part (c) runs beside 1b-I's board work, and part (e) follows (b). Part
+(d) is Phase 2's. No milestone depends on the track.
 
 **Goal.** A USB keyboard, mouse or tablet and a USB stick work on QEMU
 `virt` and on the Raspberry Pi 4, along [design-usb.md](design-usb.md):
 both controllers are xHCI behind a PCIe domain, the controller's domain
 holds every USB device, HID reaches the display's input router through
-input numbers, and mass storage reaches a FAT server through drives.
+input numbers, and a stick's FAT, EROFS and littlefs volumes are served at
+`/media` through drives ([design-drives.md](design-drives.md)).
 
 **Demo.** On QEMU `virt`, keys typed with QMP into a USB keyboard on
 `qemu-xhci` reach a window, a tablet moves its pointer, a keyboard
@@ -2952,13 +2953,21 @@ the VL805's internal hub types into the kiosk.
   kernel's MSI frame and the IOMMU window; the Pi 4 at
   [M12](#m12-storage-networking-boards), with the VL805's firmware
   notification as a kernel operation.
+* **(e) Drives' volumes, on QEMU `virt`, on Fiasco.** The media domain
+  of [design-drives.md](design-drives.md): the whole-medium window and
+  drive grant, the table reader and the probe with their fuzz targets,
+  the media tree with `status` and `ctl`, the FAT server, EROFS through
+  its unauthenticated entry, and littlefs through its port once the
+  port exists; a block device of the drive role. Its QEMU cases are the
+  design's: a stick of each served format, on each table, listed and read
+  against the harness's hashes, refused formats named, ejected and put
+  back. It needs (b)'s mass storage and the program port driver for
+  littlefs's part.
 
 DWC2 on QEMU `raspi4b` is not a part of the track; it is planned work
 in `TODO.md` ([design-usb.md](design-usb.md#dwc2)).
 
-Mass storage's files on a stick also need the FAT server, which
-[Beyond the plan](#beyond-the-plan) places after M13; until then (b)
-and (c) test drives with a raw window client.
+Until (e), parts (b) and (c) test drives with a raw window client.
 
 **Exit criteria, each part.** Its cores' explored tests and fuzz
 targets pass their budgets, each with its seeded fault failing them;
@@ -3734,7 +3743,6 @@ Phase 2:   (if GF chooses erXos's kernel) M7 --> M2 --> M5's and M9's kernel par
 | `system` and `popen` through a POSIX `sh` | they run `rc`; track Q brings toybox's `sh`, over `fork` ([design-programs.md](design-programs.md#the-posix-lite-personality)) | the user's, once track Q has brought `sh` |
 | vi-style line editing in the command shell | emacs-style editing first | possible later |
 | The network as files, `/net` | the network service's own interface comes first | with the network service's design |
-| A FAT file server for removable media and exchange | booting and updates need none; it is wanted eventually ([design-storage.md](design-storage.md#removable-media-fat)) | after M13, with the first removable medium or exchange partition a board configuration names |
 | A copy-on-write `fork` | the eager copy is the first `fork`, and copy-on-write is an optimisation | at gate GQ |
 | A separate native root task that keeps configured domains alive across a restart of the system runtime | the system domain is the root task and its fault is a reset; the domain library behind one C interface keeps this a change behind a seam ([design.md](design.md#alternatives-considered)) | only if measured availability of the system domain asks for it |
 | Hosting a sub-space under a user-level kernel, through vCPU user mode | Fiasco's vCPU interface can run a sub-space's code on a thread of its creator, as L4Linux does; erXos's subset leaves that mode out | when a use appears |

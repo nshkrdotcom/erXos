@@ -291,8 +291,9 @@ says what the backend and the Phase 1 manifest check do with it
   domain serves the display
   ([design-display.md](design-display.md#the-display-device));
 * the block transport contract, the write path and its trial rule (U4),
-  the block service's windows, the removable-media rule and the FAT
-  server ([design-storage.md](design-storage.md));
+  the block service's windows ([design-storage.md](design-storage.md)),
+  and the media domain, which turns a drive's medium into files
+  ([design-drives.md](design-drives.md));
 * the three homes of a new need: an inspection path, a file tree, a
   declared protocol ([design.md](design.md#decisions)).
 
@@ -331,7 +332,8 @@ where it matters.
 * **R1. Devices.** A USB keyboard, a relative mouse and an absolute
   tablet reach the display's input router as records; a USB mass-storage
   device of the SCSI transparent command set over Bulk-Only Transport
-  reaches a FAT server as a medium. Hubs, USB 2 high-speed hubs with
+  reaches the media domain as a drive's medium
+  ([design-drives.md](design-drives.md)). Hubs, USB 2 high-speed hubs with
   their transaction translators included, connect them.
 * **R2. Controllers.** xHCI on QEMU `virt` (`qemu-xhci`) and on the
   Raspberry Pi 4 (the VL805), each behind a PCIe domain.
@@ -388,9 +390,8 @@ are configured and lasting as long as the controller's domain:
   manifest's window rows name on the domain's controllers' devices,
   numbered across the machine
   ([Mass storage reaches the file servers](#mass-storage-reaches-the-file-servers)),
-  through whose **drive grants** a FAT server's
-  domain asks for the window of one partition of whatever medium the
-  drive holds.
+  through whose **drive grants** the media domain asks for the window
+  of whatever medium the drive holds, the medium whole.
 
 A device's function **occupies** a place: a HID interface takes the
 lowest free input number when its function starts, and a mass-storage
@@ -616,40 +617,34 @@ a controller's input at all is the manifest's grant.
 ### Mass storage reaches the file servers
 
 A medium on a USB drive is served by the block service the storage
-design already has: a transport process beneath, a partition process
-that reads the medium's table under the removable-media rule, and a
-window process for each partition a client was granted
-([design-storage.md](design-storage.md#data-model)). The USB domain runs
-one such block service for each ready medium. What the manifest names is
-a **drive** of the USB domain: a window row whose device is the device
-row of one of the domain's controllers, whose role is `fat`, whose
-partition is the primary entry to serve, and whose `drive` field is the
-drive's number. The row's device picks only the domain: a drive is
-written against one of the domain's controllers, any one, and serves media
-on all of them. The device service introduces the row's holder to the USB domain
-as it introduces any window's holder, and the grant it hands over is a
-**drive grant**: a process of the USB domain, `erx_blk_drive`, made for
-that one row and living as long as the USB domain.
+design already has, a transport process beneath and window processes
+above it ([design-storage.md](design-storage.md#data-model)), with one
+window covering the whole medium and no partition process: the USB
+domain parses nothing a medium holds, and the media domain, which holds
+no device, reads the medium's table and serves its volumes
+([design-drives.md](design-drives.md)). The USB domain runs one such
+block service for each ready medium. What the manifest names is a
+**drive** of the USB domain: a window row whose device is the device row
+of one of the domain's controllers, whose role is `drive`, which names
+no partition, whose `drive` field is the drive's number, and whose
+holder is the media domain. The row's device picks only the domain: a
+drive is written against one of the domain's controllers, any one, and
+serves media on all of them. The device service introduces the media
+domain to the USB domain as it introduces any window's holder, and the
+grant it hands over is a **drive grant**: a process of the USB domain,
+`erx_blk_drive`, made for that one row and living as long as the USB
+domain.
 
 A drive grant answers one request, `window`: `{ok, Window}`, the pid of
-the window of its row's partition on the medium the drive holds now;
-`{error, no_medium}` while the drive holds none; or `{error,
-no_partition}` when the medium's table has no such entry the
-removable-media rule serves. The window is an ordinary window of the
-block service, answering `{read, Sector, Count}`, `{write, Sector,
-Bytes}` and `flush` with the block service's answers, and it ends when
-its medium ends. Holding a drive grant is holding that one partition of
-that one drive, as holding a window is holding its sectors, so the grant
-checks no caller and names nothing else.
-
-The FAT server takes a drive where it took a window. It mounts lazily,
-when a client first walks its tree, by asking the drive for the window
-and mounting what the window serves; with no medium its root is an empty
-read-only directory, and each walk asks again. When the window ends, the
-server unmounts at once, answers `eio` to every fid of that mount, and
-mounts again on the next walk. A medium that cannot flush it mounts
-read-only, and a mount whose flush fails otherwise it refuses, to try
-again at the next walk ([A medium that cannot flush](#the-scsi-subset)).
+the window on the medium the drive holds now, or `{error, no_medium}`
+while the drive holds none. The window is an ordinary window of the
+block service, whose sectors are the medium's, answering `{read, Sector,
+Count}`, `{write, Sector, Bytes}` and `flush` with the block service's
+answers, and it ends when its medium ends. Holding a drive grant is
+holding whatever medium that drive holds, whole, as holding a window is
+holding its sectors, so the grant checks no caller and names nothing
+else. What the media domain does with it, from the table to the files
+at `/media/diskN`, is [design-drives.md](design-drives.md)'s.
 
 Drive numbers name drives across the machine, as macOS's `diskN` does:
 one number is one drive wherever its medium sits, and the manifest
@@ -669,9 +664,10 @@ ready when every drive of its domain is occupied is not served, and the
 bus process shows it as `no drive`.
 
 A drive's number names a place, not a medium: the same stick may come
-back as another number. Scripts and mounts that must find one medium
-again use a stable name taken from the medium, its partition label or
-identifier, as FreeBSD's `/dev/gpt/LABEL` and `/dev/diskid/` do.
+back as another number. A script that must find one medium again finds
+it by what the medium says of itself, each volume's label and serial
+number, which its drive's `status` file shows
+([design-drives.md](design-drives.md#status)).
 
 ### What the USB domain claims
 
@@ -3160,23 +3156,16 @@ and the FAT design's ordering of its writes rests on it. A window answers
 `no_flush` as `enotsup`. Any other failure of the readiness command
 leaves the medium not ready, to be tried again at the next poll.
 
-The FAT server mounts such a medium **read-only**. It sends one flush as
-it mounts, before it writes anything, and that answer alone admits the
-mount ([design-storage.md](design-storage.md#removable-media-fat)):
-
-| The mount's flush answers | The mount |
-| --- | --- |
-| `ok` | writable, unless the volume is FAT12 or dirty |
-| `{error, enotsup}` | read-only, as a FAT12 volume and a dirty one are mounted: every write answers `erofs`, the mount's inspection record says `no flush: read-only`, and one log line says the same |
-| anything else: `{error, eio}`, which a failed SYNCHRONIZE CACHE and the transport's deadline both become, or the window's end before it answers | refused, with nothing written: the walk that asked answers `eio`, the mount's inspection record names the failure, and the next walk mounts again |
-
-A failure other than `enotsup` says only that this flush failed, not
-that the medium cannot flush, and a medium whose flush fails with no
-write outstanding is failing or gone. A read-only mount would stand for
-the window's whole life on what may be a passing failure, and would show
-a broken medium as a working one; a refusal is tried again at the next
-walk by the mounting on access the server already does, and adds no
-state. FAT keeps no
+The media domain mounts every volume of such a medium **read-only**.
+Each writable volume sends one flush as it mounts, before it writes
+anything, and that answer admits the mount by the drives' writable rule
+([design-drives.md](design-drives.md#the-writable-rule)): `ok` lets a
+volume of a format erXos writes mount writable, `{error, enotsup}`
+mounts it read-only with `no flush` in its drive's `status`, and any
+other answer, `{error, eio}`, which a failed SYNCHRONIZE CACHE and the
+transport's deadline both become, or the window's end before it
+answers, refuses the mount with nothing written, until the medium is
+taken out and put back. FAT keeps no
 journal and orders its batches by flushes alone, so on a medium that
 cannot flush nothing keeps one batch's steps from reaching the medium
 out of order, and an `fsync` could answer only a false success or an error most programs
@@ -3203,11 +3192,10 @@ reference, its capacity and whether it flushes.
   and 512-byte blocks, and the readiness SYNCHRONIZE CACHE answers. The
   medium takes a fresh reference and the lowest free drive the manifest
   names for the domain's controllers, and a block service starts for it under the
-  function: the transport, which carries the medium's reference, the
-  partition process, which reads the table under the removable-media
-  rule, serving only primary entries inside the medium that overlap no
-  other ([design-storage.md](design-storage.md#data-model)), and a
-  window for each partition the drive's rows name that the table has.
+  function: the transport, which carries the medium's reference, and
+  one window covering the medium, which the drive's grant hands the
+  media domain ([Mass storage reaches the file
+  servers](#mass-storage-reaches-the-file-servers)).
 * **Gone**: a sense of NOT READY, for TEST UNIT READY's MEDIUM NOT
   PRESENT among others, any UNIT ATTENTION (the device's own word that
   its medium may have changed or it was reset), a sense that fails, an
@@ -3393,9 +3381,9 @@ in the controller's mailbox and, for input, in their own number's stream,
 which only they write. A drive grant answers from the window it was last
 told of, which the medium's block service sends each of the drive's
 grants as its windows start, and which the grant forgets when it sees
-that window end; a file server that receives a window that ends a moment
-later finds its first request failing and unmounts, the same as if the
-medium had gone after the request.
+that window end; a media domain that receives a window that ends a
+moment later finds its first request failing and ends that medium's
+mounts, the same as if the medium had gone after the request.
 
 ## Failure handling
 
@@ -3413,8 +3401,8 @@ medium had gone after the request.
 | an invalid CSW or a phase error | `erx_usb_bot_core` | the command, answered `{device, reset}` | reset recovery |
 | an issued request past its 18 s bound | the BOT core | the request, answered `{device, deadline}`; the medium; its windows end; queued requests of the medium answered `gone` | the engine's next command starts with reset recovery; the medium is found again by TEST UNIT READY |
 | a medium's transport ends | the function's monitor of it | the medium; its windows end; queued requests of the medium answered `gone`; an operation already issued runs on as any operation, and its answer reaches a caller that is gone, or the unit's course | the unit's readiness sequence finds the medium again under a fresh reference, at most once a poll period however often its transport ends; the function and its other units run on |
-| a medium removed or changed | TEST UNIT READY, UNIT ATTENTION, the detach | the medium; its windows end | the FAT server unmounts and remounts on the next walk |
-| a medium that cannot flush | the readiness SYNCHRONIZE CACHE | nothing: its flushes answer `no_flush` | none; the FAT server mounts it read-only, with `no flush: read-only` in the mount's record |
+| a medium removed or changed | TEST UNIT READY, UNIT ATTENTION, the detach | the medium; its window ends | the media domain ends the medium's volumes; the next medium mounts at the next walk ([design-drives.md](design-drives.md#failure-handling)) |
+| a medium that cannot flush | the readiness SYNCHRONIZE CACHE | nothing: its flushes answer `no_flush` | none; the media domain mounts its volumes read-only, with `no flush` in the drive's `status` |
 | a control transfer not answered in 5 s | the controller process's deadline | the transfer, answered `timeout` after Stop Endpoint and Set TR Dequeue Pointer past it | the caller's; EP0 is open again |
 | a command not answered in 5 s, an event that fails the form's checks, the controller's host system error, host controller error or halt while it runs, read from `USBSTS` on an interrupt or once a second, an all-ones read from a function that left the bus among them, a wait of the install past its deadline | the controller process | the controller process | the bus group restarts; `negotiate/2` resets the controller and returns every buffer; every device is enumerated again; places survive, so each input number carries `release` and each medium's windows end; past `usb_bus_restarts_max` restarts in `usb_bus_restart_window_ms` the controller is given up, the places still served ([The process tree](#the-process-tree)) |
 | a stream, the input tree's mint or the places end | `erx_usb_places_sup`, then `erx_usb`'s top supervisor, each of intensity 0 | the places, the top supervisor, the permanent application and the domain | the domain service restarts the domain, which holds its units again and runs every controller afresh. The domain ends rather than restart its places within itself because the places serve its input files, whose grants the domain service mints only for a new incarnation of the domain ([design-system.md](design-system.md#facets-a-configured-domain-serves)): places made again in the same incarnation would serve no reader |
@@ -3458,19 +3446,19 @@ sink shows it.
 | `erx_usb_pipe` calls | `{error, gone}` | the pipe's device has detached |
 | `erx_usb_pipe` calls | `{error, halted}`, `{error, resetting}`, `{error, stopped}` | the pipe halted and has not been reset; a reset is running; the transfer was still posted when a reset restarted the ring |
 | `erx_usb_pipe` calls | `{error, stall}`, `{error, timeout}`, `{error, {controller, Code}}` | the endpoint halted on this transfer; no answer in 5 s; any other completion code |
-| a drive grant's `window` | `{error, no_medium}`, `{error, no_partition}` | the drive holds no ready medium; the medium's table has no entry for the grant's partition that the removable-media rule serves |
+| a drive grant's `window` | `{error, no_medium}` | the drive holds no ready medium |
 | a window of a medium that has gone | no answer: the process has ended | the caller's monitor fires |
 | the transport | `{error, {device, {sense, Key, Asc, Ascq}}}`, `{error, {device, no_sense}}`, `{error, {device, reset}}`, `{error, {device, short}}`, `{error, {device, gone}}`, `{error, {device, deadline}}`, `{error, no_flush}` | a failed command; a failed command whose REQUEST SENSE failed too; a reset recovery; a transfer that moved less than asked; a request of an ended medium; the wait bound passed; a flush of a medium that cannot flush |
 | a device at enumeration | refused, with `descriptor too long`, `malformed descriptor`, `duplicate interface`, `missing setting`, `endpoint zero`, `duplicate endpoint`, `missing companion`, `unsupported speed`, `too deep`, `too many ports`, `too many devices`, `too many endpoints`, `endpoint too large` or `zero interval payload` | the decoder or a bound |
 | an access of the bridge driver below the root port | `{error, link_down}` | the link was down before the access or after it |
 | the bridge's bring-up | fails, with `link_down`, `endpoint_mode`, `dma_ranges` or `ranges` logged, and no function reported | no link 200 ms after PERST#'s release; the block is not a root complex; the tree's inbound range breaks the window's rules |
 | the VL805's report | `not_ready`, never given, with `vl805 firmware not loaded` logged, and the bridge's `firmware lost` in `/dev`'s `status` after a timed-out notification | `0x50` reads 0 or all ones after the notification, or the notification's kernel call failed; for the rest of the boot after a timed-out notification, whatever `0x50` reads |
-| a write to a FAT volume on a medium that cannot flush | `erofs` | the FAT server mounted it read-only, its window having answered the mount's flush `enotsup` |
-| a walk of a drive's tree whose mount the server refused | `eio`, the mount's inspection record naming the failure | the mount's flush answered other than `ok` or `enotsup`, or the window ended before it answered; the next walk mounts again |
+| a write to a volume on a medium that cannot flush | `erofs` | the media domain mounted it read-only, its window having answered the mount's flush `enotsup` |
+| a walk into a volume whose mount the media domain refused | `eio`, the drive's `status` naming the failure | the mount's flush answered other than `ok` or `enotsup`, or the window ended before it answered |
 | `erx_firmware_request` | `ERX_ENOTSUP`; `ERX_EPROTO`; `ERX_ERIGHTS`; `ERX_ETIMEDOUT`; `ERX_EBUSY`; `ERX_EWOULDBLOCK` | a resource of a device without notifications or a platform without one, an index past the device's list, or a tag the firmware ignored; an answer outside the interface; a resource without `CARVE`; no answer within 1 s, and every call after one in the boot; another mailbox request in flight; a call from an executor |
 | the Pi 4's PCIe unit at boot | given to no domain, with the device service's diagnostic | the tree the firmware hands over routes the VL805's position to one of the bridge's lines, so one unit spans the PCIe domain and the USB domain |
 | a function | not started, with `no input number`, `no drive`, `not direct access`, `block length`, `max lun`; or ended unusable, with `no usable report` | its place, its layout, its unit |
-| the manifest check | the build fails | a window on a `usb` device with no drive, or a drive on another device; a drive named twice for one partition; one drive named on two controllers; more drives on one USB domain's controllers than `usb_drives_max`; a release manifest whose USB domain holds another unit or a file server; a second holder of a bridge's unit, or a `pcie` domain holding another unit; the Pi 4's INTx line given apart from its function |
+| the manifest check | the build fails | a window on a `usb` device that is not a `drive` window, or a `drive` window that names a partition or no drive; a drive named twice, or on two controllers; a drive held by a domain other than the media domain ([design-drives.md](design-drives.md#manifest-rows)); more drives on one USB domain's controllers than `usb_drives_max`; a release manifest whose USB domain holds another unit or a file server; a second holder of a bridge's unit, or a `pcie` domain holding another unit; the Pi 4's INTx line given apart from its function |
 
 ## Verification
 
@@ -3508,7 +3496,7 @@ targeted traces carry the longer sequences.
 | the places, a property test over attach, detach, crash, a halted interrupt pipe and restart sequences | `release` skipped on a crash; the window process kept across media |
 | the BCM2711 bridge driver, against a model of its registers whose link can fall at any step and whose VL805 loses its firmware at every PERST# | the bus-0 rule removed; the link read after the access removed, so a value read across a fall is reported; the reset run on a link up with firmware present; the notification skipped after a reset; the 100 ms wait dropped; a bridge in reset taken as out of it, and a SerDes powered down taken as powered, so the model, which hangs on any other register of a bridge in those states, hangs |
 | the stack's own bounds, on the host, and in the QEMU suite on both phases for the cases QEMU can drive | the enumeration throttle removed, so the storm's attempts exceed 3 in 60 s |
-| the FAT server's mount over a raw window whose flush answers in turn `ok`, `enotsup`, `eio`, and nothing before the window ends, landing with the FAT server | the mount's flush skipped, so the first write is accepted on the `enotsup` window and the dirty flag is written on the `eio` one; every answer but `ok` taken as `enotsup`, so the `eio` window mounts read-only |
+| the writable rule over a raw window whose flush answers in turn `ok`, `enotsup`, `eio`, and nothing before the window ends, landing with the media domain ([design-drives.md](design-drives.md#host-tests)) | the mount's flush skipped, so the first write is accepted on the `enotsup` window and the dirty flag is written on the `eio` one; every answer but `ok` taken as `enotsup`, so the `eio` window mounts read-only |
 | the mailbox core behind `erx_firmware_request`, C17 built for the host, which Fiasco's root and erXos's kernel both use, against a model mailbox that answers a request at once, late or never, and can hold an answer to another buffer | the buffer's address match removed, so a late answer to a timed-out request completes the next one; the rule after a timeout removed, so a second call rewrites the buffer the firmware may still answer into |
 
 The chokepoint rules carry their own seeded violations: a module of
@@ -3558,7 +3546,11 @@ Erlang ones run on the host's stock OTP, as the FAT decoders do:
   reset as well as after the first. Seeded: SET_CONFIGURATION skipped,
   which must fail the typing case; the install's `INTE` write dropped,
   which must fail it from the first key. The bound cases of
-  [the host tests](#host-tests-of-the-cores) run here on both phases.
+  [the host tests](#host-tests-of-the-cores) run here on both phases,
+  and so do the drive cases of
+  [design-drives.md](design-drives.md#qemu-cases): a stick of each
+  served format mounted, listed and read against the harness's hashes,
+  ejected and put back.
 * **The FreeBSD oracle**, at the milestone gate: FreeBSD 15.1's QEMU
   image, the command shell's oracle guest already, boots on QEMU `virt`
   with the same devices, each with `pcap=` set, as does erXos. Every
@@ -3635,7 +3627,7 @@ item when the stack's code lands: consumer-page keys and digitizers in
 HID, keyboard LEDs, SuperSpeed hubs and the VL805's bulk-out burst quirk
 that comes with
 them, the VL805's full-speed babble wait unless the board shows it,
-media whose blocks are not 512 bytes, a medium with no partition table,
+media whose blocks are not 512 bytes,
 CBI and UAS, the bridge's spread-spectrum clocking and its clock power
 management and L1 substates, a VL805 that no host controller reset
 recovers, and the BCM2711's other xHCI, which `otg_mode=1` puts on the
