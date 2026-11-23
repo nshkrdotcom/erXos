@@ -65,11 +65,24 @@ module Erx
 
     def self.check(valid, what) = valid || raise(Invalid, what)
 
-    # value and everything it holds, frozen: a record's parts never change once built.
+    # A copy of value and everything it holds, frozen: a record's parts never change once
+    # built, and no caller's later change reaches them.
     def self.frozen(value)
       check(json?(value), 'a record part holds a value that is not JSON')
-      JSON.parse(JSON.generate(value), freeze: true)
+      frozen_copy(value)
     end
+
+    # The copy of a value json? accepted: its strings, arrays and maps are copied and
+    # frozen, and its other values are immutable already.
+    def self.frozen_copy(value)
+      case value
+      when String then -value
+      when Array then value.map { |item| frozen_copy(item) }.freeze
+      when Hash then value.to_h { |key, item| [-key, frozen_copy(item)] }.freeze
+      else value
+      end
+    end
+    private_class_method :frozen_copy
 
     # What a record holds: JSON's values, with string keys and finite numbers.
     def self.json?(value)
