@@ -121,7 +121,9 @@ init(Kernel, System) ->
     serve(Kernel, System).
 
 %% Any process handed this pid can reach it, and what arrives from another domain comes as
-%% {erx_origin, D, Msg} (edit 16): the only such messages either loop acts on are a
+%% {erx_origin, D, Msg}, D the sending domain's id, since the runtime wraps every message
+%% from another domain so (docs/design-runtime.md, "The edits outside sys/erxos"): the
+%% only such messages either loop acts on are a
 %% domain's records, facets answer, installations and app's record from the system
 %% domain, so no peer steers it. Both
 %% loops act on net_kernel's end, which the agent's link brings as 'EXIT'
