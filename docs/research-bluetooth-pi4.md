@@ -11,11 +11,13 @@ anything between power-on and `HCI_Reset`, what the firmware answers a
 set-GPIO-state request with, and what the controller's ROM firmware is
 and can do before the patch.
 
-**Status:** B-P1 and B-P2 are recorded from board runs 1 to 3
-(2026-11-22), which agree. B-P3 and B-P4 are pending: in runs 1 to 3
-the controller answered every `HCI_Reset` and the vendor download
-minidriver, and no standard command (below); run 4's image tests whether
-the level of its CTS at power-up puts it in a download mode. A blank
+**Status:** B-P1 and B-P2 are recorded from board runs 1 to 4
+(2026-11-22), which agree. B-P3 before the patch and B-P4's advertising
+are recorded from run 4: powered up with the host's RTS held
+deasserted, the controller's ROM answers every standard command tried
+and advertises; powered up with RTS asserted, it is in a download mode
+that answers only `HCI_Reset` and the patch commands (runs 1 to 3).
+B-P4's connection and B-P3 after the patch are still to come. A blank
 (`____`) is a reading still to come.
 
 ## The probe image
@@ -70,13 +72,14 @@ Run 1:
 * **Board:** Raspberry Pi 4 Model B, ____ GB, revision ____
 * **Firmware:** `start4.elf` ____ (the card's), board tree ____
 * **Image:** run 1 commit `b0fbfb889`, run 2 commit `89c9a6b4b`, run 3
-  commit `9a3e427eb` (branch
+  commit `9a3e427eb`, run 4 commit `827dd2fc5` (branch
   `bt-probes`), `build/production-image/raspi4b/boot`,
   built on the Apple Silicon macOS development host with Homebrew LLVM
 * **Console:** the mini UART on GPIO 14 and 15, 115200 baud; the probe's
   lines are kept in the separate history repository at
-  `pi4/2026-11-22-bt-probes/bt-probe-run1.txt`, `bt-probe-run2.txt` and
-  `bt-probe-run3.txt`
+  `pi4/2026-11-22-bt-probes/bt-probe-run1.txt` to `bt-probe-run4.txt`;
+  run 4's kept log ends at B-P4's `advertising as erxos-probe` line, so
+  its end lines are not recorded
 
 The run takes about 5 s before the root goes on, plus up to 60 s for
 B-P4's connection window. B-P4 needs a phone or another host scanning for
@@ -103,6 +106,13 @@ line (with the pulls the board needs), as it has for UART3's pins.
 **Run 1:** the firmware leaves GPIO 30 to 33 as inputs, so `config.txt`
 needs `gpio=` lines for them (or the bring-up sets ALT3 itself). Set to
 ALT3, UART0 carried `HCI_Reset` and its answer at once.
+
+**Run 4:** the same functions, and, read from GPLEV0 while still
+inputs, GPIO 30 (CTS0) and GPIO 31 (RTS0) both HIGH. So at the
+firmware's own power-up the controller's CTS was most likely HIGH,
+deasserted (not read at that moment). Whether that boot left it in the
+normal mode is not recorded: in every run the first standard command
+followed one of the probe's own power-ups.
 
 ## B-P2: the controller's power
 
@@ -315,12 +325,56 @@ whether its ROM serves standard commands at all before the patch.
 
 | Reading | Line | Value |
 | --- | --- | --- |
-| `HCI_Reset` before the reads | `B-P3 reset` | ____ |
-| Read Local Version, from the status on | `B-P3 local-version return-from-status` | ____ |
-| HCI version / subversion | | ____ / ____ |
-| LMP version / manufacturer / subversion | | ____ / ____ / ____ |
-| Read BD_ADDR, from the status on (little-endian) | `B-P3 bd-addr return-from-status` | ____ |
-| The address as written | | ____ |
+**Run 4:** the hypothesis holds.
+
+*Power-up B, RTS0 held HIGH:* during the 500 ms on, RTS0 read 1 and the
+controller's own RTS, CTS0, also read 1 (FR `0x90`); after the release
+both read 0 (FR `0x91`). No byte arrived in either window. Then every
+command was answered within milliseconds, with status 0, and every reset
+after one in 5 to 6 ms:
+
+| Try | tx | rx |
+| --- | --- | --- |
+| B1 Read Local Version, first after the power-up | `01 01 10 00` | `04 0e 0c 01 01 10 00 07 00 00 07 0f 00 19 61` |
+| B2 Read Local Version after a reset | `01 01 10 00` | the same |
+| B3 Write Scan Enable, scans off | `01 1a 0c 01 00` | `04 0e 04 01 1a 0c 00` |
+| B4 Read BD_ADDR | `01 09 10 00` | `04 0e 0a 01 09 10 00 aa aa aa aa aa aa` |
+
+So the ROM answers standard commands with no patch, and the first
+command after the power-up needs no `HCI_Reset` before it.
+
+*Power-up A, RTS0 asserted (LOW):* RTS0 and CTS0 read 0 throughout and
+nothing at all was answered, not even the resets: A1 to A4, both Launch
+RAMs (A5, A6) and every Read Local Version after them got no byte in
+2 s, and every `HCI_Reset` after them went unanswered in 500 ms, with FR
+`0x91` (CTS asserted, both FIFOs empty), so the bytes left. A6 raised
+RTS0 to 1 while held (UARTCR `0x8301`), with no byte before or after the
+release. This differs from run 3, where every power-up with RTS0
+asserted was followed first by an `HCI_Reset`, which was answered in 1
+ms, as run 4's own B-P2 power phases were (set 1, then `HCI_Reset`,
+answered in 6 ms). The one difference is the first command: in run 4's
+A it was Read Local Version (`01 01 10 00`). The guide's 3.2 says that
+in download mode the device "checks the UART Rx for particular bit
+patterns and will adapt the baud rate for the best match", and that the
+`HCI_Reset` exchange is what sets it. So the likely explanation, not
+tested, is that the controller took its rate from Read Local Version's
+bit patterns, got it wrong, and then understood nothing at 115200. A5
+and A6 therefore decide nothing: the controller was not listening at
+our rate when they were sent.
+
+| Reading | Line | Value |
+| --- | --- | --- |
+| `HCI_Reset` before the reads | `B-P3 reset` (run 4: `try reset-after`, after B4) | yes, 0x00, 5 ms |
+| Read Local Version, from the status on | `B-P3 local-version return-from-status` | `00 07 00 00 07 0f 00 19 61` |
+| HCI version / subversion | | 7 / `0x0000` |
+| LMP version / manufacturer / subversion | | 7 / `0x000f` / `0x6119` |
+| Read BD_ADDR, from the status on (little-endian) | `B-P3 bd-addr return-from-status` | `00 aa aa aa aa aa aa` |
+| The address as written | | `aa:aa:aa:aa:aa:aa` |
+
+The manufacturer `0x000f` is the Bluetooth SIG's company identifier for
+Broadcom (from memory, not from a source read in this task: unverified).
+The address is not a board's own but a ROM default, the same byte six
+times.
 
 The return parameters after the status are, in order: HCI version (1
 byte), HCI subversion (2), LMP version (1), manufacturer (2), LMP
@@ -333,9 +387,37 @@ which the after-patch reading (with the patch loaded, a later run) is
 compared against; an address of the ROM's default rather than the board's
 own shows whether the bring-up must set the address itself.
 
+**What run 4 settles for [design-bluetooth.md](design-bluetooth.md):**
+
+* **Power-up holds RTS deasserted.** Through the whole off and on cycle
+  the host's RTS (the controller's CTS) stays HIGH, deasserted: on the
+  PL011, `RTSEN` and `CR`'s `RTS` bit both clear. Only after the on time
+  does RTS follow the receive FIFO (`RTSEN` set). Powered up with RTS
+  asserted, the controller is in download mode and answers only
+  `HCI_Reset` and the patch commands, and only if `HCI_Reset` is the
+  first command.
+* **No patch for HCI and LE advertising.** In that mode the ROM answers
+  Read Local Version, Write Scan Enable, Read BD_ADDR and B-P4's event
+  masks and advertising commands without the patch. Whether it accepts
+  a connection and serves the later stages without the patch is still to
+  be read (B-P4's connection).
+* **The ROM's public address is a placeholder.** Read BD_ADDR answers
+  `aa:aa:aa:aa:aa:aa`, so no host may use the public address as the
+  machine's identity. A host that wants a public address must set one with
+  a vendor command: NetBSD's `init_bcm43xx.c:56-57` (trunk
+  `5cebe14c1559`, SHA-256
+  `2c25439d61fbfd410f9cd8216152a7f8bc4dd9f7dbb974b58dc351d4d9f46f53`) names
+  `HCI_CMD_BCM43XX_SET_BDADDR`, vendor OCF `0x006` (`0xfc06`), but never
+  sends it, so its parameter layout is unverified. Zephyr's
+  `h4_ifx_cyw43xxx.c` sets no address.
+
 ## B-P4: advertising on the ROM firmware
 
-**Pending:** run 1 stopped at Set Event Mask, unanswered.
+**Run 4 (advertising only):** every command was answered with status 0
+in 2 to 5 ms, and the probe advertised as `erxos-probe`. No phone was
+connected in the window, so the connection is still to be read. Runs 1
+to 3 stopped at Set Event Mask, unanswered, because the controller was
+in download mode (B-P3).
 
 The probe sets the event masks (LE meta, disconnection complete, hardware
 error; LE connection complete), connectable undirected advertising every
@@ -350,8 +432,8 @@ waits 2 s and resets the controller, which drops it.
 
 | Reading | Value |
 | --- | --- |
-| Each command's status | ____ |
-| Seen by the phone (name, address) | ____ |
+| Each command's status | Set Event Mask, LE Set Event Mask, LE Set Advertising Parameters, LE Set Advertising Data, LE Set Advertising Enable: all 0x00 (run 4) |
+| Seen by the phone (name, address) | ____ (run 4: no phone scanned; the address advertised is the public `aa:aa:aa:aa:aa:aa`) |
 | Connected, after (ms) | ____ |
 | LE Connection Complete parameters | ____ |
 | Hardware error events | ____ |
@@ -369,6 +451,6 @@ on any boot.
 
 | Reading | Value |
 | --- | --- |
-| End reset answered | yes, 1 ms (run 1) |
-| Pin restored to | 1, on (run 1) |
+| End reset answered | yes, 1 ms (runs 1 and 3; run 4's not in the kept log) |
+| Pin restored to | 1, on (runs 1 and 3; run 4's not in the kept log) |
 | Boot reached the shell afterwards | ____ |
