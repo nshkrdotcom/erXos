@@ -773,9 +773,11 @@ domain library's records, keyed by the same id:
 
 A domain's target in the code service follows from its record and is
 never stored: `{configured, Row}` for a supervised domain of a configured
-row, `{created, First}` for a supervised created domain, with `First` the
-id of its specification's first domain, and `{domain, Id}` for any other
-([design-live.md](design-live.md#the-code-server), "Targets").
+row and `{domain, Id}` for any other
+([design-live.md](design-live.md#the-code-server), "Targets"). A
+supervised created domain's target needs a record of its specification
+that outlives each of its domains, which this record is not; its name is
+an open decision of design-live.md.
 
 A `session` domain holds `SPACES` and creates its programs as sub-spaces,
 and is made from its principal's session template of the manifest, which

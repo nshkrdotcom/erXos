@@ -3012,9 +3012,12 @@ and writes nothing that must outlive it.
   in the domain's record and, for a domain whose build answer carried the
   `supervised` flag, tells `erx_code` with
   `erx_code:started(Id, Target, DomainPid, Agent)`, a message, not a
-  call, with `Target` the domain's target (**Targets**, below). With no
-  `erx_code` registered the message goes nowhere, and the domain's boot
-  ends at its boot timeout, as for any start load that never comes.
+  call, with `Target` the domain's target (**Targets**, below).
+  `erx_code:started/4` looks the registered name up and sends only to a
+  process it finds, since a send to an unregistered name raises
+  `badarg` in the sender: with no `erx_code` registered nothing is sent,
+  the domain service runs on, and the domain's boot ends at its boot
+  timeout, as for any start load that never comes.
   `erx_code` calls the domain service (to resolve a load, to stop a
   domain at a reset) and the domain service never calls `erx_code`, so
   neither ever waits on the other in a cycle.
@@ -3199,53 +3202,83 @@ to `erx_code` in every `started` and in every resolution of a load.
 * `{configured, Row}` for a domain of configured row `Row` whose build
   answer carried the `supervised` flag. Every domain the row starts in
   the boot has this target, so the row's overlay outlives each of them.
-* `{created, First}` for a created domain whose build answer carried
-  the flag, with `First` the id of the first domain of its
-  specification. Every restart of that specification has this target;
-  an id is never reused within a boot
-  ([design-system.md](design-system.md#the-domain-services-record)).
 * `{domain, Id}` for a domain whose build answer did not carry the flag:
-  one domain, one target.
+  one domain, one target. A domain id is never reused within a boot
+  ([design-system.md](design-system.md#the-domain-services-record)).
 
 The system domain is no such target: it loads only through `erx_code`'s
-install path. A name depends only on the domain service's records, which
-last the boot, so a restarted `erx_code`, which begins with no targets,
-names every target as its predecessor did. It makes a supervised target
-at the first `started` or load that names it and keeps it until it ends
-itself, so a specification's overlay lasts as long as `erx_code` does.
-It makes a target `{domain, Id}` at its first load and drops it when
-that load ends: such a domain has no overlay, and nothing of its target
-is needed after the load.
+install path. Both names follow from facts that last the boot, a
+manifest row and a domain id, so a restarted `erx_code`, which begins
+with no targets, names every target as its predecessor did. It makes a
+configured target at the first `started` or load that names it and
+keeps it until it ends itself, so a row's overlay lasts as long as
+`erx_code` does; the manifest's rows bound how many such targets it
+ever holds. It makes a target `{domain, Id}` at its first load and
+drops it when that load ends: such a domain has no overlay, and nothing
+of its target is needed after the load, so these targets number at most
+the loads in flight.
 
-A target holds no release. While `erx_code` holds a supervised target,
-its specification boots one release: a configured row boots the boot
-image's one domain release under the script its row names
+A created specification that the domain service restarts
+(`restart => permanent | transient`) is supervised too, and its target
+needs a name that outlives each of its domains. A domain's record ends
+with the domain, so the name needs a record of the specification
+itself, which the domain service keeps while it restarts the
+specification and which carries the name into each of its domains.
+That record, the name, and the bound on how many such targets
+`erx_code` keeps, those of specifications left down included, are one
+open decision ([Risks and open questions](#risks-and-open-questions)).
+
+A target holds no release. While `erx_code` holds a configured target,
+its row boots one release: the boot image's one domain release under
+the script the row names
 ([design-fiasco.md](design-fiasco.md#the-production-image)), and the
-boot image does not change within a boot; a created specification boots
-the script its request named at every restart. An overlay lives at most
+boot image does not change within a boot. An overlay lives at most
 until the machine ends ([Overlays](#code-from-the-host)), so it always
 stands over the release it was loaded over. The release manifest the
 verdicts read (**The verdicts**, below) is therefore the same for every
-target: that of the domain release.
+target: that of the domain release. A created specification boots the
+script its request named at every restart, so its target, once named,
+holds no release either.
 
 **The effect layer.** Beside its store, `erx_code` keeps its lifeline
 (**When `erx_code` ends**, below), its targets by name, and, for each
-load in flight, the load's alias with its target, its timer and the
-monitor of its domain pid. It applies the actions `erx_code_target`
-returns in order, each one effect: `begin_load` monitors the domain
-pid, starts the `code_load_wait` timer and holds the load's blobs in the
-store; `send` sends a load or a word of publication to the code server
-and never waits; `serve` slices a piece from the stored blob and sends
-it; `end_load` deactivates the alias with `unalias/1`, cancels the timer,
-removes the monitor and lets the blobs go; `unalias` deactivates an
-alias no load took; `stop_domain` stops a domain through the domain
-service by its id; `reply` answers a facet; `log` writes a record naming
-the target. Each event reaches one target:
+load in flight, the load's alias with its target, its deadline, its
+timer and the monitor of its domain pid. It applies the actions
+`erx_code_target` returns in order, each one effect: `begin_load`
+monitors the domain pid, records the load's deadline, the monotonic
+time `code_load_wait` from now, starts a timer for it and holds the
+load's blobs in the store; `send` sends a load or a word of publication
+to the code server; `serve` slices a piece from the stored blob and
+sends it; `end_load` deactivates the alias with `unalias/1`, cancels
+the timer, removes the monitor and lets the blobs go; `unalias`
+deactivates an alias no load took; `stop_domain` stops a domain through
+the domain service by its id; `reply` answers a facet; `log` writes a
+record naming the target.
+
+Every message to a domain, a load, a piece or a word of publication,
+leaves through one function, which sends with `erlang:send/3`'s
+`nosuspend` from a process whose `async_dist` flag is cleared, as the
+domain pid sends to a runtime agent. So `erx_code` never waits on a
+domain, whatever the system domain's peer does with a connection whose
+queue is busy: a send refused as `nosuspend` is a message dropped, like
+one dropped past `system_queue`
+([design-domains.md](design-domains.md#flow-control)), and the load's
+deadline, or for a word of publication the code server's, already ends
+what it leaves waiting. A system domain that suspends no sender refuses
+none, and the function changes nothing there.
+
+Each event reaches one target:
 
 * `{erx_origin, D, Msg}` goes to the target whose load holds the alias
   `Msg` names as its second element (`erx_code_target:alias/1`), as
   `received(D, Msg)`; a message naming no alias, or an alias of no load
-  in flight, is dropped;
+  in flight, is dropped. If the load's deadline has passed when the
+  message is taken, the target gets `deadline` first, so the message
+  then names no load in flight and is dropped: a load ends at its
+  deadline however long its answer and its timer waited in the queue
+  together, and `erx_code` never publishes a batch after its deadline,
+  by when the code server's own deadline may also have passed and ended
+  its domain for want of the word of publication;
 * the load's timer, as `deadline`, and its monitor's `'DOWN'`, as
   `domain_down`, go to the target that holds the alias;
 * `started(Id, Target, DomainPid, Agent)` goes to `Target`, with a new
@@ -3264,6 +3297,24 @@ inspection agent's answer to its asker's alias
 ([The runtime agent](#the-runtime-agent)). `unalias/1` at a load's end
 closes every holder of the alias, so the funnel drops a later send to it
 as unauthorised, before any process sees it.
+
+The alias is not the only name of `erx_code`'s side a load hands the
+domain. The sender of every message `erx_code` sends it is `erx_code`'s
+own pid, handed out with `send` like any sender
+([design-domains.md](design-domains.md#exports), case 1), and the word
+of publication hands out the lifeline. Both last as long as their
+processes. Neither lets a domain act on another's load: what it sends
+to either arrives in its envelope too, the lifeline drops every message,
+and `erx_code` routes a message by the alias it names and
+`erx_code_target` takes it only from the domain of a load in flight
+that holds that alias, so a domain reaches nothing but its own load's
+protocol while that load runs. What a domain can make `erx_code` hold
+through its pid is what it can make any system process it can name
+hold: the frames queued on it, up to that process's quota
+([design-domains.md](design-domains.md#flow-control)). Taking the pid's
+`send` back after each send would need an operation the export table
+does not have, a per-name withdrawal of a holder, and would protect
+nothing the routing does not.
 
 * **A request.** A code facet's `load` is `{load, Domain, Manifest}`.
   `Domain` is a binary: decimal digits are a domain id, and anything
@@ -3508,11 +3559,12 @@ domain receives the published overlay again.
 
 **Concurrency.** `erx_code` is one process, and every decision it makes
 is a function of `erx_code_target`'s state and one event. It never waits
-on a domain: it only sends, the system domain suspends no sender, and a
-message dropped past `system_queue`
+on a domain: it only sends, each send with `nosuspend` (**The effect
+layer**, above), and a message refused or dropped past `system_queue`
 ([design-domains.md](design-domains.md#flow-control)) appears as the
 load's deadline passing, or, for a word of publication, as the code
-server's. It waits only on its calls to the domain service, which
+server's. A domain whose connection is busy therefore delays no other
+target's load, timer or monitor. It waits only on its calls to the domain service, which
 never calls `erx_code`. Loads into different
 targets interleave freely. An install runs in `erx_code`'s own runtime
 and waits on no domain. A facet waits for its load's answer with no
@@ -3535,6 +3587,10 @@ load ends.
 * **The target domain ends.** This is the same as a restart, except
   that no next domain starts for a target that no specification
   restarts.
+* **A domain's connection is busy.** A send refused as `nosuspend` is
+  dropped; the load ends at its deadline, or, for a lost word of
+  publication, the code server ends its domain at its own, and every
+  other target's load runs on meanwhile.
 * **A load ends unpublished after the batch loaded**, at the deadline,
   as `invalid`, or because its word of publication was lost. The
   supervised domain's code server ends it at its own deadline, and its
@@ -4015,6 +4071,7 @@ any 9P2000.L peer does.
 | QEMU's 9P server answers with bytes that fail the codec, or stops answering | `erx_9p` in the host-tree bridge; the client's flush | the request failed | `eio` for that request; `/host` stays mounted |
 | A load the domain refuses | the code server's reply | the candidate overlay discarded | the reply lists what loaded and what failed |
 | A supervised domain's code server reports while no `erx_code` is registered | the domain service's `started` finds no process | nothing sent | the domain's boot ends at its boot timeout, and its specification restarts within its restart intensity |
+| `erx_code` sends to a domain whose connection's queue is busy | `erlang:send/3` answers `nosuspend` | the message dropped; nothing else changes, and every other target's load runs on | the load ends at its deadline with `{error, timeout}` and a log record, or, for a word of publication, the code server ends its domain at its own deadline |
 | A start load is refused, goes unanswered for 30 s, or answers `invalid` | the code server's own refusal, or the code server's deadline with no word of publication; otherwise the domain's boot timeout | the published overlay unchanged; the domain ended, counted against its specification's restart intensity, and left down once that is spent | a log record and the domain's death record naming the refusal, the log record also the specification and the overlay's revision; `load -d DOMAIN -r` resets the overlay, and the next domain boots its release |
 | A load or a reset names a target that has a load in flight, or a load names a domain that has not reported ready, is not its target's current domain, or is closed | `erx_code`'s target state | nothing kept | `{error, busy}`; `load: NAME: busy`, and the sender sends it again |
 | A supervised domain loads a batch that `erx_code` does not publish: the load ended at its deadline or as `invalid`, or the word of publication was lost | the code server's deadline in step 4 | the published overlay unchanged; the domain ended by its code server, counted against its specification's restart intensity, and its next domain started from the published overlay | `{error, timeout}` or `{error, invalid}`, which for a supervised domain means nothing was published; the domain's end and reason in the log |
@@ -4361,22 +4418,40 @@ faults that must make its tests fail where it has any.
     reports, naming `{configured, Row}`, and the row's next domain, after
     a restart, sends one naming the same target and its own id; a domain
     whose answer does not carry the flag sends none, and nor does a
-    report that arrives after its domain's boot timeout. Seeded: the
-    target derived from the domain's id, under which the two notices
-    name different targets; the flag ignored, under which the
-    unsupervised domain is announced.
-  * `erx_code`'s effect layer for start loads, in a host test with stub
-    domain pids and code servers and the deadline shortened: `started`
-    sends the code server an empty start load, whose `ok`, sent to the
-    load's alias in the domain's envelope, is answered with the word of
-    publication naming the lifeline; `started` for the target's next
-    domain ends the first domain's load, so its later `ok` publishes
-    nothing; a silent code server's load ends at the deadline with one
-    log record; a domain pid's end ends its load with none; each end
-    deactivates the alias and removes the monitor. Seeded: the target
-    keyed by domain id, under which the first domain's late `ok` is
-    published; the monitor left out, under which the ended domain's
-    load waits for its deadline.
+    report that arrives after its domain's boot timeout, or one whose
+    `Ref` is not the live record's for its id. With no `erx_code`
+    registered, a supervised domain's report is recorded, nothing is
+    sent, and the service answers its next request. Seeded: the target
+    derived from the domain's id, under which the two notices name
+    different targets; the flag ignored, under which the unsupervised
+    domain is announced; the record found by id alone, under which the
+    report with the wrong `Ref` sends a `started`; a plain send to the
+    registered name, under which the service ends with `badarg`.
+  * `erx_code`'s effect layer for start loads, extending
+    `test/erlang/erx_code_tests.erl`, with stub domain pids and code
+    servers and the deadline shortened: `started` sends the code server
+    an empty start load, whose `ok`, sent to the load's alias in the
+    domain's envelope, is answered with the word of publication naming
+    the lifeline; `started` for the target's next domain ends the first
+    domain's load, so its later `ok` publishes nothing; a silent code
+    server's load ends at the deadline with one log record; a domain
+    pid's end ends its load with none; each end deactivates the alias
+    and removes the monitor; an `ok` that the test queues before the
+    deadline while `erx_code` is held with `sys:suspend/1`, and releases
+    after it, publishes nothing and ends the load as timed out. Seeded:
+    the target keyed by domain id, under which the first domain's late
+    `ok` is published; the monitor left out, under which the ended
+    domain's load waits for its deadline; the deadline check left out,
+    under which the held `ok`, ahead of its timer in the queue, is
+    published.
+  * A busy connection, in the same file: a stub code server on a peer
+    node the test has stopped, behind a connection whose queue a helper
+    process with `async_dist` set has filled past ERTS's busy limit, and
+    a second stub on a node that answers. Both get `started`; the second
+    start load is answered and published, and the first ends at its
+    deadline with one log record. Seeded: a plain send in place of the
+    one send function, under which `erx_code` is suspended at the first
+    start load and the second never comes.
   * A stub code server of a supervised specification that answers `ok`
     receives the word of publication, and the facet's answer is
     `{ok, R}`; a start of the specification's next domain then carries
@@ -4410,19 +4485,25 @@ faults that must make its tests fail where it has any.
     dropped at a refusal, under which the next domain boots the release
     with the overlay gone; a reset without the stop, under which the
     live domain runs modules the empty overlay does not name.
-  * `erx_code` killed in a host test with four stub domains: a
+  * `erx_code` killed in a host test with five stub domains: a
     supervised one whose code server holds every piece of its load and
     has not yet answered, a supervised one that runs a published overlay
-    with no load in flight, a supervised one whose overlay is empty, and
-    one no specification restarts with a load in flight. The first ends
-    at its deadline once it loads its batch, the second at the
-    lifeline's `'DOWN'`, and the next domain of each boots its release
-    from an empty start load of the restarted `erx_code`; the third and
-    fourth run on; the facet answers `{error, failed}`; the restarted
-    `erx_code` logs that every overlay was dropped. Seeded: the keep
-    step removed, under which the first runs a batch no overlay names;
-    the lifeline monitor removed, under which the second runs on its
-    overlay's code after that overlay is gone.
+    with no load in flight, a supervised one whose overlay is empty, one
+    no specification restarts with a load in flight, and a supervised
+    one whose code server holds its start load and has not yet answered.
+    The first ends at its deadline once it loads its batch, the second
+    at the lifeline's `'DOWN'`, the fifth at its code server's deadline
+    with `{erx_code, unpublished}`, its `ok` to the old alias reaching no
+    process, and the next domain of each boots its release from an empty
+    start load of the restarted `erx_code`; the third and fourth run on;
+    the facet answers `{error, failed}`; the restarted `erx_code` logs
+    that every overlay was dropped and holds no alias, timer or monitor
+    of its predecessor's loads. Seeded: the keep step removed, under
+    which the first runs a batch no overlay names; the lifeline monitor
+    removed, under which the second runs on its overlay's code after
+    that overlay is gone; the code server's wait for the word of a start
+    load without its deadline, under which the fifth ends only at its
+    boot timeout.
   * A domain whose `max_frame`, `max_message_heap` or `funnel_depth` is
     below the code protocol's floor ends at its start with one log line
     naming the limit, its value and the floor; one at every floor takes
@@ -4562,7 +4643,10 @@ faults that must make its tests fail where it has any.
   `started` left out, under which the row's boot ends at its boot
   timeout, which shows the code server waited; `erx_code`'s word of
   publication left out, under which the code server ends its domain
-  with `{erx_code, unpublished}` 30 s after its start load.
+  with `{erx_code, unpublished}` 30 s after its start load. The suite's
+  boot timeout is longer than `code_load_wait`, as the machine's
+  default of 60 s is, so the second seed's end is the code server's and
+  not the boot timeout's.
 * **Loading, by every route, under QEMU.** A supervised test domain whose
   release carries a probe module that answers its version; each case
   loads a probe with a new answer and reads the answer through the
@@ -5001,6 +5085,24 @@ Open decisions:
   trusted base's other services are restarted rather than repaired;
   the deferred case is in
   [todo-domains.md](todo-domains.md#planned-features).
+* **A created specification's target.** A created domain whose request
+  names `restart => permanent | transient` is supervised, and its
+  overlay must outlive each of its domains, while a domain's record ends
+  with the domain ([Targets](#the-code-server)). Naming its target needs
+  a record of the specification, one the domain service keeps while it
+  restarts the specification, which carries the name, such as the id of
+  the specification's first domain, into every domain of it. It also
+  needs a bound on the targets `erx_code` keeps, since every new
+  specification is a new name even under a reused domain name, and an
+  empty overlay costs no blob quota: the domain service's word to
+  `erx_code` when it gives a specification up, stopped for good or left
+  down past its restart intensity, so `erx_code` drops its target, and
+  the names quota then bounds the specifications alive at once.
+  Recommendation: decide it with the design of a created domain's
+  restart, which needs the same record for its own restart intensity,
+  and set the `supervised` flag only for configured rows until that
+  design names the target: a created domain's code server then starts
+  its domain at once on its release, with no overlay, which fails safe.
 * **Overlays across reboots.** Decided: overlays live in memory only, so a
   reboot returns every domain to its release, and M10 does not keep them on
   the data partition. Persisting them costs what Alternatives considered lists

@@ -809,6 +809,17 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   holds a link with the sender (one a process of this domain made toward the peer's
   process): the peer's process then gets an exit of `noproc` for a live link; it needs a link
   record the input task can read.
+* [Medium] Runtime, the system domain's queue to a domain (edit 10 of design-runtime.md,
+  `otp/erts/emulator/beam/dist.c` `erts_dsig_prepare` and `erts_dsig_send`): not built.
+  `system_queue` is read by the manifest tools only, and a system process that sends to a
+  domain whose connection is busy is suspended like any sender (the suspend on
+  `ERTS_DE_QFLG_BUSY` in `erts_dsig_send`), so a domain that stops draining can stall a
+  system service. The domain pid (`erx_domain_pid:send_or_stop/5`) sends with `nosuspend`,
+  so a busy connection refuses its message instead, and `erx_code` does the same from
+  package 2 of todo-domains.md's "start loads to supervised domains" (design-live.md, "The
+  effect layer"); the other system processes that send to domains have not been checked.
+  The edit needs no change in those two: a system domain that suspends no sender refuses
+  no `nosuspend` send.
 * [Medium] Runtime, export table, `erl_process.c` `erl_create_process` and
   `erx_exports_spawned`: a spawn from another domain when the table is full still creates
   the child, and `erx_exports_spawned` only counts the full answer, so the spawner holds nothing
