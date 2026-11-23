@@ -270,9 +270,9 @@ in under a second, and records:
   [research-baselines.md](research-baselines.md#exception-and-address-space-switch-costs));
 * the smallest increment two reads observe, and the median cost of a read,
   from 10,000 back-to-back pairs;
-* for each pair of CPUs a cross-CPU operation uses, an interval that
-  holds their counters' offset. Thread A, on one CPU, stamps `a` and
-  passes a token through shared memory, with no kernel call; thread B, on
+* for each pair of CPUs on which a cell reads its start and end stamps,
+  an interval that holds their counters' offset. Thread A, on one CPU,
+  stamps `a` and passes a token through shared memory, with no kernel call; thread B, on
   the other, stamps `b` on receipt and passes it back; A stamps `c` on its
   return. Causality gives `b - c <= offset <= b - a`, each end widened by
   the smallest increment. Over 1,000 rounds the offset lies in the
@@ -576,7 +576,7 @@ benchmark's cells there:
 | A benchmark cell's status | Suite cell |
 | --- | --- |
 | `measured` | `passed` |
-| `unsupported`, where the declaration expects it in that environment (a cross-CPU cell in deterministic mode) | `passed`, the cell listed as unsupported |
+| `unsupported`, where the declaration expects it in that environment (a cell that places work on two CPUs, in deterministic mode) | `passed`, the cell listed as unsupported |
 | `unsupported` anywhere else, `partial`, `rejected` | `partial`, which leaves the suite incomplete and fails the gate |
 | `timed_out` | `timed_out` |
 | `not_run` | `not_run` |
@@ -794,13 +794,15 @@ accepted request adds. Nothing is added for a benchmark to keep secure.
 
 The stub reports a failed IPC as `ERX_EINVAL` too, so the status alone
 does not show that the decoder answered. One correctness case shows it
-for the request's shape, before any task starts and while no other
-thread of the guest runs: the root reads the service's count of messages
-received (`erx_fiasco_test_received`, the test accessor beside
-`erx_fiasco_test_pool_free`), makes 1,000 of the requests, and reads it
-again; the count must have risen by exactly 1,000. The cells do not
-repeat the count, since a task's start and stop send requests of their
-own. On erXos's kernel, `kernel` is its
+for both callers, while no other thread of the guest runs, by the
+service's count of messages received (`erx_fiasco_test_received`, the
+test accessor beside `erx_fiasco_test_pool_free`). From the root: it
+reads the count, makes 1,000 of the requests and reads it again, and the
+count must have risen by exactly 1,000. From a task: the root launches
+the `nullcall` task twice, once making no requests and once making
+1,000, and reads the count around each run; the second run's rise must
+exceed the first's by exactly 1,000, since the task's own start and
+stop send the same requests in both. The cells do not repeat the count. On erXos's kernel, `kernel` is its
 null call, the one the speculation mitigations are priced by
 ([design-arch-aarch64.md](design-arch-aarch64.md#speculation-mitigations)),
 and the root operations go, since there is no root service.
@@ -934,10 +936,12 @@ repository takes no lock and needs none: it reads only committed runs as
 baselines, and a run directory is complete once its `run.json` is written,
 last, by rename.
 
-A cross-CPU cell is timed only after calibration found a non-empty offset
-interval for its CPUs narrow enough for it; otherwise the cell reports
-`unsupported`. In deterministic mode every operation runs on one CPU, so
-the cross-CPU cells are expected `unsupported` there.
+A cell whose start and end stamps are read on different CPUs is timed
+only after calibration found a non-empty offset interval for those CPUs
+narrow enough for it; otherwise the cell reports `unsupported`. A cell
+whose two stamps are read on one CPU needs no calibration, wherever its
+work ran. In deterministic mode every operation runs on one CPU, so the
+cells that place work on two CPUs are expected `unsupported` there.
 
 ## Refusals and error results
 
@@ -979,7 +983,7 @@ fault that must fail it:
 | the phase sweep | deadlines over 160 periods visit each of the sixteen phases ten times, and a fake timer that fires only on ticks gives a minimum observed lateness that varies across phases by about a tick, with each sample's excess above its phase's minimum reported | the phase term dropped: every deadline has one phase |
 | a lost wake | in the guest, the `wake` handshake reports `measured` and no loss | the wake sent to another slot: B's park times out after 1 s and the cell is `failed` |
 | `otp-switch` | two yielders on one scheduler observe nearly every yield as a switch | the yield removed: no switch observed, the measurement `failed` |
-| `nullcall` | the correctness case: 1,000 refusals answer `ERX_EINVAL` and the service's received count rises by exactly 1,000 | the request sent to the `kernel` cell's empty slot instead of the service: the stub still answers `ERX_EINVAL`, the count does not move, and the case is `failed` |
+| `nullcall` | the correctness case: 1,000 refusals from the root, and 1,000 more from a task, answer `ERX_EINVAL`, and the received count rises by exactly 1,000 for the root's and by exactly 1,000 more than the empty task run for the task's | the requests sent to the `kernel` cell's empty slot instead of the service, from the root and in a second seeded build from the task: the stub still answers `ERX_EINVAL`, the count does not move, and the case is `failed` |
 | `vm` | each cell's untimed check passes, and the disposable task's write to its read-only page faults at that address | `erx_space_protect` made to answer `ERX_OK` without calling the service: the task's write succeeds, it exits with no fault, and the cell is `failed` |
 | the GPIO probe's matching | the importer, given a capture whose third stimulus has no response before the fourth, ends the cell after the second sample, `partial`, and matches no later edge of that capture | the next response matched to the third stimulus: the cell holds a sample for it |
 | the interrupt-entry pairing (with the patch) | given receipts and `irq_entry` records, one entry between two receipts makes a sample, and none, two, or a window with a record counted as overwritten makes the receipt `partial` | the window's lower end dropped, pairing each receipt with the latest entry before it: the two-entry case yields a sample |
