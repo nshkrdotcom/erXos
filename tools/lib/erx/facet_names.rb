@@ -4,6 +4,7 @@
 
 require 'digest'
 require 'set'
+require_relative 'abi'
 require_relative 'doc_links'
 require_relative 'erlang_text'
 require_relative 'error'
@@ -115,16 +116,13 @@ module Erx
     # A design citation in an interface file's comment: (docs/<file>.md, "<heading>").
     CITATION = /(?<doc>docs\/[A-Za-z0-9_.-]+\.md),\s*"(?<heading>[^"]+)"/
 
-    # served_by is the interface's served_by member, session for a session's line, or nil.
-    Interface = Data.define(:name, :number, :path, :line, :design, :served_by)
+    Interface = Data.define(:name, :number, :path, :line, :design)
     # A manifest facet row. Its grantee holds it under name, its service's public name
     # (docs/design-abi.md, "Services, facets and their parameter schemas"); label is the
     # row's own public name, unique per grantee, which no lookup uses.
     Facet = Data.define(:name, :label, :server, :interface, :grantee, :path, :line)
-    Table = Data.define(:interfaces, :facets, :services) do
-      # The names of a session's lines: the interfaces served by a session.
-      def lines = interfaces.select { |interface| interface.served_by == 'session' }.to_set(&:name)
-
+    # lines is the set of the names of a session's lines (session_lines/1).
+    Table = Data.define(:interfaces, :facets, :services, :lines) do
       # Every name a use may give: a manifest service's public name, under which its
       # grantees hold its facets and its server mints them.
       def names = services.keys.to_set
@@ -147,7 +145,7 @@ module Erx
       raise Error, "no system manifest matches #{MANIFESTS}" if globs.fetch(MANIFESTS).empty?
 
       inputs = globs.values.flatten.to_h { |relative| [relative, File.binread(File.join(root, relative))] }
-      found, violations = table(inputs)
+      found, violations = table(inputs, lines: session_lines(root))
       raise Error, "the facet table has violations:\n#{violations.join("\n")}" unless violations.empty?
 
       # A declared name keeps no exemption, so no waiver outlives its declaration, and
@@ -194,9 +192,10 @@ module Erx
     def design_doc?(path) = File.fnmatch?(DOCS, path, GLOB_FLAGS)
 
     # The violations of the tree: files maps each path the check reads, sources and
-    # the table's files, to its text; docs maps a design document's path to its text.
-    def violations(files, docs:)
-      table, table_violations = table(files)
+    # the table's files, to its text; docs maps a design document's path to its text;
+    # lines names a session's lines (session_lines/1).
+    def violations(files, docs:, lines:)
+      table, table_violations = table(files, lines: lines)
       used = files.select { |path, _| covers?(path) }.flat_map { |path, text| uses(path, text) }
       table_violations + design_violations(table, docs) + use_violations(used, table) + stale_exemptions(used) +
         exemption_violations(UNDECLARED)
@@ -218,8 +217,14 @@ module Erx
                      detail: "UNDECLARED holds #{exemptions.size} names, not EXEMPTIONS_MAX (#{EXEMPTIONS_MAX}): #{advice}")]
     end
 
-    # The table read from files, and the violations of its manifest's interfaces.
-    def table(files)
+    # The names of a session's lines: the interfaces the ABI beneath root declares
+    # served_by session, as the generated ?ERX_LINES names them.
+    def session_lines(root)
+      ABI::Model.validate(ABI::Sources.read(root: root)).session_lines.to_set { |line| line.fetch(:name) }
+    end
+
+    # The table read from files, with lines, and the violations of its manifest's interfaces.
+    def table(files, lines:)
       interfaces = files.select { |path, _| File.fnmatch?(SERVICES, path, GLOB_FLAGS) }.sort.flat_map do |path, text|
         interfaces_of(path, text)
       end
@@ -234,11 +239,10 @@ module Erx
       end
       facets = records.select { |record| record.kind == 'facet' }.map { |record| facet_of(record, services, interfaces) }
       public_services = services.values.to_h { |record| [public_name(record), record] }
-      [Table.new(interfaces: interfaces, facets: facets, services: public_services), unknown]
+      [Table.new(interfaces: interfaces, facets: facets, services: public_services, lines: lines.to_set), unknown]
     end
 
-    # An interface file's services, each with the file's first design citation and its
-    # served_by member, read from the indented members below its service line.
+    # An interface file's services, each with the file's first design citation.
     def interfaces_of(path, text)
       cited = text.each_line.take_while { |line| line.start_with?('#') }.join.gsub(/\n#\s*/, ' ')
       design = CITATION.match(cited)&.then { |found| [found[:doc], found[:heading]] }
@@ -247,10 +251,8 @@ module Erx
         found = /\Aservice\s+(?<name>\S+)\s+(?<number>\d+)\s*\z/.match(line.strip)
         next unless found
 
-        members = lines.drop(index + 1).take_while { |member| member.start_with?(' ', "\t") }
-        served_by = members.filter_map { |member| member.strip[/\Aserved_by\s+(\S+)\z/, 1] }.first
         Interface.new(name: found[:name], number: Integer(found[:number], 10), path: path, line: index + 1,
-                      design: design, served_by: served_by)
+                      design: design)
       end
     end
 

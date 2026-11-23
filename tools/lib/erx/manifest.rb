@@ -2878,8 +2878,7 @@ module Erx
       # domain names (docs/design-system.md, "A session's lines"), so no facet row grants
       # one either: a facet row names a service row.
       def check_no_line_services(service_rows)
-        lines = @codec.schema.services.select { |service| service.fetch(:served_by) == 'session' }
-                      .to_h { |service| [service.fetch(:number), service.fetch(:name)] }
+        lines = @codec.schema.session_lines.to_h { |service| [service.fetch(:number), service.fetch(:name)] }
         service_rows.each do |row|
           line = lines[row.fetch('interface')] or next
           invalid("service #{row.fetch('name')} is of #{line}, a session's line, which no manifest row grants",

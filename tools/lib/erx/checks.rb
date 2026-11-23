@@ -466,7 +466,7 @@ module Erx
       files = read.call(listed.select { |relative| FacetNames.covers?(relative) || FacetNames.table_file?(relative) })
       docs = listed.select { |relative| FacetNames.design_doc?(relative) && File.file?(File.join(@root, relative)) }
                    .to_h { |relative| [relative, text_of(relative)] }
-      violations = FacetNames.violations(files, docs: docs)
+      violations = FacetNames.violations(files, docs: docs, lines: FacetNames.session_lines(@root))
       raise Error, violations.join("\n") unless violations.empty?
     end
 

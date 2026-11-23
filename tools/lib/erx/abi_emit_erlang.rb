@@ -188,8 +188,7 @@ module Erx
       def session_lines(schema)
         raise SchemaError, 'lines collides with a constant' if schema.constants.key?('lines')
 
-        entries = schema.services.select { |service| service.fetch(:served_by) == 'session' }
-                        .sort_by { |service| service.fetch(:name) }.map do |service|
+        entries = schema.session_lines.sort_by { |service| service.fetch(:name) }.map do |service|
           quantities = service.fetch(:quantities).sort.map { |key, value| "#{key} => #{value}" }
           "#{literal(atom(service.fetch(:name)))} =>\n        \#{#{quantities.join(', ')}}"
         end

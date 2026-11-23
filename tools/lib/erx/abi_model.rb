@@ -158,6 +158,10 @@ module Erx
       def event_enums
         type_order.map { |name| types.fetch(name) }.select { |type| type.is_a?(EnumType) && type.args.any? }
       end
+
+      # The service interfaces declared served_by session, a session's lines
+      # (docs/design-system.md, "A session's lines"), in declaration order.
+      def session_lines = services.select { |service| service.fetch(:served_by) == 'session' }
     end
 
     # Resolve types before readers and calls. No emitter receives an unchecked
