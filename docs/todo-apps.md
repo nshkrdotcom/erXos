@@ -556,3 +556,12 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   against the service's schema as a facet row's parameters are, not a column for one service, and update the
   row of [Alternatives considered](design-packaging.md#alternatives-considered) that sends such values
   to the service's defaults. Needed only once such a board gets an `apps` row.
+* [Medium] debugging, 0.2's native debugger, core dumps and remote Erlang debugger ([design-display.md](design-display.md#risks-and-decisions)'s
+  LVGL-in-app, [design-programs.md](design-programs.md#signal-numbers)): no document designs a debugger for a native
+  program (a GDB remote stub, so `gdb` attaches to a domain or sub-space over a connection), the core dumps a
+  debugger would read, or a debugger for Erlang processes in another node or domain (remote `dbg`, `observer`
+  or `debugger` over distribution). Design the three together, with LVGL-in-app, since an app that links its own LVGL
+  is the first native program a developer debugs. The designs disagree today: design-programs.md says erXos
+  writes no core file, so the signal table has no core column and `WCOREDUMP` is never set; decide whether a
+  core dump is a file a program's death leaves, an inspector read of a stopped domain, or neither, and edit that
+  statement with the design. QEMU's GDB stub (`-s`) debugs the kernel only; the harness passes no such flag.

@@ -449,6 +449,11 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   reader and decides which log lines each console line shows, the UART's
   and the host link's
   ([design-live.md](design-live.md#the-console)).
+* [Low] log, `erx_logfs` and `/var/log` ([design-log.md](design-log.md#the-file-tree)): the read-only file tree that
+  serves the log store (the stored `messages` and `kernel/messages` and their archives) is not built. The writer
+  keeps the store, so the log is readable only as `/data/log` through the system domain's whole-`/data` grant, and
+  a session has no `/var/log`. Build `erx_logfs` as the design's `erx_fs` callback module; the escape-at-read item
+  under Security residuals applies to it.
 * [Low] crash record, the brief form's promise: `fault` keeps `addr`, `pc` and
   `status`, so a wild dereference or an exit status can carry 8 bytes of what
   the root task held, against [design-kernel.md](design-kernel.md#the-root-task)'s

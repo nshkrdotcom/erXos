@@ -355,6 +355,21 @@ of its run) are in the full list as it stood before it was grouped,
 
 ## Host tooling and build
 
+* **[Low] `tools/erx bench` lacks the workloads that design documents name.** `tools/lib/erx/bench*.rb` runs
+  `otp-pingpong`, `otp-ring`, `otp-spawn`, `otp-switch`, `boot`, `g3`, `g5`, `bytes`, `web` and the `net-` family; a design
+  document's `tools/erx bench NAME` for any other NAME is a plan, and the tool refuses it as unknown. Named and
+  not written: `nullcall` ([design-arch-aarch64.md](design-arch-aarch64.md), [design-kernel.md](design-kernel.md),
+  [design-platforms.md](design-platforms.md)); `app-start` ([design-apps.md](design-apps.md), [design-packaging.md](design-packaging.md));
+  `fs` ([design-f2fs.md](design-f2fs.md), [design-files.md](design-files.md), [design-programs.md](design-programs.md), [design-storage.md](design-storage.md));
+  `blk` ([design-storage.md](design-storage.md)); `mmap` ([design-files.md](design-files.md), [design-kernel.md](design-kernel.md));
+  `pipe` ([design-pipes.md](design-pipes.md)); `stop`, `pause`, `irq` and `locks` ([design-kernel.md](design-kernel.md)); `ladder` ([design-scheduler.md](design-scheduler.md));
+  `spawn`, `fork`, `spawn-cost`, `make` and `system` ([design-programs.md](design-programs.md)); `erts-local` ([design-runtime.md](design-runtime.md));
+  `login` ([design-system.md](design-system.md)); `ssh-login` ([design-ssh.md](design-ssh.md)); `shared-code` ([design-shared-code.md](design-shared-code.md));
+  `hostlink` and `sha256` ([design-live.md](design-live.md)); and the domain experiments of
+  [design-domains.md](design-domains.md#performance), E-D1 (`xdomain-pingpong` and `xdomain-throughput`), E-D3
+  (`domain-lifecycle`) and E-D4 (`xdomain-stall`); E-D2 names no workload. Write each with the first measurement
+  that needs it, and give each its first result a record as CLAUDE.md requires; remove a name from this item as its
+  workload lands.
 * **[Low] live, loading a driver over a board's host link** ([design-live.md](design-live.md#performance)): the time of a load over UART3 at 115,200 baud is the line's arithmetic from module sizes, about 1.7 s for `erx_genet`, not a measurement, and the missing-blob exchange's round trips and the `put` terms' encoding add to it. Settled by timing `tools/erx load --tty` of `erx_genet` on a Raspberry Pi 4, with the blob missing and with it held.
 * **[Low] live, `tools/erx watch --ssh` sends the watch's whole set at each change** ([design-live.md](design-live.md#one-load-three-routes)): the SSH route has no missing-blob exchange, so a watch over a large directory sends every module it compiled at every change, and `ssh`'s connection setup adds to each. Settled by timing a watch of 50 modules over SSH to a Raspberry Pi 4: kept if a change loads in under 2 s, and otherwise brought back to the design.
 * **[Low] host tools, the packer hashes with BLAKE3's portable code.** `tools/host/pack_hash.c` builds the portable C ([origin](../kernel/crypto/blake3/ORIGIN.md)), though [design-build.md](design-build.md) gives host tools the SIMD paths, which are not imported; the packer reads the whole archive into memory to hash it, and each of its three calls rereads it. Measure `tools/erx pack`'s hashing time over a full image of tens of MiB. Fixes: import the SIMD paths for the host build alone; read only the runs asked for.

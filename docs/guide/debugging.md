@@ -142,16 +142,17 @@ Fiasco's.
 ## What is not built
 
 * **QEMU's GDB stub.** The harness (`tools/lib/erx/qemu*.rb`) does not pass
-  `-s` or `-gdb`, and no document in the tree describes attaching a
-  debugger to a guest. The one place the tree uses a stub is a research
+  `-s` or `-gdb`, and no design describes attaching a debugger to a
+  guest or to a native program. The one place the tree uses a stub is a research
   record about the SD host controller model
   ([research-sdhci-qemu-model.md](../research-sdhci-qemu-model.md)).
   `tools/erx boot --medium FILE --print` prints the plain QEMU command, to
   which you can add flags yourself.
-* **A native debugger, core files and a remote Erlang debugger.** No
-  design or plan document in the tree describes them.
+* **A native debugger, core files and a remote Erlang debugger.** They
+  are planned for 0.2, to be designed together with LVGL-in-app
+  ([the item](../todo-apps.md#planned-features)).
   [design-programs.md](../design-programs.md) says erXos writes no core
-  file.
+  file, which that design has to settle.
 * **JTAG.** The Pi 4's JTAG pins appear in
   [design-fiasco.md](../design-fiasco.md) and
   [design-header-io.md](../design-header-io.md) as a header assignment;

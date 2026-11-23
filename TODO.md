@@ -171,13 +171,13 @@ document's "residual risks accepted" paragraph.
 * [Sessions and SSH](docs/todo-session.md#planned-features): sessions, SSH, the vault and login.
   26 items (11 Medium, 15 Low).
 * [Apps and the start service](docs/todo-apps.md#planned-features): applications and packages, the demo apps.
-  16 items (1 High, 10 Medium, 5 Low).
+  17 items (1 High, 11 Medium, 5 Low).
 * [Storage](docs/todo-storage.md#planned-features): storage: file systems, the storage domain, file clients, the object store, the image tree.
   16 items (7 Medium, 9 Low).
 * [Display and desktop](docs/todo-display.md#planned-features): the display stack, the window system, the desktop and LVGL in apps.
   19 items (8 Medium, 11 Low).
 * [Inspection and logging](docs/todo-inspection.md#planned-features): the inspector, /proc, logging and the live tree.
-  6 items (1 High, 5 Low).
+  7 items (1 High, 6 Low).
 * [Website and book](docs/todo-site.md#planned-features): the website, the book and the user guide.
   19 items (8 Medium, 11 Low).
 * [Build, tooling and tests](docs/todo-build.md#planned-features): the build, the host tools, the test harnesses and the gates.

@@ -218,7 +218,7 @@ HVF is macOS's hardware virtualization: the guest's instructions run
 on the Mac's own CPU, fast. TCG is QEMU's translator, which turns each
 guest instruction into host code; it is slower, and with instruction
 counting it makes a boot repeat exactly, which is what the
-deterministic transcript needs. The QEMU suites are the 29 files of
+deterministic transcript needs. The QEMU suites are the files of
 `tools/lib/erx/qemu_suites/`; `tools/erx check-qemu --suite NAME` runs
 one. The Raspberry Pi 4 suite runs under TCG alone, because QEMU runs
 that board's CPUs from a privilege level HVF cannot host.
