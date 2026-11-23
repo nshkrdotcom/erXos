@@ -5,8 +5,9 @@
 %% (docs/design-time.md, "Verification and testing", erx_ntpd_flags_fuzz):
 %% arbitrary binaries of up to 2 KiB, biased toward letters, digits, dots,
 %% hyphens and spaces and toward mutations of valid lists. Properties: nothing
-%% raises; an accepted list has 1 to 8 entries, each an IPv4 literal or a
-%% name of 1 to 253 bytes in labels of 1 to 63 letters, digits and hyphens.
+%% raises; an accepted list has 1 to 8 entries, each a name of 1 to 253 bytes in
+%% labels of 1 to 63 letters, digits and hyphens with no hyphen at a label's edge,
+%% which takes every dotted-decimal IPv4 literal too.
 %% tools/fuzz/erx_ntpd_flags.rb runs it and its seeded faults.
 -module(erx_ntpd_flags_fuzz).
 -export([run/1]).
@@ -60,11 +61,7 @@ round_of(Flags) ->
     end.
 
 valid(Entry) ->
-    case inet:parse_ipv4strict_address(binary_to_list(Entry)) of
-        {ok, _} -> true;
-        {error, _} ->
-            byte_size(Entry) >= 1 andalso byte_size(Entry) =< 253 andalso
-                lists:all(fun(Label) -> byte_size(Label) >= 1 andalso byte_size(Label) =< 63 andalso
-                                            re:run(Label, <<"^[A-Za-z0-9-]+$">>) =/= nomatch
-                          end, binary:split(Entry, <<".">>, [global]))
-    end.
+    byte_size(Entry) >= 1 andalso byte_size(Entry) =< 253 andalso
+        lists:all(fun(Label) -> byte_size(Label) >= 1 andalso byte_size(Label) =< 63 andalso
+                                    re:run(Label, <<"^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\\z">>) =/= nomatch
+                  end, binary:split(Entry, <<".">>, [global])).

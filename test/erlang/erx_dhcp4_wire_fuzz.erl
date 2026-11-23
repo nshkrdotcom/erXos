@@ -131,7 +131,7 @@ bounded(#{addr := <<A:32>> = Addr, mask := <<M:32>>, mtu := Mtu, dns := Dns, sea
     Links = [Subnet | [{P, L} || #{prefix := <<P:32>>, plen := L, gateway := none} <- Routes]],
     Mtu >= 68 andalso Mtu =< ?DEVICE_MTU andalso length(Dns) =< 3
         andalso length(Search) =< 6
-        andalso lists:all(fun(Name) -> re:run(Name, "^[A-Za-z0-9.-]+$") =/= nomatch end, Search)
+        andalso lists:all(fun(Name) -> re:run(Name, "^[A-Za-z0-9.-]+\\z") =/= nomatch end, Search)
         andalso length(Routes) =< 32
         andalso length(lists:usort([{P, L} || #{prefix := P, plen := L} <- Routes])) =:= length(Routes)
         andalso lists:all(fun(Route) -> route_bounded(Route, Addr, Subnet, Links) end, Routes).
@@ -265,7 +265,8 @@ value() ->
 
 %% One to seven names separated by blanks, sometimes with one final NUL.
 search_text() ->
-    Names = [name_only() || _ <- lists:seq(1, pick([{6, 1}, {3, rand:uniform(6)}, {1, 7}]))],
+    Count = pick([{6, 1}, {3, rand:uniform(6)}, {1, 7}]),
+    Names = [pick([{9, name_only()}, {1, long_label()}]) || _ <- lists:seq(1, Count)],
     Text = iolist_to_binary(lists:join(pick([{3, <<" ">>}, {1, <<"\t">>}, {1, <<"  ">>}]), Names)),
     pick([{4, Text}, {1, <<Text/binary, 0>>}]).
 
@@ -275,6 +276,9 @@ name() ->
         1 -> <<Name/binary, (pick([{1, 0}, {1, 27}, {1, $_}, {1, 16#c3}, {1, $\s}]))>>;
         _ -> Name
     end.
+
+%% A label at the 63-byte bound or one past it, so the judge's label bound is reached.
+long_label() -> <<(binary:copy(<<"a">>, 62 + rand:uniform(2)))/binary, ".lan">>.
 
 name_only() ->
     Chars = <<"abcxyzABZ019-.">>,
@@ -408,17 +412,28 @@ routes_reading(<<Width, Rest/binary>>, Routes) when Width =< 32 ->
 routes_reading(_, _) ->
     false.
 
-%% One final NUL dropped; then at most 256 bytes of one to six blank-separated names, each
-%% made of labels that are letters, digits and hyphens, with no hyphen at a label's edge.
+%% One final NUL dropped; then at most 256 bytes of one to six blank-separated names. Each
+%% name, once one trailing dot is dropped, is at most 253 bytes of labels of 1 to 63
+%% letters, digits and hyphens with no hyphen at a label's edge. `\z`, not `$`, ends the
+%% pattern, since `$` also matches before a final newline.
 search_reading(V) ->
     Text = case binary:last(<<1, V/binary>>) of
                0 -> binary:part(V, 0, byte_size(V) - 1);
                _ -> V
            end,
-    Names = [list_to_binary(N) || N <- string:lexemes(binary_to_list(Text), " \t")],
+    Names = [without_trailing_dot(list_to_binary(N)) || N <- string:lexemes(binary_to_list(Text), " \t")],
+    Label = "[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?",
     byte_size(Text) =< 256 andalso Names =/= [] andalso length(Names) =< 6
-        andalso lists:all(fun(N) -> re:run(N, "^(?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?|\\.)*$") =/= nomatch end, Names)
+        andalso lists:all(fun(N) -> byte_size(N) =< 253 andalso
+                                        re:run(N, "^" ++ Label ++ "(?:\\." ++ Label ++ ")*\\z") =/= nomatch
+                          end, Names)
         andalso {true, Names}.
+
+without_trailing_dot(Name) ->
+    case binary:last(<<1, Name/binary>>) of
+        $. -> binary:part(Name, 0, byte_size(Name) - 1);
+        _ -> Name
+    end.
 
 %% A contiguous mask: its bits, read as text, are ones and then zeros.
 mask_bits(Mask) ->

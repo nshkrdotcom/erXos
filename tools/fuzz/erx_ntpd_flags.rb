@@ -5,7 +5,8 @@
 
 # Runs test/erlang/erx_ntpd_flags_fuzz.erl, the fuzz target of ntpd's start flags
 # reader, erx_ntp_core:servers/1, and the server-list rule it applies,
-# erx_ntp_exchange:servers/1 (docs/design-time.md, "Verification and testing"),
+# erx_ntp_exchange:servers/1, with the host-name rule that one applies,
+# erx_inet:host_name/1 (docs/design-time.md, "Verification and testing"),
 # on stock's emulator (ERX_ERL and ERX_ERLC), and then once with each seeded fault,
 # which must fail the run with the property it breaks.
 
@@ -16,15 +17,18 @@ require 'tmpdir'
 module ErxNtpdFlagsFuzz
   ROOT = File.expand_path('../..', __dir__)
   CORE = 'erlang/apps/erx_ntpd/src/erx_ntp_core.erl'
-  # The seeded faults go into the rule's module, which ntpd's core and ntpctl share.
+  # The seeded faults go into the rules' modules: the server-list rule, which ntpd's core
+  # and ntpctl share, and the host-name rule it applies, which the resolver's check and
+  # the DHCP client share too.
   RULE = 'erlang/apps/erx/src/erx_ntp_exchange.erl'
+  HOST_NAME = 'erlang/apps/erx_net_client/src/erx_inet.erl'
   TARGET = 'test/erlang/erx_ntpd_flags_fuzz.erl'
-  Fault = Data.define(:name, :from, :to, :failure)
+  Fault = Data.define(:name, :source, :from, :to, :failure)
   FAULTS = [
-    Fault.new(name: 'a reader without the 253-byte bound',
-              from: 'server(Name) when byte_size(Name) > ?MAX_NAME -> false;', to: '',
-              failure: 'entry_out_of_rule'),
-    Fault.new(name: 'a reader that accepts a ninth entry',
+    Fault.new(name: 'a host-name rule without the 253-byte bound', source: HOST_NAME,
+              from: 'host_name(Name) when is_binary(Name), byte_size(Name) =< ?MAX_NAME ->',
+              to: 'host_name(Name) when is_binary(Name) ->', failure: 'entry_out_of_rule'),
+    Fault.new(name: 'a reader that accepts a ninth entry', source: RULE,
               from: 'length(Names) =< ?MAX_SERVERS', to: 'length(Names) =< ?MAX_SERVERS + 1',
               failure: 'entry_count')
   ].freeze
@@ -33,24 +37,29 @@ module ErxNtpdFlagsFuzz
   module_function
 
   def run(seed:)
-    source = File.binread(File.join(ROOT, RULE))
-    FAULTS.each { |fault| raise "#{RULE} lacks #{fault.from}" unless source.scan(fault.from).size == 1 }
+    sources = [RULE, HOST_NAME].to_h { |path| [path, File.binread(File.join(ROOT, path))] }
+    FAULTS.each do |fault|
+      raise "#{fault.source} lacks #{fault.from}" unless sources.fetch(fault.source).scan(fault.from).size == 1
+    end
 
-    output, status = fuzz(source, seed: seed)
+    output, status = fuzz(sources, seed: seed)
     abort(output) unless status.success? && output.match?(/^fuzz: \d+ rounds ok, \d+ accepted$/)
     FAULTS.each do |fault|
-      output, status = fuzz(source.sub(fault.from) { fault.to }, seed: seed)
+      faulty = sources.fetch(fault.source).sub(fault.from) { fault.to }
+      output, status = fuzz(sources.merge(fault.source => faulty), seed: seed)
       abort("#{fault.name} passed:\n#{output}") if status.success? || !output.include?(fault.failure)
     end
     puts 'erx_ntp_core:servers/1 keeps the server-list rule on any flags, and each seeded fault fails'
   end
 
-  # In a directory of its own, which also takes the crash dump of a failed round.
-  def fuzz(source, seed:)
+  # In a directory of its own, which also takes the crash dump of a failed round. sources
+  # maps each rule module's root-relative path to the text compiled for it.
+  def fuzz(sources, seed:)
     Dir.mktmpdir('erx-ntpd-flags-fuzz') do |work|
-      rule = File.join(work, File.basename(RULE))
-      File.binwrite(rule, source)
-      output, status = Open3.capture2e(ENV.fetch('ERX_ERLC'), '-o', work, rule, File.join(ROOT, CORE),
+      written = sources.map do |path, text|
+        File.join(work, File.basename(path)).tap { |copy| File.binwrite(copy, text) }
+      end
+      output, status = Open3.capture2e(ENV.fetch('ERX_ERLC'), '-o', work, *written, File.join(ROOT, CORE),
                                        File.join(ROOT, TARGET), stdin_data: '')
       raise output unless status.success?
 

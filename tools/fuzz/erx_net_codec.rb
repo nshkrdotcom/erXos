@@ -23,6 +23,8 @@ module ErxNetCodecFuzz
   APPLICATION = File.join(ROOT, 'erlang/apps/erx_net')
   PORTABLE_BYTES = File.join(APPLICATION, 'portable/erx_bytes.erl')
   ORACLE = File.join(ROOT, 'test/erlang/erx_net_pkt_oracle.erl')
+  # The client application's host-name rule, which erx_dhcp4_wire's search list applies.
+  HOST_NAME = File.join(ROOT, 'erlang/apps/erx_net_client/src/erx_inet.erl')
   DEADLINE_SECONDS = '300'
 
   # The failures of a round that show it reached the faulty code: a raise, a refusal or
@@ -132,7 +134,7 @@ module ErxNetCodecFuzz
       ebin = Erx::ErxNetHost.lay_out(work, erl: ENV.fetch('ERX_ERL'))
       compile(ebin, Dir[File.join(pkt, 'src', '*.erl')].sort, includes: ['-I', pkt_include])
       others = Dir[File.join(APPLICATION, 'src', '*.erl')].sort.reject { |path| File.basename(path, '.erl') == module_name }
-      compile(ebin, [module_path, *others, PORTABLE_BYTES, ORACLE, File.join(ROOT, "test/erlang/#{module_name}_fuzz.erl")],
+      compile(ebin, [module_path, *others, PORTABLE_BYTES, HOST_NAME, ORACLE, File.join(ROOT, "test/erlang/#{module_name}_fuzz.erl")],
               includes: ['-I', File.join(APPLICATION, 'include'), '-I', pkt_include])
       Open3.capture2e('gtimeout', '-k', '10', DEADLINE_SECONDS, ENV.fetch('ERX_ERL'), '-noshell', '-pa', ebin,
                       '-run', "#{module_name}_fuzz", 'run', seed.to_s, '-s', 'init', 'stop',

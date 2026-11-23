@@ -8,9 +8,11 @@ Asking NTP servers for the time (docs/design-time.md, "Server list" and
 HOST` name, resolve and ask a server.
 
 servers/1 is the server-list rule both apply to the names they are given:
-one to 8 names, each an IPv4 literal or a host name of letters, digits and
-hyphens in labels of 1 to 63 bytes that neither start nor end with a
-hyphen, 253 in all. addresses/1 resolves one
+one to 8 names, each a host name by the resolver's rule, erx_inet:host_name/1:
+labels of 1 to 63 letters, digits and hyphens that neither start nor end
+with a hyphen, 253 bytes in all, and no trailing dot. A dotted-decimal IPv4
+literal is a host name by that rule, and no flag is one.
+addresses/1 resolves one
 such name: a literal is its address, and a name gives the first four
 addresses the session's resolver answers, in DNS order, or none.
 
@@ -37,8 +39,6 @@ classify/4 is the pure decision over one datagram.
                  | {kiss, <<_:32>>} | {drop, erx_ntp_sample:drop()} | {error, term()}.
 
 -define(MAX_SERVERS, 8).
--define(MAX_NAME, 253).
--define(MAX_LABEL, 63).
 %% The addresses of one name that are asked, as DNS orders them.
 -define(ADDRESSES_PER_NAME, 4).
 %% How long one resolution waits for DNS, and one exchange for its reply.
@@ -47,27 +47,11 @@ classify/4 is the pure decision over one datagram.
 -define(NTP_PORT, 123).
 -define(NONCE_BYTES, 8).
 
--doc "Whether Names is a server list: 1 to 8 names, each an IPv4 literal or a host name.".
+-doc "Whether Names is a server list: 1 to 8 names, each a host name or dotted-decimal IPv4 literal.".
 -spec servers([binary()]) -> boolean().
 servers(Names) ->
-    Names =/= [] andalso length(Names) =< ?MAX_SERVERS andalso lists:all(fun server/1, Names).
-
-server(Name) when byte_size(Name) > ?MAX_NAME -> false;
-server(Name) ->
-    case inet:parse_ipv4strict_address(binary_to_list(Name)) of
-        {ok, _} -> true;
-        {error, _} -> lists:all(fun label/1, binary:split(Name, <<".">>, [global]))
-    end.
-
-%% A label of RFC 1123: 1 to 63 letters, digits and hyphens, neither first nor last
-%% a hyphen, so no flag is a name.
-label(Label) when byte_size(Label) < 1; byte_size(Label) > ?MAX_LABEL -> false;
-label(<<$-, _/binary>>) -> false;
-label(Label) when binary_part(Label, byte_size(Label), -1) =:= <<$->> -> false;
-label(Label) -> lists:all(fun label_byte/1, binary_to_list(Label)).
-
-label_byte(C) -> (C >= $a andalso C =< $z) orelse (C >= $A andalso C =< $Z)
-                     orelse (C >= $0 andalso C =< $9) orelse C =:= $-.
+    Names =/= [] andalso length(Names) =< ?MAX_SERVERS
+        andalso lists:all(fun erx_inet:host_name/1, Names).
 
 -doc """
 The addresses server Name stands for: its own, for an IPv4 literal, or the

@@ -48,6 +48,7 @@ config_test_() ->
     [{"a well-formed answer is taken", fun config_accepted/0},
      {"a malformed answer is refused", fun config_refused/0},
      {"a bad search domain is dropped and the rest kept", fun config_drops_bad_domains/0},
+     {"the host-name rule and its one trailing dot", fun host_names/0},
      {"an answer loads into inet_db", fun config_loads/0},
      {"inet_db's resolv.conf check keeps a loaded answer", fun config_outlives_resolv_conf/0}].
 
@@ -302,7 +303,24 @@ config_refused() ->
            #{nameservers => Ns, search => [<<"lan">> | improper]}],
     [?assertEqual({error, badarg}, erx_inet:resolver_config(Term)) || Term <- Bad].
 
-%% Each search domain is checked alone, by erx_dhcp4_wire's rules: one that fails is
+%% The one host-name rule the resolver check, the DHCP client and the NTP server list
+%% share: host_name/1 takes labels of 1 to 63 letters, digits and hyphens with no hyphen
+%% at an edge, 253 bytes in all, and no trailing dot; domain/1 drops one trailing dot
+%% first.
+host_names() ->
+    Label63 = binary:copy(<<"a">>, 63),
+    Name253 = <<Label63/binary, ".", Label63/binary, ".", Label63/binary, ".", (binary:copy(<<"b">>, 61))/binary>>,
+    Good = [<<"lan">>, <<"a-b.example">>, <<"10.0.2.3">>, <<"A9">>, Label63, Name253],
+    Bad = [<<>>, <<".">>, <<"lan.">>, <<"a..b">>, <<".lan">>, <<"-lan">>, <<"lan-">>, <<"a_b">>,
+           <<"a b">>, <<"esc\e[31m">>, <<"lan", 0>>, <<"caf", 16#c3, 16#a9>>, <<Label63/binary, "a">>, <<Name253/binary, "b">>,
+           "lan", lan],
+    [?assert(erx_inet:host_name(Name)) || Name <- Good],
+    [?assertNot(erx_inet:host_name(Name)) || Name <- Bad],
+    ?assertEqual({ok, <<"corp.example">>}, erx_inet:domain(<<"corp.example.">>)),
+    ?assertEqual({ok, Name253}, erx_inet:domain(<<Name253/binary, ".">>)),
+    [?assertEqual(error, erx_inet:domain(Name)) || Name <- [<<".">>, <<"lan..">>, <<>>, "lan"]].
+
+%% Each search domain is checked alone, by erx_inet:domain/1: one that fails is
 %% dropped, and the name servers and the other domains are kept.
 config_drops_bad_domains() ->
     Ns = [{{10, 0, 2, 3}, 53}],

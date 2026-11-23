@@ -41,6 +41,9 @@ servers_test_() ->
      %% RFC 1123's labels neither start nor end with a hyphen, so no flag is a name.
      ?_assertEqual({error, bad_flags}, erx_ntp_core:servers(<<"-q">>)),
      ?_assertEqual({error, bad_flags}, erx_ntp_core:servers(<<"pool-.org">>)),
+     %% inet's strict parser takes a signed field, as in these; the host-name rule does not.
+     ?_assertEqual({error, bad_flags}, erx_ntp_core:servers(<<"-0.0.0.0">>)),
+     ?_assertEqual({error, bad_flags}, erx_ntp_core:servers(<<"+1.2.3.4">>)),
      ?_assertEqual({ok, [<<"a-b.org">>]}, erx_ntp_core:servers(<<"a-b.org">>))].
 
 %%% The facet request

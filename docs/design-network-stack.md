@@ -256,7 +256,9 @@ steps and carry out their actions. Beneath them:
   application, with its own app file, that runs on stock OTP outside
   erXos, needing only `kernel` and `stdlib`, and outside erXos `crypto`
   for its portable entropy source; the client
-  backends are a second such application, `erx_net_client`. What is
+  backends are a second such application, `erx_net_client`, which a
+release of `erx_net` carries beside it, since the DHCP client checks
+its search list by the client's host-name rule. What is
   erXos's is the erXos implementation of each seam, chosen by
   configuration, and no other module names it
   ([Two places, four seams](#two-places-four-seams)). `erlang/apps/erx_net`
@@ -5778,7 +5780,9 @@ watches at start and again after the grant ends, checks each answer as
 input from another domain, and loads it into `inet_db`: the name servers and search list
 replace inet_db's, `dns` joins the lookup methods after the hosts file,
 and the answer takes the place of resolv.conf, which a domain does not
-have. A search domain is checked by the DHCP client's rules: labels of
+have. A search domain is checked by `erx_inet:domain/1`, which the DHCP
+client's search list applies too; the NTP server list applies the same
+host-name rule, `erx_inet:host_name/1`, without the trailing dot: labels of
 letters, digits and hyphens that begin and end with a letter or digit
 (`res_hnok`), each of 1 to 63 bytes, at most 253 bytes in all, one
 trailing dot allowed and dropped; stricter than `res_hnok`, which also
@@ -7140,7 +7144,9 @@ Each with a test proving it catches a violation:
   `crypto`, and only `erx_net_clock` calls `erx_bytes:entropy/1`, so
   every random key passes the clock's seam;
 * the modules in `src/` of `erx_net` and `erx_net_client` call only
-  `erts`, `kernel`, `stdlib`, their own application and `erx_bytes`; only
+  `erts`, `kernel`, `stdlib`, their own application and `erx_bytes`, and
+  `erx_net`'s also `erx_net_client`'s host-name rule, `erx_inet:domain/1`,
+  for the DHCP client's search list, so the rule has one copy; only
   `erxos/` (`erx_virtio_net`, `erx_genet` and its modules, `erx_net_erxos`,
   `erx_net_client_erxos`)
   calls erXos's modules or BIFs; and no include or file name reaches a
