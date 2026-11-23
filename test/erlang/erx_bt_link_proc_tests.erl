@@ -18,6 +18,7 @@
 -module(erx_bt_link_proc_tests).
 
 -include_lib("eunit/include/eunit.hrl").
+-define(GAP, #{name => <<"erxos">>, appearance => 0}).
 
 -export([log/2]).
 
@@ -330,7 +331,7 @@ services() ->
        characteristics => [#{name => open_w, uuid => <<16#01, 16#FF>>, max => 20, access => #{write => open}},
                            #{name => n, uuid => <<16#02, 16#FF>>, max => 20, access => #{notify => open}}]}].
 
-table() -> erx_gatt_db:build(services()).
+table() -> erx_gatt_db:build(?GAP, services()).
 
 handle(Char) -> {ok, #{value := Handle}} = erx_gatt_db:characteristic({svc, Char}, table()), Handle.
 

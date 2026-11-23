@@ -21,6 +21,7 @@
 %% A step that ends the link starts a new one. The seed comes from make check-fuzz.
 
 -module(erx_bt_link_fuzz).
+-define(GAP, #{name => <<"erxos">>, appearance => 0}).
 -export([run/1]).
 
 -define(ROUNDS, 20000).
@@ -34,7 +35,7 @@ run([Seed]) ->
     [{module, _} = code:ensure_loaded(M) || M <- [erx_bt_link_core, erx_l2cap, erx_att, erx_gatt_db, erx_gatt_gate,
                                                   erx_gatt_server, erx_smp, erx_smp_core, erx_smp_crypto, erx_bytes,
                                                   crypto, queue, lists, binary, maps]],
-    Table = erx_gatt_db:build(services()),
+    Table = erx_gatt_db:build(?GAP, services()),
     _ = erx_bt_link_core:facts(element(1, core(Table))),
     Atoms = erlang:system_info(atom_count),
     _ = lists:foldl(fun(_, {Link, Now}) -> round(Link, Now, Table) end, {core(Table), 0}, lists:seq(1, ?ROUNDS)),

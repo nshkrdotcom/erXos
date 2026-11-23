@@ -11,6 +11,7 @@
 -module(erx_bt_link_tests).
 
 -include_lib("eunit/include/eunit.hrl").
+-define(GAP, #{name => <<"erxos">>, appearance => 0}).
 
 -define(CENTRAL, {random, <<16#C0, 16#FF, 16#EE, 16#12, 16#34, 16#56>>}).
 -define(PERIPHERAL, {random, <<16#D1, 16#E2, 16#F3, 16#A4, 16#B5, 16#C6>>}).
@@ -30,7 +31,7 @@ services() ->
                            #{name => enc_n, uuid => <<16#03, 16#FF>>, max => 20, access => #{notify => encrypted}},
                            #{name => ind, uuid => <<16#04, 16#FF>>, max => 20, access => #{indicate => open}}]}].
 
-table() -> erx_gatt_db:build(services()).
+table() -> erx_gatt_db:build(?GAP, services()).
 
 handle(Char) -> {ok, #{value := Handle}} = erx_gatt_db:characteristic({svc, Char}, table()), Handle.
 configuration(Char) -> {ok, #{configuration := Handle}} = erx_gatt_db:characteristic({svc, Char}, table()), Handle.

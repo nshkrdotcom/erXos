@@ -17,6 +17,7 @@
 -include_lib("eunit/include/eunit.hrl").
 -include("generated/erx_abi.hrl").
 -include_lib("kernel/include/file.hrl").
+-define(GAP, #{name => <<"erxos">>, appearance => 0}).
 
 -define(ADDRESS, <<2#11:2, 7:46>>).
 
@@ -84,7 +85,7 @@ state_refuses_malformed_fields_test() ->
 %% table hash and subscribed to every such characteristic, are the largest state, and a
 %% declaration that would make a put `too_large` fails here.
 state_largest_fits_test() ->
-    Table = erx_gatt_db:build([erx_gatt_decl:service(Name) || Name <- erx_gatt_decl:names()]),
+    Table = erx_gatt_db:build(?GAP, [erx_gatt_decl:service(Name) || Name <- erx_gatt_decl:names()]),
     Subs = #{{atom_to_binary(Service), atom_to_binary(Char)} => indicate
              || #{source := {configuration, {Service, Char}}} <- erx_gatt_db:range(1, 16#ffff, Table)},
     %% Every table holds GATT's Service Changed, so a pattern that stopped matching fails.

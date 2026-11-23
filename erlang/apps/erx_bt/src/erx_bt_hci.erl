@@ -9,10 +9,10 @@ into one input, reads the clock, steps the core and performs the actions in orde
 ends it, and the group's restart resets the line and the controller.
 
 - **Configuration.** At its start it builds the core's configuration from owners that
-  outlive the group: the connection limit, the name and the appearance from `erx_bt`'s
-  application keys (the name by default the host part of the node name), the identity
-  address from `erx_bt_store`, and the advertising data from `erx_bt_adv:data/1`. Then it
-  steps `start`, whose one action is `line_reset`.
+  outlive the group: the connection limit from `erx_bt`'s application keys, the identity
+  address from `erx_bt_store`, and the advertising data from `erx_bt_adv:data/1` of what
+  the registry advertises, `erx_gatt_srv:advertised/0`: the service UUIDs, the name and
+  the appearance. Then it steps `start`, whose one action is `line_reset`.
 - **The line.** Items go to the writer, `erx_bt_line_tx`, whose answers, `written` and
   `line_ready`, are inputs. Stepping `line_ready` gives the reader, `erx_bt_line_rx`, its
   first acknowledgement; each read's bytes are appended to what the last split left, split
@@ -62,18 +62,11 @@ init([]) ->
     steps([start], #hci{core = Core}).
 
 %% The core's configuration (docs/design-bluetooth.md, "The controller process's effects",
-%% "Configuration"). No GATT table exists yet, so no UUID is advertised.
+%% "Configuration").
 config() ->
-    Data = erx_bt_adv:data(#{uuids => [], name => name(), appearance => application:get_env(erx_bt, appearance, 0)}),
+    Data = erx_bt_adv:data(erx_gatt_srv:advertised()),
     Data#{connections => application:get_env(erx_bt, connections, 1), address => erx_bt_store:address(),
           patch => patch(application:get_env(erx_bt, patch))}.
-
-%% The advertised name: the application key, else the host part of the node name.
-name() ->
-    case application:get_env(erx_bt, name) of
-        {ok, Name} -> unicode:characters_to_binary(Name);
-        undefined -> lists:last(binary:split(atom_to_binary(node()), <<"@">>))
-    end.
 
 %% The patch the row names, read whole by erx_bt_patch, with the manufacturer it applies
 %% to; a file the reader refuses ends the process before the line is touched.

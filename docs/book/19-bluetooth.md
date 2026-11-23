@@ -4,8 +4,8 @@
 > `virt` against a Bumble virtual controller, and run on the Raspberry
 > Pi 4 as far as advertising: the
 > H4 framing and the HCI codec, the controller process with its
-> supervision, the patch reader, the advertising data and identity
-> address, the line tree with its keeper in the system domain, its
+> supervision, the patch reader, the advertising data with the
+> served services' UUIDs, the identity address, the line tree with its keeper in the system domain, its
 > power cycle and its service as a `line` file grant; the `ble`
 > interface, its manifest check and the facet's mint with its one
 > request check, which has a fuzz target; the GATT server, its
@@ -15,8 +15,7 @@
 > with the pairing window and the bond store. On the Pi 4 the controller
 > comes up and a phone's scan sees the board advertising under the name
 > `erxos`; a connection, GATT access and pairing have not run on the
-> board. Designed: advertising a service's
-> UUID, an installed app's own `ble` grant, the rule that a service's
+> board. Designed: an installed app's own `ble` grant, the rule that a service's
 > state belongs to its handler, the app that handles the serial
 > service, and tests against a Bumble peer that scans, connects, reads
 > and pairs.
@@ -85,10 +84,9 @@ The design offers a phone four things
    that key, so the phone and the machine recognize each other next
    time.
 
-Of these, the advertised name, the table of characteristics with the
-level each requires, and pairing and bonding are built. Advertising a
-service's UUID, the app side of characteristics and the serial stream
-are designed and not built.
+Of these, the advertised name and services, the table of characteristics
+with the level each requires, and pairing and bonding are built. The app
+side of characteristics and the serial stream are designed and not built.
 
 The central role, which scans and connects, belongs to the design
 of HID over GATT, for keyboards and mice. Classic Bluetooth, the older

@@ -14,19 +14,21 @@ structures, a length, a type and its data (Vol 3 Part C, 11), at most 31 octets:
 - the scan response data: the complete local name, or the name shortened to what fits, then
   the appearance when it fits.
 
-The UUIDs come from the configuration, which the manifest check holds to what fits, so
-UUIDs that do not fit fail with `badarg`; the name is shortened rather than refused, at a
-character boundary.
+The UUIDs are those the registry answers, `erx_gatt_srv:advertised/0`, least significant
+octet first as ATT carries them, which is how AD carries them too. UUIDs that do not fit
+fail with `badarg`: the manifest check holds the served set to what fits
+(docs/todo-bluetooth.md, the `ble` facet's side), and while `erx_bt_sup` serves every
+declared service, a host test builds the advertising data of all of them. The name is
+shortened rather than refused, at a character boundary.
 """.
 
 -include("generated/erx_abi.hrl").
 
 -export([data/1]).
--export_type([uuid/0, input/0]).
+-export_type([input/0]).
 
--doc "A service UUID: a 16-bit one, or a 128-bit one as its integer.".
--type uuid() :: 0..16#FFFF | 16#10000..(1 bsl 128 - 1).
--type input() :: #{uuids := [uuid()], name := unicode:unicode_binary(), appearance := 0..16#FFFF}.
+-doc "The service UUIDs as ATT carries them, which AD carries the same way, and GAP's name and appearance.".
+-type input() :: #{uuids := [erx_att:uuid()], name := unicode:unicode_binary(), appearance := 0..16#FFFF}.
 
 -doc "The advertising data and the scan response data for the UUIDs, the name and the appearance.".
 -spec data(input()) -> #{advertising_data := binary(), scan_response_data := binary()}.
@@ -34,8 +36,8 @@ data(#{uuids := Uuids, name := Name, appearance := Appearance}) ->
     #{advertising_data => advertising(Uuids), scan_response_data => scan_response(Name, Appearance)}.
 
 advertising(Uuids) ->
-    Short = << <<Uuid:16/little>> || Uuid <- Uuids, Uuid =< 16#FFFF >>,
-    Long = << <<Uuid:128/little>> || Uuid <- Uuids, Uuid > 16#FFFF >>,
+    Short = << <<Uuid/binary>> || <<_:16>> = Uuid <- Uuids >>,
+    Long = << <<Uuid/binary>> || <<_:128>> = Uuid <- Uuids >>,
     Data = <<(ad(?ERX_BT_AD_TYPE_FLAGS, <<?ERX_BT_AD_FLAGS_GENERAL_NO_BREDR>>))/binary,
              (list(?ERX_BT_AD_TYPE_UUID16_COMPLETE, Short))/binary,
              (list(?ERX_BT_AD_TYPE_UUID128_COMPLETE, Long))/binary>>,

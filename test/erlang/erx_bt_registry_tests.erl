@@ -14,6 +14,7 @@
 -include_lib("eunit/include/eunit.hrl").
 
 -define(WAIT_MS, 2000).
+-define(GAP, #{name => <<"erxos">>, appearance => 16#03C1}).
 -define(ADDRESS, {random, <<16#C0, 16#FF, 16#EE, 16#12, 16#34, 16#56>>}).
 
 %% ---- the core, case by case ----
@@ -36,7 +37,7 @@ pid(N) -> list_to_pid("<0." ++ integer_to_list(N) ++ ".0>").
 step(Input, Core) -> erx_gatt_registry:step(Input, Core).
 
 steps(Inputs) ->
-    lists:foldl(fun(Input, {_, Core}) -> step(Input, Core) end, {[], erx_gatt_registry:new(services())}, Inputs).
+    lists:foldl(fun(Input, {_, Core}) -> step(Input, Core) end, {[], erx_gatt_registry:new(?GAP, services())}, Inputs).
 
 attach_answers_the_limits_and_refuses_test() ->
     {Actions, _} = steps([{facet, ?H1, {attach, a}, from}]),
@@ -103,7 +104,7 @@ alphabet() ->
 %% write, the link's end and a late answer fit in four steps.
 every_sequence_of_four_keeps_the_model_test_() ->
     {timeout, 300, fun() ->
-        Empty = erx_gatt_registry:new(services()),
+        Empty = erx_gatt_registry:new(?GAP, services()),
         {Model, Core} = lists:foldl(fun(Symbol, {M, C}) ->
                                             Input = input(Symbol, M),
                                             {Actions, Next} = step(Input, C),
@@ -215,7 +216,7 @@ events_only_to_handlers(Actions, #model{handlers = H}) ->
 
 registry_test_() ->
     {foreach,
-     fun() -> {ok, Pid} = erx_gatt_srv:start_link(services()), unlink(Pid), Pid end,
+     fun() -> {ok, Pid} = erx_gatt_srv:start_link(?GAP, services()), unlink(Pid), Pid end,
      fun stop/1,
      [fun(_) -> {"a join racing sets misses none", fun join_races_sets/0} end,
       fun(_) -> {"an answer is taken once, from its handler", fun answer_only_from_its_handler/0} end,
@@ -276,6 +277,33 @@ notification_answered() ->
     after ?WAIT_MS -> error(no_request)
     end,
     ?assertEqual(ok, caller_answer(Caller)).
+
+%% What the advertising carries (docs/design-bluetooth.md, "Advertising"): the UUIDs of
+%% the served services abi/gatt marks `advertise`, and GAP's name and appearance. Every
+%% declared service is served (erx_bt_sup), so the declared set must fit the advertising
+%% data, which erx_bt_adv:data/1 refuses with badarg.
+advertised_test() ->
+    Nus = erx_gatt_decl:service(nus),
+    ?assertEqual(maps:put(uuids, [maps:get(uuid, Nus)], ?GAP), advertised([Nus | services()])),
+    ?assertEqual(maps:put(uuids, [], ?GAP), advertised(services())),
+    Declared = [erx_gatt_decl:service(Name) || Name <- erx_gatt_decl:names()],
+    #{advertising_data := _} = erx_bt_adv:data(advertised(Declared)).
+
+advertised(Services) ->
+    {ok, Pid} = erx_gatt_srv:start_link(?GAP, Services),
+    unlink(Pid),
+    try erx_gatt_srv:advertised() after stop(Pid) end.
+
+%% GAP's values from the application keys: the configured name, the host part of the
+%% node name by default, the 248-octet bound, text alone, and a 16-bit appearance.
+gap_from_the_keys_test() ->
+    ?assertEqual(#{name => <<"bt">>, appearance => 16#03C1}, erx_bt_sup:gap({ok, "bt"}, {ok, 16#03C1}, 'a@b')),
+    ?assertEqual(#{name => <<"erxos">>, appearance => 0}, erx_bt_sup:gap(undefined, undefined, 'bt@erxos')),
+    Longest = binary:copy(<<"a">>, 248),
+    ?assertMatch(#{name := Longest}, erx_bt_sup:gap({ok, Longest}, undefined, 'a@b')),
+    [?assertError({bad_name, Name}, erx_bt_sup:gap({ok, Name}, undefined, 'a@b'))
+     || Name <- [<<Longest/binary, "a">>, <<16#FF>>, erxos]],
+    [?assertError({bad_appearance, A}, erx_bt_sup:gap(undefined, {ok, A}, 'a@b')) || A <- [-1, 16#10000, foo]].
 
 %% Ends the registry and waits for its end, so the next case can register its own.
 stop(Pid) ->

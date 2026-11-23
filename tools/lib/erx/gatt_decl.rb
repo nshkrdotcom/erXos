@@ -12,7 +12,7 @@ module Erx
   # The GATT service declarations (docs/design-bluetooth.md, "Declarations:
   # `abi/gatt`"): every file abi/gatt/NAME.txt, read and checked whole, becomes one
   # term of the generated Erlang module erx_gatt_decl, in the shape
-  # erx_gatt_db:build/1 takes (its service() type). Nothing reads a declaration at
+  # erx_gatt_db:build/2 takes (its service() type). Nothing reads a declaration at
   # run time.
   #
   # A declaration is lines of space-separated tokens, with # starting a comment:
@@ -297,7 +297,7 @@ module Erx
         -module(erx_gatt_decl).
         -moduledoc """
         The GATT services declared in abi/gatt (docs/design-bluetooth.md, "Declarations:
-        `abi/gatt`"), each as erx_gatt_db:build/1 takes it: UUIDs as ATT carries them, least
+        `abi/gatt`"), each as erx_gatt_db:build/2 takes it: UUIDs as ATT carries them, least
         significant octet first, and each access with the level it requires.
         """.
 

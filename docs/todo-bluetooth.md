@@ -240,6 +240,3 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   "Concurrency"): the tree's order is store, registry, group under `rest_for_one`, so a store crash restarts
   the registry, which loses every attachment, and no handler hears of it. The registry depends on the store
   for nothing; put it first, or tell handlers of a registry restart, in the design's tree.
-* [Medium] bluetooth, advertised UUIDs (`erx_bt_hci`'s `config/0`; docs/design-bluetooth.md "Advertising"):
-  no GATT table (`erx_gatt_srv:advertised/0`) exists, so no service UUID is advertised; stage 1's advertising
-  needs the table's declarations brought forward from stage 2.

@@ -34,7 +34,7 @@ service's handler, the live links with their `Conn`, and the writes handed to ha
   answers `{error, gone}` at once.
 """.
 
--export([new/1, step/2]).
+-export([new/2, step/2]).
 -export_type([core/0, input/0, action/0, limits/0]).
 
 -type key() :: erx_gatt_db:key().
@@ -80,12 +80,15 @@ link whose answer goes to `From`.
                 | {to_link, pid(), {answer, pos_integer(), term()} | {set, key(), binary()}}
                 | {request, pid(), {notify, notify | indicate, key(), binary()}, from()}.
 
--doc "The core of the served `Services`, as `erx_gatt_decl` declares them, in any order.".
--spec new([erx_gatt_db:service()]) -> core().
-new(Services) ->
+-doc """
+The core of the served `Services`, as `erx_gatt_decl` declares them, in any order, with
+GAP's values `Gap`.
+""".
+-spec new(erx_gatt_db:gap(), [erx_gatt_db:service()]) -> core().
+new(Gap, Services) ->
     Limits = #{Name => #{Char => maps:with([max, access], C) || #{name := Char} = C <- Chars}
                || #{name := Name, characteristics := Chars} <- Services},
-    #core{table = erx_gatt_db:build(Services), limits = Limits}.
+    #core{table = erx_gatt_db:build(Gap, Services), limits = Limits}.
 
 -doc "Steps one input: the actions to perform, in order, and the next core.".
 -spec step(input(), core()) -> {[action()], core()}.

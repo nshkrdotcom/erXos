@@ -15,6 +15,8 @@
 -define(JUST_WORKS, #{key => encrypted, encrypted => true}).
 -define(PASSKEY, #{key => authenticated, encrypted => true}).
 -define(WRITES, 4).
+%% GAP's values, which the table's Device Name and Appearance read with no handler.
+-define(GAP, #{name => <<"erxos">>, appearance => 16#03C1}).
 
 %% Two served services, given out of name order: nus, as the design's example declares it,
 %% and sec, with a long readable value and an indication, both above `open`.
@@ -35,7 +37,7 @@ uuid(String) ->
     Bin = binary:decode_hex(iolist_to_binary(string:replace(String, "-", "", all))),
     list_to_binary(lists:reverse(binary_to_list(Bin))).
 
-table() -> erx_gatt_db:build(services()).
+table() -> erx_gatt_db:build(?GAP, services()).
 
 server(Security) -> server(Security, #{}).
 server(Security, Values) -> #{table => table(), values => Values, security => Security}.
@@ -51,7 +53,7 @@ expected() ->
      {2, <<16#03, 16#28>>, <<16#02, 3, 0, 16#00, 16#2A>>},
      {3, <<16#00, 16#2A>>, <<"erxos">>},
      {4, <<16#03, 16#28>>, <<16#02, 5, 0, 16#01, 16#2A>>},
-     {5, <<16#01, 16#2A>>, <<0, 0>>},
+     {5, <<16#01, 16#2A>>, <<16#C1, 16#03>>},
      {6, <<16#00, 16#28>>, <<16#01, 16#18>>},
      {7, <<16#03, 16#28>>, <<16#20, 8, 0, 16#05, 16#2A>>},
      {8, <<16#05, 16#2A>>, none},
@@ -180,7 +182,7 @@ gate_follows_gap_table_10_2_test() ->
 %% ---- erx_gatt_db ----
 
 table_matches_the_hand_written_one_test() ->
-    Server = server(?OPEN, values()),
+    Server = server(?OPEN),
     lists:foreach(fun({Handle, Type, Value}) ->
                           {ok, #{type := T}} = erx_gatt_db:lookup(Handle, table()),
                           ?assertEqual({Handle, Type}, {Handle, T}),
@@ -196,7 +198,7 @@ value_of(Handle, Server) ->
 
 table_ignores_manifest_order_test() ->
     [Sec, Nus] = services(),
-    ?assertEqual(erx_gatt_db:build([Sec, Nus]), erx_gatt_db:build([Nus, Sec])),
+    ?assertEqual(erx_gatt_db:build(?GAP, [Sec, Nus]), erx_gatt_db:build(?GAP, [Nus, Sec])),
     {ok, #{type := <<16#00, 16#28>>, group_end := 15}} = erx_gatt_db:lookup(10, table()).
 
 %% erx_gatt_decl, generated from abi/gatt/, declares nus as the design's example does, so
@@ -208,8 +210,8 @@ declared_services_build_the_table_test() ->
     Declared = [erx_gatt_decl:service(Name) || Name <- erx_gatt_decl:names()],
     ?assertEqual(Nus, erx_gatt_decl:service(nus)),
     ?assert(lists:member(nus, erx_gatt_decl:advertised())),
-    ?assertEqual(table(), erx_gatt_db:build([Sec, erx_gatt_decl:service(nus)])),
-    Table = erx_gatt_db:build(Declared),
+    ?assertEqual(table(), erx_gatt_db:build(?GAP, [Sec, erx_gatt_decl:service(nus)])),
+    Table = erx_gatt_db:build(?GAP, Declared),
     lists:foreach(fun(#{name := Service, characteristics := Chars}) ->
                           [{ok, _} = erx_gatt_db:characteristic({Service, Char}, Table)
                            || #{name := Char} <- Chars]
@@ -225,16 +227,16 @@ table_past_0xffff_handles_is_refused_test() ->
                                    max => 0, access => #{read => open}}
                                  || Index <- lists:seq(1, 32762)]},
     Empty = fun(Name) -> #{name => Name, uuid => <<16#F2, 16#FF>>, characteristics => []} end,
-    Full = erx_gatt_db:build([Wide, Empty(empty)]),
+    Full = erx_gatt_db:build(?GAP, [Wide, Empty(empty)]),
     ?assertMatch({ok, #{handle := 16#FFFF, group_end := 16#FFFF}}, erx_gatt_db:lookup(16#FFFF, Full)),
-    ?assertError({handles_past_0xffff, 16#10000}, erx_gatt_db:build([Wide, Empty(empty), Empty(extra)])).
+    ?assertError({handles_past_0xffff, 16#10000}, erx_gatt_db:build(?GAP, [Wide, Empty(empty), Empty(extra)])).
 
 %% The hash covers what a client keeps of the table: a characteristic's UUID, its accesses,
 %% which its properties name, and the characteristic itself change it; its maximum, its
 %% levels and its initial value, which a client does not keep, do not.
 hash_covers_the_layout_alone_test() ->
     [#{characteristics := [Key, Ind]} = Sec, Nus] = services(),
-    Hash = fun(Chars) -> erx_gatt_db:hash(erx_gatt_db:build([Sec#{characteristics := Chars}, Nus])) end,
+    Hash = fun(Chars) -> erx_gatt_db:hash(erx_gatt_db:build(?GAP, [Sec#{characteristics := Chars}, Nus])) end,
     Base = erx_gatt_db:hash(table()),
     ?assertEqual(32, byte_size(Base)),
     ?assertNotEqual(Base, Hash([Key#{uuid := <<16#F1, 16#FF>>}, Ind])),
@@ -405,7 +407,7 @@ write_waits_for_its_handler_test() ->
 
 writes_answer_their_errors_test() ->
     [Sec, #{characteristics := [Rx, Tx]} = Nus] = services(),
-    Short = (server(?OPEN))#{table := erx_gatt_db:build([Sec, Nus#{characteristics := [Rx#{max := 4}, Tx]}])},
+    Short = (server(?OPEN))#{table := erx_gatt_db:build(?GAP, [Sec, Nus#{characteristics := [Rx#{max := 4}, Tx]}])},
     B = erx_gatt_server:new(),
     ?assertEqual(error_rsp(16#12, 12, 16#0D), answer(write(12, <<1, 2, 3, 4, 5>>), Short, B)),
     ?assertEqual({[], [], B}, ask(write_cmd(12, <<1, 2, 3, 4, 5>>), Short, B)),
@@ -536,7 +538,7 @@ prepared_writes_refuse_what_they_cannot_hold_test() ->
 
 gate_guards_commands_prepares_and_value_search_test() ->
     [#{characteristics := [Key, Ind]} = Sec, #{characteristics := [Rx, Tx]} = Nus] = services(),
-    Gated = erx_gatt_db:build([Sec#{characteristics := [Key, Ind#{access := #{indicate => encrypted, read => encrypted}}]},
+    Gated = erx_gatt_db:build(?GAP, [Sec#{characteristics := [Key, Ind#{access := #{indicate => encrypted, read => encrypted}}]},
                                Nus#{characteristics := [Rx#{access := #{write => open, write_without_response => encrypted}}, Tx]}]),
     Open = (server(?OPEN))#{table := Gated},
     Encrypted = (server(?JUST_WORKS))#{table := Gated},

@@ -16,6 +16,7 @@
 %% table, and the test's own calls in the envelope are the grantee's.
 -module(erx_ble_facet_tests).
 -include_lib("eunit/include/eunit.hrl").
+-define(GAP, #{name => <<"erxos">>, appearance => 0}).
 -export([export/3, owner/1]).
 
 -define(SYSTEM, 4).
@@ -32,7 +33,7 @@ owner(_Name) -> ?GRANTEE.
 %% The registry serving every declared service, registered as erx_gatt_srv and not
 %% linked to the test.
 start_registry() ->
-    {ok, Registry} = erx_gatt_srv:start_link([erx_gatt_decl:service(Name) || Name <- erx_gatt_decl:names()]),
+    {ok, Registry} = erx_gatt_srv:start_link(?GAP, [erx_gatt_decl:service(Name) || Name <- erx_gatt_decl:names()]),
     unlink(Registry),
     Registry.
 

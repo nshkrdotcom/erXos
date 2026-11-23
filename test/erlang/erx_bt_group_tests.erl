@@ -9,8 +9,11 @@
 
 -include_lib("eunit/include/eunit.hrl").
 -include("generated/erx_abi.hrl").
+-define(GAP, #{name => <<"erxos">>, appearance => 0}).
 
 -define(WAIT_MS, 3000).
+%% What the stand-in registry answers erx_gatt_srv:advertised/0.
+-define(ADVERTISED, #{uuids => [<<16#0F, 16#18>>], name => <<"erxos-test">>, appearance => 16#03C1}).
 
 %% The group reaches ready from its start and again after the controller process is
 %% killed; each start's first read of data comes after ctl's answer; the identity address
@@ -25,6 +28,17 @@ group_reaches_ready_and_keeps_the_address_test() ->
         Log = erx_bt_line_model:log(Model),
         ?assertNot(lists:member(read_at_reset, Log)),
         ?assertEqual(lists:duplicate(2, [reset, reset_done, read]), starts(Log))
+    end).
+
+%% The controller advertises what the registry answers, erx_gatt_srv:advertised/0: the
+%% service UUIDs in the advertising data, the name and appearance in the scan response.
+advertising_is_the_registrys_test() ->
+    with_group(#{}, fun(Model) ->
+        #{advertising_data := Data, scan_response_data := Scan} = erx_bt_adv:data(?ADVERTISED),
+        Written = [{write, erx_h4:command(Opcode, Parameters)}
+                   || Command <- [{le_set_advertising_data, Data}, {le_set_scan_response_data, Scan}],
+                      {Opcode, Parameters} <- [erx_hci:command(Command)]],
+        await(fun() -> Written -- erx_bt_line_model:log(Model) =:= [] end)
     end).
 
 %% A link process killed while connected is its disconnect: one HCI_Disconnect of its
@@ -130,13 +144,13 @@ static_addresses_test() ->
 advertising_data_test() ->
     ?assertEqual(#{advertising_data => <<2, 1, 6>>, scan_response_data => <<3, 9, "bt", 3, 16#19, 16#C1, 3>>},
                  erx_bt_adv:data(#{uuids => [], name => <<"bt">>, appearance => 16#03C1})),
-    #{advertising_data := Data} = erx_bt_adv:data(#{uuids => [16#180F, 1 bsl 127 + 5], name => <<>>, appearance => 0}),
+    #{advertising_data := Data} = erx_bt_adv:data(#{uuids => [<<16#0F, 16#18>>, <<5, 0:112, 16#80>>], name => <<>>, appearance => 0}),
     ?assertEqual(<<2, 1, 6, 3, 3, 16#0F, 16#18, 17, 7, 5, 0:112, 16#80>>, Data),
     Long = binary:copy(<<"a">>, 28),
     #{scan_response_data := Short} = erx_bt_adv:data(#{uuids => [], name => <<Long/binary, "\xc3\xa9\xc3\xa9">>,
                                                        appearance => 0}),
     ?assertEqual(<<29, 8, Long/binary>>, Short),
-    ?assertError(badarg, erx_bt_adv:data(#{uuids => [1 bsl 127, 1 bsl 126], name => <<>>, appearance => 0})).
+    ?assertError(badarg, erx_bt_adv:data(#{uuids => [<<0:120, 16#80>>, <<0:120, 16#40>>], name => <<>>, appearance => 0})).
 
 %% Helpers.
 
@@ -175,14 +189,14 @@ group_processes(Group) ->
     Links = [Pid || {_, Pid, _, _} <- supervisor:which_children(erx_bt_link_sup), is_pid(Pid)],
     Children ++ Links.
 
-%% The store, and a stand-in for the registry, which answers each link's `join` with the
-%% GAP and GATT services alone and takes what the links send it.
+%% The store, and a stand-in for the registry, which answers `advertised` with
+%% ?ADVERTISED and each link's `join` with the GAP and GATT services alone, and takes
+%% what the links send it.
 with_store(Case) -> with_store(fun erx_bt_store:start_link/0, Case).
 
 %% The same with the store StartStore starts, which registers it as erx_bt_store and
 %% answers {ok, Pid}.
 with_store(StartStore, Case) ->
-    application:set_env(erx_bt, name, "erxos-test"),
     {ok, Store} = StartStore(),
     unlink(Store),
     Registry = spawn(fun registry/0),
@@ -197,7 +211,8 @@ with_store(StartStore, Case) ->
 
 registry() ->
     receive
-        {'$gen_call', From, {join, _Conn, _Info}} -> gen_server:reply(From, #{table => erx_gatt_db:build([]), values => #{}});
+        {'$gen_call', From, advertised} -> gen_server:reply(From, ?ADVERTISED);
+        {'$gen_call', From, {join, _Conn, _Info}} -> gen_server:reply(From, #{table => erx_gatt_db:build(?GAP, []), values => #{}});
         _ -> ok
     end,
     registry().

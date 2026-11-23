@@ -7,8 +7,8 @@ The attribute table (docs/design-bluetooth.md, "One table, one gate" and "The at
 table"): a pure function of the services the manifest selects, built once when the
 Bluetooth domain starts and never changed while it lives.
 
-`build/1` lays out the GAP service, with Device Name and Appearance, read `open` (Vol 3
-Part C, 12.1 and 12.2); the GATT service, with Service Changed, `indicate open`, and its
+`build/2` lays out the GAP service, with Device Name and Appearance, read `open` (Vol 3
+Part C, 12.1 and 12.2), whose values are the name and appearance it is given; the GATT service, with Service Changed, `indicate open`, and its
 Client Characteristic Configuration (Part G, 7.1); then each served service in the order
 of its name. A service is its declaration (Part G, 3.1); each characteristic its
 declaration, its value and, when it allows `notify` or `indicate`, one Client
@@ -27,20 +27,26 @@ Its input is trusted configuration, a set of `erx_gatt_decl`'s terms, checked wh
 declarations are generated and the manifest is built (docs/design-bluetooth.md,
 "Declarations: `abi/gatt`"), so it is not checked again here. The one fact only the
 layout knows, how many handles the table takes, is checked here, where the handles are
-given: `build/1` fails with `{handles_past_0xffff, Count}` on a table of more than 0xFFFF
+given: `build/2` fails with `{handles_past_0xffff, Count}` on a table of more than 0xFFFF
 attributes, since ATT names a handle in 16 bits. (Part F 3.2.2, ATT's handle range, was
 not read; 0xFFFF is the 16-bit field's last value.)
 """.
 
 -include("generated/erx_abi.hrl").
 
--export([build/1, lookup/2, range/3, characteristic/2, hash/1, service_changed/0]).
--export_type([table/0, attribute/0, service/0, characteristic/0, key/0, access/0, source/0, char_info/0]).
+-export([build/2, lookup/2, range/3, characteristic/2, hash/1, service_changed/0]).
+-export_type([gap/0, table/0, attribute/0, service/0, characteristic/0, key/0, access/0, source/0, char_info/0]).
 
 -type level() :: erx_gatt_gate:level().
 -type access() :: read | write | write_without_response | notify | indicate.
 -doc "A characteristic's name in the table: its service's and its own.".
 -type key() :: {Service :: atom(), Char :: atom()}.
+
+-doc """
+GAP's values: the device's name, the machine's host name, which the advertising carries
+too, and its appearance (docs/design-bluetooth.md, "The attribute table").
+""".
+-type gap() :: #{name := unicode:unicode_binary(), appearance := 0..16#FFFF}.
 
 -doc "A service as `erx_gatt_decl` declares it: UUIDs as ATT carries them.".
 -type service() :: #{name := atom(), uuid := erx_att:uuid(), characteristics := [characteristic()]}.
@@ -64,11 +70,11 @@ access requires, or `none` where it is not allowed; `max` bounds a written value
                        notify := none | level(), indicate := none | level()}.
 -opaque table() :: #{attributes := tuple(), characteristics := #{key() => char_info()}, hash := <<_:256>>}.
 
--doc "The table of the served `Services`, in any order.".
--spec build([service()]) -> table().
-build(Services) ->
+-doc "The table of the served `Services`, in any order, with GAP's values `Gap`.".
+-spec build(gap(), [service()]) -> table().
+build(Gap, Services) ->
     Sorted = lists:sort(fun(#{name := A}, #{name := B}) -> A =< B end, Services),
-    {Laid, _Next} = lists:mapfoldl(fun service/2, 1, [gap(), gatt() | Sorted]),
+    {Laid, _Next} = lists:mapfoldl(fun service/2, 1, [gap(Gap), gatt() | Sorted]),
     {Attributes, Infos} = lists:unzip(Laid),
     Tuple = list_to_tuple(lists:append(Attributes)),
     tuple_size(Tuple) =< 16#FFFF orelse error({handles_past_0xffff, tuple_size(Tuple)}),
@@ -105,12 +111,12 @@ service_changed() -> {gatt, service_changed}.
 
 %% GAP's service (Part C, 12.1 and 12.2) and GATT's (Part G, 7.1), declared as any other;
 %% GATT's names are service_changed/0's.
-gap() ->
+gap(#{name := Name, appearance := Appearance}) ->
     #{name => gap, uuid => <<?ERX_GATT_UUID_GAP_SERVICE:16/little>>,
       characteristics => [#{name => device_name, uuid => <<?ERX_GATT_UUID_DEVICE_NAME:16/little>>,
-                            max => ?ERX_GAP_DEVICE_NAME_MAX, access => #{read => open}},
+                            max => ?ERX_GAP_DEVICE_NAME_MAX, access => #{read => open}, value => Name},
                           #{name => appearance, uuid => <<?ERX_GATT_UUID_APPEARANCE:16/little>>,
-                            max => 2, access => #{read => open}, value => <<0, 0>>}]}.
+                            max => 2, access => #{read => open}, value => <<Appearance:16/little>>}]}.
 
 gatt() ->
     {Service, ServiceChanged} = service_changed(),

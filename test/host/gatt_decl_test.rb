@@ -14,7 +14,7 @@ require_relative '../../tools/lib/erx/gatt_decl'
 # that breaks only it, beside a passing neighbour where the bound is a number; and the
 # generated erx_gatt_decl, compiled and run on stock's emulator (ERX_ERL and ERX_ERLC),
 # gives a declaration's 16-bit UUID, initial value and empty characteristic list as
-# erx_gatt_db:build/1 takes them. test/erlang/erx_bt_gatt_tests.erl builds the table from
+# erx_gatt_db:build/2 takes them. test/erlang/erx_bt_gatt_tests.erl builds the table from
 # the generated module the build compiles.
 class GattDeclTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)

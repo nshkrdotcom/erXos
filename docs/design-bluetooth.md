@@ -1455,8 +1455,9 @@ restart of the group rebuilds the same configuration:
 * `address`, the identity address, from the store,
   `erx_bt_store:address/0` ([The identity address](#the-identity-address));
 * `advertising_data` and `scan_response_data`, from `erx_bt_adv:data/1`,
-  a pure function of the UUIDs the registry's table marks `advertise`
-  (`erx_gatt_srv:advertised/0`), the name and the appearance
+  a pure function of what the registry answers `erx_gatt_srv:advertised/0`:
+  the UUIDs of the served services whose declarations say `advertise`,
+  and GAP's name and appearance
   ([Advertising](#advertising));
 * `patch`: `none` when the row names no patch, else the manufacturer from
   `patch_manufacturer` and the records `erx_bt_patch:records/1` returns
@@ -1660,12 +1661,18 @@ declared service ([The attribute table](#the-attribute-table)).
 
 ### The attribute table
 
-`erx_gatt_db:build/1` lays out, in this order: the GAP service, with
+`erx_gatt_db:build/2` lays out, in this order: the GAP service, with
 Device Name and Appearance, read `open`; the GATT service, with Service
 Changed, `indicate open`, and its Client Characteristic Configuration;
 then each served service in the order of its name, each characteristic as
 its declaration, its value and, when it allows `notify` or `indicate`,
-one Client Characteristic Configuration descriptor. The descriptor is
+one Client Characteristic Configuration descriptor. GAP's Device Name is
+the machine's host name, the advertising's local name, and its one owner
+is `erx_bt_sup`, which reads it and the appearance once from the `name`
+and `appearance` keys ([The Bluetooth domain](#the-bluetooth-domain)),
+refusing a name that is not UTF-8 or is longer than Device Name's 248
+octets, and hands both to the registry, which lays them into the table
+and answers them to the controller process for the advertising data. The descriptor is
 readable openly and writable at the one level of the characteristic's
 `notify` or `indicate`, whichever it declares, since the generator
 refuses the two at different levels, so subscribing is gated as
@@ -1676,7 +1683,7 @@ for any other; on a link that holds a key the write requires at least
 no Database Hash: with Service Changed alone, robust caching is not
 required (GATT 2.5.2.1).
 
-Handles run from 1 in that order, and `build/1`, which gives every
+Handles run from 1 in that order, and `build/2`, which gives every
 handle, is the one place that counts them: a table of more than 0xFFFF
 attributes, past the 16 bits ATT names a handle in, fails to build, so
 no table names a wrapped handle and no other module copies the layout to

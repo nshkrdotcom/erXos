@@ -8,7 +8,8 @@ link's messages"): the process registered as `erx_gatt_srv`, the effects around
 `erx_gatt_registry`. It sits before the controller group in `erx_bt_sup`, so it outlives
 every link, and handlers stay attached across the group's restarts.
 
-- **Inputs.** A link's `join/2` call; a link's messages, `{erx_bt_link, Link, Message}`,
+- **Inputs.** The controller process's `advertised/0` call; a link's `join/2`
+  call; a link's messages, `{erx_bt_link, Link, Message}`,
   each a write for a handler, a subscription, a new MTU or the link's security; a facet's
   operation, `facet/3`; and the `'DOWN'` of a link or a handler it monitors. For each of a
   link's writes it makes the fresh reference `Req` the handler receives.
@@ -24,18 +25,29 @@ every link, and handlers stay attached across the group's restarts.
 """.
 -behaviour(gen_server).
 
--export([start_link/1, join/2, facet/3]).
+-export([start_link/2, advertised/0, join/2, facet/3]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2]).
 
 -record(srv, {
+    advertised :: erx_bt_adv:input(),
     core :: erx_gatt_registry:core(),
     requests :: gen_server:request_id_collection()
 }).
 
--doc "Starts the registry, registered as `erx_gatt_srv`, serving `Services`.".
--spec start_link([erx_gatt_db:service()]) -> gen_server:start_ret().
-start_link(Services) ->
-    gen_server:start_link({local, ?MODULE}, ?MODULE, Services, []).
+-doc "Starts the registry, registered as `erx_gatt_srv`, serving `Services` with GAP's values `Gap`.".
+-spec start_link(erx_gatt_db:gap(), [erx_gatt_db:service()]) -> gen_server:start_ret().
+start_link(Gap, Services) ->
+    gen_server:start_link({local, ?MODULE}, ?MODULE, {Gap, Services}, []).
+
+-doc """
+What the controller process advertises (docs/design-bluetooth.md, "Advertising"): the
+UUIDs of the served services whose declarations say `advertise`, in the order served,
+and GAP's name and appearance, the values the table's Device Name and Appearance
+read, so the advertised name and GAP's are one.
+""".
+-spec advertised() -> erx_bt_adv:input().
+advertised() ->
+    gen_server:call(?MODULE, advertised).
 
 -doc """
 A link joins the registry at its start: the registry maps `Conn` to the calling link,
@@ -61,9 +73,14 @@ outlast that.
 facet(Caller, Op, Timeout) ->
     gen_server:call(?MODULE, {facet, Caller, Op}, Timeout).
 
-init(Services) ->
-    {ok, #srv{core = erx_gatt_registry:new(Services), requests = gen_server:reqids_new()}}.
+init({Gap, Services}) ->
+    Marked = erx_gatt_decl:advertised(),
+    Uuids = [Uuid || #{name := Name, uuid := Uuid} <- Services, lists:member(Name, Marked)],
+    {ok, #srv{advertised = Gap#{uuids => Uuids}, core = erx_gatt_registry:new(Gap, Services),
+              requests = gen_server:reqids_new()}}.
 
+handle_call(advertised, _From, #srv{advertised = Advertised} = Srv) ->
+    {reply, Advertised, Srv};
 handle_call({join, Conn, Info}, {Link, _Tag} = From, Srv) ->
     step({join, Link, Conn, Info, From}, Srv);
 handle_call({facet, Caller, Op}, From, Srv) ->
