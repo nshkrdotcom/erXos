@@ -597,6 +597,20 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
 
 ## Planned features
 
+* [Medium] code server, its runtime inputs (`erlang/apps/erx/src/erx_code_agent.erl`,
+  `erxos_env/2`): on erXos the code server runs with `supervised` false, its limits
+  unknown and no release, because the runtime has none of the three inputs
+  [design-live.md](design-live.md#the-code-server) gives it: `erx:limits/0` (the funnel's
+  `max_frame`, `max_message_heap` and `funnel_depth` as the runtime enforces them), the
+  boot information's `supervised` flag (an `abi/erx_abi.txt` `boot_flags` bit, set by the
+  domain service from the specification's `restart` and read by a BIF), and a reader of
+  the domain's release manifest (blob by hash, and a release module's hash). The code
+  protocol's floors into and out of a domain are not yet in `abi/services/code.txt`, nor
+  computed by its generator, nor held to the system domain by the manifest's check. Until
+  all of these land, a domain does not check the floors (it logs that its limits are
+  unknown), no domain waits for a start load, and a blob only the release holds is asked
+  of `erx_code`, which ends the load as `invalid`; all fail safe, and none matters before
+  `erx_code` sends loads to domains, which needs all of them first.
 * [Low] code service, overlays across reboots and `erx_code` restarts
   (`erlang/apps/erx_code/src/erx_code.erl`): design-live.md keeps every overlay, hot store and history in
   `erx_code`'s memory, so a reboot returns every domain to its release and an `erx_code` restart ends the
