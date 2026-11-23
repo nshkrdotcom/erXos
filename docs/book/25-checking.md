@@ -12,12 +12,14 @@
 > tests and the CBMC harnesses. So are the exhaustive explorations of
 > the TCP core, the USB hub machine, the pipe server and the host
 > link's 9P bridge; reproducible boot images and the deterministic-mode
-> transcript; the QEMU suites; and the seeded faults of each of these.
+> transcript; the QEMU suites; the seeded faults of each of these; and
+> the benchmarks of stock OTP, the guest's runtime and the boot.
 > **Designed:** the TLA+ models of the update protocol and of the host
 > link's sessions; the kernel interface's conformance cases (the
 > harness is built, its roster holds one pending case); the full
 > suites of hostile programs; the fuzz campaign against Fiasco's
-> system calls; and the further oracles section 25.1.4 lists.
+> system calls; the further oracles section 25.1.4 lists; and the
+> benchmark records, comparisons and limits of section 25.9.
 
 **Background needed.** The whole book, chapters
 [6](06-construction.md) and [7](07-one-source.md) most: the
@@ -42,8 +44,9 @@ check must first be seen to fail on a fault planted for it.
 Section 25.1 covers the oracles and 25.2 the seeded faults. Sections
 25.3 to 25.5 cover fuzzing and sanitizers, models and bounded proofs,
 and exhaustive tests of state machines. Section 25.6 covers
-determinism, 25.7 the QEMU suites, and 25.8 how the checks are split
-between every commit and the slower runs.
+determinism, 25.7 the QEMU suites, 25.8 how the checks are split
+between every commit and the slower runs, and 25.9 how the system is
+measured.
 
 ## 25.1 Answers from outside the code
 
@@ -712,7 +715,70 @@ for a missing tool or a timeout, fails; none is reported as skipped
 and green
 ([design-build.md, Processes and evidence](../design-build.md#processes-and-evidence)).
 
-## 25.9 What the checks cannot say
+## 25.9 Measuring the system
+
+A check says whether the system gives the right answer; a measurement
+says how long the answer took. The checks of this chapter could not
+have seen the console on the Raspberry Pi 4 lose pasted bytes: every
+byte that arrived was right, but the driver's process sometimes ran
+milliseconds after the interrupt, and the UART holds less than a
+millisecond of input
+([chapter 9, section 9.2.4](09-processes.md#924-urgent-work)). Built
+are the benchmarks `tools/erx bench` runs today: stock OTP's message,
+spawn and switch costs, the same workloads in a guest against stock
+OTP, boot time, and a few subsystem workloads. Designed is the system
+that measures below the runtime
+([design-bench.md](../design-bench.md)).
+
+> **Background: microbenchmarks and tails.** A **microbenchmark**
+> times one small operation many times: a call that asks the system
+> for nothing, a wake of a sleeping thread, a page committed. Its
+> average hides what users feel. A **tail** is the slow end of the
+> distribution, such as the 99th percentile, the time that one
+> operation in a hundred exceeds. A lost interrupt or a dropped byte
+> lives in the tail, so a benchmark that reports only a mean cannot
+> see it.
+
+In the designed system, each run of a benchmark leaves one
+**benchmark record (designed)** in the project's history repository,
+never in the source tree. The record separates where the run happened, its environment (QEMU under HVF,
+deterministic mode, or the board, with the system that ran), from what
+ran: the revision, the image, the compiler and its flags. Every
+interval in it is two readings of one clock. Inside a guest that clock
+is the processor's system counter, which the kernel interface's clock,
+ERTS's time and the trace ring all read; at the board's pins it is a
+logic analyser's. A guest sends a histogram of its samples rather than
+the samples themselves, since the board's console carries about 11 KiB
+a second.
+
+Two records are compared only when their environments are equal, so a
+number taken under TCG can never be set against a native one. The
+comparison is a rule, not a judgement. The **noise band (designed)** of
+a number is its range over at least three runs of the baseline. A
+candidate inside the band is the same; one outside it is slower or
+faster only in a **paired run (designed)**, where the two images boot
+alternately on one host in one session, so that the host's own drift
+falls on both. Anything else is inconclusive, and inconclusive is not
+a pass.
+
+Thresholds inform; they do not fail a commit. Exactly three limits do:
+no lost wake, anywhere; and on the Raspberry Pi 4, the console's
+interrupt handled within 0.7 ms with no byte lost, and the SD
+controller's within 1 ms. The landing gate runs five benchmarks in
+about a minute, as one more QEMU suite: `wake`, how late a waiting
+thread runs; `sched`, how a processor is shared; `nullcall`, what a
+request for nothing costs; `vm`, what memory costs; and `xdomain`, a
+message from one domain to another.
+
+The same Raspberry Pi 4 also boots stock L4Re, FreeBSD and Linux, with
+the same firmware settings, and each runs the counterpart of every
+operation. L4Re runs its own IPC benchmark, whose published numbers
+for this board erXos must first reproduce before it trusts the
+comparison. FreeBSD and Linux run one small C program of erXos's own,
+compiled on the board. Linux is the best case on the board; FreeBSD is
+the behaviour erXos matches.
+
+## 25.10 What the checks cannot say
 
 Every check here answers a narrower question than its name suggests.
 TLC checks a model, not the machine code. herd7 checks litmus
@@ -729,7 +795,7 @@ What a device does to Fiasco, such as an asynchronous error or a storm
 of interrupts, is driven by no erXos test. These are limits of the
 system.
 
-## 25.10 Design choices
+## 25.11 Design choices
 
 **Oracles over hand-written expectations.** Writing expected answers
 by hand for OTP's thousands of cases would restate OTP's behavior with
@@ -771,7 +837,10 @@ stated bounds, and pure protocol cores are explored state by state on
 the host. Boot images build byte for byte the same, and a
 deterministic boot writes the same transcript twice. QEMU suites
 report every cell's status and never invent a pass. Fast checks guard
-every commit; slow ones run on what has landed.
+every commit; slow ones run on what has landed. In the design,
+benchmarks leave records outside the tree, compare only like with
+like, and fail a commit only for a lost wake or, on the board, a late
+console or SD interrupt.
 
 ## Where to read next
 
@@ -781,6 +850,9 @@ every commit; slow ones run on what has landed.
   built, mapped to code and run, and the CBMC harness rules.
 * [design-host-oracle.md](../design-host-oracle.md): the offline
   Linux container that runs stock OTP's suites.
+* [design-bench.md](../design-bench.md): the benchmarks, their record,
+  the comparison rule, the three limits and the other systems on the
+  board.
 * [design-build.md, What the gates run](../design-build.md#what-the-gates-run)
   and [Reusing passing boots](../design-build.md#reusing-passing-boots):
   gate discovery, cell statuses and boot reuse.

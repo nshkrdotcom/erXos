@@ -22,6 +22,37 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   repeat the G3 run for HVF and TCG on a quiet host, since the first run was
   taken at a load average of 44 to 55, and find why stock OTP on the host
   is slower than the guest at the same four operations under HVF.
+* [High] benchmarks, the record and the comparison (`tools/lib/erx/bench*.rb`,
+  [design-bench.md](design-bench.md#the-construction)): build `Erx::BenchRecord`, the one writer, into
+  `ERX_BENCH_HISTORY` or `~/erxos-history/bench/<environment>/<run>/`, refusing a destination in the tree;
+  `Erx::BenchCompare`, the noise band, the verdicts and the side-by-side table; benchmark declarations in
+  `tools/lib/erx/benches/`, found by name, with the existing runners moved into them and the chain of name tests
+  in `tools/erx` deleted; `BenchMeasurement` grown into the validator of `BENCH` lines, with its fuzz target; and
+  the three fixes of [Fixing the existing tools](design-bench.md#fixing-the-existing-tools) (`g3`'s TCG ratio,
+  `otp-switch`'s observed switches, every runner's output under `build/bench`), with the guide's table in
+  `docs/guide/tracing.md` brought to match. Tests: the tool rows of design-bench.md's Verification, each with its
+  seed.
+* [High] benchmarks, `wake` ([design-bench.md](design-bench.md#1-wake-how-late-a-waiting-thread-runs)): the guest
+  library `test/guest/bench/` (calibration, histogram, `BENCH` lines, with host tests of the histogram), the
+  native bench guest `test/guest/native_bench/` reusing `native_irq`'s handshake and holder and `native_task`'s
+  program, the `bench` QEMU suite with no offload, `park-deadline`, the two wake handshakes, `trigger-take`, and
+  `bench/erx_wake_bench.erl`'s `erlang-timer` on the development image. Lands with its two seeded runs.
+* [Medium] benchmarks, `sched` ([design-bench.md](design-bench.md#2-sched-how-a-cpu-is-shared)): `native_task`
+  program modes for the recording spinners, `share-equal`, `share-tasks` and `band-work`; lands with the quantum
+  case's seed run.
+* [Medium] benchmarks, `nullcall` ([design-bench.md](design-bench.md#3-nullcall-what-asking-for-nothing-costs)):
+  the root round trips through the decoder's refusal, same and cross space, and the kernel's cheapest call chosen
+  from Fiasco's source; then FD32's ten runs a build on the Raspberry Pi 4.
+* [Medium] benchmarks, `vm` ([design-bench.md](design-bench.md#4-vm-what-memory-costs)): the reserve, commit,
+  touch, protect, decommit, release, map and child operations from the root and from a test task.
+* [Medium] benchmarks, `xdomain` ([design-bench.md](design-bench.md#5-xdomain-one-message-one-domain-to-another)):
+  `bench/erx_xdomain_bench.erl`, a test image from the `system_domain` suite's with the echo facet granted to the
+  client's domain, `local-rtt`, `xdomain-pingpong` busy and parked, and `xdomain-throughput`; G5's lane variants.
+* [Medium] benchmarks, the Raspberry Pi 4 and the other systems
+  ([design-bench.md](design-bench.md#other-systems-on-the-same-raspberry-pi-4)): a raspi4b build of the native
+  bench image; `tools/erx bench import` for console logs and the analyser's captures; `bench/peer/erx_peer_bench.c`;
+  the L4Re, FreeBSD and Linux images and L4Re's IPC benchmark pinned in the fetch step; the two GPIO responders.
+  Waits on design-bench.md's open decisions 1 to 3 (the entry stamp, the stimulus, the pins).
 
 ## Stopgap replacements
 

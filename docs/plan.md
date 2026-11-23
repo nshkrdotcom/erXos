@@ -505,8 +505,11 @@ explained or in `TODO.md`, and every case that cannot run yet shown with
 its reason.
 
 **Gate G3.** Measures: W1 of E-S1 (same-domain ping-pong and ring, spawn,
-switch) against stock OTP 29.1.2 on the host; footprint; boot time to the
-shell. Decides: the baseline every later change is measured against.
+switch) against stock OTP 29.1.2 on the host, under HVF; footprint; boot
+time to the shell. Decides: the baseline every later change is measured
+against. Under TCG the guest's numbers are recorded alone, since TCG
+numbers are never set against native ones
+([design-bench.md](design-bench.md#fixing-the-existing-tools)).
 The first run, taken at a high load average and so not yet a valid
 baseline, is in [research-g3-baseline.md](research-g3-baseline.md);
 `tools/erx bench g3 --accel hvf|tcg` measures it again.
@@ -3581,7 +3584,7 @@ their numbers.
 | Gate | Milestone | Measures or asks | Decides |
 | --- | --- | --- | --- |
 | G0 | M0 | the Fiasco set's license scan and link closure; `lld` installed | what enters the tree, and the GPL-headed files Fiasco keeps |
-| G3 | M3 | W1 against stock OTP; footprint; boot time to the shell | the baseline |
+| G3 | M3 | W1 against stock OTP under HVF; footprint; boot time to the shell | the baseline |
 | GK1 | before Phase 1 is complete, beside Phase 1b | the pilot's time and defect rate | the pace of the rest of track K and of the plan |
 | GF | track F, after 0.2 and stages F1 to F7 | the downsides left after track F, each classed as closable on Fiasco, with its cost there, or as needing erXos's kernel; that cost against erXos's kernel's remaining estimate, recalibrated by GK1; F7's root pager and root-thread measurements under track Q's first consumer; whether group quotas fitted as a scheduler variant; the fuzz campaign's and the upstream watch's findings since 0.2; whether anything must claim FD24's construction properties | whether erXos builds its own kernel (GK2 and Phase 2) or stays on Fiasco with the rows only erXos's kernel closes published as downsides ([Track F](#track-f-fiasco-improved-to-the-decision)) |
 | GK2 | after the pilot, 1b-A and GF choosing erXos's kernel | Phase 1's and 1b-A's tests and benchmarks baselined on Fiasco, the conformance roster written from the design | the start of erXos's kernel in full |

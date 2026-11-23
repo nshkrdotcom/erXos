@@ -93,6 +93,7 @@ evidence, not design contracts.
 | [design-build.md](design-build.md) | the build and host tooling: deadlines, source records, evidence boundaries |
 | [design-host-oracle.md](design-host-oracle.md) | the stock OTP oracle in an isolated Linux container |
 | [design-verification.md](design-verification.md) | pure protocol cores, TLA+ models and model-to-code evidence |
+| [design-bench.md](design-bench.md) | the benchmarks: the record, the one clock, the comparison rule, the three hard limits, the other systems on the same board |
 | [plan.md](plan.md) | milestones, exit criteria and decision gates |
 | [style.md](style.md) | code style |
 | [todo-simplification.md](todo-simplification.md) | unadopted alternatives and their evidence |
@@ -1628,7 +1629,8 @@ tools/            Ruby: erx (build, pack, qemu, bench, console, inspect,
 specs/tla/        TLA+/PlusCal models, configurations, expectations and
                   invariant-to-implementation mappings
 test/             conformance, transcript, oracle, hosted and fuzz tests
-bench/            benchmarks and recorded results
+bench/            benchmark workloads; their results live in the history
+                  repository (design-bench.md)
 docs/             design, plan, research records, style
 sdk/              the SDK's own sources: erx_ui_host and sdk.mk; tools/erx
                   sdk export writes the SDK from a built tree
@@ -1716,6 +1718,7 @@ The layers of testing:
 | The oracle | OTP's suites in a test domain against stock OTP built on the development host, `libc-test` in a test domain, and erXos's F2FS's deep runs against Linux's F2FS and `fsck.f2fs` in their guests (`make check-oracle`); stock OTP's own suites alone in the isolated Linux oracle (`make check-oracle-host`) | QEMU on the development host, and a Linux container there |
 | Deterministic mode | `erx.det=1`: one CPU, TCG with instruction counting, the interpreter; byte-identical transcripts | QEMU, TCG |
 | Differential tests | the funnel against `binary_to_term/1`; float conversion against the host; cross-domain behaviour against two connected stock nodes; erXos's kernel against Fiasco; each recombined ERTS part against its predecessor; erXos's F2FS against Linux's in a QEMU guest and against littlefs; the EROFS reader, on images fsimg writes, and the FAT server, on images fsimg creates and by fsimg's verify of the images it writes; the network stack against FreeBSD's on the FreeBSD test host and against Linux's, by interoperation and scripted packet tests; each per-byte primitive against its reference on the host; the command shell against plan9port's rc, and its commands named like FreeBSD utilities against FreeBSD 15.1's in the oracle guest | host and QEMU |
+| Benchmarks | the operations of [design-bench.md](design-bench.md) with their distributions, compared within one environment; a lost wake fails, and on the Raspberry Pi 4 so do console and SD receipts past their limits | QEMU under HVF and in deterministic mode; the Raspberry Pi 4 beside L4Re, FreeBSD and Linux |
 | Fuzzing | every parser of untrusted input, built for the host from the same sources, each target landing with its parser; each design document's verification section names its own targets, and `make check-fuzz` runs them all for their configured budgets | host |
 | Hostile programs | domains and programs that attack the kernel's calls, their lanes and channels, forge pids and exits, fill lanes and never drain them, send malformed frames, and ignore kills | QEMU |
 
@@ -1762,7 +1765,9 @@ senders' traffic while some of their receivers stop draining.
 on them. Every
 measurement records host, accelerator, QEMU version, compiler, flags,
 workload and baseline, and TCG numbers are never compared with HVF or
-native numbers.
+native numbers. [design-bench.md](design-bench.md) is how: one record per
+run in the history repository, one clock per interval, comparisons only
+within one environment, and three limits that fail a gate.
 
 Acceptance measurements use the same OTP version, runtime flavour, workload
 and recorded machine load. They separate a domain's local work from

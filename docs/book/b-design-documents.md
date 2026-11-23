@@ -1,7 +1,7 @@
 # Appendix B. Reading the Design Documents
 
 The book explains erXos; the design documents decide it. Behind the
-chapters stand forty-five documents named `design-*.md`, together more
+chapters stand forty-eight documents named `design-*.md`, together more
 than a hundred thousand lines, each the contract of one subsystem.
 Each is written for the people who build or review its subsystem and
 assumes they know the rest. A reader who opens one cold meets terms
@@ -131,6 +131,7 @@ gives the question the document settles.
 | [design-pcie.md](../design-pcie.md) | PCIe: the enumerator, BAR placement, bus mastering and interrupts |
 | [design-usb.md](../design-usb.md) | USB: xHCI, hubs, HID and mass storage |
 | [design-header-io.md](../design-header-io.md) | The Raspberry Pi 4's 40-pin header: GPIO, I2C, SPI and PWM |
+| [design-rp1.md](../design-rp1.md) | RP1, the Raspberry Pi 5's I/O controller: its parts, interrupts, Ethernet and USB hosts |
 | [design-board-sensors.md](../design-board-sensors.md) | The Raspberry Pi 4's firmware readings and `/proc/sensors` |
 | [design-network-stack.md](../design-network-stack.md) | The TCP/IP stack, FreeBSD's behavior in Erlang, and its fast path |
 | [design-time.md](../design-time.md) | Network time and the clock service |
@@ -146,6 +147,7 @@ gives the question the document settles.
 | [design-desktop-programs.md](../design-desktop-programs.md) | The desktop's own programs and the shared visual theme |
 | [design-find-act.md](../design-find-act.md) | Find and act: the session's palette and routes from values to rc lines |
 | [design-web.md](../design-web.md) | The web client and its two front ends |
+| [design-book-site.md](../design-book-site.md) | The book on the website: Markdown rendered to static pages at build time, diagrams drawn from the book's Mermaid, typography and fonts |
 | [design-apps.md](../design-apps.md) | Apps as principals, the start table and `service` |
 | [design-packaging.md](../design-packaging.md) | Packages: one file per app, admission, install and update at run time, the SDK |
 | [design-app-trees.md](../design-app-trees.md) | An app's own tree at `/svc/NAME` |
@@ -154,6 +156,7 @@ gives the question the document settles.
 | [design-build.md](../design-build.md) | The build and host tooling: deadlines, source records, evidence boundaries |
 | [design-host-oracle.md](../design-host-oracle.md) | Stock OTP as the test oracle, in an isolated Linux container |
 | [design-verification.md](../design-verification.md) | Pure protocol cores, TLA+ models and the evidence that ties a model to its code |
+| [design-bench.md](../design-bench.md) | The benchmarks: the record, the one clock, the comparison rule, the three hard limits and the other systems on the same board |
 
 *Table B.1. The design documents, grouped by subject, drawn from
 [design.md, Document map](../design.md#document-map).*
@@ -287,7 +290,7 @@ read next" names.
 | [22](22-display.md) | design-display.md; design-desktop-programs.md; design-find-act.md; design-web.md |
 | [23](23-apps.md) | design-apps.md; design-packaging.md; design-app-trees.md; design-storage.md |
 | [24](24-startup.md) | design-system.md; design-fiasco.md; design-kernel.md (boot); design-abi.md; design-platforms.md |
-| [25](25-checking.md) | design-verification.md; design-host-oracle.md; design-build.md; design-network-stack.md (its tests) |
+| [25](25-checking.md) | design-verification.md; design-host-oracle.md; design-build.md; design-bench.md; design-network-stack.md (its tests) |
 
 *Table B.2. Which chapter prepares a reader for which documents, from
 each chapter's "Where to read next" and the outline of chapters 24

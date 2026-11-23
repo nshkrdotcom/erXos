@@ -33,7 +33,7 @@ goes to the document of the subsystem its component pointer names.
 * [Inspection and logging](docs/todo-inspection.md#major-initiatives): the inspector, /proc, logging and the live tree.
   1 item (1 Low).
 * [Build, tooling and tests](docs/todo-build.md#major-initiatives): the build, the host tools, the test harnesses and the gates.
-  3 items (3 Medium).
+  10 items (2 High, 8 Medium).
 
 ## Stopgap replacements
 
@@ -101,7 +101,7 @@ goes to the document of the subsystem its component pointer names.
 * [Web client and host link](docs/todo-web.md#bugs-by-subsystem): the web client and the host tool's web server.
   3 items (3 Medium).
 * [Website and book](docs/todo-site.md#bugs-by-subsystem): the website, the book and the user guide.
-  20 items (5 Medium, 15 Low).
+  21 items (5 Medium, 16 Low).
 * [Build, tooling and tests](docs/todo-build.md#bugs-by-subsystem): the build, the host tools, the test harnesses and the gates.
   125 items (60 Medium, 65 Low).
 
