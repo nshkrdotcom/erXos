@@ -14,9 +14,10 @@ require_relative '../fixtures/erlang_build'
 # never made by either, so it needs no hosted build.
 class ErxPl011Test < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
-  # The application, compiled whole (ErlangBuild), and the suite.
+  # The application, compiled whole (ErlangBuild), the stand-in for the device NIF the
+  # receive cases script (test/erlang/stand_in/erx_device.erl), and the suite.
   APPLICATIONS = %w[erx_uart].freeze
-  TESTS = %w[test/erlang/erx_pl011_tests.erl].freeze
+  TESTS = %w[test/erlang/stand_in/erx_device.erl test/erlang/erx_pl011_tests.erl].freeze
 
   def test_console_uart_cases_pass_under_eunit
     Dir.mktmpdir('erx-pl011-test') do |work|

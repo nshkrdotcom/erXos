@@ -24,3 +24,20 @@ putc(Binary) ->
     State = prim_tty:init_ssh(#{}, {80, 24}, unicode),
     {Output, _} = prim_tty:handle_request(State, {putc, Binary}),
     iolist_to_binary(Output).
+
+%% The editor steps over a control character as one character, and prim_tty moves over and
+%% erases both columns its caret notation takes, as it does two printable characters; stock
+%% steps over one column and leaves a stray `^` behind a deleted `^@`.
+one_step_over_a_caret_spans_its_two_columns_test_() ->
+    [{atom_to_list(element(1, Step)),
+      fun() -> ?assertEqual(after_typing(<<"xab">>, double(Step)), after_typing(<<"x", 0>>, Step)) end}
+     || Step <- [{delete, -1}, {move, -1}]].
+
+double({Request, N}) -> {Request, 2 * N}.
+
+%% What a terminal-less prim_tty writes for Request once Typed is inserted.
+after_typing(Typed, Request) ->
+    State = prim_tty:init_ssh(#{}, {80, 24}, unicode),
+    {_, Typing} = prim_tty:handle_request(State, {insert, Typed}),
+    {Output, _} = prim_tty:handle_request(Typing, Request),
+    iolist_to_binary(Output).

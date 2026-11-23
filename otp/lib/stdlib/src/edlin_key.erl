@@ -17,6 +17,10 @@
 %% See the License for the specific language governing permissions and
 %% limitations under the License.
 %%
+%% Modified by erXos: NUL, the mark a console UART puts where input was lost, is a
+%% character to insert, not a key, and ends any escape sequence it arrives in; a
+%% character that cannot continue a CSI sequence ends it and is read again.
+%%
 %% %CopyrightEnd%
 %%
 -module(edlin_key).
@@ -47,7 +51,9 @@ get_valid_escape_key([], Res) ->
             case Atom of
                 finished -> {key, Acc, []};
                 invalid -> {invalid, Acc, []};
-                csi -> {mode, {csi, Acc}}
+                %% erXos: the sequence waits for its next character, as an escape prefix
+                %% does; stock answers {mode, ...}, which edlin has no clause for.
+                csi -> {escape_prefix, {csi, Acc}}
             end;
         meta -> {escape_prefix, meta};
         meta_o -> {key,"\eO", []};
@@ -55,9 +61,18 @@ get_valid_escape_key([], Res) ->
         meta_csi -> {escape_prefix, meta_csi};
         meta_left_sq_bracket -> {escape_prefix, meta_left_sq_bracket}
     end;
+%% erXos: NUL, the mark a console UART puts where input was lost, ends any sequence it
+%% arrives in, which is dropped as an invalid key, and is read again from scratch, so
+%% it enters the line and the damaged line is never finished.
+get_valid_escape_key([$\^@|_] = Rest, Mode) when is_atom(Mode), Mode =/= none;
+                                                 element(1, Mode) =:= csi ->
+    {invalid, [], Rest};
 get_valid_escape_key([C|Rest], none) ->
     case C of
         $\e -> get_valid_escape_key(Rest,meta);
+        %% erXos: NUL is the mark a console UART puts where input was lost; it is part
+        %% of the line, not a key, so that edlin can refuse to finish the line.
+        $\^@ -> {insert, C, Rest};
         C when $\^@ =< C, C =< $\^_; C =:= $\^? -> {key, [C], Rest};
         _ -> {insert, C, Rest}
     end;
@@ -103,7 +118,10 @@ get_valid_escape_key([C|Rest], {csi, Acc}) ->
         $; -> get_valid_escape_key(Rest, {csi, [$;|Acc]});
         _ when $0 =< C, C =< $9 -> get_valid_escape_key(Rest, {csi, [C|Acc]});
         $m -> {invalid, "\e["++reverse([$m|Acc]), [$m|Rest]};
-        _ when $! =< C, C =< $~ -> get_valid_escape_key(Rest, {finished, "\e["++reverse([C|Acc])})
+        _ when $! =< C, C =< $~ -> get_valid_escape_key(Rest, {finished, "\e["++reverse([C|Acc])});
+        %% erXos: a character that cannot continue the sequence ends it and is read
+        %% again from scratch (edit 73); stock has no clause for it and crashes.
+        _ -> {invalid, "\e["++reverse(Acc), [C|Rest]}
     end;
 get_valid_escape_key([C|Rest], {finished, Acc}) ->
     case C of

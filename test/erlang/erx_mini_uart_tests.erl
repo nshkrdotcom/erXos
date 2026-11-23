@@ -61,9 +61,9 @@ logged(Steps) ->
                                  end, {0, 0, []}, Steps),
     lists:reverse(Logged).
 
-%% A burst that overran the receive FIFO, eight bytes in it and one in the receiver: the
-%% driver takes every byte and acknowledges the line before it logs the overrun, so the log
-%% call, which formats and writes a line, never stalls a drain with the FIFO filling behind
+%% A burst that overran the receive FIFO, eight bytes in it and one that came after the
+%% loss: the driver takes every byte, marks the loss after the eighth, and acknowledges the
+%% line before it logs the overrun, so the log call, which formats and writes a line, never stalls a drain with the FIFO filling behind
 %% it. The driver runs over a played device (test/erlang/stand_in/erx_device.erl): this
 %% process answers its register calls from a model of the FIFO and records them, the
 %% console input and the driver's log calls in the order they come.
@@ -76,7 +76,7 @@ overrun_is_logged_after_the_drain_and_the_acknowledgement_test() ->
         {_, _} = serve(Driver, {[], [], false}, {read, lsr}, []),
         Driver ! {erx_irq, {stand_in, Self}, 0},
         {Events, _} = serve(Driver, {[], "abcdefghi", true}, logged, []),
-        ?assertEqual([{input, <<"abcdefghi">>}], [E || E = {input, _} <- Events]),
+        ?assertEqual([{input, <<"abcdefgh", 0, "i">>}], [E || E = {input, _} <- Events]),
         Order = [E || E <- Events, E =:= {read, io} orelse E =:= ack orelse element(1, E) =:= logged],
         {Reads, After} = lists:split(9, Order),
         ?assertEqual(lists:duplicate(9, {read, io}), Reads),
@@ -85,6 +85,60 @@ overrun_is_logged_after_the_drain_and_the_acknowledgement_test() ->
         unlink(Driver),
         exit(Driver, kill),
         logger:remove_handler(?MODULE)
+    end.
+
+%% A line typed into a full FIFO: "rm -rf /" filled it, the next byte was lost, and "x\n"
+%% arrived during the drain. The marker, a NUL as FreeBSD's uart(4) puts it, follows the
+%% eight bytes the FIFO held and comes before the newline, so the damaged line goes up
+%% marked and the line editor refuses to run it; a marker at the end of the drain would send
+%% "rm -rf /x" out whole.
+overrun_mid_line_is_marked_where_the_bytes_were_lost_test() ->
+    ?assertEqual(<<"rm -rf /", 0, "x\n">>, delivered({[], "rm -rf /x\n", true})).
+
+%% A FIFO that has not overrun goes up as read, with no marker.
+input_without_an_overrun_is_unmarked_test() ->
+    ?assertEqual(<<"ls\n">>, delivered({[], "ls\n", false})).
+
+%% The marks a drain keeps, one per overrun not yet marked, each the bytes still to read
+%% before its marker: an overrun shown by a read with two bytes of an earlier one still to
+%% come is marked after them and again eight bytes after the read that showed it; a FIFO
+%% read empty first marks every loss still pending, since no byte that came before them is
+%% left in it.
+marks_test() ->
+    ?assertEqual({<<"a">>, [7]}, erx_mini_uart:received($a, [8])),
+    ?assertEqual({<<"h", 0>>, [5]}, erx_mini_uart:received($h, [1, 6])),
+    ?assertEqual({<<"z">>, []}, erx_mini_uart:received($z, [])),
+    ?assertEqual({<<0, 0>>, []}, erx_mini_uart:received(empty, [3, 8])),
+    ?assertEqual({<<>>, []}, erx_mini_uart:received(empty, [])).
+
+%% An overrun the send path's read of LSR shows, which clears the bit before the drain's own
+%% reads: the driver keeps it pending, so the drain between two bytes of the send still
+%% marks the loss after the eight bytes the FIFO held, before the two that came after it.
+overrun_seen_by_a_send_is_marked_test() ->
+    Self = self(),
+    Driver = proc_lib:spawn_link(erx_mini_uart, init, [Self, #{stand_in => Self}]),
+    try
+        {_, _} = serve(Driver, {[], [], false}, {read, lsr}, []),
+        Driver ! {erx_console_output, Self, "."},
+        {Written, _} = serve(Driver, {[], "abcdefghij", true}, written, []),
+        ?assertEqual(<<"abcdefgh", 0, "ij">>, << <<B/binary>> || {input, B} <- Written >>)
+    after
+        unlink(Driver),
+        exit(Driver, kill)
+    end.
+
+%% The input one receive interrupt delivers from the FIFO given.
+delivered(Fifo) ->
+    Self = self(),
+    Driver = proc_lib:spawn_link(erx_mini_uart, init, [Self, #{stand_in => Self}]),
+    try
+        {_, _} = serve(Driver, {[], [], false}, {read, lsr}, []),
+        Driver ! {erx_irq, {stand_in, Self}, 0},
+        {Events, _} = serve(Driver, Fifo, ack, []),
+        << <<B/binary>> || {input, B} <- Events >>
+    after
+        unlink(Driver),
+        exit(Driver, kill)
     end.
 
 %% A paste at the rate the driver echoes, one byte arriving on the line for each byte the
@@ -185,3 +239,15 @@ arrive({[Byte | Arriving], Bytes, Overrun}) -> {Arriving, Bytes ++ [Byte], Overr
 %% it, sent to the case, which keeps only the driver's.
 log(#{msg := Msg, meta := #{pid := Pid}}, #{config := Case}) ->
     Case ! {logged, Pid, Msg}.
+
+%% However many reads show an overrun while no byte is read, the marks stay at most one per
+%% place a byte can be: an overrun before any byte is read since the last adds none, and one
+%% after a byte adds one, so a device that keeps RX_OVERRUN set cannot grow the driver.
+marks_are_bounded_test() ->
+    Stuck = lists:foldl(fun(_, Marks) -> erx_mini_uart:add_mark(Marks) end, [], lists:seq(1, 100)),
+    ?assertEqual([8], Stuck),
+    Read = lists:foldl(fun(_, Marks) ->
+                               {_, Left} = erx_mini_uart:received($a, erx_mini_uart:add_mark(Marks)),
+                               Left
+                       end, [], lists:seq(1, 100)),
+    ?assertEqual([1, 2, 3, 4, 5, 6, 7], Read).

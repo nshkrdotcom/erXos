@@ -656,8 +656,38 @@ answers `false` and the terminfo calls answer that no capability exists, which i
 `io_ansi` reads when a terminal has no terminfo.
 79\. `prim_tty` shows a C0 control character other than tab, newline, return and escape as `^` and the character
 with bit 6 set, caret notation (NUL as `^@`, Ctrl-A as `^A`, US as `^_`; DEL stays
-`^?`). Stock sets bit 5 instead and shows NUL as `^ ` and Ctrl-A as `^!`, an upstream
-bug. `test/host/prim_tty_caret_test.rb` and `test/integration/runtime_console_test.rb` pin it.
+`^?`), and counts the two columns as one character of the line, so the editor's one step
+over it moves over or erases both. Stock sets bit 5 instead and shows NUL as `^ ` and Ctrl-A as
+`^!`, and counts two characters, so deleting the character leaves its `^`: upstream bugs.
+`test/host/prim_tty_caret_test.rb` and `test/integration/runtime_console_test.rb` pin it.
+80\. `edlin_key` hands `edlin` NUL as a character to insert, not as a key: NUL is the mark
+a console UART's driver puts where received input was lost, as FreeBSD's uart(4) does
+([design-live.md](design-live.md#the-console)), so it stays in the line, shown as `^@`
+(edit 79), and in a history search it joins
+the term, which then matches no line. NUL ends any escape sequence it arrives in, which
+is dropped, and is read again as a character, so a loss inside a key still marks the
+line. Stock reads NUL as a key bound to nothing and drops it, swallows it inside a
+sequence, and crashes on it after a CSI digit. 81\. Every line `edlin` finishes leaves it
+through one function, whether on Enter, at the end of input, or on an accepted history
+search, which `group` hands back to `edlin` to finish rather than finishing it itself. A
+line that holds NUL is not finished, and the bell rings. At the end of input the line is
+dropped and `edlin` hands the end of input on, which `group` gives the reader in place of
+a line, so the read ends rather than waiting for an end the console sends only once.
+Otherwise the line stays in the editor, held: every later line of input is dropped through
+its newline, the rest of the delivery that brought the key and each later delivery's
+alike, a line cut by a delivery's end included, with the bell once per dropped line, until
+the user edits the held line. Keys count by their action in the normal keymap: text, a key
+bound to nothing and one bound to completion (Tab) belong to a dropped line, and one bound
+to finishing the line (Enter) ends one, so CR LF ends two, as it finishes two lines
+unheld; any other key is the user's edit (deleting the `^@`, killing the line, moving the
+cursor, the history), which ends the hold and is read as usual, and input reaches the line
+again. So the text of a damaged paste that arrives after the refused Enter, whether with
+the key or in a later delivery (the mini UART's drain delivers at most 32 bytes at a
+time), joins the held line only after a key bound to an edit, and nothing runs while the
+`^@` stays. Moving through the history does not keep a line that holds NUL. So no shell
+that edits with `edlin`, the Erlang shell or `erx_shell`, runs a line that lost bytes; the
+user deletes the `^@` or the line to go on. Stock finishes the line.
+`test/host/edlin_marker_test.rb` pins both, through `edlin` and through a group.
 39\. `standard_error` calls no `prim_tty`: its encoding is `unicode`, and it
 writes with `erlang:display_string(stderr, Bytes)`, which waits as any
 process's write does. 42. While another process holds `erx_tty_owner`,

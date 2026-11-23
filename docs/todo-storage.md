@@ -243,6 +243,13 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   callbacks' one executor, feeding their results to pure transitions, and correct the module doc; the forget part
   is the `{forget, Node}` effect the hold bookkeeping item above considers, so one change closes both.
 
+* [Medium] /tmp, `test/integration/prim_file_compare.erl` `tmp_processes/1` (`:1513`):
+  `RuntimePrimFileTest#test_tmp_serves_the_domain`, run by `make check-runtime-hosted`, fails on "tmpx old owners
+  counted" (`:1463`, at least three processes under the old tree before the kill), in two runs out of two on the
+  tree of commit 3c5b79691 with a freshly built hosted runtime, so the console and line-editor changes after it
+  did not cause it. Either the tree no longer links its grant process the way `tmp_processes/1` walks (its
+  supervisor's `grant` child and that child's links), or the count of three is stale; find which, and fix the
+  walk or the tree, so the restart cases after it check every old owner again.
 * [Low] /tmp, `test/host/erx_ramfs_test.rb`: `test_seeded_fault_2_is_caught` expects the mutant to fail
   `a_dead_owners_open_file_gives_back_what_it_held_test`, but under load (a full `make check`) the mutant runs into
   EUnit's timeout in `wait_free/3` first and the case reads `*timed out*`, so the seeded-fault test fails though the

@@ -760,6 +760,36 @@ to the corpus and follow rc
   the handler and the stream relay open the terminal with `erx_session_relay:open_reader/2` (and join the
   chokepoint's list), the stream relay names a terminal stream `{relayed, read_write, tty}` and copies its input, the handler's
   reads pass as "Reading a terminal" describes, and that section's tests run.
+* [Medium] shell, edit 73 of [design-runtime.md](design-runtime.md) is built only in part
+  (`otp/lib/stdlib/src/edlin_key.erl` `get_valid_escape_key/2`, `otp/lib/stdlib/src/edlin.erl`): a character that
+  cannot continue a CSI sequence ends it and is read again, NUL ends any sequence (edit 80), and a key cut after
+  two or more CSI digits waits for the rest, but the rest is stock. A delivery that ends after one CSI digit takes `ESC [ 3` as a whole key and inserts
+  the `~` that follows. Digits accumulate without the 15-character bound, a complete key takes one more `~`, and
+  no line bound is kept: a line has no 65,536-codepoint limit and no count beside it, so a paste grows the group
+  without end, and the scan for the lost-input mark each time a line is finished (edit 81) costs the length of
+  the line. Build the rest of edit 73 with its tests, beside `test/host/edlin_marker_test.rb`.
+* [Medium] shell and console, the lost-input marker's open cases (edits 80 and 81 of
+  [design-runtime.md](design-runtime.md), `otp/lib/stdlib/src/edlin.erl` `finish/4`): `prim_tty`
+  `split_cols/6` still counts a caret as two characters, so after a vertical
+  move in a multi-line edit deleting `^@` leaves a `^`. A refused accepted history search sends the search's
+  requests again after redrawing the line and leaves the history stack unpadded (reached only from a persisted
+  history holding NUL). The mini UART's marker can follow one byte from after the loss when the overrun falls
+  between a drain's read of LSR and its read of the byte, so a newline there finishes the line unmarked; mark
+  one byte earlier on a drain's later reads, or keep it as a residual. A NUL typed (Ctrl-Space, Ctrl-@) or a
+  PL011 break also holds the line, and a group in dumb mode returns a marked line unchanged. A held line drops
+  only text, keys bound to nothing and completion; a paste that carries a key bound to an edit (a form feed's
+  `Ctrl-L`, DEL, an escape sequence, or an ESC cut by a delivery's end that meets the next delivery's letter as a
+  meta key) ends the hold, and the rest of the paste joins the line, which still runs only once the `^@` is gone.
+  Bracketed paste (`ESC [ 200~` to `ESC [ 201~`) would mark where a paste ends, so the hold could end only at a
+  key typed outside one.
+* [Medium] shell and console, the end of input on an unmarked line in `edlin`'s mode (`otp/lib/stdlib/src/edlin.erl`
+  `finished/4`, `otp/lib/kernel/src/group.erl` `xterm/3`): as on stock, `edlin` finishes the line and hands no end of
+  input on, and `group` reads the line, which has no newline, as an unfinished one and asks for more, so a read
+  of a group in `edlin`'s mode, a shell's on a console line with a terminal (`erx_console` `group_options/1`), never
+  ends at the end of input, even on an empty line, and the console sends `eof` once. Only a marked line, which `edlin` drops, ends the read (edit 81
+  of [design-runtime.md](design-runtime.md)). Decide whether every line should: `edlin` would hand the end on
+  after any line, and `group` would read the line, if it has text, and then the end, as its dumb mode does, with a
+  test beside `test/host/edlin_marker_test.rb`'s end-of-input case.
 * [Low] shell, the console's group's line history (`otp/lib/kernel/src/group.erl` `save_line_buffer`, `:1294-1305`):
   the group keeps every line its editor returns, so a long session, or a paste or peer that sends many lines, grows
   the group without end, though edit 73 of [design-runtime.md](design-runtime.md) bounds each line. Keep the

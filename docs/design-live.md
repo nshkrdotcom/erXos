@@ -933,7 +933,22 @@ through the log service, `erx_syslog`, which takes the kernel's ring with
   host tool reports.
 * **Input.** Bytes go to the connected terminal's tty as
   `{tty_input, Bytes}`, whose line discipline decides what they mean
-  ([The tty](#the-tty)). The one exception is `Ctrl-G`, which the console
+  ([The tty](#the-tty)). A UART's receive overrun, which no flow control
+  prevents on the console's line, puts one NUL where the bytes were lost,
+  as FreeBSD's uart(4) does: the mini UART's driver after the bytes its
+  full FIFO held, the PL011's before the byte its receive FIFO stored the
+  overrun with. A shell edits its line with `edlin`, which shows the NUL
+  as `^@` and finishes no line that holds it, however the line would end,
+  and rings the bell. The end of input drops the line and ends the read.
+  Enter holds the line: every later line of input is dropped through its
+  newline, with the bell once per line, until the user edits the held line
+  with any editing key, deleting the `^@` or killing the line among them,
+  so the rest of a damaged paste, whenever it arrives, joins it only
+  after an editing key (edits 80 and 81 of
+  [design-runtime.md](design-runtime.md#the-edits-outside-syserxos)), and
+  a line that lost bytes never runs; a program that reads its tty in
+  canonical mode gets the NUL in its line, as on FreeBSD. The one
+  exception is `Ctrl-G`, which the console
   keeps for the line's menu and no session ever reads, so the operator can
   always reach the real menu. While the menu or a login prompt has a line,
   no terminal is connected there: the tty last connected at that line is

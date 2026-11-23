@@ -179,3 +179,35 @@ format_status_shows_only_the_reasons_name_test() ->
     Status = erx_pl011:format_status(#{reason => {badmatch, <<"SECRET">>}, state => <<"SECRET">>,
                                        message => {erx_console_output, make_ref(), <<"SECRET">>}}),
     ?assertEqual(#{reason => badmatch, state => hidden, message => hidden}, Status).
+
+%% The console's drain over a scripted device (test/erlang/stand_in/erx_device.erl): FR
+%% shows a byte waiting four times, then the FIFO empty, and DR gives the words. The word
+%% whose OE bit is set is the first byte pushed after the loss, since the receive FIFO
+%% stores the overrun status with the character that follows it (BCM2711 ARM Peripherals,
+%% 11.5, DR), so the marker, a NUL as FreeBSD's uart(4) puts it, goes before that byte and
+%% the newline after it does not send the damaged line out unmarked.
+overrun_is_marked_before_the_byte_after_the_loss_test() ->
+    script_receive([$a, $b, ?ERX_HW_PL011_DR_OE_MASK bor $c, $\n]),
+    ?assertEqual(<<"ab", 0, "c\n">>, erx_pl011:drain(dev, mark)).
+
+%% A framing, parity or break bit is no loss: the byte goes up as read, unmarked.
+other_errors_are_not_marked_test() ->
+    script_receive([?ERX_HW_PL011_DR_FE_MASK bor $a, ?ERX_HW_PL011_DR_PE_MASK bor $b,
+                    ?ERX_HW_PL011_DR_BE_MASK, $\n]),
+    ?assertEqual(<<"ab", 0, "\n">>, erx_pl011:drain(dev, mark)).
+
+%% A line's driver, the host link's or a Bluetooth controller's, passes its bytes as read:
+%% they are a protocol's, which the marker would corrupt, not a person's line.
+a_line_s_driver_does_not_mark_test() ->
+    script_receive([$a, $b, ?ERX_HW_PL011_DR_OE_MASK bor $c, $\n]),
+    ?assertEqual(<<"abc\n">>, erx_pl011:drain(dev, pass)).
+
+script_receive(Words) ->
+    erx_device:script(#{{fr, rxfe} => lists:duplicate(length(Words), 0) ++ [1], dr => Words}).
+
+%% Which start marks: the console's driver, and no line's, whether the host link's or a
+%% Bluetooth controller's record.
+only_the_console_s_driver_marks_test() ->
+    ?assertEqual(mark, erx_pl011:on_overrun(console)),
+    ?assertEqual(pass, erx_pl011:on_overrun(fresh(rts_cts))),
+    ?assertEqual(pass, erx_pl011:on_overrun(spec(16#9000000, 16#1000, 1, 48000000))).

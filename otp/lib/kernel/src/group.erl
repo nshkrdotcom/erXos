@@ -20,7 +20,10 @@
 %% Modified by erXos: the driver's suspend (Ctrl-Z) and window-size change
 %% (winch) reach the shell; the group has one ask for input outstanding at
 %% most (ask/1), which the driver answers with {read, Ref, Chars}; format_status/1
-%% hides the shell history and the input typed or waiting (edit 75).
+%% hides the shell history and the input typed or waiting (edit 75); an accepted
+%% history search is finished by edlin, a line that holds the lost-input mark
+%% is not kept in the history, and the end of input edlin hands on after dropping
+%% such a line ends the read (edit 81).
 %%
 %% %CopyrightEnd%
 %%
@@ -448,7 +451,12 @@ xterm(data, Buf, Data = #state{ input = #input_state{
     %% Get a single line using edlin
     case get_line_edlin(Buf, Pbs, Cont, Lines, Encoding, Data) of
         {done, NewLines, RemainBuf} ->
-            CurrentLine = cast(edlin:current_line(NewLines), Data#state.read_type, Encoding),
+            CurrentLine = case RemainBuf of
+                              %% erXos: edlin hands the end of input on only once it has
+                              %% dropped the line (edit 81), so the reader reads the end.
+                              eof -> eof;
+                              _ -> cast(edlin:current_line(NewLines), Data#state.read_type, Encoding)
+                          end,
             case io_lib:CollectF(start, CurrentLine, Encoding, CollectAs) of
                 {stop, eof, _} ->
                     io_reply(Data, eof),
@@ -1085,8 +1093,12 @@ get_line_edlin({search_found,_Cs,_,Rs}, Drv, State) ->
     Prompt = edlin:prompt(State#get_line_edlin_state.search_quit_prompt),
     send_drv_reqs(Drv, Rs),
     send_drv_reqs(Drv, edlin:erase_line()),
-    send_drv_reqs(Drv, edlin:redraw_line({line, Prompt, LineCont, {normal,none}})),
-    get_line_edlin({done, LineCont, "\n", Rs}, Drv, State#get_line_edlin_state{ search_result = []});
+    Found = {line, Prompt, LineCont, {normal,none}},
+    send_drv_reqs(Drv, edlin:redraw_line(Found)),
+    %% erXos: edlin finishes the line, as it finishes every line, so a line that holds
+    %% the lost-input mark stays in the editor here too.
+    get_line_edlin(edlin:finish_line(Found, Rs), Drv,
+                   State#get_line_edlin_state{ search_result = []});
 %% The search mode has been exited, but the user wants to remain in line
 %% editing mode wherever that was, but editing the search result.
 get_line_edlin({search_quit,_Cs,_,Rs}, Drv, State) ->
@@ -1307,9 +1319,17 @@ down_stack({stack,U,{},[]}) ->
 down_stack({stack,U,C,D}) ->
     down_stack({stack,[C|U],{},D}).
 
-save_line({stack, U, {}, []}, Line) ->
+%% erXos: a line that holds the lost-input mark is not kept, so moving through the
+%% history drops it rather than keeping it to come back to.
+save_line(Stack, Line) ->
+    case edlin:marked(Line) of
+        true -> Stack;
+        false -> save_line1(Stack, Line)
+    end.
+
+save_line1({stack, U, {}, []}, Line) ->
     {stack, U, {}, [Line]};
-save_line({stack, U, _L, D}, Line) ->
+save_line1({stack, U, _L, D}, Line) ->
     {stack, U, Line, D}.
 
 get_lines(Ls) -> get_all_lines(Ls).

@@ -504,20 +504,21 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   console process before it acknowledged, and at `high` it ran within about 25 to 40 us (Pi 4, native, the timing
   probe pasting 41-byte lines; history repository `pi4/2026-11-22-uart-gap/`, `uartgap1.txt` and
   `uartgap-high.txt`). What remains is the late interrupt, whose cause the probe of docs/todo-fiasco.md settles;
-  a lost byte is shown only in the log, so a pasted command can run with bytes missing. Typing at human speed
-  loses nothing, and the user guide sends pastes to SSH. If the probe ties the delay to Fiasco, erXos's own kernel
+  a lost byte is marked: the driver puts a NUL where the bytes were lost and the line editor refuses
+  to finish a line that holds it (docs/design-live.md, "The console"), so what is left is the loss itself, a
+  pasted line refused and typed again. Typing at human speed loses nothing, and the user guide sends pastes to SSH. If the probe ties the delay to Fiasco, erXos's own kernel
   removes it, and nothing is built for it on Fiasco. Should it have to go on Fiasco, the fallback is a native drain at the delivery into a ring the driver
   reads (docs/design-shared-devices.md and docs/design-fiasco.md, "Interrupts and readiness"), or the console on
   the PL011 UART0, with Bluetooth on the mini UART. A polled write of Fiasco's or the root's to the same UART also
   reads LSR (`fiasco/kernel/src/lib/uart/uart_16550.cc`, `write`), clearing the overrun bit before the driver sees
-  it, and holds a CPU while it writes; the overrun count is shown nowhere but the log, which an inspection path
+  it, so that loss goes unmarked, and holds a CPU while it writes; the overrun count is shown nowhere but the log, which an inspection path
   would fix. QEMU's `raspi4b` model is unlikely to show the loss: its mini UART is believed to take a byte only when
   its FIFO has room (unverified: read QEMU's `hw/char/bcm2835_aux.c`).
-* [Low] `erlang/apps/erx_uart/src/erx_pl011.erl`, `send/4`: while `FR.TXFF` is clear the transmit loop writes without
+* [Low] `erlang/apps/erx_uart/src/erx_pl011.erl`, `send/2`: while `FR.TXFF` is clear the transmit loop writes without
   looking at `FR.RXFE` or its mailbox, so receive is not served at all during a run of writes, the shape
   `erx_mini_uart` polls around with `send_step/1`. The PL011's receive FIFO holds 32 bytes (DDI 0183G 2-6), so a run
   starves it only at that depth, and under `rts_cts` flow the UART holds RTS off when its receive FIFO is full.
-  Mirroring the poll needs its own choice of whether a drain inside a send clears the interrupts (`deliver_input/2`
+  Mirroring the poll needs its own choice of whether a drain inside a send clears the interrupts (`deliver_input/1`
   writes ICR from MIS) and a played-device case like `erx_mini_uart_tests`'s.
 * [Medium] `erlang/apps/erx_uart/src/erx_pl011.erl`: QEMU 11.1's PL011 writes each byte straight to its backend, so `FR.TXFF`
   never sets, and it forces the receive interrupt level to one byte, so the receive timeout never has a byte below the

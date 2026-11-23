@@ -16,7 +16,7 @@
 %% See the License for the specific language governing permissions and
 %% limitations under the License.
 %%
-%% Modified by erXos: no NIF; isprint/1, wcwidth/1 and the terminfo calls are pure, for terminal-less rendering; a control character is shown in caret notation.
+%% Modified by erXos: no NIF; isprint/1, wcwidth/1 and the terminfo calls are pure, for terminal-less rendering; a control character is shown in caret notation and counts as one character.
 %%
 %% %CopyrightEnd%
 %%
@@ -966,12 +966,14 @@ split(_N, [], Acc, Chars, Cols, _Unicode) ->
     {Chars, Cols, Acc, []};
 split(N, [Char | T], Acc, Cnt, Cols, Unicode) when is_integer(Char) ->
     split(N - 1, T, [Char | Acc], Cnt + 1, Cols + npwcwidth(Char, Unicode), Unicode);
-split(N, [GC|T], Acc, Cnt, Cols, Unicode) when is_list(GC), N < length(GC) ->
-    {NumL2, ColsL2, List2, List1} = split(N, GC, Unicode),
-    split(N-NumL2, List1 ++ T, List2 ++ Acc, Cnt+NumL2, Cols+ColsL2, Unicode);
-split(N, [Chars | T], Acc, Cnt, Cols, Unicode) when is_list(Chars) ->
-    split(N - length(Chars), T, [Chars | Acc],
-          Cnt + length(Chars), Cols + cols(Chars, Unicode), Unicode);
+split(N, [GC|T], Acc, Cnt, Cols, Unicode) when is_list(GC) ->
+    case logical_length(GC) of
+        Len when N < Len ->
+            {NumL2, ColsL2, List2, List1} = split(N, GC, Unicode),
+            split(N-NumL2, List1 ++ T, List2 ++ Acc, Cnt+NumL2, Cols+ColsL2, Unicode);
+        Len ->
+            split(N - Len, T, [GC | Acc], Cnt + Len, Cols + cols(GC, Unicode), Unicode)
+    end;
 split(N, [SkipChars | T], Acc, Cnt, Cols, Unicode) when is_binary(SkipChars) ->
     split(N, T, [SkipChars | Acc], Cnt, Cols, Unicode).
 
@@ -980,9 +982,20 @@ logical([]) ->
 logical([Char | T]) when is_integer(Char) ->
     1 + logical(T);
 logical([Chars | T]) when is_list(Chars) ->
-    length(Chars) + logical(T);
+    logical_length(Chars) + logical(T);
 logical([SkipChars | T]) when is_binary(SkipChars) ->
     logical(T).
+
+%% erXos: the characters of the line a cluster of the buffer stands for, which the
+%% editor's moves and deletes count. A control character shown in caret notation
+%% (insert_buf/4) is one character drawn as two, so the editor's one step over it moves
+%% or erases both columns; stock counts two and leaves a stray `^`. No other cluster
+%% is a caret and a character of `?` to `_`: two ASCII characters are never one
+%% grapheme cluster.
+logical_length([$^, C]) when $? =< C, C =< $_ ->
+    1;
+logical_length(Chars) ->
+    length(Chars).
 
 move_cursor(#state{ cols = W } = State, FromCol, ToCol) ->
     ?dbg({?FUNCTION_NAME, FromCol, ToCol}),
