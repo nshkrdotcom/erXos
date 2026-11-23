@@ -500,13 +500,12 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   then hang nothing up. Phase 2's kernel checks the monitor's connection.
 * [Medium] manifest check, property 8's pin controller clause (`check_pin_controller`,
   `tools/lib/erx/manifest.rb`; docs/design-system.md property 8, docs/design-header-io.md "The
-  pin controller and the console"): the clause counts units only, as its text says ("a domain
-  that holds only such units"), so a domain that serves services, windows or sessions holds
-  the GPIO page, and with it the console's pins, as long as it holds no other unit. Open
-  decision 2 of [design-pinctrl.md](design-pinctrl.md#open-decisions) recommends tightening
-  the clause to "is the system domain's", which removes the case; tighten the text and the
-  check together when it is decided. The Pi 4's development manifest gives `gpio` to the
-  system domain.
+  pin controller and the console"): the check counts units only and passes a domain that holds
+  only such units, so a domain that serves services, windows or sessions holds the GPIO page,
+  and with it the console's pins, as long as it holds no other unit. The clause allows no
+  holder but the system domain and reads the chip's pin table
+  ([design-pinctrl.md](design-pinctrl.md#decisions), 2); bring the check to it. The Pi 4's
+  development manifest gives `gpio` to the system domain.
 * [Medium] design, decisions made on the user's behalf and awaiting confirmation: the list that follows the
   risks table of [design.md](design.md#risks-and-open-questions) (translating from Fiasco, login
   credentials, the device secret through the root task, the vault's partition in the extended partition,

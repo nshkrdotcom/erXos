@@ -494,10 +494,12 @@ bootable file as `kernel8.img`, and enters BL31, which enters
 (`tools/lib/erx/boot_partition.rb`). Among its settings are a 64-bit
 kernel at the address `bootstrap` is linked for, the armstub,
 the mini UART with
-its clock pinned so its divisor holds, and a `gpio=` line for each
-of the header's bus pins; the pins the board wires to its own chips
-are set later, before any configured domain starts, by the system
-domain's pin driver in the design and by its root in what is built
+its clock pinned so its divisor holds, and, in what is built, a
+`gpio=` line for each of the header's bus pins. The pins the board
+wires to its own chips are set later, before any configured domain
+starts, by the root in what is built; in the design the system
+domain's pin driver sets those and the bus pins, and no `gpio=` line
+is written
 ([chapter 15](15-devices.md#1581-one-table-of-pins)). The firmware stays resident
 with access to all memory, and BL31 stays at EL3
 ([design-platforms.md, Firmware](../design-platforms.md#firmware));

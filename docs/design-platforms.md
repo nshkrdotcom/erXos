@@ -273,8 +273,9 @@ record carries its clock in hertz, from its node's `clocks`, and
 unprogrammed, as it leaves UART3
 ([design-abi.md](design-abi.md#devices-and-partition-windows)). The host link is UART3, a PL011 on GPIO 4 and 5,
 which `dtoverlay=uart3` in `config.txt` enables in the device tree; the
-firmware sets no pins from an overlay, so `config.txt`'s `gpio=4=a4,pn`
-and `gpio=5=a4,pu` lines put the pins in UART3's function; UART2, the other PL011
+firmware sets no pins from an overlay, so the system domain's pin
+driver puts the pins in UART3's function
+([design-pinctrl.md](design-pinctrl.md#at-start)); UART2, the other PL011
 with pins of its own, sits on GPIO 0 and 1, the bus of a HAT's
 identification EEPROM, which the firmware reads at boot. The manifest
 names the host link by its device-tree path, so no `serialN` alias ever
@@ -954,10 +955,10 @@ so the PCIe domain is in the trusted base whole, and because it holds
 nothing else, the devices domain and its slow devices' drivers stay out of
 it. Because the console's and the host link's UART units go to the system
 domain on every platform ([UARTs](#uarts)), and a pin controller that
-sets the function of their pins goes to no domain, the system domain or
-a domain that holds only such units (property 8 of
+can put their signals on a pin goes to no domain or to the system
+domain (property 8 of
 [design-system.md](design-system.md#the-manifest), derived from the
-board's pin table, on the Pi 4 its header map in
+chip's pin table, on the Pi 4 through its header map in
 [design-header-io.md](design-header-io.md#the-pin-controller-and-the-console)),
 the devices domain holds only slow devices that no part of the trusted
 base depends on, and is outside the trusted base without exception. A device the manifest does not name

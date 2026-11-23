@@ -97,7 +97,7 @@ controller in one page, with no lock
 pins need setting:
 
 * The header's bus pins and the host link's, which the firmware sets
-  from `config.txt`'s `gpio=` lines.
+  today from `config.txt`'s `gpio=` lines.
 * UART0's four pins to the Bluetooth controller, GPIO 30 to 33 in ALT3.
   The firmware leaves GPIO 30 and 31 inputs whatever a `gpio=` line
   asks: GPFSEL3 read `0x00000fc0` at every boot of four board runs, and
@@ -350,12 +350,14 @@ The manifest check adds, naming the unit or the row:
 * **A controller with a row for the pin driver has a holder.**
   Otherwise the table would be applied by nobody and a chip would be
   silent with no diagnostic.
-* **Property 8's pin clause**, unchanged: a unit whose registers set a
-  pin of the console's or the host link's device is held as
-  [design-system.md](design-system.md#the-manifest) says
-  ([Placement and boot order](#placement-and-boot-order)). The console's
-  pins it reads are rows checked against the firmware's settings, and
-  the host link's are rows the pin driver itself sets.
+* **Property 8's pin clause:** a unit whose registers can put a signal
+  of the console's or the host link's device on a pin is held by no
+  domain or by the system domain
+  ([design-system.md](design-system.md#the-manifest);
+  [Decisions](#decisions), 2). The clause reads the chip's pin table,
+  so it holds whichever pins the rows use. The console's pins are rows
+  checked against the firmware's settings, and the host link's are rows
+  the pin driver itself sets.
 * **A device with rows on a controller a configured domain holds is
   held by that domain**, so no start order between configured domains
   is ever needed ([Placement and boot order](#placement-and-boot-order)).
@@ -811,7 +813,7 @@ an overlay the firmware merges changes no pin.
 The Raspberry Pi boards' rows are written by hand: their wired pins
 number about ten on the Pi 4 and about twenty-five on the Pi 5. The
 importer is built for the first board that needs it
-([Open decisions](#open-decisions), 4).
+([Decisions](#decisions), 4).
 
 ### What the firmware leaves
 
@@ -848,9 +850,9 @@ give. Until it does, the kind neither writes nor checks the field, so
 an input signal on RP1 rests on the firmware having left it alone, and
 `set` does not vouch for it ([design-rp1.md](design-rp1.md#pins)).
 
-`config.txt`'s `gpio=` lines are no part of this design: with or without
-them the driver's plan leaves the pins as the table says
-([Open decisions](#open-decisions), 3).
+The boot description writes no `gpio=` line: the driver's plan puts the
+header's bus pins and the host link's as the table says
+([Decisions](#decisions), 3).
 
 ### A machine's own choices
 
@@ -877,9 +879,10 @@ pages ([design-system.md](design-system.md#devices)), so whoever holds a
 pin controller can write every pin in it. Its unit therefore has one
 holder, and the pin driver runs there.
 
-**The system domain holds a pin controller that sets the console's or
-the host link's pins**, as property 8 allows. On the Raspberry Pi 4 that
-is the `gpio` unit. The BCM2712's two controllers go to the system
+**The system domain holds a pin controller that can put the console's
+or the host link's signals on a pin**, and property 8 allows no other
+holder ([Decisions](#decisions), 2). On the Raspberry Pi 4 that is the
+`gpio` unit. The BCM2712's two controllers go to the system
 domain as well, whether or not they set the console's pins, which no
 source read here says: the SD slot's pins must be set before the storage
 domain starts.
@@ -1026,6 +1029,12 @@ The build's refusals are listed under
   console's line whatever its driver's checks say
   ([design-header-io.md](design-header-io.md#the-pin-controller-and-the-console)).
   This design changes who writes, not who can.
+* **The trees' code runs with the root task's authority** where the
+  system domain holds the controller: the code that reads a GPIO or
+  `pins` client's request is in the trusted base, and a fault in it
+  resets the machine ([Decisions](#decisions), 2). What it reads from
+  a client is a `ctl` line and a walk name, each through a parser with
+  a fuzz target.
 * **Leaving the console's rows out of the driver's record guards
   against a wrong table, not against the holder.** It keeps a correct
   driver from idling the console's pins. Code that runs in the holder's
@@ -1152,6 +1161,9 @@ The GPIO cases are the header design's.
   after the root's write; with the Wi-Fi rows, the pull register reads
   as the rows state. Seeded fault: a card whose record lacks UART0's
   rows, on which the controller must not answer.
+* With `config.txt`'s `gpio=` lines deleted, the header's bus pins and
+  the host link's read through `/proc` as the table states, and the
+  host tool reaches the host link.
 
 **The Raspberry Pi 5 board**, with its packages: the Ethernet link comes
 up after `reset` and `default`; USB ports have power with GPIO 42 and 43
@@ -1185,14 +1197,15 @@ What a maintainer must know, across the system:
 | what a writer can set | functions on the board; functions never on the header at run time; no pulls off the header | function, pull and level, wherever the table says |
 | a driver that drives a line | its own register writes (`erx_rp1:phy_reset/1`) | a state name |
 | what remembers a device's pins | nothing; the root writes once | nothing; the state is read from the registers |
-| a unit needed by two holders | open: the root at boot and a GPIO domain after ([design-header-io.md](design-header-io.md#decisions)) | one holder, which is also the boot-time writer |
+| a unit needed by two holders | the root at boot and the GPIO driver's domain after | one holder, which is also the boot-time writer |
 | the root's mapping of the GPIO page | writable for the system domain's life, a recorded residual | none |
 | a new board with pins | rows, and a new C core and root step for its chip | rows, and one Erlang kind module per new chip |
 
 Deleted: `kernel/core/bcm2711_pins.c` and its header, the Fiasco shim
 `bcm2711_pins.c`, the root's `board_pins` step and report line, the
 chokepoint group for the core, the manifest's `onboard_pins` table and
-its range rule, the pin lines of `hw/dts/raspi4b-uart3.dtso`, the
+its range rule, the pin lines of `hw/dts/raspi4b-uart3.dtso`,
+`config.txt`'s `gpio=` lines, the
 separate `erx_gpio` application and the `PINS` mask of the header
 design, and `erx_rp1`'s pin registers and `phy_reset/1`.
 
@@ -1277,7 +1290,7 @@ here: one pin served both as plain GPIO and as a device's.
   domain service's creation of each domain and, for the pin driver's
   restarts, the set of domains the boot left out, where a configuration
   is one fact. It is the next step if boards show such faults
-  ([Open decisions](#open-decisions), 1).
+  ([Decisions](#decisions), 1).
 * **Have a driver in the pin driver's own domain select `default` as it
   starts,** so that a line whose pins are unset breaks alone, as the
   line service already leaves a line whose driver does not start. It is
@@ -1305,26 +1318,32 @@ here: one pin served both as plain GPIO and as a device's.
 * **A pin driver domain of its own on the Pi 4.** It keeps the tree's
   server out of the system domain. It costs a domain, a start order rule
   between domains, and a system domain that waits on a configured
-  domain for the Bluetooth line and the host link
-  ([Open decisions](#open-decisions), 2).
+  domain for the Bluetooth line and the host link, where the system
+  domain's cost is the root task's authority for the trees' code
+  ([Decisions](#decisions), 2).
+* **Keep `config.txt`'s `gpio=` lines beside the pin driver.** They are
+  a second writer of the bus pins, redundant on the board and without
+  effect under QEMU, kept only for a boot that runs no system release.
+* **Build the tree importer for the Raspberry Pi boards.** Their wired
+  pins number about ten and about twenty-five, and rows a tool derives
+  from a GPL-licensed tree would ship inside the image's manifest.
 
-## Open decisions
+## Decisions
 
-Each gives this design's recommendation and the external design
-review's.
+1. **The pin driver's start replaces the root's boot write.** The
+   system domain's pin driver sets the on-board pins, UART0's among
+   them, with every other device's pins ([At start](#at-start)), and
+   the root writes no pin
+   ([design-header-io.md](design-header-io.md#decisions), 1;
+   [design-bluetooth.md](design-bluetooth.md#decisions), 5). The root's
+   write is proven on the board, so the driver's parity test is the
+   board check of [Verification](#verification): with that write
+   deleted, GPFSEL3 reads the same word and the Bluetooth controller
+   answers its reset.
 
-1. **Replace the root's boot write with the pin driver's start.** This
-   changes two accepted decisions: the root writes the on-board pins
-   ([design-header-io.md](design-header-io.md#decisions), 1) and the
-   root sets UART0's pins
-   ([design-bluetooth.md](design-bluetooth.md#decisions), 5). The cost
-   is reworking code proven on the board.
-
-   It also changes what a pin that does not take its setting does, on
-   every kind of build. With the root's write, the root reports it,
-   every domain starts, and Bluetooth then fails by its own diagnostic.
-   With this design nothing that would use the device starts
-   ([At start](#at-start)):
+   A pin that does not take its setting keeps what would use its device
+   from starting, on every kind of build, where the root's write
+   reports it and lets every domain start:
 
    * A device that only domains outside rescue use, on the Pi 4 UART0's
      four pins, makes the boot a rescue boot: the console and a login,
@@ -1347,68 +1366,35 @@ review's.
    at its first boot. An output can also be held at the other level by
    what is wired to it. The Pi 4's rows are signals, pulls and plain
    GPIO, and none drives a level.
-
-   The other answers are in
-   [Alternatives considered](#alternatives-considered). Running on with
-   every domain lets a bus driver return what an unrouted controller
-   clocked in. Stopping every such boot never reaches rescue. Leaving
-   down only the domain the device is for keeps the most running, and
-   costs a condition in the domain service's creation of each domain.
-   Recommendation: replace the root's write, with the board check above
-   as its parity test, and accept rescue for a device the normal
-   configuration alone uses and the repeated stop for a device rescue
-   uses. The review recommends replacing the write, on three conditions
-   this document states: the console's rows checked against the
-   firmware's settings, a stated result when a pin differs at start,
-   and a stated start order. It finds stopping the normal boot on a
-   mismatch sound, asks for rescue in place of an uncounted reset loop
-   wherever rescue does not use the device, which is the rule above,
-   and says the change from the root's report needs acceptance.
-2. **Where the Pi 4's pin controller lives once it serves `/dev/gpio`:**
-   the system domain, or a trusted domain of its own, the header
-   design's candidate. Either holder can take or read the console's
-   line. They differ in what a defect reaches: in the system domain the
-   code that reads GPIO clients' requests runs with the authority of
-   the root task, and its fault resets the machine; in a domain of its
-   own a defect reaches the pins and the console's wires and nothing
-   else, at the price of a start order between domains for the
-   Bluetooth line and the host link.
-   Recommendation: the system domain, and then tighten property 8's
-   clause to "is the system domain's", as its UART clause reads, which
-   also settles the open question of what else such a domain may hold;
-   and read the clause over every controller whose chip table can put a
-   signal of the console's or the host link's device on a pin,
-   whichever pins the rows use. The review prefers the system domain
-   for this boot order too, leaves the placement to this decision, and
-   asks that the wider authority of the client-facing code be accepted
-   knowingly.
-3. **`config.txt`'s `gpio=` lines on the Pi 4.** Deleting them changes
-   the accepted "the firmware sets the bus pins". With the pin driver
-   they are redundant on the board and have no effect under QEMU; without
-   them the header's bus pins stay inputs for the seconds until the
-   system release starts, and a boot that runs no system release (the
-   probe card, a native partial boot) finds them unset. `enable_uart`
-   and `enable_jtag_gpio` stay in either case.
-   Recommendation: delete them with the pin driver's landing, unless
-   such a boot needs the host link. The review recommends the same:
-   delete the bus lines with the driver's landing once the host link's
-   needs on probe and partial boots are settled, and keep the
-   firmware's console and JTAG settings.
-4. **When to build the tree importer, and whether the Raspberry Pis use
-   it.** Rows the build derives from a GPL-licensed tree would ship
-   inside the image's manifest, which is a license question as well as
-   a technical one.
-   Recommendation: hand-written rows for both boards, and the importer
-   with the first board whose tree the build compiles under a
-   permissive license and whose wired pins number more than a
-   screenful. The review recommends deferring the importer until a
-   board benefits, and adds a limit this recommendation accepts: a row
-   whose only source is a GPL-licensed tree carries that license
-   question whether a tool or a person copies it, and a facts record
-   does not answer it. The Pi 4's rows come from the chip's
-   documentation, the schematics and board readings. The Pi 5's BCM2712
-   rows have no such source yet, so shipping them waits on the decision
-   about that board's tree
+2. **The system domain holds the Pi 4's pin controller and serves
+   `/dev/gpio` from it.** Property 8's pin clause allows no other
+   holder: a unit whose registers can put a signal of the console's or
+   the host link's device on a pin, by the chip's pin table and
+   whichever pins the rows use, is held by no domain or by the system
+   domain ([design-system.md](design-system.md#the-manifest)). So no
+   start order between domains stands before the Bluetooth line and the
+   host link, and what else such a holder may hold needs no rule. The
+   cost is authority: the code that reads GPIO clients' requests runs
+   with the authority of the root task, and its fault resets the
+   machine ([Security](#security)).
+3. **The boot description writes no `gpio=` line.** The pin driver sets
+   the header's bus pins and the host link's, and the firmware's
+   settings that remain are `enable_uart` and `enable_jtag_gpio`
+   ([What the firmware leaves](#what-the-firmware-leaves)). The bus
+   pins stay inputs for the seconds until the system release starts,
+   and a boot that runs no system release, the probe card or a native
+   partial boot, finds them and the host link's pins unset.
+4. **The Raspberry Pi boards' rows are written by hand, and the tree
+   importer waits for a board that needs it:** the first whose tree the
+   build compiles under a permissive license and whose wired pins
+   number more than a screenful
+   ([Rows from a board's tree](#rows-from-a-boards-tree)). A row whose
+   only source is a GPL-licensed tree carries that license question
+   whether a tool or a person copies it, and a facts record does not
+   answer it. The Pi 4's rows come from the chip's documentation, the
+   schematics and board readings. The Pi 5's BCM2712 rows have no such
+   source, so shipping them waits on the decision about that board's
+   tree
    ([design-platforms.md](design-platforms.md#the-pi-5s-device-tree-and-its-license)).
 
 ## References

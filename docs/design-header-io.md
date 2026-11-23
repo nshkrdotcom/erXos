@@ -29,14 +29,14 @@ Decisions every reader needs:
   device of the record, the console, the host link, JTAG, a reserved
   use, or plain GPIO) and, for a bus pin, its alternate function and
   pull. Everything that depends on pins is generated from that one
-  table: the `gpio=` lines of `config.txt` that make the firmware set
-  each bus pin's function before the kernel runs, the set of pins a GPIO
-  driver may ever touch, which bus devices are driven, and the manifest
-  check that keeps the pin controller out of untrusted hands.
-* **No bus driver asks for its pins.** The firmware sets the header's
-  bus pins from the map's `gpio=` lines before the kernel runs, and the
-  system domain's pin driver puts each bus's pins in the table's setting
-  before any configured domain starts, and the boot creates no domain
+  table: the rows the pin driver sets at its start, the set of pins a
+  GPIO driver may ever touch, which bus devices are driven, and the
+  manifest check that keeps the pin controller out of untrusted hands.
+* **No bus driver asks for its pins.** The system domain's pin driver
+  puts each bus's pins in the table's setting before any configured
+  domain starts, with no `gpio=` line in `config.txt`
+  ([design-pinctrl.md](design-pinctrl.md#decisions), 3), and the boot
+  creates no domain
   that would use a bus it could not set
   ([design-pinctrl.md](design-pinctrl.md#at-start)). So I2C, SPI and
   the vault's TPM depend on no domain but the system domain.
@@ -48,12 +48,10 @@ Decisions every reader needs:
 * **Whoever holds the pin controller holds the console's wires.** The
   GPIO page sets the function and pull of every pin, the console's and
   the host link's included, and reads every pin's level. A manifest
-  therefore gives the pin controller to no domain, to the system domain,
-  or to a domain of its own that holds only such units and serves only
-  the trees they back, with no window, facet or introduction, which
-  property 8 of the
-  manifest check proves from the header map. The Pi 4's manifests give
-  it to the system domain, which runs the pin driver
+  therefore gives the pin controller to no domain or to the system
+  domain, which property 8 of the manifest check proves from the chip's
+  pin table. The Pi 4's manifests give it to the system domain, which
+  runs the pin driver
   ([design-pinctrl.md](design-pinctrl.md#placement-and-boot-order);
   [Decisions](#decisions)).
 * **A pin, a chip select or a PWM channel is held by one grant at a
@@ -216,7 +214,7 @@ for a pin a block other than GPIO drives, a **function** and a **pull**:
 | Use | Meaning | Function and pull |
 | --- | --- | --- |
 | `gpio` | a pin for plain GPIO, served by the pin controller's driver where a manifest gives that controller a holder | none |
-| a device path of the record | the pin is that device's, set by the firmware's line and by the pin driver | the function's Table 94 name, such as `SDA1`; the pull, `none`, `up` or `down` |
+| a device path of the record | the pin is that device's, set by the pin driver | the function's Table 94 name, such as `SDA1`; the pull, `none`, `up` or `down` |
 | `jtag` | the ARM's JTAG, on development cards | the function's name, such as `ARM_TMS` |
 | `reserved` | nothing touches the pin | none |
 
@@ -245,22 +243,21 @@ Raspberry Pi 4's map is:
 
 The header pins are the schematics' J8. The GPIO pins are 6, 12, 13 and
 16 to 21; GPIO 18 and 19, PWM0's pins, are plain GPIO while PWM is not
-driven ([PWM](#pwm)). A `gpio` row gives no `config.txt` line, so a pin
-that no domain drives keeps its power-on state, an input with Table 94's
-pull.
+driven ([PWM](#pwm)). A `gpio` pin that nothing holds is in its idle
+state ([`/dev/gpio`](#devgpio)); where no domain holds the pin
+controller it keeps its power-on state, an input with Table 94's pull.
 
 **What is generated from it.** The record reader checks the map and the
 build derives from it, so nothing else states a pin:
 
-1. **`config.txt`.** Each row with a device use gives one `gpio=N=aK,pX`
-   line, K the function's alternate number from the SoC table, X the
-   pull; the `jtag` rows give `enable_jtag_gpio=1` on a development card
-   and nothing on a release card. The host link's lines come from its
-   rows, so `OVERLAY_PINS` is deleted; the console's rows give lines too,
-   which agree with what `enable_uart=1` forces. The map's on-board rows
-   give no line ([On-board pins](#on-board-pins)). A line sets early
-   what the pin driver sets at its start in any case
-   ([design-pinctrl.md](design-pinctrl.md#what-the-firmware-leaves)).
+1. **`config.txt`.** The `jtag` rows give `enable_jtag_gpio=1` on a
+   development card and nothing on a release card, and the console's
+   rows are checked against what `enable_uart=1` forces
+   ([design-pinctrl.md](design-pinctrl.md#what-the-firmware-leaves)). No
+   row gives a `gpio=` line, so `OVERLAY_PINS` is deleted: the pin driver
+   sets every other row at its start, and until then the header's bus
+   pins and the host link's are as the firmware leaves them
+   ([design-pinctrl.md](design-pinctrl.md#decisions), 3).
 2. **The pin driver's record carries the rows that are its to set**,
    the `gpio` rows among them
    ([design-pinctrl.md](design-pinctrl.md#what-is-generated-from-it)),
@@ -455,24 +452,21 @@ GPLEV step decides only whether the read can be silent; no result of it
 makes an untrusted holder safe.
 
 **The property.** Property 8 of the manifest check
-([design-system.md](design-system.md#the-manifest)) gains a clause
-derived from the header map: a unit whose registers set the function of
-a pin that the map gives to `console` or `hostlink` is held by no domain,
-by the system domain, or by a domain of its own: the check refuses the
-holder if any row of the manifest names it other than such units, the
-services of the trees they back (`/dev/gpio`) and its place in the boot
-order, so a window, a facet granted to it or an introduction is refused,
-and so is a row of any other kind. On the
+([design-system.md](design-system.md#the-manifest)) has a clause
+derived from the chip's pin table: a unit whose registers can put a
+signal of the `console`'s or the `hostlink`'s device on a pin, whichever
+pins the map's rows use, is held by no domain or by the system domain
+([design-pinctrl.md](design-pinctrl.md#decisions), 2). On the
 Pi 4 that unit is `gpio`, the unit of the map's pin controller. The unit
 rule groups devices that share a page or a line, and so cannot see a
-control path that crosses pages; the map is where the board states that
-path, and the clause turns it into a check, so the next board's pin
-controller is covered by its own map rather than by a list of device
-classes. The check fails the build naming property 8, the unit and the
-holder.
+control path that crosses pages; the chip's table is where that path is
+stated, and the clause turns it into a check, so the next board's pin
+controller is covered by its own chip's table rather than by a list of
+device classes. The check fails the build naming property 8, the unit
+and the holder.
 
-The Pi 4's manifests give `gpio` to the system domain, which property
-8 allows, and the pin driver runs there
+The Pi 4's manifests give `gpio` to the system domain, the one holder
+property 8 allows, and the pin driver runs there
 ([design-pinctrl.md](design-pinctrl.md#placement-and-boot-order);
 [Decisions](#decisions)).
 
@@ -1042,10 +1036,9 @@ units (property 8); a `gpio` row's `pins` outside the header map's `gpio` rows;
 ## Security
 
 * The console's and the host link's pins are reachable only from the
-  trusted base: the pin controller's unit is held by no domain, the
-  system domain or a domain of its own, which no other row of the
-  manifest names, as property 8 proves from the header map. Its holder, whichever domain that is,
-  joins the console's trusted base: no placement keeps a compromised
+  trusted base: the pin controller's unit is held by no domain or by
+  the system domain, as property 8 proves from the chip's pin table.
+  Its holder is in the console's trusted base: no placement keeps a compromised
   holder from reading or taking the console's line, and the pin
   driver's table and a restricted SVD discipline correct driver code
   without limiting the domain that holds the page.
@@ -1096,9 +1089,9 @@ so the case is known to reach the code it tests.
 | `erx_pwm_core`, with a case of 100 ns at 27 MHz giving 3 ticks | rounding down instead of to nearest, which the 100 ns case exposes |
 | `erx_rtc_ds3231` | the nibble check removed; 12 AM taken as hour 12; the century bit ignored |
 | the header map reader | for each refusal of the reader, one map that breaks only it: a missing pin, a function not the pin's, the console on GPIO 13, `SDA1` on an SPI0 row, SPI0 without SCLK, a `gpio` row with a function, a driven bus that no row names; an on-board row on a header pin, or with a function the pin does not carry, and UART0's on-board rows without `TXD0` |
-| the `config.txt` writer | `jtag` rows written as `gpio=` lines on a release card |
+| the `config.txt` writer | `enable_jtag_gpio=1` written on a release card; a `gpio=` line written for a row |
 | the pin plan and the pin table's states and refusals | [design-pinctrl.md](design-pinctrl.md#verification)'s |
-| property 8's pin controller clause | the same manifest giving `gpio` to the devices domain, which fails naming property 8 and the unit |
+| property 8's pin controller clause | the same manifest giving `gpio` to the devices domain, or to a domain that holds nothing else, each of which fails naming property 8 and the unit |
 | `gpio_grant` and `rtc_grant` | a `pins` holding GPIO 14; two `rtc` rows with different addresses; an `rtc` row whose `bus` names SPI0 |
 
 **Fuzz targets**, landing with the parsers: the trees' `ctl` lines and
@@ -1177,10 +1170,11 @@ checks are ([plan.md](plan.md#1b-i-the-raspberry-pi-4-on-fiasco)):
    `duty 0` it stops. Seeded fault: `disable`, after which the count
    stops.
 9. **The map's card**: a development card whose `config.txt` the
-   header map wrote, with the `gpio=` lines, `core_freq=500` and
-   `core_freq_fixed=1` of the writer's test, boots to the console's
-   login prompt on GPIO 14 and 15, and `tools/erx` reaches the host link
-   over UART3 on GPIO 4 and 5 (header pins 7 and 29).
+   header map wrote, with `core_freq=500` and `core_freq_fixed=1` of the
+   writer's test and no `gpio=` line, boots to the console's login
+   prompt on GPIO 14 and 15, and `tools/erx` reaches the host link over
+   UART3 on GPIO 4 and 5 (header pins 7 and 29), which the pin driver
+   set.
 
 ## Performance
 
@@ -1201,7 +1195,7 @@ controller a DMA device of
   drivers, a list of pins never to give out, and, with the TPM's SPI in
   the vault's domain and GPIO elsewhere, a dependency of the vault on
   another domain at every start. Setting every device's pins from one
-  generated map, by the firmware's lines and at the pin driver's start,
+  generated map, at the pin driver's start,
   deletes all three, and leaves the buses needing nothing but the
   system domain. The cost is that changing which pins a
   bus uses needs a new card build, which is also how FreeBSD and the
@@ -1266,17 +1260,13 @@ controller a DMA device of
    driver there.** The driver sets every device's pins at its start,
    the on-board pins among them, and serves `/dev/gpio`
    ([design-pinctrl.md](design-pinctrl.md#placement-and-boot-order)).
-   Property 8's clause allows the system domain as a holder, and one
-   holder is then both the writer at boot and the server at run time.
-
-   Two points of that are open decisions of
-   [design-pinctrl.md](design-pinctrl.md#open-decisions): that the pin
-   driver replaces the root's boot write of the on-board pins, and that
-   `/dev/gpio` is served from the system domain and not from a trusted
-   domain of its own, the PCIe domain's pattern for system-wide
-   configuration authority
-   ([design-system.md](design-system.md#the-manifest), property 3). The
-   header map, I2C, the RTC, SPI and the TPM wait on neither.
+   Property 8's clause allows no other holder, and one holder is then
+   both the writer at boot and the server at run time
+   ([design-pinctrl.md](design-pinctrl.md#decisions), 1 and 2). A
+   trusted domain of its own for `/dev/gpio`, the PCIe domain's pattern
+   for system-wide configuration authority
+   ([design-system.md](design-system.md#the-manifest), property 3), is
+   rejected there.
 
 ## References
 

@@ -688,7 +688,8 @@ on-board pins' functions once at boot, from rows the packer copies
 into the manifest: its pure core has a field for GPIO 28 to 57 alone,
 so no row can reach a header pin, and it writes only the registers
 that change, reads them back and prints one line. The pin driver
-takes that job over. In the design, drivers serve `/dev/gpio`,
+takes both jobs over, and the packer then writes no `gpio=` line.
+In the design, drivers serve `/dev/gpio`,
 `/dev/i2c1`, `/dev/spi0` and `/dev/pwm0`, each from the domain that
 holds its controller; they are designed and not built.
 

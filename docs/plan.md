@@ -2521,8 +2521,9 @@ by side; (f) needs (b) and (c).
      nothing else in (e) needs it: the pin table with pulls and
      states, the manifest's `pins` table and the `pins` record, the
      `gpio` unit's kind row and SVD, and `erx_pins` with its
-     `bcm2711` kind, which sets every device's pins at its start and
-     takes over the root's boot write; then `/dev/gpio` with its
+     `bcm2711` kind, which sets every device's pins at its start,
+     takes over the root's boot write and ends `config.txt`'s `gpio=`
+     lines; then `/dev/gpio` with its
      `gpio` interface and `pins` parameter, and the LED and button.
 
   PWM is not a package of 1b-I. It is built when a consumer needs
@@ -2583,8 +2584,6 @@ by side; (f) needs (b) and (c).
   NIF's region call, `erx_device:fill/3` (`TODO.md`,
   `docs/design-display.md`).
 * (e): (a); 1b-E's configured domains, for the devices domain; for
-  package 4, open decisions 1 and 2 of
-  [design-pinctrl.md](design-pinctrl.md#open-decisions); for
   the TPM, the vault's TPM design and a module on the board.
 * (f): (b)'s storage domain on the board; (c)'s network domain on
   the board; for W5, the firmware's `sae_ext`, or another licensed
@@ -3679,7 +3678,7 @@ Phase 1b, in order of its demos (backend rows, hosted backend too; BeamAsm besid
            1b-H M13 on QEMU (any time; lowest priority)
            1b-I the Pi 4: (a) serial shell on raspi4b after Phase 1, then once on the board (GR)
              --> (b) storage after 1b-E, (c) network after 1b-G, (d) display after 1b-C part 3,
-                 (e) the header after 1b-E (its pins package also on design-pinctrl's open decisions)
+                 (e) the header after 1b-E
            1b-J the Pi 5: (a) headless boot, (b) serial shell and probe (GR5)
              --> (d) bridge and MIP after 1b-E --> (e) RP1 --> (f) Ethernet after 1b-G, (h) USB after track U (a);
                  (c) storage, (g) display after (b)

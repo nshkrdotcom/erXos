@@ -814,7 +814,8 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
 * [Low] pin control, the host link's overlay (`hw/dts/raspi4b-uart3.dtso`): remove `pinctrl-names` and `pinctrl-0`,
   which nothing reads and which state rows 4 and 5 of the header map a second time.
 * [Low] pin control, `config.txt`'s `gpio=` lines (`tools/lib/erx/boot_partition.rb`): delete them with `erx_pins`'
-  landing if open decision 3 of [design-pinctrl.md](design-pinctrl.md#open-decisions) says so.
+  landing ([design-pinctrl.md](design-pinctrl.md#decisions), 3), once it is settled whether the probe card or a native
+  partial boot, which run no pin driver, needs the host link.
 * [Low] pin control, the `pins` service and `/dev/pins` ([design-pinctrl.md](design-pinctrl.md#interfaces)): built
   with the first driver that selects a state from another domain, likely the Pi 5's SD power cycle, whose
   hardware start then runs from its row's `-eval`, after the ready answer brings the grant
