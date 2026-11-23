@@ -94,6 +94,14 @@ class BlockDeviceTest < Minitest::Test
     refute_match last.fetch(:pattern), record('blk: wrote sector 7')
   end
 
+  # A record after the log dropped some, and a line ended by LF alone, are still driver lines.
+  def test_a_dropped_count_or_a_bare_line_feed_keeps_a_driver_line
+    log = good_log.sub('debug space 0: blk: read sector 3 ok', 'debug space 0 dropped 3: blk: read sector 3 ok')
+    refute_equal good_log, log
+    assert_nil Device.line_difference(log)
+    assert_nil Device.line_difference(log.delete("\r"))
+  end
+
   # A driver line is the text of a debug log record; a bare line of the same text is
   # not the test module's output and neither ends the guest nor counts as a line.
   def test_a_line_outside_a_debug_log_record_is_not_a_driver_line

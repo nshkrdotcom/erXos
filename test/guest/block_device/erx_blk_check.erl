@@ -60,9 +60,10 @@
 %% at a mount that failed, and is not made again, which is its death record standing, and sees no incarnation run
 %% erx_storage, whose start is /data's mount.
 %%
-%% Each line goes to the console in one erlang:display_string/2 call, which reaches the
-%% console's sink, its driver, whole (docs/design-runtime.md, "The console and standard
-%% I/O"), so a kernel log line the console writes lands between two lines, never inside one.
+%% Each line goes out in one erlang:display_string/2 call on the system domain's standard
+%% output, which reaches the console as one debug log record of its space per line
+%% (docs/design-runtime.md, "The console and standard I/O"), so another line the console
+%% writes lands between two of these, never inside one.
 
 -module(erx_blk_check).
 

@@ -151,7 +151,9 @@ module Erx
     # The test module prints through the system domain's standard output, which reaches the
     # console as debug log records of its space (NativeRoot::DOMAIN_RECORD), so a driver
     # line is the text of a record, perhaps opened by PROMPT; a bare line is someone else's.
-    DRIVER_LINE = /\A(?:#{Regexp.escape(PROMPT)})?#{NativeRoot::DOMAIN_RECORD}(?<text>blk: .*)\z/n
+    # DRIVER_HEAD is what comes before the text, for the reader and the checkpoint alike.
+    DRIVER_HEAD = /(?:#{Regexp.escape(PROMPT)})?#{NativeRoot::DOMAIN_RECORD}/n
+    DRIVER_LINE = /\A#{DRIVER_HEAD}(?<text>blk: .*)\z/n
     # The test module, the guest directory its beam is packed in, and the kernel command
     # line words that start it after the release.
     GUEST_SOURCE = 'test/guest/block_device/erx_blk_check.erl'
@@ -282,7 +284,7 @@ module Erx
     # follows it is not judged. Serial bytes come from the guest and are only compared
     # here; a report quotes them only through quote.
     def guest_lines(bytes)
-      lines = bytes.b.split("\n").filter_map { |line| DRIVER_LINE.match(line.chomp("\r"))&.[](:text) }
+      lines = bytes.b.split("\n").filter_map { |line| line.chomp("\r")[DRIVER_LINE, :text] }
       done = lines.index('blk: done')
       done ? lines.first(done + 1) : lines
     end
@@ -328,7 +330,7 @@ module Erx
     # test module's last line, within seconds of the banner, on a machine of memory_mib.
     def checkpoints(memory_mib:, seconds: GUEST_SECONDS)
       [*Qemu.boot_transcript(memory_mib: memory_mib, test_image: true),
-       { name: 'block-done', pattern: /^(?:#{Regexp.escape(PROMPT)})?#{NativeRoot::DOMAIN_RECORD}blk: done\r?\n/n,
+       { name: 'block-done', pattern: /^#{DRIVER_HEAD}blk: done\r?\n/n,
          seconds: seconds }.freeze].freeze
     end
 
