@@ -2,9 +2,9 @@
 # SPDX-License-Identifier: BSD-2-Clause
 # frozen_string_literal: true
 
-require 'json'
 require_relative 'bench_record'
 require_relative 'error'
+require_relative 'json_input'
 
 module Erx
   # What one measurement from erx_otp_bench:run/3 must say before it is believed, whether
@@ -105,7 +105,7 @@ module Erx
     end
 
     # The JSON object of a kind's line: printable ASCII, bounded, no key twice, every
-    # required key and no unknown one, deeply frozen.
+    # required key and no unknown one, frozen.
     def decode(text, kind:, required:, known:)
       prefix = "#{kind} "
       need(text.is_a?(String) && text.b.start_with?(prefix), "is not a #{kind} line")
@@ -115,14 +115,18 @@ module Erx
       # No field's character set needs an escape, and a decoded \u escape could be invalid
       # UTF-8; json also reads /* */ comments. Refusing both keeps the bytes the values.
       need(!body.match?(%r{[\\/]}), 'holds a backslash or a slash')
-      fields = JSON.parse(body, max_nesting: 4, allow_nan: false, allow_duplicate_key: false,
-                                create_additions: false, freeze: true)
+      fields = parsed(body, kind: kind)
       need(fields.is_a?(Hash), 'is not a JSON object')
       need((required - fields.keys).empty?, 'lacks a required field')
       need((fields.keys - known).empty?, 'holds an unknown field')
-      fields
-    rescue JSON::ParserError, JSON::NestingError
-      need(false, 'is not one JSON object nested at most four deep')
+      fields.freeze
+    end
+
+    # JsonInput's refusals name the line's kind, never its text.
+    def parsed(body, kind:)
+      JsonInput.parse(body, max_bytes: LINE_BYTES, max_nesting: 4, label: "#{kind} line")
+    rescue Error => e
+      need(false, "is not one JSON object nested at most four deep (#{e.message})")
     end
 
     def conditions(value)
@@ -226,7 +230,7 @@ module Erx
       raise Error, "guest line #{reason}" unless valid
     end
 
-    private_class_method :measured, :decode, :conditions, :tick?, :count?, :frequency?, :pairs, :cpus?, :interval?, :parameter?, :counts, :detail, :histogram, :largest,
+    private_class_method :measured, :decode, :parsed, :conditions, :tick?, :count?, :frequency?, :pairs, :cpus?, :interval?, :parameter?, :counts, :detail, :histogram, :largest,
                          :raw, :phases, :need
   end
 end
