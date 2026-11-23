@@ -497,23 +497,26 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   both builds read.
 * [Medium] `erlang/apps/erx_uart/src/erx_mini_uart.erl`, the Raspberry Pi 4 console: a paste can lose bytes. The
   receive FIFO holds eight bytes (about 0.7 ms at 115200 baud) and the line has no flow control, and on Fiasco the
-  interrupt raised after the line's acknowledgement reaches its dispatcher 0.9 to 1.2 ms later, longer than the FIFO
-  lasts (docs/todo-fiasco.md, the late interrupt after an unmask). The driver drains the receive FIFO between the
-  bytes of a send (`send_step/1`) and the shared line's owner runs at `high` priority
+  interrupt raised after the line's acknowledgement is handled by its owner 0.6 to 6 ms later, longer than the
+  FIFO lasts (docs/todo-fiasco.md, the late interrupt after an unmask). The driver drains the receive FIFO between
+  the bytes of a send (`send_step/1`) and the shared line's owner runs at `high` priority
   (docs/design-shared-devices.md, "The owner"): at `normal` the owner waited about a millisecond behind the
   console process before it acknowledged, and at `high` it ran within about 25 to 40 us (Pi 4, native, the timing
   probe pasting 41-byte lines; history repository `pi4/2026-11-22-uart-gap/`, `uartgap1.txt` and
-  `uartgap-high.txt`). What remains is the late interrupt, whose cause the probe of docs/todo-fiasco.md settles;
-  a lost byte is marked: the driver puts a NUL where the bytes were lost and the line editor refuses
-  to finish a line that holds it (docs/design-live.md, "The console"), so what is left is the loss itself, a
-  pasted line refused and typed again. Typing at human speed loses nothing, and the user guide sends pastes to SSH. If the probe ties the delay to Fiasco, erXos's own kernel
-  removes it, and nothing is built for it on Fiasco. Should it have to go on Fiasco, the fallback is a native drain at the delivery into a ring the driver
-  reads (docs/design-shared-devices.md and docs/design-fiasco.md, "Interrupts and readiness"), or the console on
-  the PL011 UART0, with Bluetooth on the mini UART. A polled write of Fiasco's or the root's to the same UART also
-  reads LSR (`fiasco/kernel/src/lib/uart/uart_16550.cc`, `write`), clearing the overrun bit before the driver sees
-  it, so that loss goes unmarked, and holds a CPU while it writes; the overrun count is shown nowhere but the log, which an inspection path
-  would fix. QEMU's `raspi4b` model is unlikely to show the loss: its mini UART is believed to take a byte only when
-  its FIFO has room (unverified: read QEMU's `hw/char/bcm2835_aux.c`).
+  `uartgap-high.txt`). What remains is not in the kernel: the interrupt probe found Fiasco's path to the
+  dispatcher under 10 us and the delay in the owner's ERTS scheduler waiting behind other ERTS threads at the
+  same priority on CPU 0 (history repository `pi4/2026-11-22-irq-probe/`, commits 924e652, de6a618 and 66b1a9e).
+  The work is ERTS's spinning off and the priority bands, after which the probe is re-run. A lost byte is
+  marked: the driver puts a NUL where the bytes were lost and the line editor refuses to finish a line that
+  holds it (docs/design-live.md, "The console"), so what is left is the loss itself, a pasted line refused and
+  typed again. Typing at human speed loses nothing, and the user guide sends pastes to SSH. Should a loss
+  remain after both, the fallback is a native drain at the delivery into a ring the driver reads
+  (docs/design-shared-devices.md and docs/design-fiasco.md, "Interrupts and readiness"), or the console on the
+  PL011 UART0, with Bluetooth on the mini UART. A polled write of Fiasco's or the root's to the same UART also
+  reads LSR (`fiasco/kernel/src/lib/uart/uart_16550.cc`, `write`), clearing the overrun bit before the driver
+  sees it, so that loss goes unmarked, and holds a CPU while it writes; the overrun count is shown nowhere but
+  the log, which an inspection path would fix. QEMU's `raspi4b` model is unlikely to show the loss: its mini
+  UART is believed to take a byte only when its FIFO has room (unverified: read QEMU's `hw/char/bcm2835_aux.c`).
 * [Low] `erlang/apps/erx_uart/src/erx_pl011.erl`, `send/2`: while `FR.TXFF` is clear the transmit loop writes without
   looking at `FR.RXFE` or its mailbox, so receive is not served at all during a run of writes, the shape
   `erx_mini_uart` polls around with `send_step/1`. The PL011's receive FIFO holds 32 bytes (DDI 0183G 2-6), so a run

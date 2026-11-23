@@ -468,18 +468,21 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   reply-capability warning below does at each domain fault; `thread-ipc.cpp:260` (a fault whose pager capability is invalid) is
   another, whether it fires in erXos's configuration unverified. Either set `WARN_NONE` in the release kernel's configuration
   or publish the interleaving with the release.
-* [Medium] 0.2 on Fiasco, the late interrupt after an unmask (residual of FD16 in docs/design-fiasco.md's
-  downsides): an interrupt raised after its holder unmasks the line reaches the holder's dispatcher thread 0.9 to
-  1.2 ms later, about one timer tick, even with the dispatcher alone on an idle CPU (Raspberry Pi 4, the mini
-  UART's level line; measured with a timing probe, history repository `pi4/2026-11-22-uart-gap/`,
-  `uartgap-cpu3.txt`). The mini UART's receive FIFO lasts 0.7 ms, so pastes into the Pi 4's serial console can
-  lose bytes; typing at human speed does not (docs/todo-drivers.md, the mini UART item). The delay is taken to be
-  FD16's wake through the dispatcher, which erXos's kernel removes, so nothing is patched or built for it on
-  Fiasco; but why the wake waits for a tick is unverified, and FD16's extra thread switch alone costs
-  microseconds, not a tick. The work is a probe that stamps `Irq_sender::_hit_level_irq`
-  (`fiasco/kernel/src/kern/irq.cpp`) and the dispatcher's wake: if the tick comes from how erXos sets the
-  dispatcher up (its band, or the line routed to another CPU than the dispatcher's), it is an erXos bug to fix,
-  not a residual.
+* [Medium] 0.2 on Fiasco, the late interrupt after an unmask: an interrupt raised after its holder unmasks the
+  line is handled by the holder's Erlang owner 0.6 to 6 ms later on the Raspberry Pi 4 (the mini UART's level
+  line and the SD controller's), longer than the mini UART's 0.7 ms receive FIFO, so pastes into the Pi 4's
+  serial console can lose bytes; typing at human speed does not (docs/todo-drivers.md, the mini UART item).
+  Neither FD16 nor a timer tick is the cause: a probe stamping Fiasco's interrupt entry, the dispatcher's
+  wake and the owner's receipt found the kernel path, entry to dispatcher wake, under 10 us, and the rest
+  spent with the owner's ERTS scheduler awake but not running, waiting behind the other ERTS threads that
+  share CPU 0 at the same Fiasco priority (history repository commits 924e652 and de6a618,
+  `pi4/2026-11-22-irq-probe/`, images A to C). With ERTS's busy-wait spinning off (image E, commit 66b1a9e)
+  the SD line's receipts all fall under 615 us, but the console's lags stay at 0.6 to 2.1 ms. The work is
+  erXos's: ERTS's spinning off, and the priority bands of docs/design-fiasco.md ("Bands", the [High] item
+  above), which put the system domain (the console's holder) and the driver domains (the SD controller's)
+  above every interactive and app domain. Bands separate a domain from other domains' threads, not from its
+  own; which domain's threads the owner waited behind is not recorded, so the probe is re-run on the Pi 4
+  once both are in.
 
 * [Medium] Fiasco backend, `liberx/backend/fiasco/park.c`: `erx_park` and `erx_group_take_ready` refuse a thread
   that is not an executor (`ERX_ETYPE`), and that is all of the executor rule. Refusing to arm a vCPU
