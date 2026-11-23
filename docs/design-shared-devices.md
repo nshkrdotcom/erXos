@@ -285,7 +285,12 @@ progress. It runs at Erlang priority `high`, and the drivers at
 `normal`, except the driver of a device whose buffer overruns within a
 scheduling slice, the Raspberry Pi 4's mini UART, which runs at `high`
 too: its work for each notice is bounded by its FIFO, as the owner's is
-by its members. The line stays masked from a firing until the owner
+by its members, and its sends, which carry the console's output, every
+session's included, by the line's rate, since a send waits blocked
+whenever the transmit FIFO is full. On Fiasco both bounds are its entry
+on its runtime's urgent roster
+([design-fiasco.md](design-fiasco.md#urgency), "What reaches the urgent
+level"). The line stays masked from a firing until the owner
 acknowledges it, which the owner does only once it runs after the last
 member's answer, so every moment the owner waits for its scheduler the
 line is deaf. A process of priority `high` does not interrupt a process

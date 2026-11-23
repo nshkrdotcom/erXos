@@ -1164,17 +1164,28 @@ ERTS's scheduler is the second level, kept whole except at these points:
   scheduler thread, of the worker class and outside `schedulers` and
   `schedulers_online`, which sets its own base to the ceiling once with
   `erx_thread_set_urgency` and is pinned to the first CPU of the run.
-  ERTS's enqueue sends every process of priority `high` or `max` to its
-  run queue and no other process there; balancing and stealing leave
-  the queue alone and no port is queued on it. With nothing to run it
-  waits in `erx_ipc_wait` for the IRQ objects bound to it: the device
-  lines, which `erx_device` binds to it in place of the group, and its
-  wake bell, a doorbell the adapter binds to it and other schedulers
-  trigger when they queue it a process. So a line's delivery and the
-  `high` process it wakes never pass through a thread at the group's
-  base, and wait neither for the base level's turn nor for an ordinary
-  process's slice of reductions. Where the ceiling is the base the
-  adapter starts none, and `high` and `max` run on the normal
+  Inside ERTS it is the last normal scheduler, left out of the counts
+  Erlang reads, of capacity changes, of balancing and stealing, of
+  `process_flag(scheduler, N)` and of a new port's run queue. ERTS's
+  enqueue sends every unbound process whose own priority is `high` to
+  its run queue and no other process there, and `max`, which OTP keeps
+  for the runtime's own processes, stays on the normal schedulers; a system task's
+  raise of the priority a process is enqueued at does not move it. With
+  nothing to run it waits in `erx_ipc_wait` for the IRQ objects bound
+  to it: the device lines, which `erx_device` binds to it in place of
+  the group, and its wake bell, a doorbell the adapter binds to it and
+  other schedulers trigger when they queue it a process. At each safe
+  point it takes the deliveries already queued with waits whose deadline
+  is zero, so a line waits for the running process's slice and not for
+  the queue to empty. A `multi_scheduling` block suspends and evacuates
+  its queue with the others, and the suspended scheduler goes on taking
+  its lines and dispatching them as aux work, running no process. So a
+  line's delivery and the `high` process it wakes never pass through a
+  thread at the group's base, and wait neither for the base level's
+  turn nor for an ordinary process's slice of reductions. Every
+  process the runtime runs at `high` is on its urgent roster,
+  with the bound on what one message costs it. Where the ceiling is the base the
+  adapter starts none, and `high` processes run on the normal
   schedulers as in stock ERTS
   ([design-fiasco.md](design-fiasco.md#urgency)).
 * **Deferral.** With `ERX_GROUP_DEFER`, the adapter raises the control

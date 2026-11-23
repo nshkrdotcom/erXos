@@ -833,7 +833,8 @@ Neither direction needs a kernel call.
 transition until it is dispatched, so a hint raised for it is not sampled:
 it waits at the level it was queued at, a slice for each thread ahead of
 it there, since a woken thread joins the tail, within what the groups'
-quotas let those threads take. A trigger with no executor parked raises no
+quotas let those threads take, and behind every level above it, which
+may run there without end (requirement 1). A trigger with no executor parked raises no
 one either; a running executor finds the work at its next safe point, and
 one that is ready waits the same turn. A refresh does reach a ready
 thread, but `erx_thread_set_urgency` sets a base, which a waker and the
@@ -844,7 +845,10 @@ own: a worker whose base `erx_thread_set_urgency` set to the group's
 ceiling and to which the event's IRQ object is bound, which waits for it
 in an open wait and so preempts at its delivery (**Preemption**, in
 [Pick and dispatch](#pick-and-dispatch)), as a Fiasco interrupt thread
-does. ERTS's urgent scheduler is that worker
+does. That removes the stale-hint wait while the worker is eligible to
+run, and nothing more: it reserves no CPU, waits behind every ready
+thread above its level, and is dispatched only while its group path can
+supply quota on its CPU (step 3 of the pick). ERTS's urgent scheduler is that worker
 ([design-runtime.md](design-runtime.md#scheduling),
 [design-fiasco.md](design-fiasco.md#urgency)).
 
