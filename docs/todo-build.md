@@ -992,6 +992,13 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
 
 ## Planned features
 
+* [Medium] `make check`: no check finds a call to a function no module exports. A removed export with a live
+  caller in another application survived to a QEMU run before; the host tests load only the modules they name,
+  so a caller outside them compiles and fails only at run time. Add `xref`'s `undefined_function_calls` over
+  every application the images ship, compiled as the build compiles them, with OTP's own undefined calls taken
+  from the stock oracle's modules, and a seeded fault: an export removed while a caller in another application
+  stays.
+
 * [Medium] tools, two copies of the root's physical record selection: `physical_paths` and `held_record_words` in
   `tools/lib/erx/production_image.rb` restate `device_kind` and `line_uart_read` of
   `liberx/backend/core/boot_manifest.c` for `record_words`, so a new physical record kind changes both and only a

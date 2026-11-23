@@ -601,6 +601,14 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
 
 ## Planned features
 
+* [Medium] web views, a paused view (`erlang/apps/erx_web_line/src/erx_web_line.erl`, the view's loop;
+  [design-system.md](design-system.md#a-sessions-lines), "Views and ttys"): the design has a view charge its
+  facet's account and, its share spent, pause, taking only the resume message and its facet's `'DOWN'`. No facet
+  admits by its grantee's share of reductions yet (the facets item under Bugs), so no view is charged or pauses
+  and there is no resume message. The view's charge and its paused receive land with that admission, with the
+  design's test of a paused view ending at its facet's end, its table entry freed, and its seeded fault, a
+  paused receive that takes only the resume message.
+
 * [Medium] grants, the USB restart cell of the waits ([design-system.md](design-system.md#waiting-for-a-grant),
   "Verification"; `tools/lib/erx/usb_boot.rb`): the three waits are built (`erx_ssh_dev`,
   `erx_input_follower`, the settlement list and the rows held at boot); what remains is the QEMU cell

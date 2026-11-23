@@ -106,6 +106,13 @@ of its run) are in the full list as it stood before it was grouped,
 
 ## Domains, cross-domain messaging and inspection
 
+* [Low] Web views, `web_line_view_heap_max` (`abi/services/web.txt`, `erlang/apps/erx_web_line/src/erx_web_line.erl`):
+  on OTP 29.1.2 on the development host a view flooded with unread messages was killed only at its second forced
+  collection, the first having moved the queued messages onto its heap, so a flood is held until the view's
+  next collection; and whether 262,144 words holds a view's largest projection on the target is unmeasured.
+  Settle both with a view over the 1,000-child listing page and a flood on QEMU `virt`, recording the heap at
+  each collection.
+
 * [Low] Boot, the PCIe domain (`config/manifest/development.txt`, `domain pcie`): every boot of
   QEMU virt's development manifest starts one more interpreter domain, 22.5 MiB at rest, which walks the
   ECAM bridge and reports before its holders start. Settle it with `tools/erx bench boot --accel hvf` on

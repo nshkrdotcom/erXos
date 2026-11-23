@@ -122,20 +122,19 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
 ## Security residuals
 
 * [Medium] Web view scope, root's session through the host link's `web` facet
-  (`erlang/apps/erx/src/erx_session_line.erl`, `export/2`; [design-web.md's
-  Security](design-web.md#security)): once the system domain exports root's session's line to the web
-  domain, every view a browser opens reads at scope `all`, so a browser reaches the machine-wide paths
+  (`erlang/apps/erx_uart/src/erx_hostlink_web.erl`, `erlang/apps/erx_web_line/src/erx_web_line.erl`;
+  [design-web.md's Security](design-web.md#security)): once the host link's `web` facet holds root's
+  session's line, every view a browser opens reads at scope `all`, so a browser reaches the machine-wide paths
   (`/proc/kernel`, `/proc/cpus`, the kernel log, the machine record's `all` attributes), as the session's own
   `/proc` does: the system domain's query worker answers each of them through the session's inspect facet, at
   that facet's scope.
   Development builds run trusted code only. The wide scope is accepted; narrowing it to root's own
   domains, or removing it, changes design-live.md ("Scopes"), design-web.md (W1) and design-domains.md
-  (property 9) with it, and needs a test that a browser's view of `/proc/kernel` ends `scope`. The line
-  exports itself to Web when the system domain calls it with `{export, Web}`, and today only the host link's `web` facet
-  sends one, for root's development session: the network login (`erx_web_login`) must not export its sessions'
-  lines through the same call. Not yet consistent at `all` in a
-  lines through the same call. The facet the session item under Bugs mints, taken by `erx:cap(inspect)`,
-  is the better source of the scope; with it the line's own `scope` goes. Not yet consistent at `all` in a
+  (property 9) with it, and needs a test that a browser's view of `/proc/kernel` ends `scope`. The
+  system domain asks for a session's web line with `erx_domain:line/4`, and today only the host link's `web`
+  facet (`erx_hostlink_web`) does, for root's development session: the network login (`erx_web_login`) must not
+  hand its sessions' lines the same scope. The facet the session item under Bugs mints, taken by `erx:cap(inspect)`,
+  is the better source of the scope. Not yet consistent at `all` in a
   session's runtime: `[domains, 4, threads]` through `entries/2` is gated only on the domain, not on the runtime
   (`erx_inspector:collects_domain/2` covers `collect/2` alone), and `/proc/cpus` answers a partial empty
   listing where Fiasco refuses a task's `erx_object_info`, which `erx_kernel_records:listing/6` should

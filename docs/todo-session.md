@@ -330,46 +330,15 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   on a terminal's tty it waits on the line's console, and fails once the line has hung up or crashed. Have both call
   sites pass their own encoding to `prompt_width/2` (`prim_tty` holds `unicode`, `group` its `encoding`), extending edit
   44 of design-runtime.md; then no session console needs `user`, and `user => none` (erx_console.erl) can go.
-* [Medium] SSH stage 2, the login facet ([design-ssh.md](design-ssh.md)): the cookie table is keyed by the connection process, but a service behind `erx_facet` sees the facet's forward (a fresh alias, `erx_facet.erl`'s request handling), not the grantee's pid. The stage-2 design must say how the facet learns the connection: carried in the request, or keyed by the facet's forward and its `'DOWN'`. The facet's decoder of what the SSH domain hands the system domain, `erx_ssh_wire` ([design-ssh.md](design-ssh.md#logging-in)), lands with the facet that calls it, in the system domain's login application, with its fuzz target and the values it reads entered in `abi/formats/ssh.txt`; its blob matcher stays `erx_boot_keys:key_blob/1`.
-* [Medium] session lines, mint each line as a facet (`erlang/apps/erx/src/erx_session_line.erl`, `line/4`;
-  [design-system.md](design-system.md#a-sessions-lines)): a line admits its peer's calls with an admission loop of
-  its own, with no `max_request`, no limit in flight and no counts, the domain service keeps the lines in a
-  registry beside the mint core, the SSH line sends a channel its tty's ending itself, which exports the line
-  process, and root's web line outlives the host's closing of its `web` facet. The work package, in order, each
-  step with the test and seeded fault of the design's table:
-  1. ABI: the `served_by session` member (`tools/lib/erx/abi_contracts.rb`, with all five quantities required of
-     it); `abi/services/ssh.txt`'s `ssh_line` keeps `open_tty` alone, marked `served_by session`, with
-     `max_request` 65536, `in_flight` 4, `reductions` 100000, `period_ns` 1000000000 and `max_heap_size` 65536,
-     and the job messages, `exited` and `signaled` leave its operations (`abi/signals.txt`'s comment on
-     `tty_master` then cites design-ssh.md's table); `abi/services/web.txt` declares `service web_line 21` with
-     `open 1`, `max_request` 8192 and the same other quantities but `in_flight` 16. Each file's comment states
-     its `max_request` derivation as design-system.md gives it, by `erlang:external_size/1` of the call without
-     the envelope, over every implemented variant.
-  2. Generation: `?ERX_LINES` as a map from each `served_by session` interface's name to its quantities, from
-     the ABI generator, in place of `tools/lib/erx/facet_names.rb`'s `LINES`; the facet-name check reads the
-     same set; the manifest check refuses a `service` or `facet` row of such an interface.
-  3. Mint core (`erlang/apps/erx_domain/src/erx_domain_mints.erl`): a session's ready report carries its node
-     and `provides`, checked as a provider's are (a bad pid refuses its entry, an undeclared name the map); the
-     line operation (request with its opening, `introducing`, `minting`, the answer action, `busy`, the ends of
-     either party, the deadline, a tagged bad reply failing at once), in the exhaustive event-order test.
-  4. Domain service: `erx_domain:line/4` with its opening becomes one call answered by the core, the opening
-     carried in the mint's limits as a computed parameter; delete `lines`, `keep_lines/4`, the
-     `{line, Name, Id}` call and `export_line/2`, and the `keep_lines/4` item of [todo-runtime.md](todo-runtime.md).
-  5. `erx_facet:start/3` keeps its monitor on a timed-out child, kills it and takes its `'DOWN'` before it
-     answers `{error, timeout}`. `erx_session_line`: the mint (system domain's mint request alone; end the facet before and take its
-     `'DOWN'`, then start the new one, none if that fails; `ends_with` the connection, the line and the opening)
-     and the facet callback that forwards with the grantee, its caller and the facet; delete the peer's call
-     clause and `{export, Peer}`. `erx_web_line` and `erx_ssh_line` take the caller, peer and facet from the
-     forward; a web view monitors its facet, runs with `web_line_view_heap_max` (262144 words, declared in
-     `abi/services/web.txt`) and its queue on its heap, and takes its facet's `'DOWN'` while paused. The tty's
-     console hands its ending to the tty's relay (`erx_session_relay`), which sends it to the channel as its last
-     message, and `erx_ssh_line` sends a front end nothing; `erx_facet`'s
-     moduledoc on lines and `erx_ssh_line`'s naming of a signal set `ssh_line` (the set is `tty_master`) follow.
-  6. Callers: `erx_hostlink_web`'s facet process asks for root's line in its own init, naming itself the
-     opening, and takes the facet as the line; the host tests of both lines, the domain service and the
-     facet-name check, among them the request-bound test with node names at their bound; the web QEMU suite once.
-     Repoint the web view scope residual of [todo-web.md](todo-web.md) and the call-admission item of
-     [todo-network.md](todo-network.md), which name `erx_session_line`.
+* [Medium] SSH stage 2, the login facet ([design-ssh.md](design-ssh.md)): the cookie table is keyed by the connection process, but a service behind `erx_facet` sees the facet's forward (a fresh alias, `erx_facet.erl`'s request handling), not the grantee's pid. The stage-2 design must say how the facet learns the connection: carried in the request, or keyed by the facet's forward and its `'DOWN'`.
+* [Medium] session lines, a tty's ending from its relay (`erlang/apps/erx_ssh_line/src/erx_ssh_line.erl`,
+  `erlang/apps/erx_session/src/erx_session_relay.erl`; [design-system.md](design-system.md#a-sessions-lines)):
+  each line is minted as a facet, but the SSH line still sends a channel its tty's ending itself, which exports
+  the line process to the SSH domain beside its facet. The tty's console hands its ending to the tty's relay
+  (`erx_console`'s `on_shell_end`, `erx_session_tty:open_channel/3`), which sends it to the channel as its last
+  message, as `erx_ssh_dev_channel` then takes it, and `erx_ssh_line` sends a front end nothing; its `Notify`
+  and its `{erx_ssh_line, ended, Tty, Ending}` report go. The design's "no door beside the facet" test, row 7
+  of its tests table, lands with it, with its seeded fault, the line process sending a tty's ending itself.
 * [Medium] SSH, how a job's messages reach their job ([design-ssh.md](design-ssh.md#risks-and-open-questions)):
   the channel's `job_input`, `job_eof`, `job_sent` and `job_hangup` name no job, and through the line's facet they
   would arrive by `message/2`, which names the grantee and not the sender and is dropped once `in_flight` forwards

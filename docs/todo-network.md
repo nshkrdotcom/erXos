@@ -605,7 +605,7 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   error quoting one of ping's echo requests is dropped as `no_socket` (`erx_net_input`, `quoted/4`), so
   ping prints nothing where FreeBSD's `pr_pack` prints `NN bytes from X: Destination Host Unreachable`
   and the like. Route an ICMP quote by its `{icmp_echo, inet, Ident}` key to the socket and print it.
-* [Low] cross-domain call admission, written twice (`erx:call_from/3` in `erlang/apps/erx/src/erx.erl`, which erx_facet and erx_session_line ask; `erx_net_admit:request/2` in `erlang/apps/erx_net/src/erx_net_admit.erl`, over its own `domain/1`): N12 of [design-network-stack.md](design-network-stack.md#requirements) keeps `erx_net/src` from naming erx, so the network grant cannot ask `erx:call_from/3`, and a change to the rule is two edits. One source needs a choice: the runtime seam (`erx_net_runtime`) answering the check, the operation schema's generator emitting both, or N12 relaxed for this one function.
+* [Low] cross-domain call admission, written twice (`erx:call_from/3` in `erlang/apps/erx/src/erx.erl`, which erx_facet asks; `erx_net_admit:request/2` in `erlang/apps/erx_net/src/erx_net_admit.erl`, over its own `domain/1`): N12 of [design-network-stack.md](design-network-stack.md#requirements) keeps `erx_net/src` from naming erx, so the network grant cannot ask `erx:call_from/3`, and a change to the rule is two edits. One source needs a choice: the runtime seam (`erx_net_runtime`) answering the check, the operation schema's generator emitting both, or N12 relaxed for this one function.
 
 ## Security residuals
 
