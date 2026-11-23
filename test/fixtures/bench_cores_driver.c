@@ -10,9 +10,11 @@
 
 #include <stdbool.h>
 #include <stdio.h>
+#include <string.h>
 
 #include "bench_clock.h"
 #include "bench_hist.h"
+#include "bench_line.h"
 #include "bench_periodic.h"
 
 #define	RUN_MAX	512
@@ -185,9 +187,56 @@ drift_case(void)
 	    erx_bench_offset(before_rounds_none, 0, 1).empty);
 }
 
-int
-main(void)
+/*
+ * Prints a fast cell, a periodic cell and a two-CPU calibration as the guests print them,
+ * for the host's validator to read (test/host/bench_guest_lines_test.rb).
+ */
+static void
+print_lines(void)
 {
+	static erx_bench_hist_t fast;
+	static erx_bench_stamp_t stamps[32];
+	static erx_bench_periodic_t periodic;
+	static char line[64 << 10];
+	erx_bench_sample_t largest[] = { { 7, 1199 }, { 3, 1100 } };
+	erx_bench_pair_t pairs[] = {
+		{ { 0, 1 }, { -40, 12, false }, { -35, 15, false } },
+		{ { 0, 2 }, { 0, 0, true }, { INT64_MIN, INT64_MAX, false } },
+	};
+
+	for (uint64_t i = 0; i < 40; i++)
+		erx_bench_hist_add(&fast, i == 7 ? 1199 : i == 3 ? 1100 : 1000 + i);
+	erx_bench_cell_t cell = { .benchmark = "wake", .operation = "wake-same-cpu", .load = "idle",
+		.placement = "same-cpu", .clock = "counter", .batch = 1, .frequency_hz = 24000000,
+		.status = "measured", .hist = &fast, .min = 1000, .max = 1199, .largest = largest,
+		.nlargest = 2 };
+	if (erx_bench_line_cell(line, sizeof(line), &cell) != 0)
+		printf("%s\n", line);
+
+	for (uint32_t k = 0; k < 32; k++)
+		stamps[k] = (erx_bench_stamp_t){ k, erx_bench_periodic_deadline(1000, 1000, k) + 5 + k % 3 };
+	erx_bench_periodic_classify(1000, 1000, stamps, 32, &periodic);
+	cell = (erx_bench_cell_t){ .benchmark = "wake", .operation = "park-deadline", .load = "idle",
+		.placement = "service-cpu", .clock = "counter", .batch = 1, .frequency_hz = 24000000,
+		.status = "partial", .reason = "cut short", .hist = &periodic.late, .min = 5, .max = 7,
+		.largest = (erx_bench_sample_t[]){ { 2, 7 } }, .nlargest = 1, .periodic = &periodic };
+	if (erx_bench_line_cell(line, sizeof(line), &cell) != 0)
+		printf("%s\n", line);
+
+	erx_bench_calibration_t clock = { "counter", 24000000, 1, 2, 24, pairs, 2 };
+	if (erx_bench_line_clock(line, sizeof(line), &clock) != 0)
+		printf("%s\n", line);
+	/* A line that does not fit is not written. */
+	printf("short %s\n", erx_bench_line_clock(line, 40, &clock) == 0 ? "refused" : "written");
+}
+
+int
+main(int argc, char **argv)
+{
+	if (argc == 2 && strcmp(argv[1], "lines") == 0) {
+		print_lines();
+		return (0);
+	}
 	static const struct {
 		const char *name;
 		bool (*run)(void);

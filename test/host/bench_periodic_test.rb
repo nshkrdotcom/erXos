@@ -20,6 +20,7 @@ require 'fileutils'
 class BenchPeriodicTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
   SOURCES = %w[test/guest/bench/bench_hist.c test/guest/bench/bench_periodic.c test/guest/bench/bench_clock.c
+               test/guest/bench/bench_line.c
                test/fixtures/bench_cores_driver.c].freeze
   EXPECTED = ['hist ok', 'stall ok', 'early ok', 'sweep ok', 'tick ok', 'offset ok', 'cell ok', 'drift ok'].freeze
 
