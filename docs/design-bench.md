@@ -230,6 +230,26 @@ every field's type and bound, refuses a line whole with a reason that
 never quotes it, and is fuzzed
 ([Verification](#verification)).
 
+A guest reports its clock's calibration ([The one clock](#the-one-clock))
+as one more line per boot, `CLOCK` followed by one JSON object, printed
+after its last cell's calibration: the clock and its frequency, the
+smallest increment two reads observed, the median cost of a read, the
+rounding of a timed wait, and for each pair of CPUs a cell stamped
+across, the offset interval measured before the cells and the one
+measured after them, each as its lowest and highest offset in ticks.
+The record's `clock` group is that line's object. `BenchMeasurement`
+validates it as it does a `BENCH` line, with the same refusals, and the
+one fuzz target takes the guests' `CLOCK` lines as seeds beside their
+`BENCH` lines. The guest, not the host, applies the cross-CPU rule: it
+prints a cell stamped across a pair only once both intervals are
+measured, corrects its samples by the hull's middle and gives the
+hull's half-width as the cell's `uncertainty`, and marks the cell
+`unsupported` with the reason `counters across CPUs not bounded closely
+enough` when that half-width is more than a tenth of its median, and
+with `counters across CPUs moved during the run` when the two intervals
+do not overlap. A boot whose `BENCH` lines arrive without one valid
+`CLOCK` line has no calibration, and its cells are `rejected`.
+
 ### The histogram
 
 A guest does not send raw samples: on the Raspberry Pi 4 its console runs
