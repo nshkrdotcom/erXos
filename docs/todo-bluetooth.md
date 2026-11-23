@@ -5,6 +5,11 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
 
 ## Bugs by subsystem
 
+* [Low] Bluetooth tests, `erx_bt_group_test.rb` (test/erlang/erx_bt_group_tests.erl): the seeded fault for
+  `a_link_held_at_its_start_is_cut_at_its_backlog_test` once passed instead of failing under a host loaded by parallel
+  QEMU runs, then failed as expected when rerun alone, so the case depends on timing.
+  The step that depends on timing has not been found; fix it so the seed fails on any host.
+
 * [Medium] Bluetooth line, held `data` writes (design-bluetooth.md, "The controller's line"): a write the line has
   handed `erx_pl011` while the controller holds CTS off under `rts_cts` flow waits on the device with no deadline, so its
   flush, its fid's clunk and the drain of a grant whose Bluetooth domain ended wait until the line's next `reset`, which
