@@ -301,7 +301,7 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   domain's syntax trees fail on a record expression that builds a named record outside its
   owning module; add it (as `tools/lib/erx/ns_writers.rb` checks its Erlang rules).
 * [Low] the machine grant's principal, `erlang/apps/erx_domain/src/erx_domain_srv.erl`
-  (`machine_principal/3`): the configured domains `storage` and `display` run under the
+  (`system_facet/4` for `machine`, through `user_name/2`): the configured domains `storage` and `display` run under the
   system principal, as root's sessions do, so a `machine` row granted to one of them would
   log its end as `by root`. Only root's template holds the row, so no such grant exists; a
   row that names one needs a principal of its own for the domain first.
@@ -318,9 +318,10 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   in a configured domain and an `erx_fs` grant check none, so such a row would grant
   every operation. The server's release is not checked to supply the service's
   interface.
-* [Medium] facets, `erlang/apps/erx/src/erx_facet.erl` (`operation/1`): only the clock facet's callback
-  exports `operation/1`, so a row naming operations of another system-served service compiles and boots, and only
-  its mint refuses it (`unchecked_operations`, logged, no facet), until the generated admission path checks every
+* [Medium] facets, `erlang/apps/erx/src/erx_facet.erl` (`operation/1`): of the system-served services
+  only the `clock`, `install` (the `code` interface), `pci` and `pci_bus` facets' callbacks export `operation/1`, so a row naming operations of
+  another (`inspect`, `log`, `code_objects`, or one served through `erx_domain_facet`) compiles and
+  boots, and only its mint refuses it (`unchecked_operations`, logged, no facet), until the generated admission path checks every
   service's operations.
 * [Medium] domain service, `erlang/apps/erx_domain/src/erx_domain_srv.erl` (`served/2`): a
   configured domain's facet of a service the system domain serves ends with the process

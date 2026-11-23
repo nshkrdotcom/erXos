@@ -129,9 +129,7 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   and the domain service's start (`erx_domain:start_app/2`, which sends the app's record as
   `{Ref, app, App}` once the session's namespace is in place), and the start service's package rows
   (`erx_starter:packages/2`) with their keepers, the only starters of an app's sessions (PK7), exist. What
-  remains: the app's name from the app's pool and its principal number known to the mints and the inspect scope,
-  since `machine_principal` and the mints' parameters name no app principal;
-  the app principal's CPU group under an apps group, which Fiasco's flat groups leave out; a `tree
+  remains: the app principal's CPU group under an apps group, which Fiasco's flat groups leave out; a `tree
   apps` grant's root `apps/NAME/SIGNER/`, whose signer is the registry record's and outside the plan, so
   the plan's PK10 comparison does not cover it; the rest of the file-backed EROFS mount of
   [todo-system-partition.md](todo-system-partition.md), whose `{erofs, app}` source `erx_app`

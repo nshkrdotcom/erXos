@@ -230,11 +230,6 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   page's identity is its window address" and "Thread handles" (which a Fiasco backend item cites in
   the possessive), start no paragraph: each follows its previous line with no blank line between,
   so it renders inside that paragraph and a citation of it would fail once the form is read.
-* [Medium] build, `tools/lib/erx/production_image.rb` (`archives`): the root's link records `libl4sys.p.a` and
-  `libsigma0.a` with status `stopgap`, though the dependency table marks Fiasco's `l4re-core` parts `release`;
-  the status sets of `tools/lib/erx/dependencies.rb:88` and `tools/lib/erx/toolchain_provenance.rb:72` admit
-  only `permanent` and `stopgap`, two copies of one fact. Give the status set one source that includes
-  `release`, record both archives as `release`, and test a record with an unknown status refused.
 
 ## Bugs by subsystem
 
@@ -921,12 +916,6 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
 
 ## Security residuals
 
-* [Low] build, the source revision of a tree holding the Doom fork (`tools/lib/erx/source_revision.rb`):
-  its `git status` recurses into `examples/doom/doom` and runs there under the fork's own
-  configuration and attributes, so a clean filter they name runs, and a fork checked out away from
-  its gitlink marks the tree dirty although the build compiles only the gitlink's commit
-  (`DoomProgram.snapshot`); `DoomProgram.check_fetched` refuses that checkout first. Leaving the
-  examples out of the status would make both hold by construction and let the refusal go.
 * [Low] build, git started by host tooling (`tools/lib/erx/fiasco.rb`, `submodule.rb`, `source_revision.rb`):
   each site builds its own argv, so "git runs no program a repository names" holds only where someone
   remembered it. `Fiasco#import_git`'s `git archive` runs plain `git` in the Fiasco clone, applying the
