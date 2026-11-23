@@ -2626,8 +2626,7 @@ and does not add application-state rollback.
   a child (`restart => permanent | transient` in its spec); a specification
   has at most one live domain at a time. The code service keeps one
   overlay per supervised specification: the manifest of the modules loaded
-  into its domain from outside since the specification was started, with
-  the hash of the manifest of the release it was loaded over
+  into its domain from outside since the specification was started
   ([The code store](#the-code-store)).
   * A load has three steps, each with one actor: the code service writes
     a candidate overlay; the domain's code server loads the modules of it
@@ -2652,11 +2651,10 @@ and does not add application-state rollback.
     stays published, so no domain of the specification runs past
     `kernel` on anything but its published overlay, as far as its
     runtime reports; the operator's reset is the way back to the release
-    ([Resetting an overlay](#the-code-server)). An overlay whose
-    release hash differs from the release the domain boots is dropped
-    instead, by publishing the empty overlay with a new revision: after
-    an update changes the release beneath a running machine, as an app's
-    update does, old modules never run over the new release.
+    ([Resetting an overlay](#the-code-server)). An overlay always
+    stands over the release it was loaded over, with nothing to check:
+    a specification boots the same release for as long as its overlay
+    lives (**Targets**, [The code server](#the-code-server)).
   * An overlay lives in memory only, in `erx_code`, and lasts until the
     machine ends or `erx_code` restarts
     ([When `erx_code` ends](#the-code-server)), as the system domain's
@@ -3008,11 +3006,15 @@ and writes nothing that must outlive it.
   incarnation owns the pid, node and creation both, by the check the
   inspection agent's pid passes ([The runtime agent](#the-runtime-agent)).
   Any other report it refuses, logs and counts. It passes a kept report
-  to the domain service, which records the code server in the domain's
-  record and, for a domain of a supervised specification, tells
-  `erx_code` with `erx_code:started(Id, Target, Release, DomainPid, Agent)`,
-  a message, not a call. `Release` is the hash of the release the domain
-  boots, which the domain service holds in the domain's record.
+  to the domain service as `{domain_code_agent, Ref, Id, Agent}`, which
+  the service takes only for the live record that `Ref` names, and not
+  once its boot timeout has passed. The service records the code server
+  in the domain's record and, for a domain whose build answer carried the
+  `supervised` flag, tells `erx_code` with
+  `erx_code:started(Id, Target, DomainPid, Agent)`, a message, not a
+  call, with `Target` the domain's target (**Targets**, below). With no
+  `erx_code` registered the message goes nowhere, and the domain's boot
+  ends at its boot timeout, as for any start load that never comes.
   `erx_code` calls the domain service (to resolve a load, to stop a
   domain at a reset) and the domain service never calls `erx_code`, so
   neither ever waits on the other in a cycle.
@@ -3022,8 +3024,14 @@ and writes nothing that must outlive it.
   `permanent` or `transient`, the domains the domain service restarts;
   a session, a temporary domain and a partial-boot program do not
   ([Overlays](#code-from-the-host)). The domain library sets the flag
-  from the plan, which carries the specification's restart, with no key
-  of its own, and reports it in its answer to the build. That answer is
+  from the plan, with no key of its own: a configured domain's plan names
+  its row, whose restart intensity the library's view holds, and the flag
+  is set when that intensity allows a restart (`restarts` above 0); a
+  created domain's plan carries its request's `restart`. One function
+  computes the boot information's flags, `erx_dom_plan_boot_flags`, and
+  the library reports the `supervised` bit of what it wrote in its answer
+  to the build (`erx_dom_created_t`, `supervised` in the map
+  `erx_domain_lib` returns). That answer is
   the one owner of whether a domain is supervised: the domain service
   records it with the domain and passes it on, to `erx_code` among
   others, and no Erlang code recomputes it from a specification. The code
@@ -3183,6 +3191,80 @@ the effects: aliases, timers, monitors, sends, the store and the calls
 to the domain service. Each load is tied to the one domain id its
 request resolved to.
 
+**Targets.** The domain service names a domain's target, from the
+domain's record alone (`erx_domain_core:target/1`), and hands the name
+to `erx_code` in every `started` and in every resolution of a load.
+`erx_code` keys its targets by that name and never computes one:
+
+* `{configured, Row}` for a domain of configured row `Row` whose build
+  answer carried the `supervised` flag. Every domain the row starts in
+  the boot has this target, so the row's overlay outlives each of them.
+* `{created, First}` for a created domain whose build answer carried
+  the flag, with `First` the id of the first domain of its
+  specification. Every restart of that specification has this target;
+  an id is never reused within a boot
+  ([design-system.md](design-system.md#the-domain-services-record)).
+* `{domain, Id}` for a domain whose build answer did not carry the flag:
+  one domain, one target.
+
+The system domain is no such target: it loads only through `erx_code`'s
+install path. A name depends only on the domain service's records, which
+last the boot, so a restarted `erx_code`, which begins with no targets,
+names every target as its predecessor did. It makes a supervised target
+at the first `started` or load that names it and keeps it until it ends
+itself, so a specification's overlay lasts as long as `erx_code` does.
+It makes a target `{domain, Id}` at its first load and drops it when
+that load ends: such a domain has no overlay, and nothing of its target
+is needed after the load.
+
+A target holds no release. While `erx_code` holds a supervised target,
+its specification boots one release: a configured row boots the boot
+image's one domain release under the script its row names
+([design-fiasco.md](design-fiasco.md#the-production-image)), and the
+boot image does not change within a boot; a created specification boots
+the script its request named at every restart. An overlay lives at most
+until the machine ends ([Overlays](#code-from-the-host)), so it always
+stands over the release it was loaded over. The release manifest the
+verdicts read (**The verdicts**, below) is therefore the same for every
+target: that of the domain release.
+
+**The effect layer.** Beside its store, `erx_code` keeps its lifeline
+(**When `erx_code` ends**, below), its targets by name, and, for each
+load in flight, the load's alias with its target, its timer and the
+monitor of its domain pid. It applies the actions `erx_code_target`
+returns in order, each one effect: `begin_load` monitors the domain
+pid, starts the `code_load_wait` timer and holds the load's blobs in the
+store; `send` sends a load or a word of publication to the code server
+and never waits; `serve` slices a piece from the stored blob and sends
+it; `end_load` deactivates the alias with `unalias/1`, cancels the timer,
+removes the monitor and lets the blobs go; `unalias` deactivates an
+alias no load took; `stop_domain` stops a domain through the domain
+service by its id; `reply` answers a facet; `log` writes a record naming
+the target. Each event reaches one target:
+
+* `{erx_origin, D, Msg}` goes to the target whose load holds the alias
+  `Msg` names as its second element (`erx_code_target:alias/1`), as
+  `received(D, Msg)`; a message naming no alias, or an alias of no load
+  in flight, is dropped;
+* the load's timer, as `deadline`, and its monitor's `'DOWN'`, as
+  `domain_down`, go to the target that holds the alias;
+* `started(Id, Target, DomainPid, Agent)` goes to `Target`, with a new
+  alias for the start load.
+
+A code server's piece requests and answers reach `erx_code` as every
+frame from its domain does. The code server sends to the alias, an
+`ALIAS_SEND` frame, which the system domain's funnel admits only when
+the domain's connection holds `send` on the alias
+([design-domains.md](design-domains.md#exports)). The load handed it
+that right: encoding `{erx_code_load, Alias, Manifest}` for the domain's
+connection wrote the holder. The runtime then delivers the message in the
+domain's envelope (D18 of
+[design-domains.md](design-domains.md#invariants)), as it delivers an
+inspection agent's answer to its asker's alias
+([The runtime agent](#the-runtime-agent)). `unalias/1` at a load's end
+closes every holder of the alias, so the funnel drops a later send to it
+as unauthorised, before any process sees it.
+
 * **A request.** A code facet's `load` is `{load, Domain, Manifest}`.
   `Domain` is a binary: decimal digits are a domain id, and anything
   else is a domain's name. The facet forwards the request with its
@@ -3193,8 +3275,9 @@ request resolved to.
   and `{reset, Domain}` only under a code scope, and answers anything
   else `{error, bad_request}`. A load into another domain is resolved by
   one call to the domain service, which applies the scope to its records
-  and returns the domain's id, domain pid, target, principal, release and
-  code server, and whether the domain has reported ready, or `scope`.
+  and returns the domain's id, domain pid, target, principal, `supervised`
+  flag, its specification's `overlay` limit and code server, and whether
+  the domain has reported ready, or `scope`.
 * **The verdicts.** `erx_code` then computes two verdicts from its store
   and hands them to `erx_code_target`, each a pure function of the
   principal's store, the target's release manifest and the hashes of
@@ -3231,17 +3314,14 @@ request resolved to.
   alias, sends `{erx_code_load, Alias, Manifest}` and starts its 30 s
   timer. A facet's load into a supervised target keeps its candidate in
   memory until the load ends.
-* **A start.** `started(Id, Target, Release, DomainPid, Agent)` for the
+* **A start.** `started(Id, Target, DomainPid, Agent)` for the
   target's current domain changes nothing. For any other domain it ends
   with `{error, domain_ended}` a load of the target that is sent to
   another domain. A specification has one live domain at a time, so the
   start of its next domain means its last domain has ended, whichever of
   this and the monitor's `'DOWN'` arrives first. The started domain
   becomes the target's current domain, and `erx_code` builds its start
-  load. If the published overlay names a release other than `Release`,
-  `erx_code` first drops it by publishing the empty overlay with a new
-  revision, so a revision always names what is published
-  ([Overlays](#code-from-the-host)). The start load's manifest is the
+  load. The start load's manifest is the
   published overlay, or no modules at all if the specification has
   none, and it is sent as **A send** says. The store holds every blob a
   published overlay names, so a start load can always be built.
@@ -3934,7 +4014,7 @@ any 9P2000.L peer does.
 | A message of the files stream lost with a damaged frame | the frame's CRC or sequence | nothing | the request waits until the host's client flushes it |
 | QEMU's 9P server answers with bytes that fail the codec, or stops answering | `erx_9p` in the host-tree bridge; the client's flush | the request failed | `eio` for that request; `/host` stays mounted |
 | A load the domain refuses | the code server's reply | the candidate overlay discarded | the reply lists what loaded and what failed |
-| An overlay names another release | the release hash `started` carries at the domain's start | the empty overlay published with a new revision | a log line naming the specification; the domain runs its release as built |
+| A supervised domain's code server reports while no `erx_code` is registered | the domain service's `started` finds no process | nothing sent | the domain's boot ends at its boot timeout, and its specification restarts within its restart intensity |
 | A start load is refused, goes unanswered for 30 s, or answers `invalid` | the code server's own refusal, or the code server's deadline with no word of publication; otherwise the domain's boot timeout | the published overlay unchanged; the domain ended, counted against its specification's restart intensity, and left down once that is spent | a log record and the domain's death record naming the refusal, the log record also the specification and the overlay's revision; `load -d DOMAIN -r` resets the overlay, and the next domain boots its release |
 | A load or a reset names a target that has a load in flight, or a load names a domain that has not reported ready, is not its target's current domain, or is closed | `erx_code`'s target state | nothing kept | `{error, busy}`; `load: NAME: busy`, and the sender sends it again |
 | A supervised domain loads a batch that `erx_code` does not publish: the load ended at its deadline or as `invalid`, or the word of publication was lost | the code server's deadline in step 4 | the published overlay unchanged; the domain ended by its code server, counted against its specification's restart intensity, and its next domain started from the published overlay | `{error, timeout}` or `{error, invalid}`, which for a supervised domain means nothing was published; the domain's end and reason in the log |
@@ -4227,7 +4307,7 @@ faults that must make its tests fail where it has any.
   at a line that is not secure; one that moves a terminal connected at
   another line.
 * **Code:** hot loads with and without the install facet, atomic
-  batches, and overlays across restarts and release changes.
+  batches, and overlays across restarts.
   * `erx_domain_core:code_scope/3` over every principal and build flag,
     and a load into a domain outside the scope, by name and by id,
     answered as one into a domain that does not exist, and `-d 4`
@@ -4269,6 +4349,34 @@ faults that must make its tests fail where it has any.
     stopped, and a supervised one waits for its start load. Seeded: the
     `supervised` flag ignored, under which every code server waits and
     the first domain's boot ends at its boot timeout.
+  * The plan's flags, in the domain library's host test: a configured
+    row whose `restarts` is above 0 and a request whose `restart` is
+    `permanent` or `transient` get `supervised`; a configured row whose
+    `restarts` is 0, a `temporary` request, a session and a partial-boot
+    program do not, with and without `det`. Seeded: the flag for every
+    configured row, under which the row with no restart is supervised.
+  * The domain service's notice, in a host test over its stand-in
+    library and a stand-in `erx_code`: a configured row whose build
+    answer carries `supervised` sends one `started` when its code server
+    reports, naming `{configured, Row}`, and the row's next domain, after
+    a restart, sends one naming the same target and its own id; a domain
+    whose answer does not carry the flag sends none, and nor does a
+    report that arrives after its domain's boot timeout. Seeded: the
+    target derived from the domain's id, under which the two notices
+    name different targets; the flag ignored, under which the
+    unsupervised domain is announced.
+  * `erx_code`'s effect layer for start loads, in a host test with stub
+    domain pids and code servers and the deadline shortened: `started`
+    sends the code server an empty start load, whose `ok`, sent to the
+    load's alias in the domain's envelope, is answered with the word of
+    publication naming the lifeline; `started` for the target's next
+    domain ends the first domain's load, so its later `ok` publishes
+    nothing; a silent code server's load ends at the deadline with one
+    log record; a domain pid's end ends its load with none; each end
+    deactivates the alias and removes the monitor. Seeded: the target
+    keyed by domain id, under which the first domain's late `ok` is
+    published; the monitor left out, under which the ended domain's
+    load waits for its deadline.
   * A stub code server of a supervised specification that answers `ok`
     receives the word of publication, and the facet's answer is
     `{ok, R}`; a start of the specification's next domain then carries
@@ -4384,16 +4492,14 @@ faults that must make its tests fail where it has any.
     principal already keeps, is charged nothing. A blob stored at
     65,537 bytes is served as a full piece and a one-byte piece; a
     request at its stored end, and one for a blob only the release
-    holds, end the load as `invalid`. A start whose overlay names
-    another release publishes the empty overlay with the next revision
-    and sends an empty start load; a start load ended by `domain_ended`
-    writes no log record. Seeded: `missing` decided before `busy`, under
-    which the busy target's load is answered `missing`; the charge
-    counting the release's blobs, under which the release-held candidate
-    is refused `no_memory`; pieces cut to the manifest's `Size`, under
-    which the request past the stored end is served; the overlay dropped
-    without a new revision, under which two different overlays carry one
-    revision.
+    holds, end the load as `invalid`. A start load ended by
+    `domain_ended` writes no log record. Seeded: `missing` decided
+    before `busy`, under which the busy target's load is answered
+    `missing`; the charge counting the release's blobs, under which the
+    release-held candidate is refused `no_memory`; pieces cut to the
+    manifest's `Size`, under which the request past the stored end is
+    served; a reset that publishes the empty overlay without a new
+    revision, under which two different overlays carry one revision.
   * The code server against a stub `erx_code`, on a host node: it skips
     a module already current, reads a blob its release lists from the
     release, fetches the rest in manifest order one piece at a time,
@@ -4448,6 +4554,15 @@ faults that must make its tests fail where it has any.
     reboot does: the next change loads the unchanged module too. Seeded:
     a watch that sends only the changed module, under which the
     unchanged one is missing after the reset.
+* **Start loads under QEMU.** A configured row of the domain suite's
+  manifest whose `restarts` is above 0 boots to ready through its start
+  load; the suite stops the domain through the domain service, and the
+  row's next domain boots to ready through a second start load. Seeded
+  by hand when the case lands, each failing it: the domain service's
+  `started` left out, under which the row's boot ends at its boot
+  timeout, which shows the code server waited; `erx_code`'s word of
+  publication left out, under which the code server ends its domain
+  with `{erx_code, unpublished}` 30 s after its start load.
 * **Loading, by every route, under QEMU.** A supervised test domain whose
   release carries a probe module that answers its version; each case
   loads a probe with a new answer and reads the answer through the
@@ -4713,12 +4828,28 @@ with a start load in flight refuses every other load until its domain
 has reported ready.
 
 **Dropping an overlay whose start load is refused.** The domain would
-boot its release as built, as when an overlay names another release. It
+boot its release as built. It
 loses: a refusal shows that this attempt failed, not that running the
 release is safe; the overlay may hold an unrelated working fix, and the
 release's code may meet data the overlay's code already changed. Keeping
 the overlay and failing the start leaves that choice to the operator's
 reset.
+
+**A release hash with each start.** The domain service would carry the
+hash of the release a domain boots in `started`, and `erx_code` would
+drop an overlay loaded over another release by publishing the empty
+overlay. It loses: nothing could make the hashes differ. A supervised
+target's specification boots one release for as long as the overlay
+lives (**Targets**, [The code server](#the-code-server)), so the check
+would cost a hash in the domain record, a source for it in the domain
+library and a log record, to catch a state that cannot occur. A design
+that lets a specification's release change within a boot names the new
+release a new specification, and so a new target with an empty overlay.
+
+**A target per domain id.** `erx_code` would key every target by the id
+of the domain a load or a start names. It loses: each restart of a
+specification would start a new target with an empty overlay, so no
+overlay would outlive a domain, which is what overlays are for.
 
 **Stopping a supervised domain from `erx_code`.** `erx_code` would stop
 a supervised domain by its id at a load's deadline, at `invalid` and

@@ -668,32 +668,60 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   (`erlang/apps/erx_code/src/erx_code.erl`, `erx_code_target.erl`;
   `erlang/apps/erx_domain/src/erx_domain_pid.erl`; `liberx/system/dom_core.c`,
   `erx_dom_plan_boot_flags`): the code server's supervised path, the boot information's
-  `supervised` flag, its reader, `erx_dist:supervised/0` and the library's build answer
-  carrying the flag (`erx_dom_created_t`, `supervised` in `erx_domain_lib:created()`) are
-  built, but no domain is
-  supervised, because nothing sends a start load and a supervised code server would wait
-  for one until its boot timeout ([design-live.md](design-live.md#the-code-server),
-  "`erx_code`'s side"). Missing:
-  * `erx_code`'s target effect layer: no code makes a target. It needs the targets and
-    their aliases, the 30 s timer per load, the monitor of the code server, serving the
-    pieces a code server asks for, routing a domain's answers by alias,
-    `{erx_code_published, Alias, Lifeline}` after a supervised domain's `ok`, and ending a
-    domain through the domain service. A target made before this refuses every load
-    `enotsup`.
-  * The domain service: the domain pid passes `{domain_code_agent, Ref, Id, Agent}` on,
-    but the domain service ignores it. It records the domain's code server, its supervised
-    flag and its release hash with the domain, and for a supervised domain sends
-    `erx_code` the notice that the domain started.
-  * The plan never sets `supervised`. It sets it for a configured row that allows a
-    restart, and, once `erx_domain:create`'s restart is built and the request plan carries
-    the specification's `restart`, for a created domain whose restart is `permanent` or
-    `transient`.
-  * Three open design questions: what `Target` is as a key in `erx_code`'s state; where a
-    domain's release hash comes from (the domain record holds none); and whether an alias
-    send from a domain to `erx_code` crosses the funnel as design-live.md assumes.
+  `supervised` flag, its reader and `erx_dist:supervised/0` are built, but no domain is
+  supervised: nothing sends a start load, so the plan leaves the bit clear, which fails
+  safe, since every code server then starts its domain at once on its release
+  ([design-live.md](design-live.md#the-code-server), "Targets", "The effect layer").
+  The design (design-live.md, "Targets"): a target is the domain service's name for it,
+  `{configured, Row}`, `{created, First}` or `{domain, Id}`, derived from the domain's
+  record (`erx_domain_core:target/1`), so it outlives the domain's restarts and a
+  restarted `erx_code` names it again. No release hash exists: a supervised target's
+  specification boots one release while its overlay lives, so the hash would guard a
+  state that cannot occur. A code server's answers to the load's alias cross as
+  `ALIAS_SEND` frames, which the funnel admits on the `send` that encoding the load wrote
+  (`liberx/erx_funnel.c`, the `ERX_FUNNEL_ALIAS_SEND` verdict row;
+  `otp/erts/emulator/sys/erxos/erx_exports.c`, writer 1), delivered in the domain's
+  envelope (`otp/erts/emulator/beam/erl_proc_sig_queue.c`, edit 16), as the inspection agent's answers already
+  are (`erlang/apps/erx/src/erx_inspect_worker.erl`). Four packages, one reviewed commit
+  each, in this order, since a domain supervised before the last would wait for a start
+  load that nothing sends:
+  1. **The build answer carries the flag** (`include/erx/dom_lib.h`, `erx_dom_created_t`;
+     `liberx/system/dom_apply.c`; `created_term` in
+     `otp/erts/emulator/nifs/erxos/erx_domain_lib_nif.c`; `erx_domain_lib:created()`):
+     the apply computes the boot page's flags once and reports their `supervised` bit,
+     false everywhere until package 4. Test: the domain QEMU suite's create sees
+     `supervised := false`; seeded: the bit reported true. Run `make check` and that suite.
+  2. **`erx_code`'s targets for start loads** (`erx_code.erl`, `erx_code_target.erl`): the
+     lifeline, the targets by name, each load's alias with its timer and domain-pid
+     monitor, routing `{erx_origin, D, Msg}` by alias, `erx_code:started/4`, and the
+     effects `begin_load`, `send`, `end_load`, `unalias` and `log`. `erx_code_target`
+     loses the release (`#overlay.release`, `over_release/2`, `domain()`'s `release`, the
+     `overlay_dropped` record) and `supervised_flag` with its `enotsup` clauses: `new/1`
+     takes `supervised`, and the `overlay` limit moves into `load/4`'s request. `serve`,
+     `reply` and `stop_domain`, which only facet loads and resets return, come with those.
+     Tests: design-live.md's "effect layer for start loads" case, in a new
+     `test/erlang/erx_code_tests.erl`, with its seeds; `test/host/erx_code_target_test.rb`
+     without the release case and the `supervised_flag` seed.
+  3. **The domain service records and announces** (`erx_domain_srv.erl`,
+     `erx_domain_core.erl`): `built/5` records the answer's `supervised`;
+     `{domain_code_agent, Ref, Id, Agent}` records `code` for the live record `Ref` names
+     unless it is stopping, and for a supervised domain calls `erx_code:started/4` with
+     `erx_domain_core:target/1`. Test: design-live.md's "domain service's notice" case in
+     `test/erlang/erx_domain_tests.erl`, over `erx_domain_fake_lib`, with its seeds.
+  4. **The plan sets the bit** (`erx_dom_plan_boot_flags`): for a configured row whose
+     `restarts` is above 0. Tests: the plan-flag expectations of
+     `test/host/dom_core_test.rb` with their seed, and design-live.md's "Start loads under
+     QEMU" case, seeded by hand once. The development manifest's storage, display and pcie rows
+     become supervised, so every suite's boot takes their start loads: run the full QEMU
+     suite once, re-check the deterministic-mode transcript, and record
+     `tools/erx bench boot` before and after. This package closes the item.
 
-  Until then every domain is unsupervised, which fails safe: its code server starts it at
-  once on its release, and no domain is sent a start load.
+  Outside these packages: a created domain is supervised only once `erx_domain:create`'s
+  `restart` is built, which names its specification `{created, First}` and puts `restart`
+  in the request plan; the code facet's loads and resets, with `serve`, `reply`,
+  `stop_domain`, the resolution's `overlay` limit (which the build answer would report
+  beside the flag) and the domain release's manifest for the verdicts, belong to the item
+  "code service, other domains and principals".
 * [Low] code bounds, the model's words and depth against the funnel
   (`tools/lib/erx/abi_code_bounds.rb`, `liberx/erx_etf.c`): the bytes agree with stock
   OTP's `external_size/1`, but the words and depth the floors use are counted by hand from
@@ -766,8 +794,7 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   each target with its 30 s deadline, atomic batches in every ERTS runtime,
   the log record of each load, the code server's fetch of pieces into other
   domains and its keep step, `erx_code`'s lifeline, and overlays per
-  supervised specification, in memory, with their revisions and release
-  hash, are not
+  supervised specification, in memory, with their revisions, are not
   built ([design-live.md](design-live.md#code-from-the-host)). The host
   link and `root`'s session share the one store, so one holder's uploads can
   drop or free the other's.

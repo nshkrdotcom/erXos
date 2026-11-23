@@ -763,9 +763,19 @@ domain library's records, keyed by the same id:
 	                                     % slot, held until the domain has answered
 	                                     % every record written into it
 	devices    :: [erx_device:index()],  % devices its creation gave it
+	supervised :: boolean(),             % the library's build answer: its boot
+	                                     % information carries the supervised flag
+	code       :: pid() | none,          % its code server, once its domain pid
+	                                     % passed the report on
 	ended      :: undefined | {erx_domain:end_(), integer()}  % the end and when
 }).
 ```
+
+A domain's target in the code service follows from its record and is
+never stored: `{configured, Row}` for a supervised domain of a configured
+row, `{created, First}` for a supervised created domain, with `First` the
+id of its specification's first domain, and `{domain, Id}` for any other
+([design-live.md](design-live.md#the-code-server), "Targets").
 
 A `session` domain holds `SPACES` and creates its programs as sub-spaces,
 and is made from its principal's session template of the manifest, which
