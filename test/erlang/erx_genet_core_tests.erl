@@ -13,6 +13,7 @@
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("xmerl/include/xmerl.hrl").
 -include("generated/erx_abi.hrl").
+-include("generated/erx_hw_genet.hrl").
 
 -define(SOP, (1 bsl 13)).
 -define(EOP, (1 bsl 14)).
@@ -91,44 +92,123 @@ configure_writes_freebsds_ring_settings_for_the_nifs_ring_test() ->
               {field, {rx_ring_xon_xoff_thres, Ring}, lo, 5},
               {field, {rx_ring_xon_xoff_thres, Ring}, hi, ?ERX_GENET_RING_SIZE bsr 4}]].
 
-%% FreeBSD's gen_reset order: the flush pulse, the MAC held in reset and released, the MIB
-%% cleared; CRC forward is never set, so no FCS is counted in a receive length.
-reset_releases_the_mac_and_never_forwards_the_crc_test() ->
-    Reset = erx_genet_core:reset(),
-    Cmd = [S || {_, umac_cmd, _} = S <- Reset] ++ [S || {_, umac_cmd, _, _} = S <- Reset],
-    ?assertEqual({write, umac_cmd, 0}, lists:last([S || S <- Reset, element(2, S) =:= umac_cmd])),
-    ?assertEqual([], [S || {field, _, crc_fwd, _} = S <- sequences()]),
-    ?assert(lists:member({field, umac_cmd, sw_reset, 1}, Cmd)).
-
 %% A restart finds the controller as a predecessor that ended left it, receiving: the MAC's
-%% receive is turned off, a full frame's time passes, and both DMA engines are stopped and
+%% receive and transmit are turned off, a full frame's time passes, and both DMA engines are stopped and
 %% the stop confirmed, all before the receive buffer's reset or the MAC's, so neither lands
 %% while the MAC hands a frame to the receive engine or an engine runs (the GENET facts
 %% record, "Stopping the DMA and confirming it stopped"). The stop is made once, there, so
 %% configure/1's ring settings, which follow the reset, are written to stopped engines.
-reset_stops_receive_and_both_dma_engines_before_any_reset_test() ->
-    {Quiesce, Rest} = lists:split(3, erx_genet_core:reset()),
-    ?assertMatch([{field, umac_cmd, rxen, 0}, {wait_us, Us}, dma_stop] when Us >= 2000, Quiesce),
-    ?assertEqual({field, sys_rbuf_flush_ctrl, reset, 1}, hd(Rest)),
+reset_stops_the_mac_and_both_dma_engines_before_any_reset_test() ->
+    {Quiesce, _Reset} = lists:split(4, erx_genet_core:reset()),
+    ?assertMatch([{field, umac_cmd, rxen, 0}, {field, umac_cmd, txen, 0}, {wait_us, Us}, dma_stop]
+                     when Us >= 2000, Quiesce),
     ?assertEqual([dma_stop], [S || dma_stop = S <- sequences()]).
+
+%% After the stop, reset/0 turns both status blocks and the receive checksum check off, the
+%% values the UEFI firmware's driver runs with after the Pi 4's boot loader, which leaves
+%% all three 0 and which that driver never writes; then it is that driver's GenetReset,
+%% write for write (edk2-platforms 4db2845d1442,
+%% Silicon/Broadcom/Drivers/Net/BcmGenetDxe/GenetUtil.c:300-335): the receive buffer's
+%% reset pulsed, 10 us each side, and its flush control written 0; the MAC's command
+%% register written 0, then software reset with local loopback in one write for 10 us,
+%% then 0, which releases it with CRC forward clear, so no FCS is counted in a receive
+%% length; the MIB counters cleared in one write; the largest frame; the 2-byte alignment;
+%% and the size control 1, the very last write.
+reset_after_the_stop_is_edk2s_genet_reset_test() ->
+    {_Quiesce, Reset} = lists:split(4, erx_genet_core:reset()),
+    ?assertEqual(held_settings() ++
+                 [{field, sys_rbuf_flush_ctrl, reset, 1}, {wait_us, 10},
+                  {field, sys_rbuf_flush_ctrl, reset, 0}, {wait_us, 10},
+                  {write, sys_rbuf_flush_ctrl, 0}, {wait_us, 10},
+                  {write, umac_cmd, 0},
+                  {write, umac_cmd, ?ERX_HW_GENET_UMAC_CMD_LCL_LOOP_EN_MASK bor
+                                    ?ERX_HW_GENET_UMAC_CMD_SW_RESET_MASK},
+                  {wait_us, 10},
+                  {write, umac_cmd, 0},
+                  {write, umac_mib_ctrl, ?ERX_HW_GENET_UMAC_MIB_CTRL_RESET_RUNT_MASK bor
+                                         ?ERX_HW_GENET_UMAC_MIB_CTRL_RESET_RX_MASK bor
+                                         ?ERX_HW_GENET_UMAC_MIB_CTRL_RESET_TX_MASK},
+                  {write, umac_mib_ctrl, 0},
+                  {field, umac_max_frame_len, length, 1536},
+                  {field, rbuf_ctrl, align_2b, 1},
+                  {field, rbuf_tbuf_size_ctrl, size, 1}], Reset),
+    ?assertEqual([], [S || {field, _, crc_fwd, _} = S <- sequences()]).
+
+%% Neither the UEFI firmware's driver's initialization nor FreeBSD's flushes the transmit
+%% path or the receive buffer (GenetUtil.c:300-335 and SimpleNetwork.c:147-167;
+%% if_genet.c:488-514, 900-942), so no sequence of erx_genet_core does: no write of the
+%% UniMAC's transmit flush, and no write that sets the receive buffer's flush bit.
+no_sequence_flushes_a_buffer_test() ->
+    ?assertEqual([], [S || S <- sequences(), flushes(S)]).
+
+flushes({write, umac_tx_flush, _}) -> true;
+flushes({field, sys_rbuf_flush_ctrl, flush, _}) -> true;
+flushes({write, sys_rbuf_flush_ctrl, Word}) ->
+    Word band ?ERX_HW_GENET_SYS_RBUF_FLUSH_CTRL_FLUSH_MASK =/= 0;
+flushes(_Step) -> false.
+
+%% Nothing after reset/0, in configure/1, start/0 or link_up/1, writes a buffer setting
+%% again: the size control, above all, changes from what a boot stage left only where the
+%% UEFI firmware's driver changes it.
+no_buffer_setting_follows_the_reset_test() ->
+    Buffers = [Register || {field, Register, _, _} <- held_settings() ++ edk2_settings()],
+    After = erx_genet_core:configure(<<2, 0, 0, 0, 0, 1>>) ++ erx_genet_core:start()
+        ++ lists:append([erx_genet_core:link_up(S) || S <- [10, 100, 1000]]),
+    ?assertEqual([], [S || S <- After, is_tuple(S), lists:member(element(2, S), Buffers)]).
+
+%% Both rings' buffers are as long as the largest frame, 1,536 bytes, the UEFI firmware's
+%% driver's one GENET_MAX_PACKET_SIZE (BcmGenetDxe.h:55), which it writes as the largest
+%% frame and as both rings' buffer length (GenetUtil.c:328, 560-562, 582-584). A frame of
+%% the MTU, its Ethernet header, a VLAN tag and the 2-byte pad fits one buffer.
+the_rings_buffers_are_the_largest_frame_long_test() ->
+    Buffer = erx_genet_core:buffer(),
+    ?assertEqual(1536, Buffer),
+    ?assert(lists:member({field, umac_max_frame_len, length, Buffer}, erx_genet_core:reset())),
+    ?assert(2 + 14 + 4 + 1500 =< Buffer).
+
+%% The settings reset/0 writes before that driver's reset, the values it runs with.
+held_settings() ->
+    [{field, rbuf_ctrl, status_64b, 0}, {field, rbuf_check_ctrl, en, 0},
+     {field, tbuf_ctrl, status_64b, 0}].
+
+%% That driver's own two buffer settings (GenetUtil.c:330-334).
+edk2_settings() ->
+    [{field, rbuf_ctrl, align_2b, 1}, {field, rbuf_tbuf_size_ctrl, size, 1}].
+
+%% What the driver reads back after reset/0 is every buffer setting it wrote, field and
+%% value, so a reset that restores a register is caught before a frame is misread.
+the_buffer_check_reads_back_every_buffer_setting_test() ->
+    ?assertEqual(lists:sort([{R, F, V} || {field, R, F, V} <- held_settings() ++ edk2_settings()]),
+                 lists:sort(erx_genet_core:buffer_check())).
+
+%% The bits the Pi 4's boot loader leaves set (RBUF_CTRL 0xc040, EXT_RGMII_OOB_CTRL
+%% 0xf00000, both read on the board before any write) that FreeBSD's header does not name
+%% lie in writable fields of the SVD, so a field write keeps them as it read them, as
+%% FreeBSD's read-modify-write does, rather than writing them back as zero.
+the_bits_the_boot_loader_leaves_set_survive_a_field_write_test() ->
+    [?assertEqual({Reg, Set}, {Reg, Set band field_bits(Reg)})
+     || {Reg, Set} <- [{rbuf_ctrl, 16#c040}, {ext_rgmii_oob_ctrl, 16#f00000}]].
+
+%% The bits the writable fields of register `Reg` cover.
+field_bits(Reg) ->
+    {Doc, _} = xmerl_scan:file(os:getenv("ERX_GENET_SVD"), [{quiet, true}]),
+    [R] = [R || R <- xmerl_xpath:string("//register", Doc), name(R) =:= Reg],
+    lists:foldl(fun(F, Mask) ->
+                        Offset = list_to_integer(text("bitOffset", F)),
+                        Width = list_to_integer(text("bitWidth", F)),
+                        Mask bor (((1 bsl Width) - 1) bsl Offset)
+                end, 0, [F || F <- xmerl_xpath:string("fields/field", R),
+                             xmerl_xpath:string("access[text()='read-only']", F) =:= []]).
 
 start_enables_both_directions_and_only_the_dma_interrupts_test() ->
     Start = erx_genet_core:start(),
     [?assert(lists:member(S, Start))
      || S <- [{field, umac_cmd, txen, 1}, {field, umac_cmd, rxen, 1},
-              {field, rbuf_ctrl, align_2b, 1}, {field, rbuf_ctrl, status_64b, 0},
               {field, intrl2_cpu_clear_mask, rxdma_done, 1},
               {field, intrl2_cpu_clear_mask, txdma_done, 1}]],
     %% Everything is masked before the two are unmasked.
     {Before, _} = lists:splitwith(fun(S) -> S =/= {field, intrl2_cpu_clear_mask, rxdma_done, 1} end, Start),
     ?assert(lists:member({write, intrl2_cpu_set_mask, 16#ffffffff}, Before)).
-
-%% With the status block off, no receive checksum check a boot stage left on stays on,
-%% as FreeBSD writes it on every start without receive checksum offload
-%% (if_genet.c:568-591); it is off before the receiver is enabled.
-start_turns_the_receive_checksum_check_off_before_receive_test() ->
-    {Before, _} = lists:splitwith(fun(S) -> S =/= {field, umac_cmd, rxen, 1} end, erx_genet_core:start()),
-    ?assert(lists:member({field, rbuf_check_ctrl, en, 0}, Before)).
 
 configure_writes_the_address_in_freebsds_order_test() ->
     Steps = erx_genet_core:configure(<<16#dc, 16#a6, 16#32, 16#01, 16#02, 16#03>>),

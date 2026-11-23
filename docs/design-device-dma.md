@@ -1254,10 +1254,11 @@ lands inside a buffer, not how many bytes the engine writes, which the
 ring's buffer size bounds; the board pass confirms that bound. GENET's
 DMA engine runs between calls, so a reset that reached its ring or
 descriptor registers would be owned; its own disable is the owned DMA
-control. The UniMAC's software reset and the receive buffer and transmit
-flushes (`if_genetreg.h:49-51, 75-77, 96`; FreeBSD's `gen_reset`,
-`if_genet.c:488-514`) sit outside the DMA block. FreeBSD makes them
-before it disables the engine (`if_genet.c:286-288, 873-875`); Linux makes the
+control. The UniMAC's software reset, the receive buffer's reset and
+the receive buffer and transmit flushes (`if_genetreg.h:49-51, 75-77,
+96`) sit outside the DMA block. FreeBSD makes only the two resets
+(`gen_reset`, `if_genet.c:488-514`), and never flushes, before it
+disables the engine (`if_genet.c:286-288, 873-875`); Linux makes the
 MAC reset with the engine running but the two flushes only after a
 confirmed stop, and both drivers rewrite every ring register they use
 afterwards, so neither depends on a reset or a flush leaving the DMA
@@ -1535,7 +1536,16 @@ and idle report under the device lock, so nothing that happens between
 the two calls can make a stale report free a buffer the device holds.
 The driver's sequence is the queues, `stop_dma/1`, its own resets and
 configuration, then `negotiate/2`, whose stop finds both engines
-stopped already. A record without both its queues answers
+stopped already. Within its resets the receive and transmit buffers
+take their settings (alignment, status blocks, the size control)
+first, then the receive buffer is reset and, with the MAC held in
+software reset, the buffers are flushed; the driver reads the settings
+back after both resets. This order is erXos's own, chosen from board
+runs: the published drivers write their settings after the receive
+buffer's reset ([The receive and transmit buffers' settings](research-genet-bcm2711.md#the-receive-and-transmit-buffers-settings)).
+No setting changes a buffer after its reset or flush, and none changes
+while an engine runs.
+A record without both its queues answers
 `{error, einval}`; every other form answers `{error, enotsup}`, since no
 other driver resets its controller between a stop and the install.
 

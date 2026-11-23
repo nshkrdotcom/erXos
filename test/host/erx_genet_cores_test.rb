@@ -34,7 +34,11 @@ class ErxGenetCoresTest < Minitest::Test
     'a frame past the MTU passed up' =>
       ['erx_genet_core', '{frame, _Long} -> {[{dropped, too_long} | Drops], Frames};', '{frame, Long} -> {Drops, [Long | Frames]};'],
     'the DMA stop left out of the reset' =>
-      ['erx_genet_core', '{wait_us, ?FRAME_US}, dma_stop,', '{wait_us, ?FRAME_US},'],
+      ['erx_genet_core', '{wait_us, ?FRAME_US}, dma_stop]', '{wait_us, ?FRAME_US}]'],
+    'the alignment and size control written before the receive buffer reset' =>
+      ['erx_genet_core', "        ++ held_settings() ++\n", "        ++ held_settings() ++ buffer_settings() ++\n"],
+    'the ring buffers longer than the largest frame' =>
+      ['erx_genet_core', 'buffer() -> ?MAX_FRAME_LEN.', 'buffer() -> 2048.'],
     'a ring setting left out' =>
       ['erx_genet_core', "{write, {tx_ring_mbuf_done_thres, ?RING}, ?TX_MBUF_DONE_THRES},\n", ''],
     'a field the SVD does not name' =>

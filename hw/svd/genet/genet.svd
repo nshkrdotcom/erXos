@@ -8,8 +8,9 @@
      register and field, cited by line, and sys/arm64/broadcom/genet/if_genet.c
      (SHA-256 fbf5c90dd089fa759e04dd0c72f97e688bfc97e2855d65011cf42d4511cfd459) for
      what its driver writes. No public datasheet describes the controller, so this
-     file holds only the registers and bits FreeBSD names, as FreeBSD uses them. A
-     bit FreeBSD leaves unnamed is in no field, so write/3 refuses a word that sets
+     file holds only the registers and bits FreeBSD names, as FreeBSD uses them, and
+     those the clean-room GENET facts record (docs/research-genet-bcm2711.md) names,
+     each such one citing it. A bit neither names is in no field, so write/3 refuses a word that sets
      it; where FreeBSD writes a value it does not split into bits, the field is the
      whole word. The window is the device tree's `brcm,bcm2711-genet-v5` node,
      0x10000 bytes (docs/design-platforms.md, "Raspberry Pi 4 Model B").
@@ -60,7 +61,8 @@
           <description>GENET_SYS_RBUF_FLUSH_CTRL (if_genetreg.h:49): FreeBSD pulses RESET and writes 0 (if_genet.c:492-501), and trusts UMAC_MAC0/1 only while it reads 0 (if_genet.c:465-468)</description>
           <addressOffset>0x8</addressOffset><access>read-write</access>
           <fields>
-            <field><name>RESET</name><description>Flush the receive buffer (if_genetreg.h:50)</description><bitOffset>1</bitOffset><bitWidth>1</bitWidth></field>
+            <field><name>FLUSH</name><description>Flushes the receive buffer; pulsed 10 us each side after a confirmed DMA stop with the MAC in reset (docs/research-genet-bcm2711.md, "MAC reset, RX buffer flush and TX flush")</description><bitOffset>0</bitOffset><bitWidth>1</bitWidth></field>
+            <field><name>RESET</name><description>The receive buffer's reset (if_genetreg.h:50); whether it empties the buffer is unverified</description><bitOffset>1</bitOffset><bitWidth>1</bitWidth></field>
           </fields>
         </register>
         <register>
@@ -72,6 +74,7 @@
             <field><name>OOB_DISABLE</name><description>Disable out-of-band status (if_genetreg.h:55)</description><bitOffset>5</bitOffset><bitWidth>1</bitWidth></field>
             <field><name>RGMII_MODE_EN</name><description>Enable RGMII (if_genetreg.h:54)</description><bitOffset>6</bitOffset><bitWidth>1</bitWidth></field>
             <field><name>ID_MODE_DISABLE</name><description>Disable the MAC's internal delay (if_genetreg.h:53)</description><bitOffset>16</bitOffset><bitWidth>1</bitWidth></field>
+            <field><name>BITS20_23</name><description>Named by FreeBSD's header for no field; the Pi 4 boot loader leaves bits 20 to 23 set (0xf00000, read on the board before any write: ~/erxos-history/pi4/2026-11-22-bisect/uart-flush2.log, the diag found line). Declared so a field write keeps them as read, as FreeBSD's read-modify-write does (if_genet.c:1767-1775); never written by erx_genet</description><bitOffset>20</bitOffset><bitWidth>4</bitWidth></field>
           </fields>
         </register>
         <register>
@@ -126,6 +129,8 @@
             <field><name>STATUS_64B</name><description>Prepend a 64-byte status block to each received frame (if_genetreg.h:69; if_genet.c:572-582)</description><bitOffset>0</bitOffset><bitWidth>1</bitWidth></field>
             <field><name>ALIGN_2B</name><description>Write two bytes of padding before each frame (if_genetreg.h:68; if_genet.c:522-524)</description><bitOffset>1</bitOffset><bitWidth>1</bitWidth></field>
             <field><name>BAD_DIS</name><description>if_genetreg.h:67; FreeBSD never sets it</description><bitOffset>2</bitOffset><bitWidth>1</bitWidth></field>
+            <field><name>BIT6</name><description>Named by neither published driver; the Pi 4 boot loader leaves bit 6 (0xc040) set (docs/research-genet-bcm2711.md, "The receive and transmit buffers' settings"). Declared so a field write keeps it as read, as FreeBSD's read-modify-write does; never written by erx_genet</description><bitOffset>6</bitOffset><bitWidth>1</bitWidth></field>
+            <field><name>BITS14_15</name><description>Named by neither published driver; the Pi 4 boot loader leaves bits 14 and 15 (0xc040) set (docs/research-genet-bcm2711.md, "The receive and transmit buffers' settings"). Declared so a field write keeps it as read, as FreeBSD's read-modify-write does; never written by erx_genet</description><bitOffset>14</bitOffset><bitWidth>2</bitWidth></field>
           </fields>
         </register>
         <register>
@@ -189,6 +194,14 @@
           <addressOffset>0x814</addressOffset><access>read-write</access>
           <fields>
             <field><name>LENGTH</name><description>Written whole; FreeBSD writes 1536 (if_genet.c:520)</description><bitOffset>0</bitOffset><bitWidth>32</bitWidth></field>
+          </fields>
+        </register>
+        <register>
+          <name>UMAC_TX_FLUSH</name><ownedByNif>false</ownedByNif>
+          <description>GENET_UMAC_TX_FLUSH (if_genetreg.h:96): FreeBSD never writes it; the other published driver writes 1, then 0 10 us later, after a confirmed DMA stop (docs/research-genet-bcm2711.md, "MAC reset, RX buffer flush and TX flush")</description>
+          <addressOffset>0xb34</addressOffset><access>read-write</access>
+          <fields>
+            <field><name>FLUSH</name><description>Written whole: 1, then 0</description><bitOffset>0</bitOffset><bitWidth>32</bitWidth></field>
           </fields>
         </register>
         <register>

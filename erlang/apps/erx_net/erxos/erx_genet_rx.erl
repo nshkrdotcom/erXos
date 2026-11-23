@@ -13,10 +13,10 @@ A completion is the NIF's `{Status, Bytes}` (docs/design-device-dma.md, "The
 register ring (GENET)"). `Status` is the descriptor's whole status word: its
 flags, bits 15:0, and its length field, bits 31:16 (FreeBSD masks 12 of them).
 `Bytes` are the bytes the controller wrote, as many as the length field said
-when that is at most the 2 KiB receive buffer, and none when it is more: the
-NIF copies nothing a buffer cannot hold, hands the buffer back all the same,
-and the length field alone says why the bytes are missing. Otherwise the
-frame is cut from `Bytes`, never from the field. Both are untrusted device
+when that is at most the receive buffer (erx_genet_core:buffer/0), and none
+when it is more: the NIF copies nothing a buffer cannot hold, hands the
+buffer back all the same, and the length field alone says why the bytes are
+missing. Otherwise the frame is cut from `Bytes`, never from the field. Both are untrusted device
 data. The length counts the two bytes of padding the controller writes before
 the frame so that the IP header lands aligned; the frame is the bytes after
 them, a sub-binary of `Bytes`, which are the NIF's own copy and never memory
@@ -36,10 +36,9 @@ for a status.
 Facts from FreeBSD 975e3605ebb1, `sys/arm64/broadcom/genet/`: the status bits
 (`if_genetreg.h:169-176`; bits 0, 1, 3 and 4 from the GENET facts record,
 docs/research-genet-bcm2711.md, "The receive status word", whose rule of
-dropping on any of them the design takes), the 2 KiB buffer
-(`if_genet.c:790-792`, `MCLBYTES` in `sys/sys/param.h:196-199`), and the
-padding, turned on by `GENET_RBUF_ALIGN_2B` and counted in the length
-(`if_genet.c:521-524, 1440-1443`).
+dropping on any of them the design takes), and the padding, turned on by
+`GENET_RBUF_ALIGN_2B` and counted in the length (`if_genet.c:521-524,
+1440-1443`).
 """.
 
 -export([frame/2]).

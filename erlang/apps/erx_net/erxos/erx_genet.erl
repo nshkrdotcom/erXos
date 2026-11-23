@@ -7,15 +7,18 @@ erXos's transport (docs/design-network-stack.md, "The driver") for the Raspberry
 Ethernet controller, GENET v5, over the device NIF, erx_device
 (docs/design-runtime.md, "The device NIF"), with the controller's register ring
 (docs/design-device-dma.md, "The register ring (GENET)"): queue 0 receives and queue 1
-transmits, 256 buffers of 2 KiB each. Built only into erXos's images. Its decisions are
-erx_genet_core's, its receive judgement erx_genet_rx's, its PHY erx_phy_c22's over
+transmits, 256 buffers each as long as the largest frame (erx_genet_core:buffer/0).
+Built only into erXos's images. Its decisions are erx_genet_core's, its receive
+judgement erx_genet_rx's, its PHY erx_phy_c22's over
 erx_mdio; this module carries them out.
 
 `init/1` runs one sequence at a start and at every restart, so a restarted driver finds
 the controller as its predecessor left it and resets it: open the record, check the
 revision, read the address the firmware left before the reset, create the two queues,
-then erx_genet_core:reset/0: the MAC's receive off, both DMA directions stopped and
-confirmed by erx_device:stop_dma/1, which needs both queues' records, and the MAC reset;
+then erx_genet_core:reset/0: the MAC's receive and transmit off, both DMA directions
+stopped and confirmed by erx_device:stop_dma/1, which needs both queues' records, the
+receive buffer's reset and the MAC's, the largest frame and the buffers' settings,
+and the settings read back (erx_genet_core:buffer_check/0);
 set the port, the address, the promiscuous filter and the ring settings,
 `negotiate/2`, which installs both rings and starts them, enable the MAC and the
 interrupts, and bind the line. erx_device:stop_dma/1 and `negotiate/2` are each retried
@@ -68,7 +71,7 @@ drives it.
 -define(RXQ, 0).
 -define(TXQ, 1).
 -define(QUEUE_SIZE, ?ERX_GENET_RING_SIZE).
--define(BUFFER, 2048).
+-define(BUFFER, erx_genet_core:buffer()).
 -define(IRQ_LINE, 0).
 -define(PHY_ADDRESS, 1).
 -define(ETHER_HDR_LEN, 14).
@@ -148,6 +151,7 @@ start(Spec) ->
         {ok, Tx} ?= step(queue_create, erx_device:queue_create(Dev, ?TXQ, ?QUEUE_SIZE, ?BUFFER)),
         ok = log_phase(reset),
         ok ?= apply_steps(Dev, erx_genet_core:reset()),
+        ok ?= check_buffers(Dev),
         ok = log_phase(configure),
         ok = apply_steps(Dev, erx_genet_core:configure(Lladdr)),
         ok = log_phase(negotiate),
@@ -221,6 +225,18 @@ apply_step(Dev, {write, Register, Value}) -> ok = erx_device:write(Dev, Register
 apply_step(Dev, {field, Register, Field, Value}) -> ok = erx_device:write_field(Dev, Register, Field, Value);
 apply_step(_Dev, {wait_us, Us}) -> spin_us(Us);
 apply_step(Dev, dma_stop) -> retry_busy(dma_stop, fun() -> erx_device:stop_dma(Dev) end, Dev).
+
+%% Each buffer setting reset/0 wrote, read back after it; any that reads
+%% otherwise fails the start, named with its register, field and the value read
+%% (erx_genet_core:buffer_check/0).
+check_buffers(Dev) ->
+    Lost = [{Register, Field, Read} || {Register, Field, Value} <- erx_genet_core:buffer_check(),
+                                       Read <- [erx_device:read_field(Dev, Register, Field)],
+                                       Read =/= Value],
+    case Lost of
+        [] -> ok;
+        _ -> log("buffer settings lost in the reset: ~0p", [Lost]), {error, {buffer_settings_lost, Lost}}
+    end.
 
 %% A pause spun, as FreeBSD's DELAY, not slept on a timer: the scheduler is held for at
 %% most erx_mdio's bound on one operation, about 10 ms, 2 ms for the frame the reset lets

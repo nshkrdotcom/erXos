@@ -11,11 +11,12 @@ send. Nothing here touches the device; erx_genet carries each step out through t
 device NIF, which reaches every register and field by its name in the device's SVD
 source (hw/svd/genet/genet.svd), so no step packs a bit by hand.
 
-The sequences follow FreeBSD 975e3605ebb1, `sys/arm64/broadcom/genet/if_genet.c`:
+The sequences follow FreeBSD 975e3605ebb1, `sys/arm64/broadcom/genet/if_genet.c`, except
+`reset/0`'s reset, which is the UEFI firmware's driver's (item 2):
 
 1. `reset/0` first stops the controller, since a restart may find it receiving as its
-   predecessor left it: the MAC's receive off and a full frame's time, as the MAC stops
-   only at a frame's end, then both DMA engines stopped and the stop confirmed by the
+   predecessor left it: the MAC's receive and transmit off and a full frame's time, as
+   the MAC stops only at a frame's end, then both DMA engines stopped and the stop confirmed by the
    device NIF without the install (`dma_stop`, erx_device:stop_dma/1), so that no reset
    of item 2 lands while an engine runs. This follows the other published driver's
    interface stop (the GENET facts record, docs/research-genet-bcm2711.md, "Stopping the
@@ -28,12 +29,33 @@ The sequences follow FreeBSD 975e3605ebb1, `sys/arm64/broadcom/genet/if_genet.c`
    `gen_reset`, by writing the command register 0 after the receive buffer's reset
    (`if_genet.c:504, 873`), and again in `gen_disable` (`:554-556, 874`), never before
    that reset, and stops the DMA after it, unconfirmed (`:285-288, 873-875`).
-2. Then the rest of `reset/0`, FreeBSD's `gen_reset` (`if_genet.c:488-514`): pulse the
-   receive buffer's reset, write it 0, write the MAC's command register 0, hold the MAC
-   in software reset with local loopback for 10 us, write it 0 again, which leaves CRC
-   forward clear, so no frame check sequence is counted in a receive length, and clear
-   the MIB counters. FreeBSD sets loopback and reset in one write; here they are two
-   field writes, loopback first (unverified on the board).
+2. Then the rest of `reset/0`. First both status blocks and the receive checksum check
+   off, the values the UEFI firmware's driver runs with after the Pi 4's boot loader,
+   which leaves all three 0 and which that driver never writes. Then that driver's reset,
+   `GenetReset` (edk2-platforms 4db2845d1442,
+   `Silicon/Broadcom/Drivers/Net/BcmGenetDxe/GenetUtil.c:300-335`), which its
+   initialization runs first (`SimpleNetwork.c:147`), write for write: FreeBSD's
+   `gen_reset` (`if_genet.c:488-514`) with the largest frame and two buffer settings
+   after it:
+   * pulse the receive buffer's reset, 10 us each side, write its flush control 0, and
+     write the MAC's command register 0;
+   * hold the MAC in software reset with local loopback, one write, for 10 us, then
+     write the command register 0, which releases it with CRC forward clear, so no frame
+     check sequence is counted in a receive length;
+   * clear the MIB counters, one write and then 0, and set the largest frame to 1,536
+     bytes;
+   * the receive buffer's 2-byte alignment on and the size control
+     (`RBUF_TBUF_SIZE_CTRL`) 1, the very last write.
+   No flush: neither that driver's initialization nor FreeBSD's flushes the transmit
+   path or the receive buffer. That driver's stop does flush the transmit path, between
+   its DMA stop and turning transmit off (`GenetUtil.c:462-464`, run by its stop and
+   shutdown, `SimpleNetwork.c:88, 256`), and item 1 stands for that stop at a restart
+   without it, so a restart differs from that driver's shutdown and initialization by
+   that one flush. Both rings' buffers are as long as that driver's (`buffer/0`). Whether
+   the size control 1 written this way gives one delivery per frame on the Pi 4 after
+   its boot loader is the board's to settle (TODO.md). erx_genet reads the five buffer
+   settings back after `reset/0` and stops on a difference (`buffer_check/0`): a lost
+   alignment setting would otherwise cut two bytes off every frame.
 3. `configure/1`, the part of `gen_init_locked` before the rings
    (`if_genet.c:915-927`, `gen_set_enaddr` `:1016-1035`, `gen_setup_rxfilter`
    `:977-1013`): the port in external gigabit PHY mode, the unicast address, and the
@@ -47,15 +69,10 @@ The sequences follow FreeBSD 975e3605ebb1, `sys/arm64/broadcom/genet/if_genet.c`
 4. `negotiate/2` installs and starts both rings (the device NIF's sequence); its own
    stop finds both engines stopped already.
 5. `start/0`: every interrupt masked and cleared first, as FreeBSD's `gen_disable_intr`
-   does (`if_genet.c:538-544`), so no completion's interrupt is cleared after it lands;
-   then `gen_enable` (`if_genet.c:516-536`, `gen_enable_intr` `:710-715`): the largest
-   frame 1,536 bytes, the receive buffer's 2-byte alignment on, the transmit buffer
-   size, transmit and receive enabled, and the receive and transmit done interrupts
-   unmasked. Before the receiver is enabled, both status blocks and the receive
-   checksum check are turned off, whatever a boot stage left, as `gen_enable_offload`
-   leaves them without checksum offload (`if_genet.c:568-591`); FreeBSD runs that
-   after `gen_enable` (`:934-935`), with the receiver already on, so here no frame
-   arrives under a stale setting.
+   does (`if_genet.c:540-546`), so no completion's interrupt is cleared after it lands;
+   then the rest of `gen_enable` (`if_genet.c:528-537`, `gen_enable_intr` `:710-715`),
+   whose buffer settings `reset/0` wrote: transmit and receive enabled, and the receive
+   and transmit done interrupts unmasked.
 6. `link_up/1` at each `{link, up, Speed}` of erx_phy_c22, `gen_update_link_locked`
    (`if_genet.c:1729-1781`): the RGMII out-of-band control on, its link bit set and
    ID mode left enabled, since the board's PHY is wired `rgmii-rxid` (the PHY delays
@@ -65,7 +82,7 @@ The sequences follow FreeBSD 975e3605ebb1, `sys/arm64/broadcom/genet/if_genet.c`
 
 -export([identify/1, lladdr/1, reset/0, configure/1, start/0, link_up/1]).
 -export([stop_retry/1, frames/2, pieces/1]).
--export([evidence/0, rx_fault/1]).
+-export([buffer/0, buffer_check/0, evidence/0, rx_fault/1]).
 -export_type([step/0, address_step/0, rx_fault/0]).
 
 -include("generated/erx_abi.hrl").
@@ -177,20 +194,50 @@ local_unicast(<<High:6, _:2, Rest:40>>) -> <<High:6, 1:1, 0:1, Rest:40>>.
 %% --- The sequences ------------------------------------------------------------------
 
 -doc """
-The MAC's receive stopped at a frame's end and both DMA engines stopped and confirmed,
-then the reset, FreeBSD's `gen_reset`.
+The MAC's receive and transmit stopped at a frame's end and both DMA engines stopped and
+confirmed, the status blocks and the receive checksum check off, then the UEFI firmware's
+driver's reset as a whole: the receive buffer's reset, the MAC's, the MIB counters, the
+largest frame and the buffers' settings, the size control last.
 """.
 -spec reset() -> [step()].
 reset() ->
-    [{field, umac_cmd, rxen, 0}, {wait_us, ?FRAME_US}, dma_stop,
-     {field, sys_rbuf_flush_ctrl, reset, 1}, {wait_us, ?RESET_US},
+    [{field, umac_cmd, rxen, 0}, {field, umac_cmd, txen, 0}, {wait_us, ?FRAME_US}, dma_stop]
+        ++ held_settings() ++
+    [{field, sys_rbuf_flush_ctrl, reset, 1}, {wait_us, ?RESET_US},
      {field, sys_rbuf_flush_ctrl, reset, 0}, {wait_us, ?RESET_US},
      {write, sys_rbuf_flush_ctrl, 0}, {wait_us, ?RESET_US},
      {write, umac_cmd, 0},
-     {field, umac_cmd, lcl_loop_en, 1}, {field, umac_cmd, sw_reset, 1}, {wait_us, ?RESET_US},
+     {write, umac_cmd,
+      ?ERX_HW_GENET_UMAC_CMD_LCL_LOOP_EN_MASK bor ?ERX_HW_GENET_UMAC_CMD_SW_RESET_MASK},
+     {wait_us, ?RESET_US},
      {write, umac_cmd, 0},
-     {field, umac_mib_ctrl, reset_runt, 1}, {field, umac_mib_ctrl, reset_rx, 1},
-     {field, umac_mib_ctrl, reset_tx, 1}, {write, umac_mib_ctrl, 0}].
+     {write, umac_mib_ctrl, ?ERX_HW_GENET_UMAC_MIB_CTRL_RESET_RUNT_MASK bor
+                            ?ERX_HW_GENET_UMAC_MIB_CTRL_RESET_RX_MASK bor
+                            ?ERX_HW_GENET_UMAC_MIB_CTRL_RESET_TX_MASK},
+     {write, umac_mib_ctrl, 0},
+     {field, umac_max_frame_len, length, ?MAX_FRAME_LEN}]
+        ++ buffer_settings().
+
+%% Both status blocks and the receive checksum check off, the values the UEFI firmware's
+%% driver runs with after the Pi 4's boot loader, which leaves all three 0 and which that
+%% driver never writes; written before its reset, so that what follows is its reset alone.
+held_settings() ->
+    [{field, rbuf_ctrl, status_64b, 0}, {field, rbuf_check_ctrl, en, 0},
+     {field, tbuf_ctrl, status_64b, 0}].
+
+%% That driver's own buffer settings, its reset's last two writes (GenetUtil.c:330-334): the
+%% receive buffer's 2-byte alignment and the size control.
+buffer_settings() ->
+    [{field, rbuf_ctrl, align_2b, 1}, {field, rbuf_tbuf_size_ctrl, size, ?TBUF_SIZE}].
+
+-doc """
+The length of every buffer of both rings, the largest frame, 1,536 bytes: the UEFI
+firmware's driver writes its one `GENET_MAX_PACKET_SIZE` as the largest frame and as both
+rings' buffer length (`BcmGenetDxe.h:55`, `GenetUtil.c:328, 560-562, 582-584`). A frame of
+the MTU with its Ethernet header, a VLAN tag and the 2-byte pad fits one buffer.
+""".
+-spec buffer() -> pos_integer().
+buffer() -> ?MAX_FRAME_LEN.
 
 -doc """
 The port, the address `Lladdr`, the promiscuous filter and the driver's ring settings,
@@ -216,11 +263,6 @@ ring_settings() ->
 -spec start() -> [step()].
 start() ->
     [{write, intrl2_cpu_set_mask, ?ALL_IRQS}, {write, intrl2_cpu_clear, ?ALL_IRQS},
-     {field, umac_max_frame_len, length, ?MAX_FRAME_LEN},
-     {field, rbuf_ctrl, status_64b, 0}, {field, rbuf_ctrl, align_2b, 1},
-     {field, rbuf_check_ctrl, en, 0},
-     {field, tbuf_ctrl, status_64b, 0},
-     {field, rbuf_tbuf_size_ctrl, size, ?TBUF_SIZE},
      {field, umac_cmd, txen, 1}, {field, umac_cmd, rxen, 1},
      {field, intrl2_cpu_clear_mask, rxdma_done, 1}, {field, intrl2_cpu_clear_mask, txdma_done, 1}].
 
@@ -246,6 +288,18 @@ stop_retry(Tries) when is_integer(Tries), Tries >= 1, Tries < ?STOP_TRIES ->
     {retry, ?STOP_RETRY_MS};
 stop_retry(Tries) when is_integer(Tries), Tries >= ?STOP_TRIES ->
     {error, stop_timeout}.
+
+-doc """
+The buffer settings `reset/0` writes, as the fields to read back after it and the value
+each must hold. No source says whether the resets keep the three written before them, or
+whether the controller keeps every one as written, and a lost one is not seen in a frame:
+without the alignment every frame would lose its first two bytes to the pad erx_genet_rx
+strips. The driver stops when a field reads otherwise.
+""".
+-spec buffer_check() -> [{erx_device:register_name(), atom(), non_neg_integer()}].
+buffer_check() ->
+    [{Register, Field, Value}
+     || {field, Register, Field, Value} <- held_settings() ++ buffer_settings()].
 
 %% --- What a failure shows -------------------------------------------------------------
 
