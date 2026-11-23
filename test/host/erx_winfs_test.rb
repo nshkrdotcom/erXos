@@ -62,12 +62,18 @@ class ErxWinfsTest < Minitest::Test
   NO_CARRY = '            _ = Rest, read(Device, Read, <<>>, Dropped + NewlyDropped);'
   READER_CASE = '{generator, erx_winfs_tests, a_reader_routes_its_file_s_records_and_its_end_takes_its_keys_up_test_}'
   # The seeded faults of the input follower: one that leaves a tree's readers running when
-  # its grant ends, and one that lists a tree in its own process.
+  # its grant ends, one that lists a tree in its own process, one that forgets the facet
+  # it last followed when its grant ends (the design's Seen dropped), and one that reads
+  # the granted names before the generation.
   FOLLOWER = 'erlang/apps/erx_display/src/erx_input_follower.erl'
-  STOP_READERS = "    stop(Phase),\n    State\#{trees := maps:remove(Name, Trees)}."
-  KEEP_READERS = "    _ = Phase,\n    State\#{trees := maps:remove(Name, Trees)}."
-  LISTER = '            Lister = spawn_link(fun() -> Follower ! {listed, self(), List(Grant)} end),'
-  LIST_INLINE = '            Lister = self(), Follower ! {listed, Lister, List(Grant)},'
+  ENDED = "    State\#{trees := Trees\#{Name := \#{grant => Grant, phase => ended}}}."
+  STOP_READERS = "    stop(Phase),\n#{ENDED}"
+  KEEP_READERS = "    _ = Phase,\n#{ENDED}"
+  FORGET_ENDED = "    _ = Grant,\n    State\#{trees := maps:remove(Name, Trees)}."
+  LISTER = '    Lister = spawn_link(fun() -> Follower ! {listed, self(), List(Grant)} end),'
+  LIST_INLINE = '    Lister = self(), Follower ! {listed, Lister, List(Grant)},'
+  READ_ORDER = "    Seen = Generation(),\n    Names = Granted(),"
+  NAMES_FIRST = "    Names = Granted(),\n    Seen = Generation(),"
   FOLLOWER_CASE = '{generator, erx_input_follower_tests, follower_test_}'
 
   def setup
@@ -162,6 +168,22 @@ class ErxWinfsTest < Minitest::Test
     text, status = eunit(FOLLOWER_CASE, replaced: { FOLLOWER => seeded(FOLLOWER, LISTER, LIST_INLINE) })
     refute status.success?, text
     assert_match(/two trees/, text)
+  end
+
+  # A follower that forgets the facet it last followed when its grant ends lists the ended
+  # facet again at the installation of another name.
+  def test_a_follower_that_forgets_an_ended_facet_fails_the_follower_case
+    text, status = eunit(FOLLOWER_CASE, replaced: { FOLLOWER => seeded(FOLLOWER, ENDED, FORGET_ENDED) })
+    refute status.success?, text
+    assert_match(/an ended facet/, text)
+  end
+
+  # A follower that reads the granted names before the generation names a generation
+  # past a ready answer it read no names of, and waits for an installation that never comes.
+  def test_a_follower_that_reads_the_names_first_fails_the_follower_case
+    text, status = eunit(FOLLOWER_CASE, replaced: { FOLLOWER => seeded(FOLLOWER, READ_ORDER, NAMES_FIRST) })
+    refute status.success?, text
+    assert_match(/the ready answer between reads/, text)
   end
 
   private
