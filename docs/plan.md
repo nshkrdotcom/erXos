@@ -18,8 +18,10 @@ Ground rules:
   interface over Fiasco's own calls and nothing of erXos's kernel
   semantics inside Fiasco. Security, robustness and scheduling
   efficiency are not demanded of Phase 1; a call the backend cannot
-  offer refuses, a value it cannot measure reports unsupported, and no
-  gap of Fiasco that erXos's kernel closes is plugged. Phase 1b carries
+  offer refuses, a value it cannot measure reports unsupported, and a
+  Fiasco bug found on the way is fixed, in the fork or in the backend,
+  unless its fix would rebuild erXos's kernel design inside Fiasco.
+  Phase 1b carries
   the user-facing system further on Fiasco, behind the same
   interface, with every guarantee still deferred: domains and their
   connections, programs and pipes, the POSIX-lite first part, the
@@ -34,11 +36,15 @@ Ground rules:
   capabilities, factories, interrupts and DMA spaces, the release
   reaches a security closure in its Fiasco form, and what Fiasco lacks
   against erXos's kernel is a published list of downsides, not rebuilt
-  in user mode ([design-fiasco.md](design-fiasco.md)). Phase 2 builds
-  erXos's kernel with every guarantee, boots the same boot image, and
-  replaces Fiasco at parity over 0.2's system; every guarantee Fiasco
-  lacks lands on erXos's kernel alone
-  ([design-fiasco.md](design-fiasco.md)).
+  in user mode ([design-fiasco.md](design-fiasco.md)). After 0.2,
+  track F improves Fiasco to a stated point, each stage closing or
+  narrowing rows of that list in ways that fit Fiasco's own approach,
+  and gate GF then decides whether erXos builds its own kernel
+  ([Track F](#track-f-fiasco-improved-to-the-decision)). If it does,
+  Phase 2 builds erXos's kernel with every guarantee, boots the same
+  boot image, and replaces Fiasco at parity over 0.2's system, and the
+  rows track F leaves close on erXos's kernel alone; if it does not,
+  they stay published downsides.
 * **A demo per milestone.** Every milestone ends with something a person
   can watch, and `make run` works at every commit.
 * **Tests accumulate.** Each milestone adds transcript tests under HVF and
@@ -125,18 +131,24 @@ development build of part of that system on the Raspberry Pi 4 and QEMU
 ships that system on Fiasco with every user
 feature, the backend on Fiasco's own mechanisms and the security
 closure in its Fiasco form, and what Fiasco lacks against erXos's
-kernel published as downsides ([design-fiasco.md](design-fiasco.md));
-Fiasco's scheduler stages follow it. Beyond Phase 1b and track A, 0.2
+kernel published as downsides ([design-fiasco.md](design-fiasco.md)).
+Beyond Phase 1b and track A, 0.2
 takes M9's devices, the rest of track P, M10, M12, track D's parts 5
 and 9 and M11's closure, each in its Fiasco form, ahead of erXos's
 kernel; track Q follows 0.2 ([0.2](#02-the-first-release-on-fiasco)).
+Track F follows 0.2: it improves Fiasco, Fiasco's scheduler stages
+among its stages, up to the point where gate GF decides whether erXos
+builds its own kernel
+([Track F](#track-f-fiasco-improved-to-the-decision)).
 Phase 2, track K, M7, M2, the
 kernel parts of M5 and M9, the rest of track P, M8, M10, track Q, M11,
 M12 with its boards and track D's last parts, builds erXos's kernel,
 switches to it at parity over 0.2's system, and adds
-everything that needs a guarantee Fiasco lacks on it alone. Track K's
-pilot starts before Phase 1 is complete and runs beside Phase 1b, and
-its kernel in full starts after 1b-A and runs beside 0.2. Milestone
+everything that needs a guarantee Fiasco lacks on it alone; it is the
+plan if gate GF chooses erXos's kernel. Track K's
+pilot, the host-built C17 cores, starts before Phase 1 is complete and
+continues whatever GF decides, since Fiasco links its cores; its kernel
+in full waits for GF. Milestone
 numbers are names; the table's order is the order.
 
 | Milestone | Demo | New code (estimate) | Needs | Gate |
@@ -166,9 +178,9 @@ numbers are names; the table's order is the order.
 | 1b-J The Raspberry Pi 5 on Fiasco | the Pi 5 boots from its firmware to the shell on its debug UART; its Ethernet carries UDP echo and a TCP transfer through RP1; a USB keyboard and stick work on RP1's hosts; every guarantee deferred | estimated per part before it starts; the designs give no figure | (a), (b): 1b-I's part (a); (c): 1b-I's part (b); (d): 1b-E; (f): 1b-G; (g): 1b-C's part 3; (h): Track U's part (a) | GR5 |
 | 0.1 The preview, erXos's first public preview | a development build's published card boots a Raspberry Pi 4 to the kiosk with live quotes on its screen, root reaches `rc` over SSH with the key on the card's record partition, sets the clock and runs `ps` and `top`, `/data` survives a power cut and a fault or a hang resets the board; the QEMU image of the same build does the same, and Doom, in both images, plays on QEMU with the virtio keyboard and runs its demo loop on the Pi | the clean-room interface header (its images keep the kernel debugger by decision, with its source offered; leaving it out is 0.2's release kernel's), the end path's reset, the hardware watchdog on every boot, the set-time command and the login key's reader, each estimated before it starts; the milestones it takes carry their own figures | [0.1's dependencies](#01-the-preview) | |
 | 0.2 The first release, on Fiasco | a release build on QEMU `virt` and the Raspberry Pi 4 boots without the development banner, asks for a login and runs an installed app whose code is untrusted, which reaches no other domain, stops at its memory wall and spins in its own band without delaying the display or a driver; the release notes carry the downsides against erXos's kernel | the backend on Fiasco's own mechanisms and four Fiasco patches (the clean-room interface header, the release kernel's build without `jdb_object.cpp`, writable or executable, eager FP switching), five if the null-request bench shows that FD32's hardening of its entry costs nothing measurable, estimated before it starts; the milestones it takes carry their own figures | 0.1, Phase 1b and track A, and the Fiasco forms of M9's kernel part's devices, the rest of track P, M10, M12, track D's parts 5 and 9 and M11's closure | the gates of the milestones it takes: GP, G12, GN-board |
-| Fiasco's scheduler stages | status words, deferred preemption, group park and group quotas, in that order, each measured before and after and kept only when its numbers pay; urgency within a band waits for a consumer | 2,000 to 4,050 lines of C++ in the fork, the policy in erXos's C17 cores (unverified estimates, [design-fiasco.md](design-fiasco.md#stages-beyond-bands)) | 0.2 | each stage, after 0.2, by its before-and-after numbers on Fiasco over the workloads G8 names (E-S1, E-S3 to E-S9); G8 itself is M8's, on erXos's kernel |
-| **Phase 2** | | | | |
-| Track K erXos's kernel | the pilot, then the kernel, booting 0.2's boot image and passing the conformance suite | 25,000 to 40,000 lines of C17, of which the capability core and the budget core exist; the pilot calibrates the figure | the pilot: M0, starting before Phase 1 is complete; the kernel in full: 1b-A | GK1, GK2, GK3 |
+| Track F Fiasco, improved to the decision | a closed IRQ handle whose slot was reused answers `ERX_ESTALE`; a debugger stops, reads and resumes a thread; a domain spinning in its band gets no more than its grant; a program borrows memory its session has free; a copy-on-write `fork` or a shared file mapping works on Fiasco through the root as pager; each stage removes or narrows its rows of the downsides | about 7,000 to 16,000 lines of C17 and C++ in the fork, the backend and the root, the scheduler stages' 2,000 to 4,050 among them (unverified estimates, none prototyped; [design-fiasco.md](design-fiasco.md#stages-beyond-bands)) | 0.2 | each stage by its tests, the scheduler stages by their before-and-after numbers on Fiasco over the workloads G8 names (E-S1, E-S3 to E-S9); then GF |
+| **Phase 2, if gate GF chooses erXos's kernel** | | | | |
+| Track K erXos's kernel | the pilot, then the kernel, booting 0.2's boot image and passing the conformance suite | 25,000 to 40,000 lines of C17, of which the capability core and the budget core exist; the pilot calibrates the figure | the pilot: M0, starting before Phase 1 is complete; the kernel in full: 1b-A and gate GF | GK1, GK2, GK3 |
 | M7 Fiasco leaves | erXos's kernel boots 0.2's system and runs every test and benchmark it ran on Fiasco | integration | track K, 0.2 | GK3 |
 | M2 The execution contract holds | a native test domain and a hostile domain share four CPUs by grants; no wakeup is lost; a blocking call from an executor is refused | 4,000 lines of C17 | M7 | G2 |
 | M5's kernel part | a hostile runtime attacks a neighbour's funnel for ten minutes without effect; a domain killed under load gives every charge back to its principal's budget | in track K's figure | M2 | G5, confirmed |
@@ -176,7 +188,7 @@ numbers are names; the table's order is the order.
 | Track P, the rest | a UNIX program recompiled unchanged pipes, polls, spawns children and takes `SIGINT` | in track P's figure | track P's first part; Fiasco's vCPU row | GP |
 | M8 Cooperation earns its place | the ladder from plain threads to full cooperation, measured on seven workloads, with each feature kept or dropped by its numbers | 4,000 lines of C17 and C | G6 | G8 |
 | M10 Users without a container runtime | two users, two domains, one runs out of memory or CPU alone | 4,000 lines of Erlang | M8, M9's kernel part | |
-| Track Q The second tier | toybox's `sh` runs a script with subshells and `less` pages a log in a terminal session, and a dynamically linked program loads a library with `dlopen` | the programs' estimate in [design-programs.md](design-programs.md#performance), and the session's shared mappings, an estimated 3,000 lines of Erlang; the kernel's part is track K's | track P, M7 | GQ |
+| Track Q The second tier | toybox's `sh` runs a script with subshells and `less` pages a log in a terminal session, and a dynamically linked program loads a library with `dlopen` | the programs' estimate in [design-programs.md](design-programs.md#performance), and the session's shared mappings, an estimated 3,000 lines of Erlang; the kernel's part is track K's, or on Fiasco the root's pager of track F's F7 | track P; its first consumer on Fiasco with F7; the rest M7, or the course gate GF sets | GQ |
 | M11 Security closure | a release build without the development banner, on erXos's kernel, with an Erlang driver behind an IOMMU window; one flipped byte of an EROFS image reads `eio` | hardening | M10 | |
 | M12 Storage, networking, boards | a Raspberry Pi 4 boots erXos from its SD card, keeps its files through power cuts, and takes a system update whose trial survives a power cut | estimated in the subsystems' design documents | M11 | G12, GN-board |
 | Track D, parts 5 and 9 | a Raspberry Pi 4 kiosk; the web front end on the network | estimated per part before it starts | part 5: part 4 and M12; part 9: part 2, M10, M11 and 1b-G | GD, with part 5 |
@@ -231,11 +243,18 @@ The order reaches a usable system first:
   in their Fiasco form, the user-facing milestones that would otherwise
   wait for erXos's kernel: M9's devices, the rest of track P, M10, M12
   and track D's parts 5 and 9; track Q follows 0.2. It ships two
-  stopgaps, littlefs and LVGL, each under its release contract. Fiasco's scheduler
-  stages follow it, once everything else works.
+  stopgaps, littlefs and LVGL, each under its release contract.
+* Track F follows 0.2: the contained fixes of Fiasco and the root,
+  Fiasco's scheduler stages, budgets with caps and a pager in the root
+  under track Q's first consumer, each stage removing or narrowing rows
+  of the downsides. Gate GF then weighs the rows left, what each costs
+  to close on Fiasco and what erXos's kernel still costs, and decides
+  whether erXos builds its own kernel.
 * Track K's pilot starts before Phase 1 is complete and runs beside
-  Phase 1b; erXos's kernel in full follows 1b-A and runs beside 0.2,
-  written from its design documents, which neither phase changes.
+  Phase 1b, and its C17 cores continue whatever GF decides, since
+  Fiasco links them; erXos's kernel in full follows 1b-A and gate GF,
+  if GF chooses it, written from its design documents, which neither
+  phase changes.
   It boots the same boot image and switches at parity over 0.2's
   system (M7); the execution contract (M2), the kernel parts of M5
   and M9 and gate G6 then land on it, and G6 measures the result before
@@ -1790,24 +1809,206 @@ neighbour answering. The release notes carry the downsides table.
 Release images are built and their hashes published as M11 says, with the
 `aarch64-elf-gcc` release that builds Fiasco pinned beside LLVM's.
 
-**After 0.2.** Fiasco's scheduler stages follow, once everything else
-works, in this order: status words, deferred preemption, group park in
-the kernel, group quotas. Each is a contained change to the fork with its
-policy in erXos's C17 cores, kept only when its before-and-after numbers
-pay, as M8 keeps the ladder's features, and each that lands removes its
-row of the downsides. Urgency within a band waits for a consumer or for
-the urgency-change rate of [todo-performance.md](todo-performance.md)
-([design-fiasco.md](design-fiasco.md#stages-beyond-bands)). Track K runs
-beside 0.2, and M7 replaces Fiasco at parity over 0.2's system; M2, the
-kernel parts of M5 and M9, M8, the criteria 0.2 left to erXos's kernel,
-and M11 on erXos's kernel close the remaining downsides. While a release
-runs on Fiasco, the upstream watch continues.
+**After 0.2.** [Track F](#track-f-fiasco-improved-to-the-decision)
+improves Fiasco up to gate GF, which decides whether erXos builds its
+own kernel. If it does, M7 replaces Fiasco at parity over 0.2's system,
+and M2, the kernel parts of M5 and M9, M8, the criteria 0.2 left to
+erXos's kernel and M11 on erXos's kernel close the downsides track F
+leaves. While a release runs on Fiasco, the upstream watch continues.
+
+## Track F: Fiasco, improved to the decision
+
+**Goal.** Close or narrow, on Fiasco, the rows of
+[the downsides table](design-fiasco.md#downsides-against-erxoss-kernel)
+whose fix fits Fiasco's own approach, up to a stated point, and then
+decide at gate GF whether erXos builds its own kernel. A fix fits
+Fiasco's approach when it is a field and a check at Fiasco's own
+lookup, a scheduler variant beside the ones Fiasco's configuration
+already selects, a contained patch to its entry path, or a change to
+the root service's tables and plans, including a pager in user mode,
+which is how L4 systems are built on Fiasco. A fix goes against it when
+it puts memory objects with no pager into Fiasco's kernel (in place of
+its mapping database and `sigma0`), removes the root's tables, or
+rebuilds Fiasco's code under erXos's construction rules (FD24); those
+rows stay rows, and GF weighs them.
+
+Each stage lands as ordinary commits to the fork, the backend or the
+root, with its cases in [design-fiasco.md](design-fiasco.md#verification)
+and a seeded fault for each check it adds, and edits its rows of the
+downsides table to what it leaves. The stages start after 0.2; a fix a
+0.2 item needs lands with that item. F1 to F4 are independent of one
+another; F5 is Fiasco's scheduler stages, whose group quotas use the
+scheduler core of erXos's C17 cores, and F6 uses their budget core. The
+sizes are unverified estimates, none
+prototyped.
+
+* **F1, handles and records** (FD1, FD2, FD4, FD30 closed; FD6 and
+  FD15's report narrowed; 700 to 1,600 lines). A generation in Fiasco's
+  object-space slot and capability selector, checked in its one lookup
+  (`Obj_space_phys::lookup_local`); a generation in the root's thread
+  table and thread handles; `erx_cap_pass` planned whole before any item
+  moves; the join race of FD30 fixed; Fiasco's own counts of kernel
+  memory in use per quota and CPU time per thread read out.
+  Exit criteria: a ring and an acknowledgement through a closed IRQ
+  handle whose slot was reused answer `ERX_ESTALE`, and the case fails
+  with the generation comparison removed; a thread queued on a deleted
+  IRQ object wakes with `ERX_EDEAD`, or FD1 keeps that clause with the
+  reason found in Fiasco's source; a thread handle kept past its space's
+  deletion answers `ERX_ESTALE` once its index is reused; a pass refused
+  at its last item leaves every earlier item where it was; the join race
+  has a regression test that failed before the fix; the inspector shows
+  each budget's kernel memory in use and each domain's CPU time from
+  Fiasco's counts, where it showed `unsupported`.
+* **F2, mappings and images** (FD10 closed, FD34 closed if Fiasco's
+  overmap is atomic; FD8 and FD14 narrowed; 700 to 1,600 lines). The
+  root's range table refuses a mapping that would make a page of an
+  object without `ERX_MEM_JIT` writable in one place and executable in
+  another; `sigma0`'s and the root's own image mapped by segment; an
+  image map checks a file entry's hash before its first map and unmaps
+  what a refused load mapped; a mapping replaced by one Fiasco map call
+  over the old one; the task tables' limits, 128 threads among them,
+  raised. Exit criteria: the writable-here, executable-there pair is
+  refused, and the case fails with the check removed; a walk of the
+  root's page tables finds no page writable and executable outside its
+  pool window, the residue FD8 keeps; a file entry with one flipped byte
+  is refused at its map, and a refused load leaves no segment mapped; a
+  module's code swapped on four CPUs while a dirty scheduler reads it
+  never finds the range unmapped, or FD34 records the probe that shows
+  Fiasco's overmap is not atomic; one task runs more than 128 threads.
+* **F3, threads, interrupts and upcalls** (FD19 closed; FD13 and FD23
+  narrowed; 850 to 1,850 lines). `erx_thread_stop`, `_read` and
+  `_write`, the start of a repaired thread and of further threads in a
+  space, over Fiasco's `ex_regs`; Fiasco's IRQ acknowledgement checks a
+  right; the vCPU upcalls widened so that an event ends a wait. Carves,
+  routes and moves of IRQ objects between groups wait for a consumer.
+  Exit criteria: the thread calls' conformance cases pass on both
+  backends; an acknowledgement through a handle without `ack` is
+  refused; a program's `sem_wait` interrupted by a signal returns
+  `EINTR`, and a signal sent during a wait is handled before the wait
+  returns.
+* **F4, hardening** (FD32 closed, unless 0.2's release build carried its
+  patch; FD29's early-boot clause closed; FD33 narrowed; 150 to 450
+  lines and an audit). Branch-predictor hardening at Fiasco's AArch64
+  entry from user mode and at each switch between address spaces, as
+  [design-arch-aarch64.md](design-arch-aarch64.md#speculation-mitigations)
+  chooses from the CPU, in the release's Fiasco build whatever its cost;
+  Fiasco's boot arms the board's watchdog before the root starts; an
+  audit of Fiasco's asynchronous-error and interrupt paths. Exit
+  criteria: a probe records whether the Raspberry Pi 4's firmware offers
+  SMCCC's workaround call, the entry makes the mitigation the CPU and
+  firmware allow, and the null-request bench is recorded before and
+  after; a hang injected in Fiasco's boot before the root's first
+  instruction resets the board, under the QEMU harness and once by hand
+  on the Pi 4; the audit is a research record naming each path read and
+  what it found, and each finding is fixed or a clause of FD33; an
+  interrupt storm on a driver's line and an asynchronous error a device
+  raises run in the hostile suites' Fiasco set and report what they end,
+  and a case that ends another domain or the machine is fixed or is
+  FD33's recorded clause.
+* **F5, Fiasco's scheduler stages** (FD16 closed; FD15 and FD31 closed
+  if stage 5 fits). Status words, deferred preemption, group park in the
+  kernel and group quotas, in that order, each a contained change to the
+  fork with its policy in erXos's C17 cores
+  ([design-fiasco.md](design-fiasco.md#stages-beyond-bands)); urgency
+  within a band waits for a consumer or for the urgency-change rate of
+  [todo-performance.md](todo-performance.md). Exit criteria: each of
+  the first three stages is kept or dropped by its before-and-after
+  numbers on Fiasco over the workloads G8 names (E-S1, E-S3 to E-S9), as
+  M8 keeps the ladder's features; group quotas either land, with a
+  domain spinning on every CPU of its band held to its grant while a
+  neighbour in the same band keeps its share, a client's flood held to
+  its server's admission, and CPU use per domain reported, or a record
+  shows that they do not fit as a scheduler variant and names the
+  Fiasco files they would have to change beyond the variant's own,
+  `context.cpp` in particular.
+* **F6, budgets with caps** (FD25 narrowed; 600 to 1,500 lines). The
+  root keeps user pages in the C17 budget core (`kernel/core/budget.c`)
+  instead of wall-only records: caps above guarantees, borrowing within
+  a domain's wall, a resize of the whole, a watch and exact `used`;
+  kernel memory's `used` is read from Fiasco's quota. Kernel memory
+  stays a share fixed at a budget's creation unless a consumer is
+  refused for it. Exit criteria: a program is admitted while its
+  session has memory free in another part; a domain's walls still refuse
+  at their guarantee, and the wall test of
+  [design-fiasco.md](design-fiasco.md#verification) passes unchanged;
+  every budget reports exact `used`, kernel memory included; the budget
+  core's host tests and fuzz target pass under ASan and UBSan in the
+  form the root links.
+* **F7, a pager in the root under track Q's first consumer** (FD9
+  narrowed; what FD17 costs measured; 2,000 to 5,000 lines). The root
+  serves paged objects and copy-on-write children as their pager,
+  Fiasco's own way, as L4Re's `moe` serves dataspaces, and track Q's
+  first consumer runs over it: copy-on-write `fork` or a shared file
+  mapping written back at `msync` ([Track Q](#track-q-the-second-tier)).
+  Exit criteria: that consumer's criteria of track Q pass on Fiasco;
+  GQ's measurement of it (`tools/erx bench fork` or `tools/erx bench
+  mmap`) is recorded on Fiasco with the fault latency through the root
+  and the root thread's share of its CPU, and both again while a hostile
+  domain floods the root with faults; the research record says whether
+  the root's one thread is the limit and estimates what a root with
+  worker threads at each caller's band (FD17) would change.
+
+**Gate GF: Fiasco or erXos's kernel.** Sits after 0.2 and stages F1 to
+F7, with group quotas landed or recorded as not fitting. It weighs:
+
+* the downsides table as it then stands: each row left, classed as one
+  Fiasco can close (with its estimated cost there: a root with worker
+  threads for FD17, gates that carry messages for FD3, umtx across
+  spaces for FD22, a whole-space hold for FD21, an exit notifier for
+  FD20, a kernel trace ring and watchdog for FD26, the rest of FD13 and
+  FD14) or one only erXos's kernel closes (memory objects with no pager
+  for FD7, FD9 and FD11; no root tables, the residue of FD14, FD17 and
+  FD20's bound; and FD24's construction rules), and whether each of the
+  latter is acceptable as a permanently published downside;
+* the cost of closing the rows left on Fiasco against what erXos's
+  kernel still costs, its estimate recalibrated from GK1's pace and the
+  C17 cores already written, counting what the kernel must re-earn that
+  Fiasco has (SMP, the interrupt controllers, each board's bring-up,
+  the IOMMU drivers) and what it removes (the Fiasco backend, the root's
+  tables, the upstream watch, ownership of a C++ kernel's security
+  fixes);
+* F7's measurements: whether the root as pager, or the root's one
+  thread, is a measured problem for track Q's workloads that worker
+  threads in the root would not fix, which is the memory model and only
+  erXos's kernel changes;
+* F5's result: whether group quotas fitted as a scheduler variant;
+* the system-call fuzz campaign's and the upstream watch's findings
+  since 0.2: how many defects in Fiasco a domain could reach, and
+  whether their rate falls;
+* whether a release or a consumer needs to claim a construction
+  property of FD24 (a proof, an audit requirement, a commitment to
+  someone outside the project), which Fiasco cannot give at any price.
+
+It decides one of two courses. erXos's kernel: track K's kernel in full
+starts at GK2, and Phase 2 follows as this plan gives it. Fiasco: the
+rows Fiasco can close become stages of track F, the rows only erXos's
+kernel closes stay published downsides under
+[Fiasco's release contract](design-fiasco.md#contract), and the plan's
+Phase 2 is rewritten around Fiasco. The measurements go into a research
+record and the decision into [design.md](design.md), since it shapes
+every subsystem.
+
+**What continues before GF, and what waits.** Track K's pilot and its
+host-built C17 cores continue: Fiasco links them as `erx_cores.a` (the
+budget core in the root under F6, the scheduler core under F5's group
+quotas), and they are erXos's kernel's cores if it is built; with them
+continue the CBMC pilot over those cores and GK1's calibration, which
+GF uses. `abi/erx_abi.txt` and its generators stay the one source of
+the ABI for `liberx`, its backends and Erlang, the hosted and Fiasco
+backends keep passing one test set, and the conformance roster grows
+with it. [design-kernel.md](design-kernel.md) and the other design
+documents stay whole, as the target. What waits for GF is track K's
+kernel in full (GK2: the execution model, SMP, the architecture layer,
+`liberx`'s `erx` backend), M7, and the parts of Phase 2 that stand on
+M7.
 
 ## Track K: erXos's kernel
 
 **Goal.** erXos's own C17 kernel, implementing first the interface the
 Fiasco backend implements and then the rest of the interface, from
-[design-kernel.md](design-kernel.md).
+[design-kernel.md](design-kernel.md). The pilot continues whatever gate
+GF decides; the kernel in full waits for GF to choose it
+([Track F](#track-f-fiasco-improved-to-the-decision)).
 
 * **The pilot**, from gate GK1, starting before Phase 1 is complete and
   running beside Phase 1b: host-only C17 cores, written from the design
@@ -1822,7 +2023,8 @@ Fiasco backend implements and then the rest of the interface, from
   pilot calibrates how long an agent takes from design to a
   reviewed, tested subsystem, which the plan then uses for the rest of the
   kernel.
-* **The kernel**, from gate GK2, after the pilot and after 1b-A, with
+* **The kernel**, from gate GK2, after the pilot, after 1b-A and after
+  gate GF has chosen erXos's kernel, with
   Phase 1's and 1b-A's tests and benchmarks baselined on Fiasco and
   the conformance roster written from the design, so that the roster
   covers the rows 1b-A's consumers use:
@@ -1900,9 +2102,9 @@ Fiasco backend implements and then the rest of the interface, from
   time to the root task's start, and `tools/erx bench stop`, the stop of a
   space with threads in calls and waits on every CPU. They decide the timer
   slack and default time slice.
-* **Deferred guarantees.** Every guarantee Phase 1 and 1b defer lands on
-  erXos's kernel at the milestone named in
-  [design-fiasco.md](design-fiasco.md#downsides-against-erxoss-kernel).
+* **Deferred guarantees.** Every guarantee Phase 1 and 1b defer that
+  track F does not close lands on erXos's kernel at the milestone named
+  in [design-fiasco.md](design-fiasco.md#downsides-against-erxoss-kernel).
 * **The switch**, at gate GK3: the conformance suite, Phase 1 and 1b's
   transcript tests, the oracle and the benchmarks run on both kernels,
   differentially ([M7](#m7-fiasco-leaves)). Fiasco carries only
@@ -3380,7 +3582,8 @@ their numbers.
 | G0 | M0 | the Fiasco set's license scan and link closure; `lld` installed | what enters the tree, and the GPL-headed files Fiasco keeps |
 | G3 | M3 | W1 against stock OTP; footprint; boot time to the shell | the baseline |
 | GK1 | before Phase 1 is complete, beside Phase 1b | the pilot's time and defect rate | the pace of the rest of track K and of the plan |
-| GK2 | after the pilot and 1b-A | Phase 1's and 1b-A's tests and benchmarks baselined on Fiasco, the conformance roster written from the design | the start of erXos's kernel in full |
+| GF | track F, after 0.2 and stages F1 to F7 | the downsides left after track F, each classed as closable on Fiasco, with its cost there, or as needing erXos's kernel; that cost against erXos's kernel's remaining estimate, recalibrated by GK1; F7's root pager and root-thread measurements under track Q's first consumer; whether group quotas fitted as a scheduler variant; the fuzz campaign's and the upstream watch's findings since 0.2; whether anything must claim FD24's construction properties | whether erXos builds its own kernel (GK2 and Phase 2) or stays on Fiasco with the rows only erXos's kernel closes published as downsides ([Track F](#track-f-fiasco-improved-to-the-decision)) |
+| GK2 | after the pilot, 1b-A and GF choosing erXos's kernel | Phase 1's and 1b-A's tests and benchmarks baselined on Fiasco, the conformance roster written from the design | the start of erXos's kernel in full |
 | GK3 | M7 | the conformance suite, Phase 1 and 1b's transcript tests, the oracle and the benchmarks on both kernels; G5's E-D3, E-D4 and full E-S2; G9's latency and throughput and GN-QEMU's packet-path measurements repeated on erXos's kernel | the replacement of Fiasco; G5's provisional decisions confirmed or revised, the death path's batching and `system_queue`, and no kernel object per lightweight process; whether a program's start needs a cheaper path; whether TCP's fast path in erXos's stack needs native code |
 | G2 | M2 | early E-S2 (kernel thread switch, IPC round trip through a gate, park and wake); E-S4 FIFO wake latency; E-S10 | whether the two-level model stands on erXos's kernel; NIFs that move to dirty schedulers |
 | G5 | 1b-A, provisionally; confirmed at GK3 | on Fiasco: E-D1 and E-D2 (`tools/erx bench xdomain-pingpong`, `xdomain-throughput`); BeamAsm's speedup and footprint in an ordinary domain; translation time at a domain's start. At GK3: E-D3 and E-D4 (`xdomain-stall`, `domain-lifecycle`) and full E-S2 | provisionally: the runtimes' and the domain service's default table sizes, `cap_limit` among them; `lane` and the manifest's `system_lane`, the producer's wait rule, encoding straight into the lane; the funnel's allowance per step; the busy limit and the facets' limits; the ahead-of-time roster's triggers. At GK3: the manifest's `system_queue` and the death path's batching; no kernel object per lightweight process; the rest confirmed or revised |
@@ -3418,8 +3621,8 @@ interpreter, within a frame's cost across a connection).
 
 | Component | Seam | Replaced at |
 | --- | --- | --- |
-| Fiasco near-stock, with `bootstrap` and `sigma0` | the kernel interface: `abi/erx_abi.txt` and `liberx`'s backends; in Phase 1 the Fiasco backend over Fiasco's own calls, the system domain's `liberx` owning every kernel object; in Phase 1b also lanes, sub-spaces, doorbells and device holders as rows of its root service | M7 |
-| Fiasco's fixed priorities with no quota, grant or group enforcement | the scheduler core, `erx_group_configure` recording its grant | M7 (the scheduler), M2 (groups and quotas) |
+| Fiasco near-stock, with `bootstrap` and `sigma0` | the kernel interface: `abi/erx_abi.txt` and `liberx`'s backends; in Phase 1 the Fiasco backend over Fiasco's own calls, the system domain's `liberx` owning every kernel object; in Phase 1b also lanes, sub-spaces, doorbells and device holders as rows of its root service | M7, if gate GF chooses erXos's kernel |
+| Fiasco's fixed priorities with no quota, grant or group enforcement | the scheduler core, `erx_group_configure` recording its grant | group quotas in track F's F5 if they fit; otherwise, or for what they leave, M7 (the scheduler) and M2 (groups and quotas) |
 | The Phase 1 manifest check and root startup rule | the packer's `Admitted` value and the manifest's properties | track K (`erx_root_plan`); M5, M9 and M11 (the properties, as [design-fiasco.md](design-fiasco.md#the-phase-1-manifest-check) lists them) |
 | Virtio-mmio devices with ordinary interrupts and unconfined DMA, driven by the same Erlang drivers | DMA profiles; IRQ objects; the device NIF | M9's kernel part (virtio-pci with MSIs and the IOMMU), M11 (refused unless configured) |
 | A host link holding every facet but the system-shell facet | session facet tables | M10, M11 |
@@ -3467,11 +3670,16 @@ Phase 1b, in order of its demos (backend rows, hosted backend too; BeamAsm besid
 
 0.2:       0.1, Phase 1b and track A --> the backend on Fiasco's mechanisms, the release's Fiasco build, the closure on Fiasco
              --> the release images, the soak and the Pi's manual passes
-             --> Fiasco's scheduler stages: status words --> deferred preemption --> group park --> group quotas
 
-Track K:   pilot (GK1), beside Phase 1b --> kernel in full (GK2), after 1b-A, beside 0.2 --> M7 (GK3, parity over 0.2)
+Track F:   0.2 --> F1 handles, F2 mappings, F3 threads, F4 hardening, in parallel
+             --> F5 Fiasco's scheduler stages: status words --> deferred preemption --> group park --> group quotas
+             --> F6 budgets with caps, F7 a pager in the root under track Q's first consumer
+             --> GF, Fiasco or erXos's kernel
 
-Phase 2:   M7 --> M2 --> M5's and M9's kernel parts --> G6 --> M8 --> M10 --> M11 --> M12 (boards; M13, M14 and GN-board there)
+Track K:   pilot (GK1), beside Phase 1b, continuing whatever GF decides
+             --> kernel in full (GK2), after 1b-A and GF choosing it --> M7 (GK3, parity over 0.2)
+
+Phase 2:   (if GF chooses erXos's kernel) M7 --> M2 --> M5's and M9's kernel parts --> G6 --> M8 --> M10 --> M11 --> M12 (boards; M13, M14 and GN-board there)
            rest of track P --> track Q (after M7)
            track D: part 5, kiosks on boards (after part 4 and M12); part 9, the web on the network (after part 2, M10, M11 and 1b-G)
 ```
@@ -3479,7 +3687,7 @@ Phase 2:   M7 --> M2 --> M5's and M9's kernel parts --> G6 --> M8 --> M10 --> M1
 * The order within each phase is [the overview's](#overview). Track K's
   pilot runs beside Phase 1b, since its cores are host-built C17 with no
   shared seam and its calibration is needed whatever the order; the kernel
-  in full starts after 1b-A, so its conformance roster covers the rows
+  in full waits for gate GF, and starts after 1b-A, so its conformance roster covers the rows
   1b-A's consumers use and each refusal of the backend names what M7 must
   add. Nothing in Phase 1b changes the kernel interface, only which rows
   Fiasco carries.
