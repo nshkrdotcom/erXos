@@ -186,7 +186,12 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   its last buffer is back, and a broken queue stopping the driver); and the stage 1 peer (scanner) cases of the design's table.
   The Bluetooth domain and its grant stay out of QEMU virt's development manifest (docs/plan.md); the Raspberry Pi 4's
   board part runs the domain on UART0, where it has brought the controller up and advertised to a phone's scan.
-  Still open on the board: a connection, GATT reads and writes, and pairing, which the manual checklist covers.
+  On the board a Mac (`tools/ble_board_check.rb`, through blew) connects and reconnects, agrees an MTU of 185, discovers
+  GAP, GATT and NUS, and has a read of NUS RX refused. Still open on the board: the echo
+  through an app, which waits for an installed app's `ble` grant (below) and decision 7's second package; a NUS write
+  and its notification answered by that app; and pairing, which needs a characteristic that asks for encryption or a
+  peer that starts pairing itself (macOS starts it only at an Insufficient Authentication answer, and blew has no
+  pairing command).
 * [Medium] bluetooth, the line device's record (`liberx/backend/core/boot_manifest.c`, `tools/lib/erx/manifest.rb`
   `check_serial_devices`): the `serial` kind row makes the root write a given record for every placed serial device,
   so rule serial-device-granted refuses an ungranted one by exclusion. Choosing the line's record by the grant's index

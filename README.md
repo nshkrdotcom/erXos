@@ -396,8 +396,13 @@ Eshell V17.1.1 (type help(). for help)
   reset, the identify commands and the start of advertising. On the Pi 4
   the root sets the on-board pin functions at boot, the domain brings up
   the on-board controller, and a phone's scan sees the board advertising
-  as `erxos`; a connection, GATT access and pairing have not run on the
-  board.
+  as `erxos`. A Mac connects to it, again after each disconnection,
+  agrees an ATT MTU of 185, discovers its GATT table (GAP, GATT and
+  Nordic's UART service), and has a
+  read of the UART's write-only characteristic refused; `tools/ble_board_check.rb`
+  runs those steps. No app serves the UART service on the card yet, so a
+  write to it is answered Unlikely Error and nothing echoes; pairing has
+  not run on the board.
 
 **Display and input**
 
@@ -477,7 +482,7 @@ Eshell V17.1.1 (type help(). for help)
 **Not built yet**
 
 * The rest of erXos's own kernel, terminal input and sockets for programs,
-  the Pi 4's Bluetooth connections, GATT and pairing, and the WiFi driver, which has
+  the Pi 4's Bluetooth echo app and pairing, and the WiFi driver, which has
   host-tested cores only (WiFi's join machine, SAE exchange and EAPOL-Key codec), the
   rest of the browser client, and the POSIX-lite layer. Each has a design document in [docs/](docs/). The
   Pi 4's header (GPIO, SPI, I2C) has register descriptions, a pin table
