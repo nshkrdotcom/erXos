@@ -1624,7 +1624,8 @@ class ManifestDomainsTest < Minitest::Test
   # abi/gatt declares, packs. Each seeded violation differs from it in one thing and is
   # refused: the service of the ble interface named otherwise, a service named ble of
   # another interface, the service served by the system domain, the grant to the system
-  # domain (B8), and a name abi/gatt does not declare, against the tree's declarations
+  # domain (B8), the grant to a session template, and a name abi/gatt does not declare,
+  # against the tree's declarations
   # and against the context's.
   def test_a_ble_grant_names_declared_services_of_the_ble_service
     admit(@source + ble_grant(%w[nus]))
@@ -1633,9 +1634,10 @@ class ManifestDomainsTest < Minitest::Test
       ['service.name', service('ble', '@domain.beta')] => /service ble is named ble exactly when it is of the ble interface/,
       ['service.server', ble_grant(%w[nus], server: 'system')] => /service ble is served by no configured domain/,
       ['facet.grantee', ble_grant(%w[nus], grantee: 'system')] => /ble grant nm is granted to the system domain/,
+      ['facet.grantee', ble_grant(%w[nus], grantee: '@session.system')] => /ble grant nm is granted to a session template/,
       ['facet.parameter', ble_grant(%w[nus nusb])] => /ble grant nm names "nusb", which abi\/gatt does not declare/
     }.each do |(field, grant), message|
-      refused(Erx::Manifest::Invalid, field, @source + grant, message: message)
+      refused(Erx::Manifest::Invalid, field, with_session(self.class.session) + grant, message: message)
     end
     error = assert_raises(Erx::Manifest::Invalid) do
       admit(@source + ble_grant(%w[nus]), context: Erx::Manifest::Context.new(**ManifestContextFixture.arguments(@codec)

@@ -2453,7 +2453,9 @@ module Erx
       # mint provides and the interface the check reasons from pick the same service. Every
       # service whose checker is ble_grant is served by a configured domain, the Bluetooth
       # domain, and no grant of one goes to the system domain, whose handler would take a
-      # phone's bytes into the trusted base (B8). facets and values are parallel arrays, each
+      # phone's bytes into the trusted base (B8), or to a session template, which every
+      # session made from it would hold, so two sessions would contend for one service's
+      # handler, as line_grant refuses one. facets and values are parallel arrays, each
       # facet row beside its resolved parameters, and each grant's services are services
       # abi/gatt declares (Context#gatt_services), so every served set is a subset of the
       # declarations.
@@ -2474,6 +2476,8 @@ module Erx
           named = "ble grant #{row.fetch('name')}"
           invalid("#{named} is granted to the system domain, which takes no phone's bytes", 'facet.grantee') if
             row.fetch('grantee_kind') == grantee_kind('system')
+          invalid("#{named} is granted to a session template, whose every session would hold it", 'facet.grantee') if
+            row.fetch('grantee_kind') == grantee_kind('session')
           undeclared = given.fetch('services', []).reject { |name| declared.include?(name) }
           invalid("#{named} names #{undeclared.map(&:inspect).join(', ')}, which abi/gatt does not declare", 'facet.parameter') unless
             undeclared.empty?
