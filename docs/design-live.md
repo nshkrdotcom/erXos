@@ -4357,18 +4357,13 @@ Open decisions:
   trusted base's other services are restarted rather than repaired;
   the deferred case is in
   [todo-domains.md](todo-domains.md#planned-features).
-* **Overlays across reboots.** This design keeps overlays in memory
-  only, so a reboot returns every domain to its release. M10's scope
-  and exit criteria in
-  [plan.md](plan.md#m10-users-without-a-container-runtime) name
-  overlays kept on the data partition, surviving reboots, with the
-  decoder of what is read back and its fuzz target. Persisting them costs what
-  Alternatives considered lists under "Keeping overlays on the data
-  partition", and requirement 4 asks only that a load survive its
-  domain's restarts. Recommendation: keep overlays in memory and drop
-  the persistence and the decoder from the plan; if a consumer appears,
-  add a snapshot that `erx_code` writes after publishing and reads only
-  when it starts, which never decides a load
+* **Overlays across reboots.** Decided: overlays live in memory only, so a
+  reboot returns every domain to its release, and M10 does not keep them on
+  the data partition. Persisting them costs what Alternatives considered lists
+  under "Keeping overlays on the data partition", and requirement 4 asks only
+  that a load survive its domain's restarts. If a consumer appears, add a
+  snapshot that `erx_code` writes after publishing and reads only when it
+  starts, which never decides a load
   ([todo-domains.md](todo-domains.md#planned-features)).
 
 ## References

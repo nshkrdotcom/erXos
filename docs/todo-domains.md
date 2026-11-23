@@ -624,9 +624,8 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   the host reloads (`erx watch` at its next change). If a consumer needs loads to outlive them, add a snapshot
   of each principal's overlays that `erx_code` writes after it publishes, one file per revision so the newest
   whole file wins whatever order writes land in, and reads only when it starts; it never decides a load. Its
-  reader of the data partition is untrusted input with a fuzz target. M10's scope and exit criteria in
-  plan.md still name persisted overlays and that decoder, an open decision of design-live.md ("Overlays
-  across reboots").
+  reader of the data partition is untrusted input with a fuzz target. Deferred out of M10 until such a
+  consumer appears.
 * [Low] domain service, `served_kind/2` (`erlang/apps/erx_domain/src/erx_domain_srv.erl`, `init`): `Trees` lists the
   tree services of every server but is asked only about the system domain's, by name, so a configured domain's tree
   service named `log` or `inspect` makes the system's message service of that name minted as a tree grant, which

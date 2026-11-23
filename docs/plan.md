@@ -2784,10 +2784,7 @@ arrives, and the system-shell facet, which the console grants to a login
 at a secure line and holds itself
 ([design-live.md](design-live.md#the-console)); the host link's configured
 facet sets; supervised domains and their code overlays, kept per principal
-as manifests in the code store, each principal's hot store and overlays in
-its user's home on the data partition, an app's in its own directory, none
-for the boot image's manifest, with the code service's
-decoder of what it reads back and its fuzz target
+as manifests in the code store, in memory
 ([design-live.md](design-live.md#the-code-store)); per-principal quotas on
 the data partition.
 
@@ -2797,10 +2794,8 @@ other user's latency within its budget (W5); a release-configured build's
 console lines each show a login, a principal the manifest does not name
 for the system shell gets none, and a lock or a log out at the UART ends
 its system shell; a host-link session holds exactly its configured facets;
-an overlay survives its domain's restarts and the machine's reboots, and
-is dropped when its release changes; each principal's hot store answers
-only for its own blobs; the code service's decoder of overlays and stores
-runs its fuzz budget clean; an app's `data` grant is rooted at its own
+an overlay survives its domain's restarts and is dropped when its release
+changes; each principal's hot store answers only for its own blobs; an app's `data` grant is rooted at its own
 directory under `apps/`, and `purge` removes that directory
 through the storage service's `remove_app`, with no user's home
 reachable by it; one app name under two signers gets
@@ -3203,8 +3198,7 @@ the record where the region survives; both boards boot with good entropy;
 the boards' drivers' descriptor parsers, the update manifest's decoder,
 the vault's purpose checks, its
 file decoder and its TPM client's response decoder run their fuzz budgets
-clean; an overlay persisted on the data partition is dropped once a
-system update changes its release; the vault's tests against stock OTP
+clean; the vault's tests against stock OTP
 peers pass, its `tpm` backend passes against swtpm under QEMU, a file
 copied to another board opens no slot under `device`, a file forged under
 `none` logs no one in from afar under `device` or `tpm`, and a Pi 4 login
