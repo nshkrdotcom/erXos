@@ -241,7 +241,7 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   driver's ring settings (both burst sizes, ring 16's transmit done threshold and flow
   period, its receive XON/XOFF thresholds) are written before `negotiate/2`'s
   install. They follow the confirmed stop
-  of both engines (`erx_device:stop_dma/1`, which `reset/0` calls), as FreeBSD writes
+  of both engines (`erx_device:stop_register_ring/1`, which `reset/0` calls), as FreeBSD writes
   them after `gen_dma_disable` (`if_genet.c:286-288, 873-875`), so they land on stopped
   engines. The two XON/XOFF field writes pass through a word with the new low half and
   the old high half. If the board shows that matters, the NIF takes them as owned and
@@ -285,11 +285,11 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   transmit before it writes receive's stop, and at its interface stop waits 10 to 20 ms between (GENET
   facts record, "Stopping the DMA and confirming it stopped"). If the board still shows `{dma_stop,
   stop_timeout}` with the receive engine running, try that order and the wait in `register_ring_stop`,
-  which serves both `stop_dma/1` and `negotiate/2`, and update the design table's row.
+  which serves both `stop_register_ring/1` and `negotiate/2`, and update the design table's row.
 * [Low] GENET, `otp/erts/emulator/nifs/erxos/erx_device_genet_model.c`: the hosted controller model resets its
   stop count at every DMA control store, so with stop reads above 0 a stop rewritten at each call never
   shows, and the hosted stand-in (`erx_device.c`) runs with 0; the harness's engine counts only from a stop
-  of a running engine. The model counts as the harness does, then a hosted case where `stop_dma/1` answers
+  of a running engine. The model counts as the harness does, then a hosted case where `stop_register_ring/1` answers
   `ebusy` a few times drives `erx_genet`'s `retry_busy/3` and the `dma_stop` refusal through `init/1`.
 * [Medium] GENET, `erlang/apps/erx_net/erxos/erx_genet.erl`, the broken-queue ending: no test runs
   `event/2`'s catch, `log_broken/2` or the `{stop, {broken, _}}` hand-off; only the pure

@@ -17,7 +17,7 @@ The sequences follow FreeBSD 975e3605ebb1, `sys/arm64/broadcom/genet/if_genet.c`
 1. `reset/0` first stops the controller, since a restart may find it receiving as its
    predecessor left it: the MAC's receive and transmit off and a full frame's time, as
    the MAC stops only at a frame's end, then both DMA engines stopped and the stop confirmed by the
-   device NIF without the install (`dma_stop`, erx_device:stop_dma/1), so that no reset
+   device NIF without the install (`dma_stop`, erx_device:stop_register_ring/1), so that no reset
    of item 2 lands while an engine runs. (The MAC's software reset hold of items 5 and 6
    comes and goes with the engines running, as the other published driver's release
    does; that no owned DMA register changes across it is the board pass's to confirm,
@@ -134,7 +134,7 @@ The sequences follow FreeBSD 975e3605ebb1, `sys/arm64/broadcom/genet/if_genet.c`
 -define(OWN_PIECES, (?MAX_PIECES - 1)).
 %% The shortest frame on the wire without its FCS (IEEE 802.3's 64 bytes less 4).
 -define(MIN_FRAME, 60).
-%% erx_device:stop_dma/1 and negotiate/2 answer ebusy until both directions' DMA shows the
+%% erx_device:stop_register_ring/1 and negotiate/2 answer ebusy until both directions' DMA shows the
 %% stop. The one published bound on a stop is 5,000 reads 1 us apart, about 5 ms
 %% (docs/design-device-dma.md, "The descriptor forms"); erx_genet retries every
 %% millisecond for four times that, then fails.
@@ -145,7 +145,7 @@ The sequences follow FreeBSD 975e3605ebb1, `sys/arm64/broadcom/genet/if_genet.c`
 One effect on the controller: a whole register written, one named field written (a
 read, the field replaced, a write, except on a one-to-clear field, which is one write),
 a pause of that many microseconds, or `dma_stop`, both DMA engines stopped and the stop
-confirmed without the install (erx_device:stop_dma/1, retried as `stop_retry/1` says; a
+confirmed without the install (erx_device:stop_register_ring/1, retried as `stop_retry/1` says; a
 stop never confirmed ends the sequence). A register is named as erx_device names it: an
 atom, or `{Name, Element}` for one element of an array such as a ring's registers.
 """.
@@ -308,7 +308,7 @@ speed_code(1000) -> 2.
 
 -doc """
 What to do after the `Tries`-th call that waits on both DMA engines' stop,
-erx_device:stop_dma/1 or `negotiate/2`, answered `{error, ebusy}`: wait that many
+erx_device:stop_register_ring/1 or `negotiate/2`, answered `{error, ebusy}`: wait that many
 milliseconds and try again, or give up.
 """.
 -spec stop_retry(pos_integer()) -> {retry, pos_integer()} | {error, stop_timeout}.
@@ -333,7 +333,7 @@ buffer_check() ->
 
 -doc """
 The registers whose words the driver logs when the device NIF breaks a queue or
-erx_device:stop_dma/1 or `negotiate/2` never sees the stop: each direction's DMA control and DMA status, then the
+erx_device:stop_register_ring/1 or `negotiate/2` never sees the stop: each direction's DMA control and DMA status, then the
 receive ring's producer and consumer index and the transmit ring's consumer and producer
 index, for the ring the NIF drives. The NIF owns all but the two status registers, and the
 driver only reads them, which has no side effect. The words settle on the board what the

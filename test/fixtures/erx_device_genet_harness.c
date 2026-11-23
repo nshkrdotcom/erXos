@@ -16,7 +16,8 @@
  * form takes, ebusy until both directions are idle, a transmit post's bytes as the controller
  * reads them, received frames with their flags as tags and the consumer index advanced past
  * each, a frame of no bytes, a full ring, a hostile index that breaks the queue until the next
- * negotiation, erx_device_stop_dma's stop without the install, and a pool past 40 bits refused.
+ * negotiation, erx_device_stop_register_ring's stop without the install, and a pool past 40
+ * bits refused.
  */
 
 #include <sys/mman.h>
@@ -428,7 +429,7 @@ stop(const erx_device_t *device)
 	int status;
 
 	starts = 0;
-	while ((status = erx_device_stop_dma(device)) == ERX_EBUSY) {
+	while ((status = erx_device_stop_register_ring(device)) == ERX_EBUSY) {
 		CHECK(++busy < engines[ERX_DEVICE_GENET_TX].stop_reads);
 		CHECK(!engines[0].installed && !engines[1].installed && starts == 0);
 	}
@@ -439,7 +440,7 @@ stop(const erx_device_t *device)
 }
 
 /*
- * erx_device_stop_dma (docs/design-device-dma.md, "Stopping without installing (the
+ * erx_device_stop_register_ring (docs/design-device-dma.md, "Stopping without installing (the
  * register ring)") on the device check_register_ring left running, whose receive queue
  * is `rq` and transmit queue `tq` over `memory`: both engines
  * stopped and confirmed with nothing installed, and negotiate
@@ -588,7 +589,7 @@ check_width(void)
 	/* The stop without the install needs both directions' records, and without them leaves both engines enabled. */
 	for (uint32_t side = 0; side < 2; side++)
 		*reg(engines[side].regs.dma_ctrl) = engines[side].regs.dma_enable;
-	CHECK(erx_device_stop_dma(device) == ERX_EINVAL);
+	CHECK(erx_device_stop_register_ring(device) == ERX_EINVAL);
 	for (uint32_t side = 0; side < 2; side++)
 		CHECK(*reg(engines[side].regs.dma_ctrl) == engines[side].regs.dma_enable);
 }

@@ -16,14 +16,14 @@ erx_mdio; this module carries them out.
 the controller as its predecessor left it and resets it: open the record, check the
 revision, read the address the firmware left before the reset, create the two queues,
 then erx_genet_core:reset/0: the MAC's receive and transmit off, both DMA directions
-stopped and confirmed by erx_device:stop_dma/1, which needs both queues' records, the
+stopped and confirmed by erx_device:stop_register_ring/1, which needs both queues' records, the
 receive buffer's reset and the MAC's, the largest frame and the buffers' settings,
 and the settings read back (erx_genet_core:buffer_check/0);
 set the port, the address, the promiscuous filter and the ring settings,
 `negotiate/2`, which installs both rings and starts them, hold the MAC in software reset
 with receive and transmit off and unmask the interrupts (erx_genet_core:start/0), and bind
 the line. Nothing flushes the transmit path or the receive buffer (erx_genet_core).
-erx_device:stop_dma/1 and `negotiate/2` are each retried every millisecond while they
+erx_device:stop_register_ring/1 and `negotiate/2` are each retried every millisecond while they
 answer `ebusy`, within erx_genet_core:stop_retry/1's bound, after which the device is
 not driven. The PHY
 starts at the driver's first message to itself, so every PHY result, a failure at the
@@ -54,7 +54,7 @@ reset included, comes through `event/2`.
   a crash: one line names the bound a receive queue met as the controller's registers show
   it (erx_genet_core:rx_fault/1) and one line gives each register of
   erx_genet_core:evidence/0, then the driver's restart resets the controller. A stop
-  that never shows, in erx_device:stop_dma/1 or `negotiate/2`, logs the same registers before
+  that never shows, in erx_device:stop_register_ring/1 or `negotiate/2`, logs the same registers before
   the device is given up.
 
 Every register goes by its name in hw/svd/genet/genet.svd. The design places the device
@@ -183,7 +183,7 @@ read_logged(Dev, Register, Field) ->
     ok = log("~w ~s = 16#~.16b", [Register, Field, Value]),
     Value.
 
-%% Calls `Call`, erx_device:stop_dma/1 or negotiate/2, both of which answer ebusy until
+%% Calls `Call`, erx_device:stop_register_ring/1 or negotiate/2, both of which answer ebusy until
 %% both DMA engines show the stop, again while it answers ebusy, within
 %% erx_genet_core:stop_retry/1's bound, and returns its success, `ok` or `{ok, Features}`.
 %% A stop that never shows logs the evidence and is `{error, {Name, stop_timeout}}`; any
@@ -227,7 +227,7 @@ apply_steps(Dev, [Step | Rest]) ->
 apply_step(Dev, {write, Register, Value}) -> ok = erx_device:write(Dev, Register, Value);
 apply_step(Dev, {field, Register, Field, Value}) -> ok = erx_device:write_field(Dev, Register, Field, Value);
 apply_step(_Dev, {wait_us, Us}) -> spin_us(Us);
-apply_step(Dev, dma_stop) -> retry_busy(dma_stop, fun() -> erx_device:stop_dma(Dev) end, Dev).
+apply_step(Dev, dma_stop) -> retry_busy(dma_stop, fun() -> erx_device:stop_register_ring(Dev) end, Dev).
 
 %% Each buffer setting reset/0 wrote, read back after it; any that reads
 %% otherwise fails the start, named with its register, field and the value read

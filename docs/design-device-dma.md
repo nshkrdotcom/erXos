@@ -1532,7 +1532,7 @@ flushes after a confirmed stop
 ([MAC reset, RX buffer flush and TX flush](research-genet-bcm2711.md#mac-reset-rx-buffer-flush-and-tx-flush));
 an open after its own close finds the engines stopped by that close,
 and a restart here has no such close before it.
-`erx_device:stop_dma/1` is that confirmed stop: the register ring's row of
+`erx_device:stop_register_ring/1` is that confirmed stop: the register ring's row of
 the table above, its reset and its idle report, without the install. It
 marks both queues not ready, so from then on nothing is posted on them
 or completed from them; writes each direction's stop, transmit first;
@@ -1543,7 +1543,7 @@ hands no buffer back: a posted buffer still returns to its pool only
 through a completion or inside `negotiate/2`, after that call's own stop
 and idle report under the device lock, so nothing that happens between
 the two calls can make a stale report free a buffer the device holds.
-The driver's sequence is the queues, `stop_dma/1`, its own resets and
+The driver's sequence is the queues, `stop_register_ring/1`, its own resets and
 configuration, then `negotiate/2`, whose stop finds both engines
 stopped already. Its resets first turn both status blocks and the
 receive checksum check off; the rest is the UEFI firmware's driver's
@@ -1695,8 +1695,8 @@ adds:
 | `complete/2`, `post/4` | `{error, broken}` | the device reported an index or a length beyond its bound, or an ADMA2 transfer reported an error, until `negotiate/2` |
 | `negotiate/2` | `{error, ebusy}` | the device's idle report does not show yet, or, for ADMA2, the install has writes left |
 | `negotiate/2` | `{error, einval}` | it passes `continue` on a form whose negotiation takes no steps, virtio's or GENET's: only the TRB form's controller core continues one ([design-usb.md](design-usb.md#install)) |
-| `stop_dma/1` | `{error, ebusy}` | a GENET direction's idle report does not show yet; nothing is installed and no buffer handed back |
-| `stop_dma/1` | `{error, einval}`, `{error, enotsup}` | a GENET record without both its queues; a device of any other form |
+| `stop_register_ring/1` | `{error, ebusy}` | a GENET direction's idle report does not show yet; nothing is installed and no buffer handed back |
+| `stop_register_ring/1` | `{error, einval}`, `{error, enotsup}` | a GENET record without both its queues; a device of any other form |
 | `write/3`, `write_field/4` | `badarg` | a write that would change an owned field; any `write_field/4` of an owned field |
 | `post/4`, `complete/2`, `negotiate/2` on the TRB ring form | `{error, halted}`, `{error, full}`, `badarg`, `{error, broken}`, `{error, erange}` | as [design-usb.md](design-usb.md#the-trb-ring-form) lists them: a queue whose state refuses the request, or that the command in flight holds; a transfer on a queue with no free buffer, a command while another is in flight, or one adding a queue when no block of its kind is free; a command or context outside its bounded parameters; an event that fails the form's checks or passes the ring's bound, until `negotiate/2`; memory above the address width `AC64` gives |
 | the root at boot | gives the device no DMA memory, with a line naming it | the tree gives the device no single window that RAM backs, marks coherence on a bus above it or both ways on its node, or its DMA memory would lie outside the range |
@@ -1923,12 +1923,12 @@ ran.
   before. Seed: the idle test reads only the receive direction, and the
   stand-in's transmit engine is still running when the install writes
   its ring.
-* **GENET's stop without the install.** Over the same stand-in, `stop_dma/1`
+* **GENET's stop without the install.** Over the same stand-in, `stop_register_ring/1`
   answers `{error, ebusy}` until both directions show the stop, then `ok`,
   and leaves both engines stopped and neither ring installed, every
   receive buffer as it was and both queues refusing posts and
   completions; the `negotiate/2` after it installs on its first call.
-  Seed: `stop_dma/1` runs the install too, and the stand-in sees a ring
+  Seed: `stop_register_ring/1` runs the install too, and the stand-in sees a ring
   installed and its engines started.
 * **GENET's start and post.** Over the controller model,
   `erx_device_genet_model`, which the hosted stand-in runs too and which

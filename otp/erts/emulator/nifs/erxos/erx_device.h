@@ -372,7 +372,7 @@ int	erx_device_negotiate(const erx_device_t *device, uint64_t wanted, bool conti
  * through a completion or inside erx_device_negotiate. ERX_EINVAL for a record without both
  * its queues; ERX_ENOTSUP for a device of any other form.
  */
-int	erx_device_stop_dma(const erx_device_t *device);
+int	erx_device_stop_register_ring(const erx_device_t *device);
 
 /*
  * Posts one chain: its pieces, readable before writable, laid end to end in a free buffer of

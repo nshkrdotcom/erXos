@@ -57,7 +57,7 @@
 -export([open/1, elements/2, config_read/4, config_write/5]).
 -export([read/2, write/3, read_field/3, write_field/4, field/4, command/2]).
 -export([irq_bind/2, irq_bind_owner/2, irq_holder/2, irq_ack/2]).
--export([queue_create/4, negotiate/2, stop_dma/1, post/4, complete/2, queue_state/2, region/3, framebuffer/0]).
+-export([queue_create/4, negotiate/2, stop_register_ring/1, post/4, complete/2, queue_state/2, region/3, framebuffer/0]).
 -export([stand_in_fire/2, stand_in_used/3, stand_in_transmitted/1, stand_in_receive/2]).
 
 -export_type([device/0, register_name/0, spec/0, queue/0, region/0, framebuffer/0, segment/0]).
@@ -258,8 +258,8 @@ negotiate(_Dev, _Wanted) ->
 %% and no buffer handed back: a posted buffer returns to its pool only through complete/2
 %% or inside negotiate/2. `{error, einval}` for a record without both its queues;
 %% `{error, enotsup}` for a device that is not GENET.
--spec stop_dma(device()) -> ok | {error, atom() | {status, integer()}}.
-stop_dma(_Dev) ->
+-spec stop_register_ring(device()) -> ok | {error, atom() | {status, integer()}}.
+stop_register_ring(_Dev) ->
     erlang:nif_error(undef).
 
 %% The device's region Index (docs/design-runtime.md, "Regions"): Bytes rounded up to whole

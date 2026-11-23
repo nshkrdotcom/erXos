@@ -97,7 +97,7 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
 * [Medium] `otp/erts/emulator/nifs/erxos/erx_device.c`, queues: the NIF does not yet refuse `post/4` after the exit of a
   driver process that used the device until `negotiate/2` (`docs/design-runtime.md`, "The reset rule", R8); it needs the
   device's record to monitor the processes that post, as a line's binding does. A restarted driver's sequence
-  (`queue_create/4`, `negotiate/2`) does not depend on it. `erx_device:stop_dma/1` marks GENET's queues not
+  (`queue_create/4`, `negotiate/2`) does not depend on it. `erx_device:stop_register_ring/1` marks GENET's queues not
   ready and `erx_genet` calls it before any post, so a GENET restart does not post before `negotiate/2`; the
   NIF still refuses nothing between the predecessor's exit and that call, and virtio and xHCI are
   unchanged. The fix by construction is to monitor the process that negotiated and to unready the device's

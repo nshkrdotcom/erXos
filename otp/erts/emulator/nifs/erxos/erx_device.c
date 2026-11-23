@@ -2735,7 +2735,7 @@ erx_device_negotiate(const erx_device_t *device, uint64_t wanted, bool continues
 
 /* The queues stop being ready first, as at a negotiation's start, even when the record lacks one. */
 int
-erx_device_stop_dma(const erx_device_t *device)
+erx_device_stop_register_ring(const erx_device_t *device)
 {
 	queue_record_t *rings[2];
 	uint64_t status[2];

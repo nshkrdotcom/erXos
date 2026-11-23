@@ -88,8 +88,8 @@ class ErxDeviceQueueTest < Minitest::Test
   # "GENET's stop"), so the receive ring is installed while the transmit engine runs; the
   # register lookup narrowed to owned registers, so the idle report of DMA status, which the
   # NIF does not own, reaches no register and the negotiation is refused; and the stop without
-  # the install (erx_device_stop_dma) seeded to install and start the rings once both engines show
-  # the stop, which the harness sees as a ring installed and an engine started after it.
+  # the install (erx_device_stop_register_ring) seeded to install and start the rings once both
+  # engines show the stop, which the harness sees as a ring installed and an engine started after it.
   GENET_SEEDS = {
     idle_rx_only: ["\t\tidle = idle && shown == ERX_OK;\n",
                    "\t\tidle = side == 1 ? idle : shown == ERX_OK;\n"],

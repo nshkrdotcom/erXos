@@ -3251,8 +3251,8 @@ device's record, so a driver's start and its restart are one sequence:
 predecessor made; `negotiate/2`; then the line's attach through
 `erx_irq_line` and the reads of the
 device's configuration. GENET's driver, which resets its controller
-itself, puts `stop_dma/1` and its resets between the queues and
-`negotiate/2`: `stop_dma/1` is the register ring's reset and idle report
+itself, puts `stop_register_ring/1` and its resets between the queues and
+`negotiate/2`: `stop_register_ring/1` is the register ring's reset and idle report
 without the install: it marks the queues not ready and hands no
 buffer back
 ([design-device-dma.md](design-device-dma.md#the-descriptor-forms)).
