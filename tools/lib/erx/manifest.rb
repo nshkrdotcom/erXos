@@ -990,6 +990,7 @@ module Erx
           unit.fetch('devices').sort_by { |device| device.fetch('placement_key').b }.each do |device|
             normalized = behind_bridge(platform_device(device), bridges)
             normalized['clock'] = device_clock(normalized)
+            normalized['power_off_ms'], normalized['power_on_ms'] = device_power(normalized)
             check_device(normalized)
             places = normalized.fetch('places')
             normalized['places'] = { 'table' => 'places', 'first' => rows.fetch('places').size, 'count' => places.size }
@@ -1300,6 +1301,17 @@ module Erx
           invalid("#{named} carries a clock, which no driver of its kind reads", 'context.platform.devices') unless clock == 0
         end
         clock
+      end
+
+      # A device row's power line times (docs/design-bluetooth.md, "The power line"): the off
+      # and on milliseconds of the power row naming the device, 0 and 0 for a device no power row
+      # names. firmware_requests checks the row and refuses a time that is not positive;
+      # erx_mf_device's u16 fields bound it, so the codec refuses a time they cannot hold.
+      def device_power(device)
+        row = Array(@context.platform.fetch('firmware_requests', [])).find do |request|
+          request.is_a?(Hash) && request.key?('power_line') && request['device'] == device.fetch('path')
+        end
+        row ? row.values_at('off_ms', 'on_ms') : [0, 0]
       end
 
       # Whether device, a normalized platform row, is of a kind whose row carries a clock: a

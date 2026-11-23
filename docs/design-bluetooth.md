@@ -793,9 +793,14 @@ holds what the probe read there, and a board whose tree names another
 pin gets a power line of its own in the set. From the
 power row the generator derives the device's two notifications: index
 0, `bt_off`, the tag with the words 128 and 0, and index 1, `bt_on`,
-the words 128 and 1; and UART0's device record, which the line service
-reads at a tree's start, carries the times, its presence saying that
-the device has a power line. So the pins a record can drive are those
+the words 128 and 1; and UART0's device row carries the times
+(`erx_mf_device`'s `power_off_ms` and `power_on_ms`, 16 bits each, so the
+codec refuses a longer time), which the root writes into its device
+record, which the line service reads at a tree's start as
+`power => {Off, On}`, its presence saying that the device has a power
+line, 0 and 0 meaning none. The line service names the device to the
+device service by the record's INDEX, its row in the manifest's device
+table, which is the row the domain library's firmware entries take. So the pins a record can drive are those
 `fw_power_line` declares, one, and no record row chooses a pin or a
 state.
 

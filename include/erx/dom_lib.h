@@ -468,7 +468,7 @@ erx_status_t	erx_dom_lib_pci_answered(erx_dom_lib_t *, uint32_t domain) ERX_WARN
  * catalogue reach no mailbox, then erx_firmware_request_row's status, with the answer's
  * first *length bytes in answer and zeroes to its end. The caller holds no lock: the
  * request runs in its thread up to its 1 s deadline, and the view's records it reads are
- * written only as the view is built. The caller then hands the status to
+ * written only as the view is built. For a host bridge's row the caller then hands the status to
  * erx_dom_lib_pci_firmware under the lock.
  */
 erx_status_t	erx_dom_lib_firmware_request(const erx_dom_lib_t *, uint32_t device, uint32_t index,

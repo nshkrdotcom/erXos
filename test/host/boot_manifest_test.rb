@@ -154,7 +154,7 @@ class BootManifestTest < Minitest::Test
     assert_includes output, "device rtc pl031 151060480 4096 34 direct 0 0 window 151060480 4096 0 " \
                             "words-erx_record given rtc pl031 /pl031@9010000 11 0 4096 12 direct 0 0 0 0 0 13 exact 1 short 0\n"
     assert_includes output, "device hostlink pl011 151257088 4096 40 direct 0 24000000 " \
-                            "words-erx_record device hostlink pl011 /pl011@9040000 151257088 4096 40 direct 24000000 10 exact 1 short 0\n"
+                            "words-erx_record device hostlink pl011 /pl011@9040000 151257088 4096 40 direct 24000000 10 0 0 exact 1 short 0\n"
     refute_match(/^device (?:block|net) /, output)
   end
 
@@ -268,10 +268,42 @@ class BootManifestTest < Minitest::Test
     records = output.lines.grep(/^device line /)
     assert_equal 1, records.size, output
     words = "words-erx_record device line pl011 /pl011@9050000 #{0x9050000} 4096 41 direct 24000000 " \
-            "#{paths.index('/pl011@9050000')} exact"
+            "#{paths.index('/pl011@9050000')} 0 0 exact"
     assert_includes records.first, words
     refute_includes output, '/pl011@9060000'
   end
+
+# The line's record carries its device's power line times (docs/design-bluetooth.md, "The
+# power line"): with a power row naming the line's UART, its record's last two words are
+# the row's off and on milliseconds, which the line service waits. A time erx_mf_device's
+# u16 fields cannot hold is refused at the packer.
+def test_the_line_s_record_carries_its_device_s_power_line_times
+  grant = ManifestContextFixture.line_grant('line', '@domain.alpha', Erx::ManifestSeeds::LINE_UART,
+                                            floor: @codec.constant('files_max_frame_min'))
+  source = ManifestContextFixture.with_line(ManifestContextFixture.domain_source(@source), grant)
+  power = { 'device' => '/pl011@9050000', 'power_line' => 'bt_power', 'off_ms' => 300, 'on_ms' => 500 }
+  record = ManifestContextFixture.line_platform(platform_record('qemu-virt')).merge('firmware_requests' => [power])
+  bytes = admitted(source, record: record)
+  view = @codec.open('manifest', bytes)
+  paths = view.count('devices').times.map { |index| view.string(view.fetch('devices', index).fetch('path')) }
+  output, status = read(bytes)
+  assert status.success?, output
+  assert_includes output.lines.grep(/^device line /).first,
+                  "words-erx_record device line pl011 /pl011@9050000 #{0x9050000} 4096 41 direct 24000000 " \
+                  "#{paths.index('/pl011@9050000')} 300 500 exact"
+  assert_raises(Erx::Error) { admitted(source, record: record.merge('firmware_requests' => [power.merge('on_ms' => 65_536)])) }
+end
+
+# The Raspberry Pi 4's power row puts its times on UART0's device row alone, the one device
+# with a power line; every other row carries 0 and 0.
+def test_the_raspberry_pi_s_power_row_times_are_uart0_s_device_row_s
+  pi = Erx::Platform.load(root: ROOT, name: 'raspi4b').manifest_source(ROOT)
+  view = @codec.open('manifest', admitted(pi, platform: 'raspi4b'))
+  powered = view.count('devices').times.map { |index| view.fetch('devices', index) }
+                .reject { |row| row.values_at('power_off_ms', 'power_on_ms') == [0, 0] }
+                .map { |row| [view.string(row.fetch('path')), row.fetch('power_off_ms'), row.fetch('power_on_ms')] }
+  assert_equal [['/soc/serial@7e201000', 300, 500]], powered
+end
 
   # A missing disk is a normal state: a manifest with no block unit, and so no windows, no
   # system_image row, none of the services the windows' holder serves from them, and no
@@ -597,13 +629,13 @@ end
     assert status.success?, output
     assert_includes output, "console_uart pl011 150994944 4096 33 direct 24000000\n"
     assert_includes output, "console_words-erx_record console pl011 150994944 4096 33 direct 24000000 exact 1 short 0\n"
-    assert_match(/^device hostlink pl011 \d+ \d+ 40 direct .*words-erx_record device hostlink pl011 \/pl011@9040000 \d+ \d+ 40 direct \d+ \d+ exact 1/, output)
+    assert_match(/^device hostlink pl011 \d+ \d+ 40 direct .*words-erx_record device hostlink pl011 \/pl011@9040000 \d+ \d+ 40 direct \d+ \d+ 0 0 exact 1/, output)
     pi = Erx::Platform.load(root: ROOT, name: 'raspi4b').manifest_source(ROOT)
     output, status = read(admitted(pi, platform: 'raspi4b'), stdout_path: '/soc/serial@7e215040')
     assert status.success?, output
     assert_match(/^console_uart mini_uart #{0xfe215040} 64 125 shared \d+\n/, output)
     assert_match(/^console_words-erx_record console mini_uart #{0xfe215040} 64 125 shared \d+ exact 1 short 0\n/, output)
-    assert_match(/^device hostlink pl011 \d+ \d+ 153 shared .*words-erx_record device hostlink pl011 \/\S+ \d+ \d+ 153 shared \d+ \d+ exact 1/,
+    assert_match(/^device hostlink pl011 \d+ \d+ 153 shared .*words-erx_record device hostlink pl011 \/\S+ \d+ \d+ 153 shared \d+ \d+ 0 0 exact 1/,
                  output)
   end
 

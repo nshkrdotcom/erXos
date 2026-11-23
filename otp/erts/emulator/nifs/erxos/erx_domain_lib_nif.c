@@ -1480,6 +1480,29 @@ pci_firmware_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 }
 
 /*
+ * device_notify(Device, Index): notification Index of device row Device, a device the
+ * system domain holds itself, its power line's off or on row on the Pi 4's UART0
+ * (docs/design-bluetooth.md, "The power line"). The request runs outside lib_lock, in
+ * this dirty I/O thread, up to its 1 s deadline, as pci_firmware's does; no catalogue
+ * takes its status. ok, or {error, Name}: enotsup for an index past the device's rows or
+ * a root with no mailbox, einval for a row past the catalogue, ebusy, etimedout or eproto
+ * as the request answered.
+ */
+static ERL_NIF_TERM
+device_notify_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
+{
+	uint8_t answer[ERX_VC_WINDOW_MAX];
+	unsigned int device, index;
+	uint32_t length;
+
+	if (argc != 2 || !enif_get_uint(env, argv[0], &device) || !enif_get_uint(env, argv[1], &index))
+		return (enif_make_badarg(env));
+	if (lib == NULL)
+		return (status_error(env, ERX_ENOTSUP));
+	return (status_term(env, erx_dom_lib_firmware_request(lib, device, index, answer, &length)));
+}
+
+/*
  * The library, its lock and its fault thread live as long as the system
  * domain, so only the first load sets them up and a later one (after a
  * purge) is refused. A library with no fault thread would never end a
@@ -1532,6 +1555,7 @@ static ErlNifFunc nif_funcs[] = {
 	{ "pci_answered_nif", 1, pci_answered_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND },
 	/* A firmware request sleeps up to its 1 s deadline, outside the lock. */
 	{ "pci_firmware_nif", 1, pci_firmware_nif, ERL_NIF_DIRTY_JOB_IO_BOUND },
+	{ "device_notify_nif", 2, device_notify_nif, ERL_NIF_DIRTY_JOB_IO_BOUND },
 };
 
 ERL_NIF_INIT(erx_domain_lib, nif_funcs, load, NULL, NULL, NULL)

@@ -39,19 +39,20 @@ so does crash/1, which reads a domain's crash dump. info/2 answers any
 caller, since a group's or budget's report holds none of the domain's data,
 and so do pci_report/2, the PCIe catalogue's intake, pci_bridges/0, its
 read, pci_mode/2, the write of a PCIe function's mode, pci_answered/1,
-the write of the incarnation answered, and pci_firmware/1, a bridge's
-firmware request, whose caller is the device service.
+the write of the incarnation answered, pci_firmware/1, a bridge's
+firmware request, and device_notify/2, a notification of a device the
+system domain holds itself, whose caller is the device service.
 """.
 
 -export([register/0, create/1, start/1, stop/2, retire/1, crash/1, info/2, connect/6, disconnect/1,
          configured/0, configured/3, templates/0, apps/0, devices/0, session/5, app_session/6, code_object/2,
          code_drop/2, end_commit/1, pci_report/2, pci_bridges/0, pci_mode/2, pci_answered/1,
-         pci_firmware/1]).
+         pci_firmware/1, device_notify/2]).
 -nifs([register_nif/0, create_nif/1, start_nif/1, stop_nif/2, retire_nif/1, crash_nif/1, info_nif/3, connect_nif/6,
        disconnect_nif/1, configured_nif/0, configured_create_nif/3, templates_nif/0, apps_nif/0, devices_nif/0,
        session_create_nif/5, app_session_create_nif/6, code_object_nif/2, code_drop_nif/2,
        end_commit_nif/1, pci_report_nif/2, pci_bridges_nif/0, pci_mode_nif/2, pci_answered_nif/1,
-       pci_firmware_nif/1]).
+       pci_firmware_nif/1, device_notify_nif/2]).
 -on_load(on_load/0).
 
 -include("generated/erx_abi.hrl").
@@ -416,6 +417,20 @@ pci_firmware(Bridge) ->
     pci_firmware_nif(Bridge).
 
 -doc """
+Makes notification Index of device row Device, a device the system domain
+holds itself (docs/design-bluetooth.md, "The power line"; docs/design-system.md,
+"Firmware requests"), the device service's firmware worker its caller: the
+row the manifest lists at that index for the device, so the caller chooses
+neither the tag nor its words. A host bridge's notification is pci_firmware/1's,
+which marks the bridge after a timeout. ok, or {error, Name}: enotsup for an
+index past the device's rows or a root with no mailbox, einval for a row past
+the catalogue, ebusy, etimedout or eproto as the request answered.
+""".
+-spec device_notify(non_neg_integer(), non_neg_integer()) -> ok | error().
+device_notify(Device, Index) ->
+    device_notify_nif(Device, Index).
+
+-doc """
 Manifest startup and restart: builds configured row Row under id Id and
 domain pid DomainPid, as create/1 builds a request's domain. The domain service calls it from its
 manifest startup and restart with a row configured/0 gave, never a row a
@@ -551,6 +566,9 @@ pci_answered_nif(_D) ->
     erlang:nif_error(undef).
 
 pci_firmware_nif(_Bridge) ->
+    erlang:nif_error(undef).
+
+device_notify_nif(_Device, _Index) ->
     erlang:nif_error(undef).
 
 %% The library hands records as the bytes its generated encoders write, which

@@ -24,7 +24,7 @@ spec(Base, Size, Line, Clock) ->
 %% A physical record of Base, Size, Line and Clock, its line marked direct, as on QEMU virt,
 %% of device row 7.
 record([Base, Size, Line, Clock | Words]) ->
-    ["device", "block", "virtio_mmio", ?PATH, Base, Size, Line, "direct", Clock, "7" | Words];
+    ["device", "block", "virtio_mmio", ?PATH, Base, Size, Line, "direct", Clock, "7", "0", "0" | Words];
 record(Words) ->
     ["device", "block", "virtio_mmio", ?PATH | Words].
 
@@ -33,7 +33,7 @@ the_root_s_record_test() ->
     ?assertEqual({ok, [#{peripheral => pl011, path => <<"/pl011@9040000">>, window => {physical, 151257088, 4096}, lines => [40], clock => 24000000,
                           index => 1}]},
                  erx_device_record:find(hostlink, pl011, [["device", "hostlink", "pl011", "/pl011@9040000", "151257088", "4096", "40",
-                                                           "direct", "24000000", "1"]])).
+                                                           "direct", "24000000", "1", "0", "0"]])).
 
 %% The Raspberry Pi 4's host link UART shares line 153 with the other PL011s, and its
 %% record says so; erx_device:open/1 takes the line marked.
@@ -41,7 +41,7 @@ a_shared_line_is_marked_test() ->
     ?assertEqual({ok, [#{peripheral => pl011, path => <<"/soc/serial@7e201600">>, window => {physical, 4263515648, 512}, lines => [{shared, 153}],
                          clock => 48000000, index => 3}]},
                  erx_device_record:find(hostlink, pl011, [["device", "hostlink", "pl011", "/soc/serial@7e201600", "4263515648", "512", "153",
-                                                           "shared", "48000000", "3"]])),
+                                                           "shared", "48000000", "3", "0", "0"]])),
     ?assertEqual({ok, [(given_spec(12, 0, 512, 13, 0))#{lines => [{shared, {object, 13}}]}]},
                  find([given_marked(["12", "0", "512", "13", "shared", "0", "0", "0", "0", "0", "4"])])).
 
@@ -49,12 +49,30 @@ a_shared_line_is_marked_test() ->
 %% it as one mark or the other.
 a_bad_mark_refuses_test() ->
     [?assertMatch({error, {bad_device_record, "a device record's line mark" ++ _}},
-                  find([["device", "block", "virtio_mmio", ?PATH, "1", "2", "3", Mark, "4", "5"]]))
+                  find([["device", "block", "virtio_mmio", ?PATH, "1", "2", "3", Mark, "4", "5", "0", "0"]]))
      || Mark <- bad_marks()],
     [?assertMatch({error, {bad_device_record, "a given device record's line mark" ++ _}},
                   find([given_marked(["1", "0", "2", "3", Mark, "0", "0", "0", "0", "0", "4"])]))
      || Mark <- bad_marks()],
     ?assertMatch({error, {bad_device_record, _}}, find([["device", "block", "virtio_mmio", "1", "2", "3", "4"]])).
+
+%% The line's UART on the Pi 4: its record's last two words are its power line's off and on
+%% times (docs/design-bluetooth.md, "The power line"), read as power; 0 and 0 is no power
+%% line, and one time alone, a time past 16 bits or a word that is no number refuses it.
+a_record_s_power_line_times_test() ->
+    Line = fun(Off, On) ->
+                   ["device", "line", "pl011", "/soc/serial@7e201000", "4263514112", "512", "153", "shared",
+                    "48000000", "5", Off, On]
+           end,
+    ?assertEqual({ok, [#{peripheral => pl011, path => <<"/soc/serial@7e201000">>, window => {physical, 4263514112, 512},
+                         lines => [{shared, 153}], clock => 48000000, index => 5, power => {300, 500}}]},
+                 erx_device_record:find(line, pl011, [Line("300", "500")])),
+    ?assertMatch({ok, [Spec]} when not is_map_key(power, Spec), erx_device_record:find(line, pl011, [Line("0", "0")])),
+    [?assertMatch({error, {bad_device_record, "a device record's power line times" ++ _}},
+                  erx_device_record:find(line, pl011, [Line(Off, On)]))
+     || {Off, On} <- [{"0", "500"}, {"300", "0"}, {"65536", "500"}, {"300", "x"}, {"", "500"}]],
+    ?assertMatch({error, {bad_device_record, "a device record has fewer" ++ _}},
+                 erx_device_record:find(line, pl011, [lists:droplast(Line("300", "500"))])).
 
 bad_marks() ->
     ["", "Shared", "DIRECT", "shared ", " direct", "share", "directly", "1", "shared\n"].
@@ -226,12 +244,12 @@ a_record_s_path_names_its_device_test() ->
     Longest = "/virtio_mmio@a003e00/" ++ lists:duplicate(?ERX_DEVICE_PATH_MAX - 21, $a),
     ?assertEqual(?ERX_DEVICE_PATH_MAX, length(Longest)),
     ?assertEqual({ok, [(spec(1, 2, 3, 4))#{path => list_to_binary(Longest)}]},
-                 find([["device", "block", "virtio_mmio", Longest, "1", "2", "3", "direct", "4", "7"]])),
+                 find([["device", "block", "virtio_mmio", Longest, "1", "2", "3", "direct", "4", "7", "0", "0"]])),
     ?assertEqual({ok, [(given_spec(1, 0, 2, 3, 0))#{path => list_to_binary(Longest)}]},
                  find([["given", "block", "virtio_mmio", Longest, "1", "0", "2", "3", "direct", "0", "0", "0", "0",
                         "0", "4"]])),
     [?assertMatch({error, {bad_device_record, "a device record's path" ++ _}},
-                  find([["device", "block", "virtio_mmio", Path, "1", "2", "3", "direct", "4", "7"]]))
+                  find([["device", "block", "virtio_mmio", Path, "1", "2", "3", "direct", "4", "7", "0", "0"]]))
      || Path <- bad_paths(Longest)],
     [?assertMatch({error, {bad_device_record, "a given device record's path" ++ _}},
                   find([["given", "block", "virtio_mmio", Path, "1", "0", "2", "3", "direct", "0", "0", "0", "0",

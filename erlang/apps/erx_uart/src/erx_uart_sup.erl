@@ -179,10 +179,10 @@ driver(#{peripheral := virtio_mmio} = Spec, Line, grant) -> erx_virtio_console:s
 
 %% The power line of the line's device (docs/design-bluetooth.md, "The power line"): a
 %% line's record carries the off and on times, in milliseconds, when the platform names a
-%% power line for its device, and the device service makes its notifications; a record
-%% without them, as QEMU virt's, names none. Only a UART's record has a power line, since only
-%% its driver starts with flow none.
-power(#{peripheral := pl011, power := {Off, On}, path := Path}) ->
-    #{notify => fun(Phase) -> erx_devices:power(Path, Phase) end, off => Off, on => On};
+%% power line for its device, and the device service makes its notifications for the
+%% device's row, the record's index; a record without them, as QEMU virt's, names none.
+%% Only a UART's record has a power line, since only its driver starts with flow none.
+power(#{peripheral := pl011, power := {Off, On}, index := Device}) ->
+    #{notify => fun(Phase) -> erx_devices:power(Device, Phase) end, off => Off, on => On};
 power(#{}) ->
     none.

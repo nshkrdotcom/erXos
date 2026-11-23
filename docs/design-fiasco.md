@@ -2679,8 +2679,9 @@ driver opens it exactly as a holder's does. Nothing deletes these objects, since
 domain holds the device for the boot and its fault resets the machine; an object the backend
 refuses refuses the boot, naming the record. The host link's UART and a line's UART
 ([design-bluetooth.md](design-bluetooth.md#the-controllers-line)), which do no DMA, are the
-physical records, `-erx_record device ROLE PERIPHERAL PATH BASE SIZE LINE MARK CLOCK INDEX`, PATH as in the given record and INDEX the
-device's row in the manifest's device table, which a line grant's `device` names; the root writes the
+physical records, `-erx_record device ROLE PERIPHERAL PATH BASE SIZE LINE MARK CLOCK INDEX OFF ON`, PATH as in the given record, INDEX the
+device's row in the manifest's device table, which a line grant's `device` names, and OFF and ON its power line's off and on
+times in milliseconds from that row, 0 and 0 for a device with none ([design-bluetooth.md](design-bluetooth.md#the-power-line)); the root writes the
 line's record for that row alone, a physical record for a `uart` row and the given record of its
 kind row for a `serial` row, a virtio console, which does DMA. The record also names, after CLOCK, the base and length
 of the run of pages its unit's registers cover around its own, so the device NIF maps that run once, at the first open of any record in

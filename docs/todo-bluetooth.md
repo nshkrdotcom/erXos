@@ -15,6 +15,15 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   refuses two line records of one peripheral but takes a pl011 and a virtio_mmio line record together; only `check_line_grants`'
   one-grant limit, the root's record for the granted device alone and `check_serial_devices` keep it to one. Refuse more than one
   line record across both peripherals.
+* [Medium] Bluetooth power line, the row order off 0, on 1 is stated twice (`tools/lib/erx/manifest.rb`
+  `firmware_power_rows`, `erlang/apps/erx_domain/src/erx_devices_pci_core.erl` `power_row/1`): a reordered generator would
+  send `bt_on` for `off`, and a reset would pass without a power cycle. Declare the phases once in
+  `abi/formats/vc_property.txt` (a closed set `fw_power_phase`) and generate both from it.
+* [Medium] Bluetooth power line, `device_notify/2` is a deny-list (`erx_devices_pci_core:firmware/3` refuses a power request
+  naming a bridge in `catalogues/1`, which an unreadable PCIe catalogue empties; the NIF and `erx_dom_firmware_row` take any
+  row): a bridge's notification sent this way is not marked `firmware_lost` on a timeout. Have the NIF hand every status to
+  `erx_dom_lib_pci_firmware`, folding both entries into `erx_domain_lib:firmware/2`, and accept a power request only for a row
+  whose manifest `power_off_ms` is set. This also closes the item below.
 * [Low] Bluetooth power line, `pci_firmware/1` sends any device's row 0 (`otp/erts/emulator/nifs/erxos/erx_domain_lib_nif.c`,
   `pci_firmware_nif`): it names a host bridge but calls `erx_dom_lib_firmware_request(lib, Row, 0, ...)` for any device row,
   and UART0's row 0 is `bt_off`, so a wrong row from the device service would power the controller off instead of answering
@@ -131,11 +140,7 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   UART or, on QEMU `virt`, `erx_virtio_console` over the line unit's `/virtio_mmio@a000e00`, and the Bluetooth suite runs the
   domain over it against Bumble. Still open: the one name `line` as a generated fact (`abi/services/line.txt`, as
   `packages_service` is in `abi/manifest.txt`; today a literal in the manifest check, the serve call, the facet-names check,
-  `check_line_grants` and the grantee's mount `erx_ns:place/1`); the power line's two ends, which `erx_line` and
-  `erx_uart_sup` call but nothing provides yet, so every line runs a reset's steps 1 and 5 alone, as on a platform with no
-  power line: the off and on times in the line's physical record (`boot_manifest.c` writing them from the power row,
-  `erx_device_record` reading them as `power => {Off, On}`), and the device service's `erx_devices:power/2` over
-  `erx_domain_lib:device_notify/2` through the firmware worker (docs/design-bluetooth.md "The power line", "Authority");
+  `check_line_grants` and the grantee's mount `erx_ns:place/1`);
   the one-grant limit (`check_line_grants` in `tools/lib/erx/manifest.rb`
   accepts at most one `line` facet, since the design leaves open how the one process `erx_facet:serve/2` names reaches the
   tree of each grant when several grants name different UARTs; settle that and lift the limit); the root's names, which still

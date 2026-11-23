@@ -47,8 +47,10 @@ typedef struct erx_boot_console {
  * window, line and memory objects at boot, as a holder's creation makes them, and hands
  * their handles as -erx_record given (erx_boot_given_words), so a device that does DMA has one
  * form in every domain. The host link's UART and the line's, which do no DMA, are the
- * physical records, -erx_record device ROLE PERIPHERAL PATH BASE SIZE LINE MARK CLOCK INDEX (erx_boot_device_words),
- * INDEX the device's row in the manifest's device table.
+ * physical records, -erx_record device ROLE PERIPHERAL PATH BASE SIZE LINE MARK CLOCK INDEX OFF ON
+ * (erx_boot_device_words), INDEX the device's row in the manifest's device table and OFF and ON its
+ * power line's off and on times in milliseconds, 0 and 0 for a device with none
+ * (docs/design-bluetooth.md, "The power line").
  * role and peripheral point at a row's names, PATH is the device's device-tree path, which
  * names it to its driver, and the numbers are the manifest's device entry.
  * MARK, in every form, is shared when another device of the unit names the line and direct
@@ -75,6 +77,8 @@ typedef struct erx_boot_device {
 	bool		network;	/* a row of the network role, whose record carries the tree's MAC */
 	erx_boot_words_t path;		/* its device-tree path, into the manifest's bytes */
 	uint32_t	index;		/* its manifest device row, which is its catalogue entry's index */
+	uint16_t	power_off_ms;	/* its power line's off time, from its manifest row; 0 for none */
+	uint16_t	power_on_ms;	/* and its on time */
 } erx_boot_device_t;
 
 /*

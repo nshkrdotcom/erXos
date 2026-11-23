@@ -1729,7 +1729,11 @@ bridge's bus range is the tree's fact, which the boot reads. A
 device's `dma_limit` is a CPU address, exclusive, 0 for none, which
 the packer copies from a bridge's unit into each `pci` row behind it, and
 the function's DMA facts are cut at it
-([design-pcie.md](design-pcie.md#dma)). On a platform with an MSI frame,
+([design-pcie.md](design-pcie.md#dma)). A device's `power_off_ms` and
+`power_on_ms` are the off and on times of the platform record's power row
+that names it, 16 bits each, 0 and 0 for a device no power row names, which
+the root writes into the device's physical record
+([design-bluetooth.md](design-bluetooth.md#the-power-line)). On a platform with an MSI frame,
 QEMU `virt` and the Raspberry Pi 5, the manifest's platform part
 carries `msi_frame`: the frame's base, the interrupt id of its first
 line, the count, the row of the bridge it serves, its doorbell

@@ -56,8 +56,11 @@ Then}`, a `pcie` call whose answer goes to pcie_answer(Then, Answer);
 and `{firmware, Request}`, a `firmware` request handed to the firmware
 worker, which answers it with the request it was handed.
 
-**`firmware`** requests queue in arrival order (firmware/3), a bridge row
-the library does not hold refused, and the worker is handed the next only
+**`firmware`** requests, a bridge's notification and the line service's
+power requests (docs/design-bluetooth.md, "The power line"), queue in
+arrival order (firmware/3), a bridge request for a row the library does not
+hold, and a power request naming a host bridge, refused; the in-flight rule
+below covers every request, and the worker is handed the next only
 after the last one's answer (firmware_answered/3), which must answer the
 first request queued, so one request is in the kernel at a time (docs/design-system.md, "Firmware requests").
 While a request is in flight a `report` waits for its answer
@@ -67,7 +70,7 @@ While a request is in flight a `report` waits for its answer
 -export([targets/2, reports/2, unlisted/2, lowered/3, settings/1]).
 -export([request/3, pcie_answer/4, holder_ended/2, answered/4, incarnation_ended/2, down_timer/3,
          resume/2, resumed/5]).
--export([firmware/3, firmware_answered/3, report_waits/1]).
+-export([firmware/3, firmware_answered/3, report_waits/1, power_row/1]).
 -export_type([place/0, phase/0, request/0, action/0, then/0, firmware_request/0]).
 
 -doc "A function by its host bridge's device row and its place, as erx_domain_lib:pci_place() spells it.".
@@ -102,8 +105,13 @@ driver's `master` after it; or a lowering.
                 | {arm_down, pos_integer() | start}
                 | {firmware, firmware_request()}.
 
--doc "A `pci_bus:firmware/1` request: its caller and the bridge row it names.".
--type firmware_request() :: {From :: term(), Bridge :: non_neg_integer()}.
+-doc """
+A firmware request: its caller and what it asks for, a `pci_bus:firmware/1`
+request naming its bridge row, or erx_devices:power/2 naming a device row and
+the phase of its power line.
+""".
+-type firmware_request() :: {From :: term(), {bridge, Bridge :: non_neg_integer()}
+                                             | {power, Device :: non_neg_integer(), off | on}}.
 
 %% A function as the PCIe domain's start reports it, its record and whether
 %% the start kept it at its setting; the enumerator owns the type.
@@ -162,17 +170,36 @@ lowered(Catalogues, Devices, Reported) ->
 A `firmware` request over Queue, the requests not yet answered, the first
 of them in the firmware worker (docs/design-system.md, "Firmware
 requests"): `{error, not_held}` for a bridge row the library does not hold
-for the PCIe domain; otherwise queued, and handed to the worker at once
-when nothing was queued.
+for the PCIe domain, and `{error, einval}` for a power request naming a
+host bridge, whose notification only a bridge request makes, so the
+library marks the bridge after a timeout; otherwise queued, and handed to
+the worker at once when nothing was queued.
 """.
 -spec firmware(firmware_request(), [firmware_request()], [erx_domain_lib:pci_catalogue()]) ->
           {[firmware_request()], [action()]}.
-firmware({From, Bridge} = Request, Queue, Catalogues) ->
-    case {lists:member(Bridge, held_bridges(Catalogues)), Queue} of
-        {false, _} -> {Queue, [{reply, From, {error, not_held}}]};
-        {true, []} -> {[Request], [{firmware, Request}]};
-        {true, _} -> {Queue ++ [Request], []}
+firmware({From, {bridge, Bridge}} = Request, Queue, Catalogues) ->
+    case lists:member(Bridge, held_bridges(Catalogues)) of
+        false -> {Queue, [{reply, From, {error, not_held}}]};
+        true -> queued(Request, Queue)
+    end;
+firmware({From, {power, Device, _Phase}} = Request, Queue, Catalogues) ->
+    case lists:member(Device, [Index || #{bridge := #{index := Index}} <- Catalogues]) of
+        true -> {Queue, [{reply, From, {error, einval}}]};
+        false -> queued(Request, Queue)
     end.
+
+queued(Request, []) -> {[Request], [{firmware, Request}]};
+queued(Request, Queue) -> {Queue ++ [Request], []}.
+
+-doc """
+The notification of a power line's phase among its device's rows: off at
+index 0 and on at index 1, the order in which the manifest generator derives
+them from the platform record's power row (tools/lib/erx/manifest.rb,
+firmware_power_rows; docs/design-bluetooth.md, "The power line").
+""".
+-spec power_row(off | on) -> 0 | 1.
+power_row(off) -> 0;
+power_row(on) -> 1.
 
 -doc """
 The worker's Answer to Request, the first request of Queue, which no other
@@ -181,7 +208,7 @@ handed to the worker.
 """.
 -spec firmware_answered(firmware_request(), term(), [firmware_request(), ...]) ->
           {[firmware_request()], [action()]}.
-firmware_answered({From, _Bridge} = Request, Answer, [Request | Rest]) ->
+firmware_answered({From, _Asked} = Request, Answer, [Request | Rest]) ->
     Next = case Rest of
                [] -> [];
                [Waiting | _] -> [{firmware, Waiting}]

@@ -13,10 +13,12 @@
 %%   memory's bytes, 0 for a device that does no DMA, the firmware tree's coherence mark
 %%   and hardware address, and INDEX, the device's row in the manifest's device table, by
 %%   which the PCIe domain matches a host bridge's record to its erx_pcie_bridge index;
-%% - `-erx_record device ROLE PERIPHERAL PATH BASE SIZE LINE MARK CLOCK INDEX`, the system domain's physical record
-%%   of its host link's UART or its line's, which do no DMA, built by
+%% - `-erx_record device ROLE PERIPHERAL PATH BASE SIZE LINE MARK CLOCK INDEX OFF ON`, the system domain's
+%%   physical record of its host link's UART or its line's, which do no DMA, built by
 %%   liberx/backend/core/boot_manifest.c from the system manifest; INDEX is the device's
-%%   row in the manifest's device table, which a line grant's device names;
+%%   row in the manifest's device table, which a line grant's device names, and OFF and ON
+%%   its power line's off and on times in milliseconds, read as `power => {Off, On}`, 0 and
+%%   0 for a device with no power line (docs/design-bluetooth.md, "The power line");
 %% - `-erx_record function ROLE PERIPHERAL BRIDGE BUS DEVICE FUNCTION LINE_H MARK MEM_H MEM_SIZE COHERENT
 %%   ROUTE ADDRESS DATA TABLE_BAR TABLE_OFFSET TABLE_ENTRIES`, then six `WINDOW_H OFFSET SIZE_LOG2`
 %%   triples, a given PCIe function (docs/design-pcie.md, "The catalogue and gives"), written
@@ -74,7 +76,7 @@
                   index := non_neg_integer()}
               | #{peripheral := atom(), path := binary(), window := {physical, non_neg_integer(), non_neg_integer()},
                   lines := [non_neg_integer() | {shared, non_neg_integer()}], clock := non_neg_integer(),
-                  index := non_neg_integer()}
+                  index := non_neg_integer(), power => {pos_integer(), pos_integer()}}
               | #{peripheral := atom(), place := {non_neg_integer(), byte(), 0..31, 0..7},
                   window := {object, non_neg_integer(), non_neg_integer(), pos_integer()},
                   lines := [{object, non_neg_integer()} | {shared, {object, non_neg_integer()}}],
@@ -265,11 +267,11 @@ spec(Peripheral, {"given", [Path, Window, Offset, Size, Line, Mark, Memory, Memo
     end;
 spec(_Peripheral, {"given", _}) ->
     bad("a given device record has fewer than a path, ten numbers and a line mark");
-spec(Peripheral, {"device", [Path, Base, Size, Line, Mark, Clock, Index | _]}) ->
+spec(Peripheral, {"device", [Path, Base, Size, Line, Mark, Clock, Index, Off, On | _]}) ->
     case {number(Base, 64), number(Size, 64), number(Line, 32), {number(Clock, 32), number(Index, 32)}, mark(Mark), path(Path)} of
         {{ok, B}, {ok, S}, {ok, L}, {{ok, C}, {ok, I}}, {ok, Sharing}, {ok, P}} ->
-            {ok, #{peripheral => Peripheral, path => P, window => {physical, B, S}, lines => [marked(Sharing, L)],
-                   clock => C, index => I}};
+            power(Off, On, #{peripheral => Peripheral, path => P, window => {physical, B, S}, lines => [marked(Sharing, L)],
+                             clock => C, index => I});
         {{ok, _}, {ok, _}, {ok, _}, {{ok, _}, {ok, _}}, {ok, _}, error} ->
             bad("a device record's path is not a node path of at most "
                 ++ integer_to_list(?ERX_DEVICE_PATH_MAX) ++ " bytes");
@@ -279,7 +281,7 @@ spec(Peripheral, {"device", [Path, Base, Size, Line, Mark, Clock, Index | _]}) -
             bad("a device record's base, size, line, clock or index is not a decimal number of its field's width")
     end;
 spec(_Peripheral, {"device", _}) ->
-    bad("a device record has fewer than a path, five numbers and a line mark");
+    bad("a device record has fewer than a path, seven numbers and a line mark");
 %% A given PCIe function's record (docs/design-pcie.md, "The catalogue and gives"), written by
 %% erx_boot_function_words. Its words are checked in order, each step's refusal naming what
 %% failed: the numbers within their fields, the line mark, the coherence, the route, the six
@@ -403,6 +405,15 @@ with_memory(Spec, Memory, Bytes) -> Spec#{memory => {object, Memory, Bytes}}.
 
 bad(Text) ->
     {error, {bad_device_record, Text}}.
+
+%% A physical record's power line (docs/design-bluetooth.md, "The power line"): its off and on
+%% times, both positive, as the manifest's 16-bit fields hold them, or 0 and 0 for none.
+power(Off, On, Spec) ->
+    case {number(Off, 16), number(On, 16)} of
+        {{ok, 0}, {ok, 0}} -> {ok, Spec};
+        {{ok, F}, {ok, N}} when F > 0, N > 0 -> {ok, Spec#{power => {F, N}}};
+        _ -> bad("a device record's power line times are neither 0 and 0 nor two positive 16-bit milliseconds")
+    end.
 
 numbers(Words) ->
     all([number(Word, 64) || Word <- Words]).

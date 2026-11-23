@@ -463,7 +463,10 @@ layout erx_mf_unit wire_le 8 24
 # CPU address, exclusive, 0 for none: a PCIe bridge row carries its bridge's, and the
 # packer copies it into each pci row behind it (docs/design-pcie.md, "DMA"). places spans
 # a closed bridge's listed places in the places table (flag closed), and is empty on every
-# other row (docs/design-pcie.md, "The closed bus").
+# other row (docs/design-pcie.md, "The closed bus"). power_off_ms and power_on_ms are the off
+# and on times of the power row naming the device, in milliseconds, 0 and 0 for a device with
+# no power line; the root writes them into the device's physical record (docs/design-bluetooth.md,
+# "The power line").
 layout erx_mf_device wire_le 8 104
   field selector mf_selector 0
   field role mf_device_role 4
@@ -481,10 +484,10 @@ layout erx_mf_device wire_le 8 104
   field base u64 64
   field size u64 72
   field clock u32 80
-  field reserved u32 84
+  field power_off_ms u16 84
+  field power_on_ms u16 86
   field dma_limit u64 88
   field places erx_mf_span 96
-  zero reserved all
 # A window on a USB controller's row names in drive the controller's drive whose medium
 # it serves, diskN as N, and every other window mf_none; drive numbers are machine-wide
 # (docs/design-usb.md, "Mass storage reaches the file servers").

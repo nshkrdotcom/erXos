@@ -206,7 +206,7 @@ devices_read(const erx_manifest_view_t *view, bool hostlink, uint32_t line_uart,
 				.line_shared = line_shared(view, index, device.line), .clock = device.clock,
 				.dma_memory = device.dma_memory, .network = kind->role == ERX_MF_DEVICE_ROLE_NETWORK,
 				.path = { (const char *)string_at(view, &device.path), device.path.length },
-				.index = index,
+				.index = index, .power_off_ms = device.power_off_ms, .power_on_ms = device.power_on_ms,
 			};
 			/* Its path is its record's PATH, so the record is never refused for it. */
 			if (!erx_boot_device_path_valid(result->devices[result->device_count - 1].path))
@@ -463,7 +463,8 @@ erx_boot_device_words(const erx_boot_device_t *device, char *words, size_t capac
 	    number_put(words, capacity, &used, device->base) && number_put(words, capacity, &used, device->size) &&
 	    number_put(words, capacity, &used, device->line) &&
 	    word_put(words, capacity, &used, line_mark(device->line_shared)) &&
-	    number_put(words, capacity, &used, device->clock) && number_put(words, capacity, &used, device->index))
+	    number_put(words, capacity, &used, device->clock) && number_put(words, capacity, &used, device->index) &&
+	    number_put(words, capacity, &used, device->power_off_ms) && number_put(words, capacity, &used, device->power_on_ms))
 		return (used);
 	return (0);
 }

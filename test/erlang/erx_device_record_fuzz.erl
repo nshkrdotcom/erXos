@@ -21,6 +21,7 @@
 -define(MAX_WORDS, 6).
 -define(U64, 16#ffffffffffffffff).
 -define(U32, 16#ffffffff).
+-define(U16, 16#ffff).
 -define(U48, 16#ffffffffffff).
 %% The simple-framebuffer binding's formats and their bits per pixel (kernel/core/dt.c).
 -define(FORMATS, [{"a1r5g5b5", 16}, {"a2r10g10b10", 32}, {"a8b8g8r8", 32}, {"a8r8g8b8", 32}, {"r5g6b5", 16},
@@ -194,13 +195,18 @@ spec("given", [Path, Window, Offset, Size, Line, Mark, Memory, Bytes, Clock, Coh
         _ ->
             bad
     end;
-spec("device", [Path, Base, Size, Line, Mark, Clock, Index | _]) ->
+spec("device", [Path, Base, Size, Line, Mark, Clock, Index, Off, On | _]) ->
     case {decimal(Base, ?U64), decimal(Size, ?U64), decimal(Line, ?U32), decimal(Clock, ?U32), decimal(Index, ?U32),
-          node_path(Path)} of
-        {B, S, L, C, I, P} when is_integer(B), is_integer(S), is_integer(L), is_integer(C), is_integer(I), is_binary(P),
-                                (Mark =:= "direct" orelse Mark =:= "shared") ->
-            #{peripheral => virtio_mmio, path => P, window => {physical, B, S}, lines => [marked(L, Mark)], clock => C,
-              index => I};
+          node_path(Path), {decimal(Off, ?U16), decimal(On, ?U16)}} of
+        {B, S, L, C, I, P, {F, N}} when is_integer(B), is_integer(S), is_integer(L), is_integer(C), is_integer(I),
+                                        is_binary(P), (Mark =:= "direct" orelse Mark =:= "shared"),
+                                        is_integer(F), is_integer(N), (F > 0) =:= (N > 0) ->
+            Spec = #{peripheral => virtio_mmio, path => P, window => {physical, B, S}, lines => [marked(L, Mark)],
+                     clock => C, index => I},
+            case F of
+                0 -> Spec;
+                _ -> Spec#{power => {F, N}}
+            end;
         _ ->
             bad
     end;
@@ -304,7 +310,7 @@ entry() ->
     Words = [word() || _ <- lists:seq(1, rand:uniform(?MAX_WORDS + 1) - 1)],
     Form = Pick(["device", "given"]),
     %% The numbers before the mark word and after it.
-    Count = #{"device" => {3, 2}, "given" => {4, 6}},
+    Count = #{"device" => {3, 4}, "given" => {4, 6}},
     {Before, After} = maps:get(Form, Count),
     %% Half the time each number is 0 or 1, which fits every field, COHERENT's included, so a
     %% record of a given's ten numbers is still accepted often.

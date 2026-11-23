@@ -54,9 +54,14 @@ term of the PCIe domain's reaches a holder.
 
 **`firmware`** (docs/design-system.md, "Firmware requests";
 docs/design-pcie.md, "Facets") names a bridge row; one the library does not hold for
-the PCIe domain is answered `{error, not_held}`. Every other request is
-queued, and the **firmware worker**, a process linked to this one, makes
-each in turn through erx_domain_lib:pci_firmware/1, which waits in the
+the PCIe domain is answered `{error, not_held}`. **`power`**, the line
+service's erx_devices:power/2 (docs/design-bluetooth.md, "The power line"),
+names a device row and its power line's phase; one naming a host bridge is
+answered `{error, einval}`. Every other request is queued, and the
+**firmware worker**, a process linked to this one, makes each in turn
+through erx_domain_lib:pci_firmware/1 for a bridge, or
+erx_domain_lib:device_notify/2 with the phase's row
+(erx_devices_pci_core:power_row/1) for a power line, each of which waits in the
 kernel, while this process goes on answering every other call. The
 library's answer is the reply: `ok`, or `{error, Status}` naming the
 kernel call's status. After `etimedout` the library has marked the
@@ -139,9 +144,11 @@ handle_call({pci_bus, _D, targets}, _From, #{lib := Lib} = State) ->
     {reply, erx_devices_pci_core:targets(catalogues(Lib), Devices), Read};
 handle_call({pci_bus, D, {report, Reported}}, From, State) ->
     {noreply, report_or_park({D, Reported, From}, State)};
-handle_call({pci_bus, _D, {firmware, Bridge}}, From, #{lib := Lib, firmware := Queue} = State) ->
-    {Queued, Actions} = erx_devices_pci_core:firmware({From, Bridge}, Queue, catalogues(Lib)),
-    {noreply, perform(Actions, State#{firmware := Queued})}.
+handle_call({pci_bus, _D, {firmware, Bridge}}, From, State) ->
+    {noreply, firmware({From, {bridge, Bridge}}, State)};
+handle_call({power, Device, Phase}, From, State)
+  when is_integer(Device), Device >= 0, Device =< 16#ffffffff, (Phase =:= off orelse Phase =:= on) ->
+    {noreply, firmware({From, {power, Device, Phase}}, State)}.
 
 handle_cast({domain_ended, Id}, #{phase := Phase, held := Held} = State) ->
     {Rows, Kept} = case maps:take(Id, Held) of
@@ -177,6 +184,10 @@ handle_info({firmware_answered, Worker, Request, Answer},
     {noreply, lists:foldl(fun report_or_park/2, Answered, Parked)};
 handle_info(Message, State) ->
     {noreply, response(Message, State)}.
+
+firmware(Request, #{lib := Lib, firmware := Queue} = State) ->
+    {Queued, Actions} = erx_devices_pci_core:firmware(Request, Queue, catalogues(Lib)),
+    perform(Actions, State#{firmware := Queued}).
 
 %% The in-flight rule (erx_devices_pci_core:report_waits/1): a report taken while a
 %% firmware request is in flight parks until its answer.
@@ -303,10 +314,15 @@ act({firmware, Request}, #{worker := Worker} = State) ->
 %% request, sends its answer with the request, and takes the next.
 firmware_worker(Service, Lib) ->
     receive
-        {firmware, {_From, Bridge} = Request} ->
-            Service ! {firmware_answered, self(), Request, Lib:pci_firmware(Bridge)},
+        {firmware, {_From, Asked} = Request} ->
+            Service ! {firmware_answered, self(), Request, library_call(Lib, Asked)},
             firmware_worker(Service, Lib)
     end.
+
+%% The library entry each request names: a bridge's notification, or the row of a
+%% power line's phase among its device's notifications.
+library_call(Lib, {bridge, Bridge}) -> Lib:pci_firmware(Bridge);
+library_call(Lib, {power, Device, Phase}) -> Lib:device_notify(Device, erx_devices_pci_core:power_row(Phase)).
 
 %% The core sends pcie calls only synced, on the answered incarnation's facet.
 incarnation({synced, Id, _Facet}) -> Id.
