@@ -202,6 +202,10 @@ module Erx
     #   the supplicant's key arithmetic calls, and erx_wifi (DOMAIN_ONLY), both only
     #   loaded. No manifest names it; it exists because check_released requires a
     #   release for erx_wifi.
+    # * media, the media domain's (docs/design-drives.md, "Manifest rows"): FAT's read
+    #   core, erx_fat, and the drives' readers, erx_media, never erx_storage or erx_blk.
+    #   No manifest names it yet; it exists because check_released requires a release
+    #   for erx_media.
     # * ntpd, the network time client's session (docs/design-time.md, "Who does what"):
     #   erx_ntpd, which the ntpd template's -eval starts; its sockets and resolver are the
     #   base's network client, whose `grant` key the template's arguments set. It takes no
@@ -225,7 +229,8 @@ module Erx
                         'bt' => [*DOMAIN_BASE, 'crypto', 'erx_bt'].freeze,
                         'pcie' => [*DOMAIN_BASE, 'erx_pcie'].freeze,
                         'ntpd' => [*DOMAIN_BASE, 'erx_ntpd'].freeze,
-                        'wifi' => [*DOMAIN_BASE, 'crypto', 'erx_wifi'].freeze }.freeze
+                        'wifi' => [*DOMAIN_BASE, 'crypto', 'erx_wifi'].freeze,
+                        'media' => [*DOMAIN_BASE, 'erx_fat', 'erx_media'].freeze }.freeze
 
     # Refuses applications of which no release holds one: an application the runtime
     # builds that neither the system release (system) nor a script of the release

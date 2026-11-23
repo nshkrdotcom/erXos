@@ -58,6 +58,24 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
     `erx_fat`, before the release check of step 4 can pass with littlefs in a development build.
   * [Low] `erx_media_table`'s `VOLUMES_MAX` is a local macro of 8 until step 1's `media_volumes_max`
     limit exists in `abi/manifest.txt`; then the reader takes the generated macro.
+* [Low] Step 4's medium reader refuses the table on a failed read of any sector `erx_media_table`
+  asks for, and hands it only 512-byte sectors: `read/2` has no way to be told a sector is
+  unreadable, so a read answered as zeros would make a failed sector 0 read as no table.
+* [Low] `erx_media_table`'s entry size check uses `gpt_entry_min` while the name is read up to
+  `erx_gpt_entry`'s size; check against the layout's size and drop the limit.
+* [Low] No seeded fault covers `erx_fat_read:volume/1`'s `{fat, 16}` term weakened to `=/= not_fat`:
+  add a record volume of FAT12's cluster count.
+* [Low] `erx_media_probe_fuzz`'s mutated sectors are a copy of `erx_media_probe:sectors/0`; derive them.
+* [Low] `fat => none`, a FAT-signed sector with no cluster count, selects `msdosfs`; design-drives.md
+  names only FAT12's refusal, so say what `status` shows for it or refuse it by name.
+* [Low] Small copies of generated facts: `erx_media_probe`'s `?SECTOR`, `erx_media_table`'s
+  `Type =/= 0` for `?ERX_MBR_TYPE_EMPTY`.
+* [Low] Readability of `erx_media_table`: the throws inside booleans in `metadata/3` and
+  `integrity/3`; `taken/3`'s mixed tuple and the partial `header_of/1`; `header/3` builds its
+  `#header{}` before the header passed; `erx_media_probe` calls `boot_sector/1` twice for one
+  decision; lines past 80 columns.
+* [Low] The metadata rule counts a passing backup's array that FreeBSD would set aside when the two
+  headers disagree (`gpt_matched_hdrs`), so it refuses some tables FreeBSD reads; it errs on refusal.
 * [High] storage and apps, the system partition and the `system` tree
   ([docs/todo-system-partition.md](todo-system-partition.md),
   [design-storage.md](design-storage.md#the-system-tree)): each slot
