@@ -36,7 +36,7 @@
 -export([start_log/0, next_call/0, kill_and_await/1]).
 -export([register/0, configured/0, configured/3, templates/0, apps/0, devices/0, session/5, app_session/6, create/1, start/1, stop/2, retire/1, crash/1,
          connect/6, disconnect/1]).
--export([open_side/2, close_side/2, export/3]).
+-export([open_side/2, close_side/2, grant/1, export/3]).
 -export([agent/2, reader/1]).
 
 -include("generated/erx_abi.hrl").
@@ -221,6 +221,9 @@ close_side(Id, Reason) ->
             ok
     end,
     log({close_side, Id, Reason}).
+%% The agent's installation in the system domain's registry (erx_connections:grant/1),
+%% written as the agent writes it; no process of a host test waits on it.
+grant(Facets) -> erx_facets:install(Facets).
 export(Pid, Rights, Peer) when is_pid(Pid) -> log({export, Peer, Rights}).
 
 %% Init's ready report from domain Id, in its envelope.

@@ -506,13 +506,13 @@ client_grant_test() ->
 %% creation carries, as erx_dist:owner/1 answers it.
 with_erx(Facets, Fun) ->
     Text = ["-module(erx).", "-export([cap/1, owner/1]).",
-            "cap(Name) -> maps:get(Name, persistent_term:get({erx, facets}, #{}), undefined).",
+            "cap(Name) -> maps:get(Name, element(2, persistent_term:get({erx, facets}, {0, #{}})), undefined).",
             "owner(Name) -> erx_net_admit:domain(Name)."],
     Forms = [begin {ok, Tokens, _} = erl_scan:string(Form), {ok, Parsed} = erl_parse:parse_form(Tokens), Parsed end
              || Form <- Text],
     {ok, erx, Beam} = compile:forms(Forms),
     {module, erx} = code:load_binary(erx, "erx.erl", Beam),
-    persistent_term:put({erx, facets}, Facets),
+    persistent_term:put({erx, facets}, {1, Facets}),
     try Fun()
     after
         persistent_term:erase({erx, facets}),

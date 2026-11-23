@@ -1846,9 +1846,16 @@ mint_act({mint, Tag, Mint, Name, GranteeId, Limits}, #{core := Core, mint_config
     {ok, #{pid := Pid, ref := Ref}} = erx_domain_core:fetch(Owner(Mint), Core),
     Pid ! {Ref, mint, Mint, {erx_facet_mint, Tag, Name, GranteeId, principal_name(GranteeId, State), Limits}},
     State;
-mint_act({install, Tag, ?SYSTEM_ID, Name, Facet}, State) ->
-    %% The system domain's registry is local, and the service is its one writer.
-    ok = erx_facets:install(#{Name => Facet}),
+mint_act({install, Tag, ?SYSTEM_ID, Name, Facet}, #{agent := Agent} = State) ->
+    %% The system domain's agent writes its registry, as every domain's does, and answers
+    %% the processes waiting for an installation before it answers here, so the
+    %% installation is acknowledged only once its waiters have heard of it. A grant to
+    %% the system domain comes from a configured server, so the runtime is a node and
+    %% runs the agent.
+    case Agent:grant(#{Name => Facet}) of
+        ok -> ok;
+        {error, Reason} -> error({connection_agent, Reason})
+    end,
     mints({installed, ?SYSTEM_ID, Tag}, State);
 mint_act({install, Tag, GranteeId, Name, Facet}, #{core := Core} = State) ->
     %% The core installs only in a grantee that is ready and has not ended.

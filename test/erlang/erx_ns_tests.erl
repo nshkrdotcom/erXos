@@ -209,7 +209,7 @@ app_package(Bytes) ->
     {ok, Grant} = erx_fs:start_link(erx_fs_test_tree, [{observer, self()}, {name, <<"packages">>},
                                                       {file, <<"clock.app">>, Bytes}], rx),
     unlink(Grant),
-    persistent_term:put({erx, facets}, #{packages => {Grant, rx}}),
+    persistent_term:put({erx, facets}, {1, #{packages => {Grant, rx}}}),
     {_, Layout} = package(),
     persistent_term:put(erx_connections_app, {ok, #{place => {packages, [<<"clock.app">>]}, layout => Layout,
                                                    start => {applications, [<<"clock">>]}}}),
@@ -253,7 +253,7 @@ an_rx_app_mount_needs_an_rx_grant() ->
     {Bytes, _} = package(),
     Grant = app_package(Bytes),
     [begin
-         persistent_term:put({erx, facets}, #{packages => {Grant, Rights}}),
+         persistent_term:put({erx, facets}, {1, #{packages => {Grant, Rights}}}),
          ?assertEqual({error, eacces}, erx_ns:mount({erofs, app}, <<"/app">>, [rx])),
          ?assertEqual(undefined, persistent_term:get(erx_ns, undefined)),
          ?assertEqual([], tree_calls())
@@ -325,17 +325,17 @@ a_facet_mount_reads_the_registry_at_use() ->
                  table()),
     ?assertMatch([_, #{provider := ended}, #{provider := ended}], at_use()),
     [First, Second] = [grant(), grant()],
-    persistent_term:put({erx, facets}, #{data => {First, rw}}),
+    persistent_term:put({erx, facets}, {1, #{data => {First, rw}}}),
     ?assertMatch([_, #{provider := {grant, First, <<"data">>}, rights := rw},
                   #{provider := {grant, First, <<"data">>}, root := [<<"sub">>], rights := ro}], at_use()),
-    persistent_term:put({erx, facets}, #{data => {Second, rw}, other => {First, rw}}),
+    persistent_term:put({erx, facets}, {1, #{data => {Second, rw}, other => {First, rw}}}),
     ?assertMatch([_, #{provider := {grant, Second, _}}, #{provider := {grant, Second, _}}], at_use()),
     Remote = remote_pid(),
-    persistent_term:put({erx, facets}, #{data => {Remote, rw}}),
+    persistent_term:put({erx, facets}, {1, #{data => {Remote, rw}}}),
     ?assertMatch([_, #{provider := {grant, Remote, _}}, #{provider := {grant, Remote, _}}], at_use()),
-    persistent_term:put({erx, facets}, #{data => {not_a_pid, rw}}),
+    persistent_term:put({erx, facets}, {1, #{data => {not_a_pid, rw}}}),
     ?assertMatch([_, #{provider := ended}, #{provider := ended}], at_use()),
-    persistent_term:put({erx, facets}, #{data => First}),
+    persistent_term:put({erx, facets}, {1, #{data => First}}),
     ?assertMatch([_, #{provider := ended}, #{provider := ended}], at_use()),
     ?assertEqual(#{}, maps:get(monitors, sys:get_state(erx_ns))).
 
@@ -350,13 +350,13 @@ a_facet_entry_takes_the_lesser_of_its_rights_and_its_grants() ->
     ok = erx_ns:bind(<<"/x">>, <<"/b">>),
     Grant = grant(),
     Rights = fun(GrantRights) ->
-                     persistent_term:put({erx, facets}, #{data => {Grant, GrantRights}}),
+                     persistent_term:put({erx, facets}, {1, #{data => {Grant, GrantRights}}}),
                      [Of || #{provider := {grant, Pid, <<"data">>}, rights := Of} <- at_use(), Pid =:= Grant]
              end,
     ?assertEqual([rw, ro, ro, ro], Rights(rw)),
     ?assertEqual([ro, ro, ro, ro], Rights(ro)),
     ?assertEqual([ro, rx, ro, rx], Rights(rx)),
-    persistent_term:put({erx, facets}, #{data => Grant}),
+    persistent_term:put({erx, facets}, {1, #{data => Grant}}),
     ?assertMatch([_, #{provider := ended}, #{provider := ended}, #{provider := ended}, #{provider := ended}],
                  at_use()).
 
@@ -366,7 +366,7 @@ a_facet_entry_takes_the_lesser_of_its_rights_and_its_grants() ->
 a_facet_grant_that_ends_leaves_the_table_and_survives_a_restart() ->
     ok = erx_ns:mount({facet, data}, <<"/data">>, [{tree, <<"data">>}, rw]),
     Grant = grant(),
-    persistent_term:put({erx, facets}, #{data => {Grant, rw}}),
+    persistent_term:put({erx, facets}, {1, #{data => {Grant, rw}}}),
     Grant ! stop,
     wait_down(Grant),
     Before = settled(),
@@ -460,7 +460,7 @@ at_use() ->
 %% The table erx_facets:table/1 makes of Table over the registry Registry, which the
 %% case leaves holding nothing.
 with_registry(Table, Registry) ->
-    persistent_term:put({erx, facets}, Registry),
+    persistent_term:put({erx, facets}, {1, Registry}),
     try erx_facets:table(Table) after persistent_term:erase({erx, facets}) end.
 
 %% A pid of another node, which this node is not connected to.

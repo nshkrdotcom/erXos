@@ -362,11 +362,11 @@ installs(Agent) ->
         record(Agent, {erx_facets_install, 4, data, {Old, rw}}),
         ?assertEqual({erx_facets_installed, 4}, answer()),
         ?assertEqual(4, erx_connections:dropped()),
-        ?assertEqual(#{echo => Answer, data => {Old, rw}}, persistent_term:get({erx, facets})),
+        ?assertEqual({2, #{echo => Answer, data => {Old, rw}}}, persistent_term:get({erx, facets})),
         ?assertEqual(Old, erx:cap(data)),
         record(Agent, {erx_facets_install, 5, data, {New, ro}}),
         ?assertEqual({erx_facets_installed, 5}, answer()),
-        ?assertEqual(#{echo => Answer, data => {New, ro}}, persistent_term:get({erx, facets}))
+        ?assertEqual({3, #{echo => Answer, data => {New, ro}}}, persistent_term:get({erx, facets}))
     after
         persistent_term:erase({erx, facets}),
         [Pid ! stop || Pid <- [Answer, Old, New]]
@@ -551,3 +551,216 @@ area_refused(Agent) ->
     after
         stop(Refusing)
     end.
+
+%% The registry wait (docs/design-system.md, "Waiting for a grant"): the agent, the one
+%% writer of the facet registry in every domain, answers each process waiting for an
+%% installation (erx_facets:changed/1) after every one, and erx_facets:await/3 waits on
+%% that in the caller. Each case runs on a domain's agent, installing as the system
+%% domain's domain pid does, and those that hold in every domain also on the system
+%% domain's, installing as the domain service does (erx_connections:grant/1). The
+%% registry and the granted names start and end empty.
+wait_test_() ->
+    Both = [{answered_after_installation, fun answered_after_installation/2},
+            {installed_before_request, fun installed_before_request/2},
+            {second_request_answers_first, fun second_request_answers_first/2},
+            {waiter_monitored, fun waiter_monitored/2}, {await_successor, fun await_successor/2},
+            {await_timeout, fun await_timeout/2}],
+    [{atom_to_list(Name), fun() -> with_registry(fun() -> with_agent(fun(A) -> Case(A, domain_install(A)) end) end) end}
+     || {Name, Case} <- Both]
+    ++ [{"system_" ++ atom_to_list(Name), fun() -> with_registry(fun() -> with_sides(fun(A) -> Case(A, fun system_install/2) end) end) end}
+        || {Name, Case} <- Both]
+    ++ [{"granted_before_wake", fun() -> with_registry(fun() -> with_agent(fun granted_before_wake/1) end) end},
+        {"empty_answer_raises", fun() -> with_registry(fun() -> with_agent(fun empty_answer_raises/1) end) end},
+        {"install_refused_in_a_domain", fun() -> with_registry(fun() -> with_agent(fun install_refused/1) end) end},
+        {"install_only_from_own_runtime", fun() -> with_registry(fun() -> with_sides(fun install_own_runtime/1) end) end}].
+
+with_registry(Case) ->
+    Clear = fun() -> [persistent_term:erase(Key) || Key <- [{erx, facets}, {erx, granted}]] end,
+    Clear(),
+    try Case() after Clear() end.
+
+%% An installation of Facet under Name as the system domain's domain pid sends one to a
+%% domain's agent, returned once the agent has acknowledged it.
+domain_install(Agent) ->
+    fun(Name, Facet) ->
+            Tag = erlang:unique_integer([positive]),
+            record(Agent, {erx_facets_install, Tag, Name, Facet}),
+            ?assertEqual({erx_facets_installed, Tag}, answer())
+    end.
+
+%% An installation of Facet under Name as the domain service asks the system domain's agent.
+system_install(Name, Facet) ->
+    ?assertEqual(ok, erx_connections:grant(#{Name => Facet})).
+
+%% A process that stands for a facet's server until the case kills it.
+facet() ->
+    spawn(fun() -> receive after infinity -> ok end end).
+
+%% Whether Request's answer has come, without taking it or dropping the request. The
+%% agent has acted on every message the test sent before, since it answers dropped/0 after
+%% them.
+answered(Request) ->
+    _ = erx_connections:dropped(),
+    {messages, Messages} = process_info(self(), messages),
+    lists:any(fun(Message) -> gen:check_response(Message, Request) =/= no_reply end, Messages).
+
+%% Waits until the agent monitors Pid, or no longer does when Monitored is false.
+monitoring(Agent, Pid, Monitored) ->
+    monitoring(Agent, Pid, Monitored, erlang:monotonic_time(millisecond) + 2000).
+
+monitoring(Agent, Pid, Monitored, Deadline) ->
+    {monitors, Monitors} = process_info(Agent, monitors),
+    case lists:member({process, Pid}, Monitors) of
+        Monitored -> ok;
+        _ ->
+            ?assert(erlang:monotonic_time(millisecond) < Deadline),
+            timer:sleep(5),
+            monitoring(Agent, Pid, Monitored, Deadline)
+    end.
+
+answered_after_installation(_Agent, Install) ->
+    %% A request for the current generation waits for the next installation.
+    Facet = facet(),
+    Request = erx_facets:changed(erx_facets:generation()),
+    ?assertNot(answered(Request)),
+    Install(data, Facet),
+    ?assertEqual({reply, ok}, gen:receive_response(Request, 2000)),
+    exit(Facet, kill).
+
+installed_before_request(_Agent, Install) ->
+    %% An installation between the waiter's read and its request answers the request at
+    %% once: the agent compares the generation the request names with the registry's.
+    Facet = facet(),
+    Seen = erx_facets:generation(),
+    Install(data, Facet),
+    ?assertEqual({reply, ok}, gen:receive_response(erx_facets:changed(Seen), 1000)),
+    exit(Facet, kill).
+
+second_request_answers_first(_Agent, Install) ->
+    %% One process's second request answers its first at once, and the second waits on.
+    Facet = facet(),
+    Seen = erx_facets:generation(),
+    First = erx_facets:changed(Seen),
+    Second = erx_facets:changed(Seen),
+    ?assertEqual({reply, ok}, gen:receive_response(First, 1000)),
+    ?assertNot(answered(Second)),
+    Install(data, Facet),
+    ?assertEqual({reply, ok}, gen:receive_response(Second, 2000)),
+    exit(Facet, kill).
+
+waiter_monitored(Agent, Install) ->
+    %% The agent monitors each waiting asker and no longer once it has answered it, and
+    %% takes an unanswered asker's end without counting it as dropped.
+    Test = self(),
+    Facet = facet(),
+    Seen = erx_facets:generation(),
+    Waiter = spawn(fun() -> Test ! {woke, gen:receive_response(erx_facets:changed(Seen), infinity)} end),
+    monitoring(Agent, Waiter, true),
+    Install(data, Facet),
+    ?assertEqual({reply, ok}, receive {woke, Woke} -> Woke after 2000 -> timeout end),
+    monitoring(Agent, Waiter, false),
+    Asker = spawn(fun() -> gen:receive_response(erx_facets:changed(erx_facets:generation()), infinity) end),
+    monitoring(Agent, Asker, true),
+    Dropped = erx_connections:dropped(),
+    exit(Asker, kill),
+    monitoring(Agent, Asker, false),
+    ?assertEqual(Dropped, erx_connections:dropped()),
+    exit(Facet, kill).
+
+await_successor(Agent, Install) ->
+    %% await/3 with Seen the facet it followed is not answered while the registry holds
+    %% that facet, nor by an installation of another name, and is answered with the
+    %% successor's; with none, a facet in place answers at once.
+    Test = self(),
+    [Old, New, Other] = [facet() || _ <- [1, 2, 3]],
+    Install(data, Old),
+    ?assertEqual({ok, Old}, erx_facets:await(data, none, 0)),
+    Waiter = spawn(fun() -> Test ! {awaited, erx_facets:await(data, Old, 5000)} end),
+    monitoring(Agent, Waiter, true),
+    Install(other, Other),
+    monitoring(Agent, Waiter, true),
+    ?assertEqual(none, receive {awaited, Early} -> Early after 0 -> none end),
+    Install(data, New),
+    ?assertEqual({ok, New}, receive {awaited, Awaited} -> Awaited after 2000 -> timeout end),
+    [exit(Pid, kill) || Pid <- [Old, New, Other]].
+
+await_timeout(_Agent, Install) ->
+    %% await/3 answers timeout at its deadline, in milliseconds or absolute, and an
+    %% installation after it leaves nothing in the caller's mailbox.
+    Facet = facet(),
+    ?assertEqual(timeout, erx_facets:await(data, none, 50)),
+    ?assertEqual(timeout, erx_facets:await(data, none, {abs, erlang:monotonic_time(millisecond) + 50})),
+    Install(data, Facet),
+    _ = erx_connections:dropped(),
+    ?assertEqual({messages, []}, process_info(self(), messages)),
+    exit(Facet, kill).
+
+granted_before_wake(Agent) ->
+    %% The ready answer writes its granted names before the installation that wakes a
+    %% waiter, so a waiter woken by it reads them. The agent's writes and sends are
+    %% traced to the test in the order the agent makes them, which makes the order
+    %% checkable whatever the schedulers do.
+    Test = self(),
+    Seen = erx_facets:generation(),
+    Waiter = spawn(fun() ->
+                           {reply, ok} = gen:receive_response(erx_facets:changed(Seen), infinity),
+                           Test ! {granted, erx:granted()}
+                   end),
+    monitoring(Agent, Waiter, true),
+    erlang:trace_pattern({persistent_term, put, 2}, true, [global]),
+    erlang:trace(Agent, true, [call, send]),
+    try
+        record(Agent, {erx_facets, #{}, [{data, 5}]}),
+        ?assertEqual({granted, [data]}, receive {granted, _} = Granted -> Granted after 2000 -> timeout end),
+        ?assertMatch([{put, {erx, granted}}, {put, {erx, facets}}, woke | _], agent_effects())
+    after
+        erlang:trace(Agent, false, [call, send]),
+        erlang:trace_pattern({persistent_term, put, 2}, false, [global])
+    end.
+
+%% The agent's persistent_term writes and its answers, in order, from the trace: every
+%% send but init's facets is the answer to the one waiter, which goes to its request's
+%% alias rather than to its pid.
+agent_effects() ->
+    receive
+        {trace, _, call, {persistent_term, put, [Key, _]}} -> [{put, Key} | agent_effects()];
+        {trace, _, send, {erx_facets, _}, _} -> agent_effects();
+        {trace, _, send, _, _} -> [woke | agent_effects()]
+    after 200 -> []
+    end.
+
+empty_answer_raises(Agent) ->
+    %% A ready answer that installs no facet is an installation still: it raises the
+    %% generation, so a waiter on the granted names alone is answered.
+    Seen = erx_facets:generation(),
+    record(Agent, {erx_facets, #{}, [{data, 5}]}),
+    ?assertEqual({reply, ok}, gen:receive_response(erx_facets:changed(Seen), 1000)),
+    ?assertEqual(Seen + 1, erx_facets:generation()).
+
+install_refused(_Agent) ->
+    %% A domain's installations come from the system domain over its connection, so its
+    %% agent answers grant/1 badarg and installs nothing.
+    Facet = facet(),
+    ?assertEqual({error, badarg}, erx_connections:grant(#{forged => Facet})),
+    ?assertEqual(undefined, erx_facets:find(forged)),
+    ?assertEqual(0, erx_facets:generation()),
+    exit(Facet, kill).
+
+install_own_runtime(Agent) ->
+    %% The system domain's agent installs what its own runtime asks and answers after;
+    %% the same request, and a request to hear of an installation, in another domain's
+    %% envelope are no calls it takes: dropped and counted, installing and answering
+    %% nothing. A generation that is no non-negative integer is answered badarg.
+    Facet = facet(),
+    ?assertEqual(ok, erx_connections:grant(#{echo => Facet})),
+    ?assertEqual(Facet, erx_facets:find(echo)),
+    Dropped = erx_connections:dropped(),
+    Agent ! {erx_origin, ?PEER, {'$gen_call', {self(), make_ref()}, {install, #{forged => Facet}}}},
+    Agent ! {erx_origin, ?PEER, {'$gen_call', {self(), make_ref()}, {changed, 0}}},
+    ?assertEqual(Dropped + 2, erx_connections:dropped()),
+    ?assertEqual(undefined, erx_facets:find(forged)),
+    ?assertEqual(1, erx_facets:generation()),
+    ?assertEqual({messages, []}, process_info(self(), messages)),
+    ?assertEqual({reply, {error, badarg}}, gen:receive_response(erx_facets:changed(-1), 1000)),
+    ?assertEqual({reply, {error, badarg}}, gen:receive_response(erx_facets:changed(none), 1000)),
+    exit(Facet, kill).

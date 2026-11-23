@@ -10,10 +10,18 @@ persistent term that holds it, so the shape of a facet is known here and
 nowhere else, and the build's `facet-registry` chokepoint refuses the term's
 key in any other module.
 
-install/1 is the one writer. The domain's connection agent (erx_connections)
-calls it, and in the system domain, whose registry is local, the domain
-service (erx_domain_srv) does; the `facet-registry-writers` chokepoint
-refuses any other caller.
+install/1 is the one writer, and the domain's connection agent
+(erx_connections) its one caller, in every domain: in the system domain the
+domain service installs through the agent (erx_connections:grant/1). The
+`facet-registry-writers` chokepoint refuses any other caller of install/1,
+and `facet-install-callers` any caller of erx_connections:grant/1 but the
+domain service.
+
+The registry's value carries a generation, a count that each installation
+raises, an empty one included, so a process can wait for the next one
+(docs/design-system.md, "Waiting for a grant"): await/3 waits for a facet of a
+name, and changed/1 asks the agent, which writes every installation and
+answers its waiters after each, for word of one past a generation.
 
 The readers read the registry at use:
 
@@ -31,12 +39,14 @@ It is preloaded beside prim_file and erx_path, since every resolution of a
 path reads it, the code loader's included.
 """.
 
--export([find/1, pids/0, install/1, is_facet/1, files/2, table/1, file_grant/2, file_grant/3]).
+-export([find/1, pids/0, install/1, generation/0, await/3, changed/1, is_facet/1, files/2, table/1,
+         file_grant/2, file_grant/3]).
 -export_type([facet/0]).
 
 -include("generated/erx_abi.hrl").
 
-%% The registry's persistent term, which no other module names.
+%% The registry's persistent term, which no other module names: {Generation, Facets},
+%% the count of installations and each facet by name.
 -define(REGISTRY, {erx, facets}).
 
 -doc """
@@ -72,7 +82,74 @@ to another write that read the registry before it.
 """.
 -spec install(#{atom() => facet()}) -> ok.
 install(Facets) ->
-    persistent_term:put(?REGISTRY, maps:merge(registry(), Facets)).
+    {Generation, Held} = value(),
+    persistent_term:put(?REGISTRY, {Generation + 1, maps:merge(Held, Facets)}).
+
+-doc """
+The registry's generation: how many installations it has taken, 0 before the
+first. A waiter reads it first, then what it decides on (erx:granted/0,1, the
+facets), and names it in changed/1, so no installation after its read is missed.
+""".
+-spec generation() -> non_neg_integer().
+generation() ->
+    element(1, value()).
+
+-doc """
+The pid of the facet the registry holds under `Name`, once it holds one whose pid
+is not `Seen`: `none` for a first wait, or the pid of a facet the caller followed
+and whose server has ended, so a re-grant's successor answers. `timeout` when
+`Timeout` passes first: milliseconds, `infinity` or `{abs, Deadline}` in
+erlang:monotonic_time(millisecond), one deadline over every read. `{error, noproc}`
+when the runtime is no node, so no agent writes the registry.
+
+It runs in the caller: it reads the generation and then the facets, answers at
+once when they hold such a facet, and otherwise asks the agent for word of a
+generation past the one it read (changed/1) and reads again. A grant that failed
+never reaches the registry, so a failure shows here as `timeout`. The answer says
+what the registry holds, not that the server lives: a waiter that must hear of
+the server's end monitors the pid, and waits again with it as `Seen`.
+""".
+-spec await(atom(), pid() | none, timeout() | {abs, integer()}) -> {ok, pid()} | timeout | {error, noproc}.
+await(Name, Seen, Timeout) when is_integer(Timeout) ->
+    await(Name, Seen, {abs, erlang:monotonic_time(millisecond) + Timeout});
+await(Name, Seen, Timeout) ->
+    Generation = generation(),
+    case find(Name) of
+        Pid when is_pid(Pid), Pid =/= Seen ->
+            {ok, Pid};
+        _ ->
+            case changed(Generation) of
+                {error, noproc} = NoAgent ->
+                    NoAgent;
+                Request ->
+                    case gen:receive_response(Request, Timeout) of
+                        {reply, ok} -> await(Name, Seen, Timeout);
+                        timeout -> timeout;
+                        %% The agent's end, which ends the runtime too.
+                        {error, {_Reason, _Agent}} -> {error, noproc}
+                    end
+            end
+    end.
+
+-doc """
+Asks the domain's connection agent for word of an installation past
+`Generation`, and returns the request's id. The agent answers `ok` once the
+registry's generation is past it, at once when it already is, and also when the
+same process asks again, which answers its older request: so `ok` says to read
+again, not that the registry changed. A process therefore keeps at most one
+request outstanding, one for every fact it waits on, since two would answer each
+other in turn with no installation. A process that takes its own messages, as a
+gen_server does, takes the answer with gen_server:check_response/2; any other with
+gen_server:receive_response/2, which drops a late answer once its timeout has
+passed. `{error, noproc}` when the runtime is no node and runs no agent; the agent
+answers `{error, badarg}` for a generation that is no non-negative integer.
+""".
+-spec changed(non_neg_integer()) -> gen:request_id() | {error, noproc}.
+changed(Generation) ->
+    case whereis(erx_connections) of
+        undefined -> {error, noproc};
+        Agent -> gen:send_request(Agent, '$gen_call', {changed, Generation})
+    end.
 
 -doc """
 Whether `Term` is a facet as the system domain sends it: a pid, or a pid with
@@ -156,8 +233,12 @@ file_grant(Name, Rights, Tree) ->
             {error, enoent}
     end.
 
+%% The facets, by name.
 registry() ->
-    persistent_term:get(?REGISTRY, #{}).
+    element(2, value()).
+
+value() ->
+    persistent_term:get(?REGISTRY, {0, #{}}).
 
 -spec pid(facet()) -> pid().
 pid({Pid, _Rights}) -> Pid;

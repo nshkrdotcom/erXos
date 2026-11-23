@@ -612,19 +612,19 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
      an empty one included; add `generation/0`, `await/3` (a `Timeout` of milliseconds, `infinity` or
      `{abs, Deadline}`) and `changed/1`. `erx_connections.erl`: both loops (`sides/3` at :184, `records/3` at
      :373) answer `changed`, keeping each asker in a pid-keyed map with a monitor, answering every entry
-     and removing its monitor at each installation, and removing an entry at its `'DOWN'`; `install/1` is
+     and removing its monitor at each installation, and removing an entry at its `'DOWN'`; `grant/1` is
      exported, a call the system domain's loop takes only from its own runtime and the domain's loop
      answers `badarg`; :382-390 writes `{erx, granted}` before the install. `erx_domain_srv.erl:1849-1852`
-     installs through `Agent:install/1` and acknowledges on its answer. Build checks:
+     installs through `Agent:grant/1` and acknowledges on its answer. Build checks:
      `tools/lib/erx/chokepoint_rules/facets.rb:12` `FACETS_WRITERS` is `erx_connections` alone, and the
-     rule's text says so; a new rule there, `facet-install-callers`, refuses `erx_connections:install`
+     rule's text says so; a new rule there, `facet-install-callers`, refuses `erx_connections:grant`
      outside `erx_domain_srv.erl` in the forms `facet-registry-writers` matches, with a seeded violation,
      both proved by `test/host/facet_registry_chokepoints_test.rb`. Fixtures that build the registry's
      value build the new one: the modules of `test/erlang` that put `{erx, facets}` (`erx_connections_tests`,
      `erx_domain_mints_srv_tests`, `erx_hostlink_tests`, `erx_net_grant_tests`, `erx_ns_tests` from :328,
      `erx_pkg_system_tests`, `erx_prog_handler_tests`, `erx_ui_server_tests`), and the oracle of
      `erx_connections_install_fuzz.erl:42`, which compares its model with the registry; the domain service's
-     stand-in agent, `test/erlang/erx_domain_fake_lib.erl:39`, exports `install/1`. Suites: `apps`, `usb`,
+     stand-in agent, `test/erlang/erx_domain_fake_lib.erl:39`, exports `grant/1`. Suites: `apps`, `usb`,
      `net_device`.
   2. The two polls. `erlang/apps/erx_session/src/erx_ssh_dev.erl:90-93,121-158`: `start_when_granted/2`
      becomes `await/3` on `net` and `data` within ten minutes of the boot, and the import's `home` and
@@ -664,6 +664,15 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   `erx_domain_mints_srv_tests`, `erx_starter_tests`, `erx_domain_tests`, `apps_chokepoints_test` (step 3);
   `erx_devices_pci_core_tests`, `erx_devices_pci_tests`, `erx_domain_mints_srv_tests`, `dom_core_test`
   (step 4).
+* [Medium] system domain's connection agent, `erlang/apps/erx/src/erx_connections.erl` (`sides/3`, the
+  `{grant, Facets}` call) against `tools/lib/erx/chokepoint_rules/facets.rb` (`facet-install-callers`):
+  the agent installs what any process of the system domain's own runtime asks, and the rule refuses only a
+  call spelled with `erx_connections` and `install`, so `gen_server:call(erx_connections, {install, ...})`
+  or a raw `'$gen_call'` message from any module installs a facet whose rights the manifest did not give,
+  and the domain service's own call, through its agent variable, is invisible to the rule. Fix by
+  construction: the agent takes `install` only from the domain service's pid (its registered name at the
+  call, or the service introducing itself once), and the rule shrinks or goes; design-system.md "Waiting
+  for a grant" then says so.
 * [Medium] code server, the rest of its inputs (`erlang/apps/erx/src/erx_code_agent.erl`,
   `erxos_env/2`; `erlang/apps/erx_code/src/erx_code_target.erl`): the code server reads
   its boot information's `supervised` flag and its runtime's limits, but no reader of the

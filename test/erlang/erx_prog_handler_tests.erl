@@ -428,7 +428,7 @@ a_first_draw_without_a_display_is_enodev_and_retried(_) ->
                        H ! {erx_channel, Port, ?OPEN(4, <<"/dev/draw">>)},
                        NoDisplay = fake(send),
                        Alive = is_process_alive(H) andalso not closed(Port, 5),
-                       persistent_term:put({erx, facets}, #{display => self()}),
+                       persistent_term:put({erx, facets}, {1, #{display => self()}}),
                        H ! {erx_channel, Port, ?OPEN(5, <<"/dev/draw">>)},
                        Windows = told(opened),
                        Relayed = told(open),
@@ -444,7 +444,7 @@ a_first_draw_without_a_display_is_enodev_and_retried(_) ->
 %% once, with its errno.
 a_first_draw_the_connection_refuses_ends_the_program(_) ->
     first_draw(fun() ->
-                       persistent_term:put({erx, facets}, #{display => self()}),
+                       persistent_term:put({erx, facets}, {1, #{display => self()}}),
                        persistent_term:put(erx_draw_conn, true),
                        ok = logger:add_handler(?MODULE, ?MODULE, #{config => #{to => self()}}),
                        {H, Port, []} = started([]),
@@ -469,7 +469,7 @@ a_first_draw_the_connection_refuses_ends_the_program(_) ->
 %% window.
 window_names_before_draw_are_enoent(_) ->
     first_draw(fun() ->
-                       persistent_term:put({erx, facets}, #{display => self()}),
+                       persistent_term:put({erx, facets}, {1, #{display => self()}}),
                        {H, Port, []} = started([]),
                        H ! {erx_channel, Port, ?OPEN(4, <<"/dev/ctl">>)},
                        Ctl = fake(send),
@@ -486,7 +486,7 @@ window_names_before_draw_are_enoent(_) ->
 %% no second window.
 opens_behind_the_first_draw_meet_its_tree(_) ->
     first_draw(fun() ->
-                       persistent_term:put({erx, facets}, #{display => self()}),
+                       persistent_term:put({erx, facets}, {1, #{display => self()}}),
                        {H, Port, []} = started([]),
                        [H ! {erx_channel, Port, ?OPEN(Slot, Path)}
                         || {Slot, Path} <- [{4, <<"/dev/draw">>}, {5, <<"/dev/ctl">>}, {6, <<"/dev/kbd">>},

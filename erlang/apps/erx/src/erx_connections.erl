@@ -13,14 +13,17 @@
 %% connection_down, and tells the domain pid when one ends by itself (records/3); it hands
 %% init the domain's facets, the domain service's answer to init's ready report, and, in
 %% an app's session, answers erx_app with the app's record once it has come (app/0) and
-%% erx_ns with the record it holds, never waiting (app_held/0). Each
+%% erx_ns with the record it holds, never waiting (app_held/0). Each agent is its
+%% domain's facet registry's one writer, the system domain's installing what the domain
+%% service asks (grant/1), and answers each process of its runtime waiting for an
+%% installation (erx_facets:changed/1) after every one. Each
 %% agent counts the messages it drops (dropped/0). The agent and net_kernel live as long
 %% as the runtime: the agent halts it on net_kernel's end other than an ordered stop, and
 %% erx_dist:accept/1 on the agent's.
 -module(erx_connections).
 -moduledoc false.
 
--export([start/2, open_side/2, close_side/2, dropped/0, connection/1, area/1, app/0,
+-export([start/2, open_side/2, close_side/2, grant/1, dropped/0, connection/1, area/1, app/0,
          app_held/0]).
 %% A domain's agent past its system connection's hand-over, and the system domain's agent,
 %% which start/2 runs and the host test (test/erlang/erx_connections_tests.erl) runs with
@@ -66,6 +69,17 @@ open_side(Id, Values) ->
 -spec close_side(pos_integer(), term()) -> ok | {error, noproc}.
 close_side(Id, Reason) when Reason =/= normal ->
     call({close_side, Id, Reason}).
+
+%% In the system domain: installs Facets in the system domain's facet registry, as
+%% erx_facets:install/1 does, answers every process waiting for an installation
+%% (erx_facets:changed/1), and then answers ok, so the agent is the registry's one writer
+%% in every domain and no installation goes unanswered (docs/design-system.md, "Waiting
+%% for a grant"). The domain service alone calls it, which the build's
+%% facet-install-callers chokepoint holds. {error, badarg} asked of a domain's agent,
+%% whose installations come from the system domain over its connection.
+-spec grant(#{atom() => erx_facets:facet()}) -> ok | {error, noproc | badarg}.
+grant(Facets) when is_map(Facets) ->
+    call({grant, Facets}).
 
 %% How many messages this runtime's agent has dropped, each one it does not act on:
 %% in a domain, a record that did not come from the system connection among them
@@ -157,7 +171,7 @@ serve(Kernel, {PeerId, PeerNode, DomainPid}) ->
 introduced(Kernel, SystemId, DomainPid, Open, MapArea) ->
     persistent_term:put({erx, domain_pid}, DomainPid),
     records(#{kernel => Kernel, system => SystemId, domain_pid => DomainPid, open => Open, map_area => MapArea,
-              app => {waiting, []}}, #{}, 0).
+              app => {waiting, []}, waiters => #{}}, #{}, 0).
 
 %% An introduced connection's port, on the lane driver.
 lane_open(Command) ->
@@ -167,9 +181,9 @@ lane_open(Command) ->
 %% opens from its open command.
 -spec system_sides(pid(), fun((string()) -> port())) -> no_return().
 system_sides(Kernel, Open) ->
-    sides(#{kernel => Kernel, open => Open}, #{}, 0).
+    sides(#{kernel => Kernel, open => Open, waiters => #{}}, #{}, 0).
 
-%% The system domain's agent: the domain service's two calls, with each side by domain id
+%% The system domain's agent: the domain service's calls, with each side by domain id
 %% as {Port, Monitor, Phase}: its port, the monitor on it, and {opening, From}, the
 %% open_side call still to answer, until erx_dist's owner says the side's entry is up,
 %% then {open, Service}, the process that made the call, the domain service. The answer
@@ -182,7 +196,8 @@ system_sides(Kernel, Open) ->
 %% (docs/design-system.md, "A lost system connection ends the domain"). A side the
 %% service closes is no longer monitored, so its ordered end tells no one. The owner's
 %% word for a side no longer opening, one closed or ended first, is ignored, and anything
-%% else dropped and counted in Dropped.
+%% else dropped and counted in Dropped. The service's installations in the system domain's
+%% registry (grant/1) and the waits for them (asked/3) are served as in records/3.
 sides(#{kernel := Kernel, open := Open} = Env, Sides, Dropped) ->
     receive
         {'$gen_call', From, {open_side, Id, Values}} when not is_map_key(Id, Sides) ->
@@ -214,6 +229,14 @@ sides(#{kernel := Kernel, open := Open} = Env, Sides, Dropped) ->
                     gen:reply(From, ok),
                     sides(Env, Sides, Dropped)
             end;
+        {'$gen_call', From, {grant, Facets}} when is_map(Facets) ->
+            Next = write(Facets, Env),
+            gen:reply(From, ok),
+            sides(Next, Sides, Dropped);
+        {'$gen_call', {Pid, _} = From, {changed, Seen}} when is_pid(Pid), is_integer(Seen), Seen >= 0 ->
+            sides(asked(From, Seen, Env), Sides, Dropped);
+        {waiter_ended, Monitor, process, Pid, _Reason} ->
+            sides(waiter_ended(Monitor, Pid, Env), Sides, Dropped);
         {'$gen_call', From, dropped} ->
             gen:reply(From, Dropped),
             sides(Env, Sides, Dropped);
@@ -353,7 +376,9 @@ hand_over(Kernel, #{port := Port} = Connection) ->
 %%   domain's facets by name, which the agent hands init (edit 65), with the names and
 %%   interfaces of the facets of configured domains the manifest grants it, which the agent keeps for
 %%   erx:granted/0 (docs/design-system.md, "Facets a configured domain serves"), and each later
-%%   installation of a facet a configured domain minted for this one (install/4);
+%%   installation of a facet a configured domain minted for this one (minted_install/4);
+%% * a request of its own runtime's to hear of the next installation, after either of
+%%   those installations, and the asker's end (asked/3);
 %% * erx_dist's word that an introduced connection's entry is up;
 %% * each introduced port's end, and net_kernel's end;
 %% * a pixel area's unmap, and erx_area:open/1's question for a peer's area;
@@ -384,19 +409,21 @@ records(#{kernel := Kernel, system := SystemId} = Env, Held, Dropped) ->
         {erx_origin, SystemId, {erx_facets, Facets, Granted}} when is_map(Facets) ->
             Valid = #{Name => Facet || Name := Facet <- Facets,
                                        is_atom(Name), erx_facets:is_facet(Facet)},
-            ok = erx_facets:install(Valid),
-            %% Kept before init hears of the facets, so the applications init then starts
-            %% find the grants erx:granted/0,1 read.
+            %% One installation, an empty one included: the granted names first, which
+            %% erx:granted/0,1 read, then the facets, whose installation raises the
+            %% generation, so a waiter that finds it past the one it read finds the names
+            %% in place. Both are kept before init hears of the facets, so the
+            %% applications init then starts find them.
             persistent_term:put({erx, granted}, lists:usort(grants(Granted))),
+            Next = write(Valid, Env),
             init ! {erx_facets, Valid},
-            records(Env, Held, Dropped);
+            records(Next, Held, Dropped);
         {erx_origin, SystemId, {erx_app, App}} when is_map(App), element(1, map_get(app, Env)) =:= waiting ->
             records(app_came(App, Env), Held, Dropped);
         {erx_origin, SystemId, {erx_facets_install, Tag, Name, Facet}} when is_integer(Tag), is_atom(Name) ->
             case erx_facets:is_facet(Facet) of
                 true ->
-                    install(Env, Tag, Name, Facet),
-                    records(Env, Held, Dropped);
+                    records(minted_install(Env, Tag, Name, Facet), Held, Dropped);
                 false ->
                     records(Env, Held, Dropped + 1)
             end;
@@ -411,6 +438,10 @@ records(#{kernel := Kernel, system := SystemId} = Env, Held, Dropped) ->
             %% terms, so an area it let go is no longer among them.
             erlang:garbage_collect(),
             records(Env, Held, Dropped);
+        {'$gen_call', {Pid, _} = From, {changed, Seen}} when is_pid(Pid), is_integer(Seen), Seen >= 0 ->
+            records(asked(From, Seen, Env), Held, Dropped);
+        {waiter_ended, Monitor, process, Pid, _Reason} ->
+            records(waiter_ended(Monitor, Pid, Env), Held, Dropped);
         {'$gen_call', From, dropped} ->
             gen:reply(From, Dropped),
             records(Env, Held, Dropped);
@@ -446,13 +477,53 @@ records(#{kernel := Kernel, system := SystemId} = Env, Held, Dropped) ->
 %% A facet a configured domain minted for this domain, installed under Name in the
 %% domain's registry, replacing an older pid of that name, and acknowledged to the domain
 %% pid with the installation's tag (docs/design-system.md, "Facets a configured domain
-%% serves"). The agent is the registry's one writer in a domain (erx_facets:install/1),
-%% for the ready answer's facets and every installation alike, so no installation is
-%% lost to a write that read the registry before it.
-install(#{domain_pid := DomainPid}, Tag, Name, Facet) ->
-    ok = erx_facets:install(#{Name => Facet}),
+%% serves").
+minted_install(#{domain_pid := DomainPid} = Env, Tag, Name, Facet) ->
+    Next = write(#{Name => Facet}, Env),
     DomainPid ! {erx_facets_installed, Tag},
-    ok.
+    Next.
+
+%% The processes waiting for an installation (erx_facets:changed/1; docs/design-system.md,
+%% "Waiting for a grant"), Env's waiters: each asking pid's {From, Monitor}, the request to
+%% answer and a monitor of the asker. A request naming a generation the registry is past
+%% is answered at once, since an installation came after the asker's read; a pid's second
+%% request answers its first; and an entry goes at its asker's end. So the map holds at
+%% most one entry for each living process that asked since the last installation. A
+%% request comes only from this runtime: one from another domain arrives in its
+%% {erx_origin, D, Msg} envelope, which is no call either loop takes.
+asked({Pid, _} = From, Seen, #{waiters := Waiters} = Env) ->
+    Others = case maps:take(Pid, Waiters) of
+                 {Older, Rest} -> answer_waiter(Older), Rest;
+                 error -> Waiters
+             end,
+    case erx_facets:generation() > Seen of
+        true ->
+            gen:reply(From, ok),
+            Env#{waiters := Others};
+        false ->
+            Monitor = erlang:monitor(process, Pid, [{tag, waiter_ended}]),
+            Env#{waiters := Others#{Pid => {From, Monitor}}}
+    end.
+
+%% The one installation in the registry, which every path of either loop takes: writes
+%% Facets (erx_facets:install/1, which raises the generation, an empty map included) and
+%% then answers every waiter, no longer monitored. The agent is the registry's one
+%% writer, so no installation is lost to a write that read the registry before it.
+write(Facets, #{waiters := Waiters} = Env) ->
+    ok = erx_facets:install(Facets),
+    maps:foreach(fun(_Pid, Waiter) -> answer_waiter(Waiter) end, Waiters),
+    Env#{waiters := #{}}.
+
+answer_waiter({From, Monitor}) ->
+    erlang:demonitor(Monitor, [flush]),
+    gen:reply(From, ok).
+
+%% A waiter ended unanswered: its entry goes, if the monitor is still its entry's.
+waiter_ended(Monitor, Pid, #{waiters := Waiters} = Env) ->
+    case Waiters of
+        #{Pid := {_From, Monitor}} -> Env#{waiters := maps:remove(Pid, Waiters)};
+        #{} -> Env
+    end.
 
 %% The {Name, Interface} pairs of List, the ready answer's names and interface numbers of
 %% the facets the manifest grants the domain, ignoring any other element and an improper

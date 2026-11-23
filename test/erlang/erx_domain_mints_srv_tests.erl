@@ -207,7 +207,8 @@ installs() ->
     SystemFacet = pid('a@erxos', 5, 3),
     PidA ! {erx_origin, 5, {erx_facet_minted, SystemTag, {ok, SystemFacet}}},
     wait(fun(#{{system, echo} := {installed, {5, 4}, F}}) -> F =:= SystemFacet end),
-    ?assertEqual(#{echo => SystemFacet}, persistent_term:get({erx, facets})),
+    {_Generation, SystemRegistry} = persistent_term:get({erx, facets}),
+    ?assertEqual(#{echo => SystemFacet}, SystemRegistry),
     erlang:trace(PidA, false, ['receive']),
     erlang:trace(PidB, false, ['receive']).
 

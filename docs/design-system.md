@@ -2415,7 +2415,7 @@ installation ([Waiting for a
 grant](#waiting-for-a-grant)). Its one writer, `erx_facets:install/1`,
 is called by the domain's connection agent alone, in every domain: the
 domain service installs a facet for the system domain through the
-system domain's agent (`erx_connections:install/1`). Its readers read it at use:
+system domain's agent (`erx_connections:grant/1`). Its readers read it at use:
 `erx:cap/1`; a resolution, which puts each facet's grant beneath its
 mount with the lesser of the two rights (`erx_facets:table/1`), so a
 re-grant serves the next lookup; and a reader that opens a files facet's
@@ -3104,8 +3104,9 @@ answer the device service gives, never on a facet
 each installation raises ([The registry](#facets-a-configured-domain-serves)),
 which `erx_facets:generation/0` reads.
 
-* `erx_facets:await(Name, Seen, Timeout)` answers `{ok, Facet}` once the
-  registry holds under `Name` a facet whose pid is not `Seen`: `none` for
+* `erx_facets:await(Name, Seen, Timeout)` answers `{ok, Pid}`, a facet's
+  pid as `erx:cap/1` gives it, once the registry holds under `Name` a
+  facet whose pid is not `Seen`: `none` for
   a first wait, or the pid of a facet the caller followed and whose
   server has ended. It answers `timeout` when `Timeout` passes first:
   milliseconds, `infinity` or `{abs, Deadline}`, as
@@ -3118,7 +3119,9 @@ which `erx_facets:generation/0` reads.
   domain's connection agent answers `ok` once the registry's generation
   is past `Generation`, at once when it already is, and also when the
   same process asks again, which answers its older request. So `ok`
-  says to read again, not that the registry changed. A process that
+  says to read again, not that the registry changed, and a process
+  keeps one request outstanding for every fact it waits on, since two
+  would answer each other in turn. A process that
   must go on taking its own messages, as a `gen_server` does, takes the
   answer with `gen_server:check_response/2` and reads again.
 
@@ -3158,13 +3161,13 @@ The agent writes every installation, the system domain's included
 ([The registry](#facets-a-configured-domain-serves)), so every
 installation is followed by its answers with no second party to tell.
 In the system domain the domain service installs with
-`erx_connections:install/1`, which the system domain's agent takes only
+`erx_connections:grant/1`, which the system domain's agent takes only
 as a call from its own runtime: a message from another domain arrives
 in its `{erx_origin, D, Msg}` envelope, which is no call the agent takes
-(`erx_connections.erl:123`), and a domain's agent answers `install`
+(`erx_connections:serve/2`), and a domain's agent answers `grant`
 `badarg`, as any call it does not take, since a domain's installations
 come from the system domain over its connection. The build check
-`facet-install-callers` refuses a call of `erx_connections:install/1`
+`facet-install-callers` refuses a call of `erx_connections:grant/1`
 outside the domain service, as `facet-registry-writers` refuses one of
 `erx_facets:install/1` outside the agent, each with a seeded violation,
 so no other code of the system domain installs a facet whose rights the
@@ -3176,7 +3179,7 @@ restarted: its end ends the runtime (`erx_dist.erl:146`), so no waiter
 outlives it. A waiter that restarts asks again, and its predecessor's
 entry goes at the predecessor's `'DOWN'`. A server's restart installs
 its successor's facet under the same name, a new generation, so a waiter that names the ended facet as `Seen`
-is answered with the successor's. `{ok, Facet}` says what the registry
+is answered with the successor's. `{ok, Pid}` says what the registry
 holds, not that the server lives, since a facet stays in the registry
 after its server ends (`erx:cap/1`); a waiter that monitors the facet
 hears of that end and waits again with it as `Seen`.
@@ -3299,8 +3302,8 @@ decision.
 | `changed/1` | `{error, badarg}` | the generation is no non-negative integer, as for any call the agent does not take |
 | settlement queries | as the query table | a query outside the closed set is answered `{error, badarg}` |
 | `erx_devices:held_at_boot/1` | a call that fails | the domain service holds nothing and logs the reason |
-| `erx_connections:install/1` | `{error, badarg}` | asked of a domain's agent, whose installations come from the system domain only |
-| `changed/1`, `install/1`, a settlement query, `release_held/0` | not acted on | sent from another domain: it arrives in its `{erx_origin, D, Msg}` envelope, which neither the agent nor the domain service takes as a call or a cast; the agent counts it in `dropped/0` |
+| `erx_connections:grant/1` | `{error, badarg}` | asked of a domain's agent, whose installations come from the system domain only |
+| `changed/1`, `grant/1`, a settlement query, `release_held/0` | not acted on | sent from another domain: it arrives in its `{erx_origin, D, Msg}` envelope, which neither the agent nor the domain service takes as a call or a cast; the agent counts it in `dropped/0` |
 
 **Verification.** Each case runs on the host; each seeded fault must
 fail its case.
@@ -3311,12 +3314,12 @@ fail its case.
 | same | an installation between the waiter's read and its request answers the request at once | the agent holds every request whatever its generation: the request waits for a second installation |
 | same | a second request from one pid answers the first at once | the older entry overwritten unanswered: the first request is never answered |
 | same | the agent monitors a waiting asker (`erlang:process_info(Agent, monitors)`) and no longer once it has answered it; an asker's end is taken, not counted in `dropped/0` | the asker not monitored: the agent's monitors lack it while it waits |
-| same | `install/1` from the system domain's runtime installs and is answered; the same request enveloped as from another domain, and `install/1` asked of a domain's agent, install nothing | the system agent's clause matching the enveloped form: the peer's facet is installed |
+| same | `grant/1` from the system domain's runtime installs and is answered; the same request enveloped as from another domain, and `grant/1` asked of a domain's agent, install nothing | the system agent's clause matching the enveloped form: the peer's facet is installed |
 | `erx_facets` cases in the same suite | `await(Name, Old, T)` is not answered while the registry holds `Old`, and is answered with the successor's facet | the facet compared by presence alone: `await` answers with `Old` |
 | same | `await(Name, none, 50)` answers `timeout`, and an installation after it leaves nothing in the caller's mailbox | the reply taken with a plain `receive` after a timer instead of `gen_server:receive_response/2`: the late `ok` lands in the mailbox |
 | same | `{erx, granted}` holds the ready answer's names when its installation wakes a waiter | the names written after the installation: the woken waiter reads none and waits on |
 | same | a ready answer that installs no facet still raises the generation | the generation raised only by a non-empty installation: a waiter on the names alone is never woken |
-| `facet_registry_chokepoints_test` | `facet-install-callers` passes the tree | its seeded call of `erx_connections:install/1` outside the domain service passes: the rule catches nothing |
+| `facet_registry_chokepoints_test` | `facet-install-callers` passes the tree | its seeded call of `erx_connections:grant/1` outside the domain service passes: the rule catches nothing |
 | `erx_domain_mints_tests` | `settled/3` answers each query as `in_place/3`, `server_settled/3` and `system_grant/3` decide | the `{grant, Name, Id}` query matched by name alone: a predecessor's facet answers it |
 | `erx_domain_mints_srv_tests` | three askers, one of each query, are each answered at the step that settles their own query; the system domain's installation is acknowledged only after the agent's answer | every asker answered when any query settles: the `{grant, ...}` asker is answered before its incarnation's installation |
 | same | a `{server, Name}` asker is answered at its row's end, before the row's restart starts | the list evaluated after the successor starts: the asker waits through the successor's boot |

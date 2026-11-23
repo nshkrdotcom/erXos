@@ -10,7 +10,8 @@
 %% plays the agent's kernel and its domain pid, as erx_connections_tests does.
 %%
 %% Whatever arrives, the agent stays up, and after every message:
-%% * the registry, the persistent term {erx, facets}, holds exactly the installations a
+%% * the registry, the persistent term {erx, facets}, holds the count of the installations
+%%   and exactly the installations a
 %%   model took: those in the system connection's envelope with an integer tag, an atom
 %%   name and a pid, each replacing an older pid of its name;
 %% * each such installation, and nothing else, is acknowledged to the domain pid with
@@ -37,9 +38,9 @@ sequence(Tally) ->
     persistent_term:erase({erx, facets}),
     Agent = start(),
     try
-        {Model, Dropped, Done} = lists:foldl(fun(_, Acc) -> message(Agent, Acc) end, {#{}, 0, Tally},
+        {Model, Dropped, Done} = lists:foldl(fun(_, Acc) -> message(Agent, Acc) end, {{0, #{}}, 0, Tally},
                                              lists:seq(1, ?STEPS)),
-        Model =:= persistent_term:get({erx, facets}, #{}) orelse fail(registry_differs, Model),
+        Model =:= persistent_term:get({erx, facets}, {0, #{}}) orelse fail(registry_differs, Model),
         Done#{dropped => maps:get(dropped, Done, 0) + Dropped}
     after
         stop(Agent)
@@ -59,14 +60,15 @@ message(Agent, {Model, Dropped, Tally}) ->
                 {erx_facets_installed, Tag} -> ok
             after 1000 -> fail(not_acknowledged, Tag)
             end,
-            Next = Model#{Name => Facet},
+            {Generation, Facets} = Model,
+            Next = {Generation + 1, Facets#{Name => Facet}},
             Count =:= Dropped orelse fail(counted_an_installation, Message),
-            Next =:= persistent_term:get({erx, facets}, #{}) orelse fail(registry_differs, Message),
+            Next =:= persistent_term:get({erx, facets}, {0, #{}}) orelse fail(registry_differs, Message),
             nothing_else(),
             {Next, Dropped, Tally#{installed => maps:get(installed, Tally, 0) + 1}};
         no ->
             Count =:= Dropped + 1 orelse fail(not_counted, Message),
-            Model =:= persistent_term:get({erx, facets}, #{}) orelse fail(installed_a_dropped_message, Message),
+            Model =:= persistent_term:get({erx, facets}, {0, #{}}) orelse fail(installed_a_dropped_message, Message),
             nothing_else(),
             {Model, Dropped + 1, Tally}
     end.
