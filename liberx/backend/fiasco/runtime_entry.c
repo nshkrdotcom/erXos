@@ -401,9 +401,9 @@ board_row(const erx_dt_t *tree, const erx_manifest_view_t *manifest, const char 
 	return (NULL);
 }
 
-/* Opens the board's hardware watchdog of the manifest's row (runtime_entry.h). */
-const char *
-erx_fiasco_program_watchdog(const erx_dt_t *tree, const erx_manifest_view_t *manifest, erx_fiasco_pm_wdt_t *wdt,
+/* Opens the board's hardware watchdog of the manifest's row (erx_fiasco_program_board). */
+static const char *
+board_watchdog(const erx_dt_t *tree, const erx_manifest_view_t *manifest, erx_fiasco_pm_wdt_t *wdt,
     erx_fiasco_found_t *found)
 {
 	erx_dt_window_t window;
@@ -417,9 +417,9 @@ erx_fiasco_program_watchdog(const erx_dt_t *tree, const erx_manifest_view_t *man
 	return (reason);
 }
 
-/* Maps the firmware's mailbox of the manifest's row (runtime_entry.h), as the watchdog is opened. */
-const char *
-erx_fiasco_program_mailbox(const erx_dt_t *tree, const erx_manifest_view_t *manifest, erx_fiasco_found_t *found)
+/* Maps the firmware's mailbox of the manifest's row (erx_fiasco_program_board), as the watchdog is opened. */
+static const char *
+board_mailbox(const erx_dt_t *tree, const erx_manifest_view_t *manifest, erx_fiasco_found_t *found)
 {
 	erx_dt_window_t window;
 	const char *reason;
@@ -432,12 +432,12 @@ erx_fiasco_program_mailbox(const erx_dt_t *tree, const erx_manifest_view_t *mani
 }
 
 /*
- * Sets the board's on-board pins (runtime_entry.h), at the pin controller's row as the
+ * Sets the board's on-board pins (erx_fiasco_program_board), at the pin controller's row as the
  * mailbox is mapped. The rows are copied out of the manifest first, so the plan is taken
  * whole: more rows than the plan takes, or a row that cannot be read, writes nothing.
  */
-const char *
-erx_fiasco_program_pins(const erx_dt_t *tree, const erx_manifest_view_t *manifest, erx_fiasco_board_pins_t *found)
+static const char *
+board_pins(const erx_dt_t *tree, const erx_manifest_view_t *manifest, erx_fiasco_board_pins_t *found)
 {
 	erx_mf_onboard_pin_t rows[ERX_BCM2711_PINS_ROWS_MAX];
 	const uint32_t count = manifest->header.onboard_pins.count;
@@ -468,6 +468,18 @@ erx_fiasco_program_pins(const erx_dt_t *tree, const erx_manifest_view_t *manifes
 			return (NULL);
 	*found = erx_fiasco_bcm2711_pins_set(window, rows, count);
 	return (NULL);
+}
+
+/* Finds and readies the board devices the root drives itself (runtime_entry.h), in order. */
+const char *
+erx_fiasco_program_board(const erx_dt_t *tree, const erx_manifest_view_t *manifest, erx_fiasco_board_t *board)
+{
+	const char *reason;
+
+	if ((reason = board_watchdog(tree, manifest, &board->watchdog, &board->watchdog_found)) != NULL ||
+	    (reason = board_mailbox(tree, manifest, &board->mailbox)) != NULL)
+		return (reason);
+	return (board_pins(tree, manifest, &board->pins));
 }
 
 /* Accepts the tree and reads its seeds (runtime_entry.h); a refusal names the reader's fixed reason. */

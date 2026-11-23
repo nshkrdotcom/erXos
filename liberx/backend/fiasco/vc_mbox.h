@@ -24,7 +24,7 @@
 
 /*
  * Maps the page of window, the platform row's window that the tree has confirmed
- * (erx_fiasco_program_mailbox, through erx_dt_registers), reads STATUS once to prove it
+ * (erx_fiasco_program_board, through erx_dt_registers), reads STATUS once to prove it
  * lies in what is mapped, and keeps the mapping for the boot. False, with no mailbox kept,
  * for a page the root cannot map or a window too short for STATUS. Nothing is written.
  * Only the root's first thread calls it, once, before any request.

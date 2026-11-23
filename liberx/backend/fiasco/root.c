@@ -133,29 +133,20 @@ root_boot(erx_boot_handoff_view_t *handoff, erx_manifest_view_t *manifest, erx_b
 	const erx_watchdog_config_t config = boot_args->have_watchdog ? boot_args->watchdog :
 	    erx_watchdog_config_default();
 	const erx_watchdog_mode_t mode = boot_args->det ? ERX_WATCHDOG_MODE_DETERMINISTIC : ERX_WATCHDOG_MODE_NORMAL;
-	erx_fiasco_pm_wdt_t board;
-	erx_fiasco_found_t board_status;
-	erx_fiasco_found_t mailbox;
-	erx_fiasco_board_pins_t pins;
+	erx_fiasco_board_t board;
 
-	reason = erx_fiasco_program_watchdog(&root_tree, manifest, &board, &board_status);
-	if (reason != NULL)
-		return (reason);
-	reason = erx_fiasco_program_mailbox(&root_tree, manifest, &mailbox);
-	if (reason != NULL)
-		return (reason);
 	/* Before any domain starts, so no driver finds an on-board pin unset. */
-	reason = erx_fiasco_program_pins(&root_tree, manifest, &pins);
+	reason = erx_fiasco_program_board(&root_tree, manifest, &board);
 	if (reason != NULL)
 		return (reason);
-	reason = erx_fiasco_watchdog_start(&config, mode, &board);
+	reason = erx_fiasco_watchdog_start(&config, mode, &board.watchdog);
 	if (reason != NULL)
 		return (reason);
 	root_report(handoff, root_pack.header.nentries);
 	root_report_manifest(manifest, free_pages);
-	root_report_watchdog(&config, mode, board_status);
-	root_report_mailbox(mailbox);
-	root_report_pins(pins, manifest->header.onboard_pins.count);
+	root_report_watchdog(&config, mode, board.watchdog_found);
+	root_report_mailbox(board.mailbox);
+	root_report_pins(board.pins, manifest->header.onboard_pins.count);
 	return (NULL);
 }
 

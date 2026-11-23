@@ -20,7 +20,7 @@
  * its unit is of no kind.
  */
 
-/* What the root did with the manifest's on-board pins (erx_fiasco_program_pins). */
+/* What the root did with the manifest's on-board pins (erx_fiasco_program_board). */
 typedef enum erx_fiasco_board_pins {
 	/* The manifest has no onboard_pins rows: nothing to set, and no line. */
 	ERX_FIASCO_BOARD_PINS_NONE = 1,

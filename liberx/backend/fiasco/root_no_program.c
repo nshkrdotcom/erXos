@@ -26,31 +26,12 @@ erx_fiasco_program_tree(erx_dt_t *tree, const erx_manifest_view_t *manifest, erx
 }
 
 const char *
-erx_fiasco_program_watchdog(const erx_dt_t *tree, const erx_manifest_view_t *manifest, erx_fiasco_pm_wdt_t *wdt,
-    erx_fiasco_found_t *found)
+erx_fiasco_program_board(const erx_dt_t *tree, const erx_manifest_view_t *manifest, erx_fiasco_board_t *board)
 {
 	(void)tree;
 	(void)manifest;
-	*wdt = (erx_fiasco_pm_wdt_t){ .armed = false };
-	*found = ERX_FIASCO_FOUND_ABSENT;
-	return (NULL);
-}
-
-const char *
-erx_fiasco_program_mailbox(const erx_dt_t *tree, const erx_manifest_view_t *manifest, erx_fiasco_found_t *found)
-{
-	(void)tree;
-	(void)manifest;
-	*found = ERX_FIASCO_FOUND_ABSENT;
-	return (NULL);
-}
-
-const char *
-erx_fiasco_program_pins(const erx_dt_t *tree, const erx_manifest_view_t *manifest, erx_fiasco_board_pins_t *found)
-{
-	(void)tree;
-	(void)manifest;
-	*found = ERX_FIASCO_BOARD_PINS_NONE;
+	*board = (erx_fiasco_board_t){ .watchdog = { .armed = false }, .watchdog_found = ERX_FIASCO_FOUND_ABSENT,
+	    .mailbox = ERX_FIASCO_FOUND_ABSENT, .pins = ERX_FIASCO_BOARD_PINS_NONE };
 	return (NULL);
 }
 

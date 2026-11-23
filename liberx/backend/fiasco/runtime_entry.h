@@ -31,8 +31,8 @@ typedef struct erx_pack_view erx_pack_view_t;
 const char	*erx_fiasco_program_tree(erx_dt_t *tree, const erx_manifest_view_t *manifest, erx_fiasco_seeds_t *seeds);
 
 /*
- * What the root found of a board device it drives itself before any domain starts
- * (erx_fiasco_program_watchdog, erx_fiasco_program_mailbox).
+ * What the root found of a board device it drives itself (erx_fiasco_program_board):
+ * the hardware watchdog or the firmware's mailbox.
  */
 typedef enum erx_fiasco_found {
 	/* The manifest gives the system domain none, as on QEMU virt. */
@@ -43,39 +43,35 @@ typedef enum erx_fiasco_found {
 	ERX_FIASCO_FOUND_UNCONFIRMED
 } erx_fiasco_found_t;
 
-/*
- * The board's hardware watchdog (docs/design-platforms.md, "The watchdog"): the unit of
- * ERX_PM_WDT_COMPATIBLE that manifest gives the system domain (erx_boot_held_row), mapped
- * into *wdt when tree, the one erx_fiasco_program_tree accepted, confirms its row
- * (erx_fiasco_pm_wdt_open); *wdt has no device otherwise, and nothing is written. *found
- * says which. Returns NULL,
- * or why the root cannot boot: the row's path is not a node path. A root built without a
- * program has no board watchdog.
- */
-const char	*erx_fiasco_program_watchdog(const erx_dt_t *tree, const erx_manifest_view_t *manifest,
-		    erx_fiasco_pm_wdt_t *wdt, erx_fiasco_found_t *found);
+/* What the root found and did of the board devices it drives itself (erx_fiasco_program_board). */
+typedef struct erx_fiasco_board {
+	/* The hardware watchdog, for the watchdog thread: no device unless watchdog_found is READY. */
+	erx_fiasco_pm_wdt_t	watchdog;
+	erx_fiasco_found_t	watchdog_found;
+	erx_fiasco_found_t	mailbox;
+	erx_fiasco_board_pins_t	pins;
+} erx_fiasco_board_t;
 
 /*
- * The firmware's mailbox (docs/design-fiasco.md, "The call table", erx_firmware_request):
- * the unit of ERX_VC_MAILBOX_COMPATIBLE that manifest gives the system domain
- * (erx_boot_held_row), mapped by its shim (erx_fiasco_vc_mbox_open) when tree, the one
- * erx_fiasco_program_tree accepted, confirms its row; nothing is written. *found says
- * which. Returns NULL, or why the root cannot boot: the row's path is not a node path. A
- * root built without a program has no mailbox.
+ * The board devices the root drives itself, in the platform layer's place, each through
+ * the unit of its compatible string that manifest gives the system domain
+ * (erx_boot_held_row) once tree, the one erx_fiasco_program_tree accepted, confirms its
+ * row; *board says what was found and done:
+ *   - the hardware watchdog (docs/design-platforms.md, "The watchdog"), of
+ *     ERX_PM_WDT_COMPATIBLE, mapped into board->watchdog (erx_fiasco_pm_wdt_open), which
+ *     has no device otherwise; nothing is written;
+ *   - the firmware's mailbox (docs/design-fiasco.md, "The call table",
+ *     erx_firmware_request), of ERX_VC_MAILBOX_COMPATIBLE, mapped by its shim
+ *     (erx_fiasco_vc_mbox_open); nothing is written;
+ *   - the on-board pins (docs/design-header-io.md, "On-board pins"): the manifest's
+ *     onboard_pins rows, set through the pin controller of ERX_BCM2711_PINS_COMPATIBLE
+ *     (erx_fiasco_bcm2711_pins_set).
+ * The caller runs it before any domain starts, so no driver finds an on-board pin unset.
+ * Returns NULL, or why the root cannot boot: a row's path is not a node path. A root built
+ * without a program finds none of them and sets no pin.
  */
-const char	*erx_fiasco_program_mailbox(const erx_dt_t *tree, const erx_manifest_view_t *manifest,
-		    erx_fiasco_found_t *found);
-
-/*
- * The on-board pins (docs/design-header-io.md, "On-board pins"): the manifest's
- * onboard_pins rows, set through the unit of ERX_BCM2711_PINS_COMPATIBLE that manifest
- * gives the system domain (erx_boot_held_row) when tree, the one erx_fiasco_program_tree
- * accepted, confirms its row (erx_fiasco_bcm2711_pins_set). *found says what was done.
- * Returns NULL, or why the root cannot boot: the row's path is not a node path. A root
- * built without a program sets no pin.
- */
-const char	*erx_fiasco_program_pins(const erx_dt_t *tree, const erx_manifest_view_t *manifest,
-		    erx_fiasco_board_pins_t *found);
+const char	*erx_fiasco_program_board(const erx_dt_t *tree, const erx_manifest_view_t *manifest,
+		    erx_fiasco_board_t *board);
 
 /*
  * What the root task runs once it is up: it joins tree's facts to the manifest's devices,

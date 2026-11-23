@@ -29,7 +29,7 @@ typedef struct erx_fiasco_pm_wdt {
 
 /*
  * Maps the page of window, the platform row's window that the tree has confirmed
- * (erx_fiasco_program_watchdog, through erx_dt_registers), and reads both registers once
+ * (erx_fiasco_program_board, through erx_dt_registers), and reads both registers once
  * to prove they lie in what is mapped. False, with *wdt holding no device, for a page the
  * root cannot map or a window too short. Nothing is written.
  */
