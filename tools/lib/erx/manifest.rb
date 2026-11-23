@@ -734,6 +734,7 @@ module Erx
         rows['windows'] = normalize_windows(rows)
         check_pcie(rows)
         check_window_services(rows)
+        check_drive_domains(rows)
         RootStartup.check(loadable: root_loadable_bytes, baseline: baseline,
                           root_memory: root_memory, platform: @context.platform)
       end
@@ -3122,8 +3123,16 @@ module Erx
         check_pcie_parties(tables, pcie, units)
         return if pcie.nil?
 
-        named = domain_references(tables, pcie).reject { |scope, row| pcie_reference?(scope, row, tables) }.map(&:first).uniq
-        invalid("the domain pcie holds nothing but PCIe bridges' units, and its #{named.first} row names it", named.first) unless named.empty?
+        holds_only(tables, pcie, "the domain pcie holds nothing but PCIe bridges' units") { |scope, row| pcie_reference?(scope, row, tables) }
+      end
+
+      # Refuses the first row that names the domain at index and that the block does not
+      # admit, what completing the refusal: the allow-list form of a domain that holds
+      # nothing else (check_pcie, check_drive_domains), under which a table the ABI adds
+      # later names the domain only once the block admits it.
+      def holds_only(tables, index, what)
+        scope, = domain_references(tables, index).find { |found, row| !yield(found, row) }
+        invalid("#{what}, and its #{scope} row names it", scope) if scope
       end
 
       # Whether a row naming the domain pcie is one of the allow-list's (check_pcie): its
@@ -3206,7 +3215,6 @@ module Erx
         check_system_window(rows, tables)
         check_record_volume_window(rows)
         check_drives(rows, tables)
-        check_media_domain(rows, tables)
         placed = rows.map { |row| row.values_at('device', 'role', 'partition', 'image', 'drive') }
         invalid('two windows name one role, partition and drive of a device', 'window.partition') unless placed.uniq.size == placed.size
         rows.sort_by { |row| row.values_at('holder', 'device', 'role', 'partition', 'image', 'drive') }
@@ -3217,7 +3225,7 @@ module Erx
       # every other window names none, packed as mf_none; and every window on a USB
       # controller is a drive window. A window lies on a block device or a USB controller
       # (window_device); which drives the windows name, and who holds them, is
-      # check_drives', check_media_domain's and check_window_services'.
+      # check_drives', check_window_services' and check_drive_domains'.
       def window_drive(record, role, device)
         drive = role == drive_role
         invalid('a drive window names its drive, and no window of another role names one', 'window.drive') unless
@@ -3252,31 +3260,65 @@ module Erx
           on_usb.group_by { |device| device_holder(tables, device) }.any? { |_holder, devices| devices.size > most }
       end
 
-      # The media domain (docs/design-drives.md, "Manifest rows"), the configured domain
-      # that serves a service named media, holds no unit, no window but drive windows and
-      # no facet of a storage service, one that a storage domain serves, which is a
-      # configured domain holding a window of another role than drive. So the domain that
-      # parses every drive's volumes reaches no device and no stored file but through its
-      # drive windows and the grants a manifest gives it. That every drive window is its,
-      # and that a manifest with one holds one media service, is check_window_services'.
-      def check_media_domain(windows, tables)
-        services = tables.fetch('services')
-        none = @codec.constant('mf_none')
-        storage = windows.reject { |row| row.fetch('role') == drive_role }.map { |row| row.fetch('holder') }.uniq - [none]
-        services.select { |service| service.fetch('name') == @codec.fixed_bytes('media_service') }.each do |media|
+      # The domains a drive reaches (docs/design-drives.md, "Manifest rows" and "A drive and
+      # its medium"), each held to an allow-list (holds_only), so that what parses a medium
+      # never sits with a device or a stored file, and what drives a medium's device parses
+      # nothing. The media domain, the configured domain that serves the service named
+      # media, is named by nothing but its drive windows, its log facets and that service:
+      # its drives' grants come through the windows, by introduction. The holder of a block
+      # device's drive, a configured domain, is named by nothing but the unit that places
+      # that device alone and its log facets. That every drive window is the media
+      # domain's, and that a manifest with one holds one media service, is
+      # check_window_services'.
+      def check_drive_domains(tables)
+        media_name = @codec.fixed_bytes('media_service')
+        tables.fetch('services').select { |service| service.fetch('name') == media_name }.each do |media|
           domain = media.fetch('server')
-          invalid('the media service is served by a configured domain', 'service.server') if domain == none
-          label = "the media domain, #{tables.fetch('domains').fetch(domain).fetch('name')},"
-          invalid("#{label} holds no unit", 'unit.holder') if tables.fetch('units').any? { |unit| unit.fetch('holder') == domain }
-          invalid("#{label} holds drive windows alone", 'window.holder') if
-            windows.any? { |row| row.fetch('holder') == domain && row.fetch('role') != drive_role }
-          held = tables.fetch('facets').find do |facet|
-            facet.values_at('grantee_kind', 'grantee') == [grantee_kind('domain'), domain] &&
-              storage.include?(services.fetch(facet.fetch('service')).fetch('server'))
+          invalid('the media service is served by a configured domain', 'service.server') if domain == @codec.constant('mf_none')
+          what = "the media domain, #{domain_name(tables, domain)}, holds nothing but drive windows, log facets and the media service"
+          holds_only(tables, domain, what) do |scope, row|
+            case scope
+            when 'windows' then row.fetch('role') == drive_role
+            when 'services' then row.equal?(media)
+            else drive_domain_reference?(scope, row, tables)
+            end
           end
-          invalid("#{label} holds a facet of #{held.fetch('name')}, a storage service", 'facet.grantee') if held
+        end
+        tables.fetch('windows').select { |row| row.fetch('role') == drive_role }.each { |window| check_block_drive_holder(window, tables) }
+      end
+
+      # The holder of a block device's drive (check_drive_domains); a drive window on a USB
+      # controller is the USB domain's, whose drives check_drives counts.
+      def check_block_drive_holder(window, tables)
+        devices = tables.fetch('devices')
+        device = devices.fetch(window.fetch('device'))
+        return unless device.fetch('role') == device_role('block')
+
+        drive = "drive disk#{window.fetch('drive')}"
+        holder = device_holder(tables, window.fetch('device'))
+        invalid("the device of #{drive} is held by a configured domain", 'unit.holder') if holder == @codec.constant('mf_none')
+        what = "the holder of #{drive}, #{domain_name(tables, holder)}, holds nothing but its device's unit and log facets"
+        holds_only(tables, holder, what) do |scope, row|
+          if scope == 'units'
+            placed = unit_devices(devices, row)
+            placed.size == 1 && placed.first.equal?(device)
+          else
+            drive_domain_reference?(scope, row, tables)
+          end
         end
       end
+
+      # What either drive domain's allow-list admits besides its own rows: its place in
+      # the boot order and its log facets (docs/design-log.md, "The log facet").
+      def drive_domain_reference?(scope, row, tables)
+        case scope
+        when 'boot_order' then true
+        when 'facets' then tables.fetch('services').fetch(row.fetch('service')).fetch('interface') == fetch_interface('log')
+        else false
+        end
+      end
+
+      def domain_name(tables, index) = tables.fetch('domains').fetch(index).fetch('name')
 
       # The holder of the unit that placed the device row at index.
       def device_holder(tables, index)

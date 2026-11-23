@@ -1224,9 +1224,9 @@ reader answers its walks and link reads as a grant does, and the release
 file system holds no links. A link that lies in a tree reached through
 a provider marked `nofollow` is never followed. The provider
 `{facets, svc}`, through which a session reaches an app's tree, always
-carries the mark, and a facet's provider carries it when its service's
-row in `abi/services` is marked, as the `media` service's is, through
-which a session reaches a drive's volumes
+carries the mark, and so does the provider `{facet, media}`, through
+which a session reaches a drive's volumes, which `erx_ns` marks by the
+facet's name
 ([design-drives.md](design-drives.md#links-and-rights)). Such a link is never followed: where the resolver would
 follow it, it answers `eacces`, as FreeBSD's `vfs_lookup` answers on a
 `nosymfollow` mount, and an operation that acts on the link itself acts

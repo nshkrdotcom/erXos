@@ -550,13 +550,18 @@ class ManifestCheckTest < Minitest::Test
     end
   end
 
-  # The media domain of these manifests (docs/design-drives.md, "Manifest rows"): the web
-  # domain, which holds no unit, no window and no facet, serves the media service.
-  MEDIA_SERVICE = "service media\n  server @domain.web\n  interface files\n"
+  # The media domain of these manifests (docs/design-drives.md, "Manifest rows"): the
+  # development manifest's usb domain, renamed media, without its usb_input service and
+  # that service's facet (usb_source has taken its unit and its pci facet already), so it
+  # holds nothing and serves the media service alone.
+  MEDIA_SERVICE = "service media\n  server @domain.media\n  interface files\n"
 
-  def media_source(holders = USB_HOLDERS) = usb_source(holders) + MEDIA_SERVICE
+  def media_source(holders = USB_HOLDERS)
+    bare = usb_source(holders).sub(/^service usb_input\n(?:  .*\n)*/, '').sub(/^facet usb_input\n(?:  .*\n)*/, '')
+    changed(bare.sub("domain usb\n", "domain media\n").gsub('@domain.usb', '@domain.media')) + MEDIA_SERVICE
+  end
 
-  def drive_window(drive, name: 'stick', device: STICK, role: 'drive', holder: '@domain.web', partition: nil)
+  def drive_window(drive, name: 'stick', device: STICK, role: 'drive', holder: '@domain.media', partition: nil)
     window(role: role, partition: partition, device: device, holder: holder, name: name, drive: drive)
   end
 
@@ -596,11 +601,10 @@ class ManifestCheckTest < Minitest::Test
             message: /a drive window names its drive, and no window of another role names one/)
   end
 
-  # Drive numbers are one namespace across the machine: no two windows, on one controller
-  # or on two, name one drive.
+  # Drive numbers are one namespace across the machine: no two windows name one drive.
+  # Two on one controller would be one placement twice, which the windows' own rule
+  # refuses too, so the seed's two lie on two controllers.
   def test_a_drive_named_twice_is_refused
-    usb_refused('window.drive', /drive disk1 is named by two windows/,
-                media_source + drive_window('disk1') + drive_window('disk1', name: 'again'))
     usb_refused('window.drive', /drive disk1 is named by two windows/,
                 media_source + drive_window('disk1') + drive_window('disk1', name: 'other', device: "#{BRIDGE}:0:2:0"))
   end
@@ -636,57 +640,129 @@ class ManifestCheckTest < Minitest::Test
 
   def test_a_usb_controller_s_window_is_a_drive_window
     usb_refused('window.role', /a window on a USB controller is a drive window/,
-                media_source + drive_window('disk0') + window(role: 'data', partition: 0, device: STICK, holder: '@domain.web'))
+                media_source + drive_window('disk0') + window(role: 'data', partition: 0, device: STICK, holder: '@domain.storage'))
   end
+
+  # A log facet row granted to grantee, as every configured domain may hold one
+  # (docs/design-log.md, "The log facet").
+  def log_facet(grantee, name: 'log_seeded')
+    "facet #{name}\n  name \"log\"\n  grantee #{grantee}\n  service @service.log\n  operations write\n" \
+      "  max_request 16384\n  in_flight 2\n  reductions 100000\n  period_ns 1000000000\n  max_heap_size 262144\n"
+  end
+
+  # The block device of block_drive_source, a copy of the line unit's device as a block
+  # device with no DMA.
+  def extra_block_row
+    @platform.fetch('units').find { |unit| unit.fetch('key') == 'line' }.fetch('devices').first
+             .merge('path' => '/extra@0', 'placement_key' => 'extra', 'role' => 'block', 'dma' => 'none',
+                    'flags' => 0, 'dma_memory' => 0)
+  end
+
+  # media_source with a block device's drive, disk0, whose unit holder holds (a domain
+  # disk, a copy of the development manifest's usb domain, which holds nothing), and the
+  # platform that places the device.
+  def block_drive_source(holder: '@domain.disk', holders: USB_HOLDERS)
+    disk = @source[/^domain usb\n(?:  .*\n)*/].sub("domain usb\n", "domain disk\n")
+    [media_source(holders) + SPARE_UNIT + disk + "unit extra\n  placement \"extra\"\n  holder #{holder}\n" + drive_window('disk0', device: '/extra@0'),
+     context(platform: usb_platform(extra: [extra_block_row], spare: [spare_block_row]))]
+  end
+
+  # A second block device, /spare@0, its unit held by the storage domain, so a seed can
+  # place a data window on it without naming the boot medium's partition again.
+  def spare_block_row = extra_block_row.merge('path' => '/spare@0', 'placement_key' => 'spare')
+
+  SPARE_UNIT = "unit spare\n  placement \"spare\"\n  holder @domain.storage\n"
+
+  def spare_window(holder) = window(role: 'data', partition: 0, device: '/spare@0', holder: holder, name: 'spare')
 
   # A block device's drive (docs/design-drives.md, "A drive and its medium"): the device's
   # one window is its drive window, which the media domain holds.
   def test_a_block_device_s_drive_is_its_one_window
-    source, against = with_extra_device(role: 'block')
-    drive = drive_window('disk0', device: '/extra@0')
-    view = @codec.open('manifest', admit(source + MEDIA_SERVICE + drive, against).bytes)
+    source, against = block_drive_source
+    view = @codec.open('manifest', admit(source + log_facet('@domain.disk'), against).bytes)
     assert_equal [[@codec.constant('mf_none'), 0]], windows_on(view, '/extra@0').first.map { |row| row.values_at('partition', 'drive') }
-    refused(Erx::Manifest::Invalid, 'window.device', source + MEDIA_SERVICE + drive + drive_window('disk1', device: '/extra@0', name: 'again'),
+    refused(Erx::Manifest::Invalid, 'window.device', source + drive_window('disk1', device: '/extra@0', name: 'again'),
             against, message: /a block device with a drive window has no other window/)
     refused(Erx::Manifest::Invalid, 'window.device',
-            source + MEDIA_SERVICE + drive + window(role: 'data', partition: 0, device: '/extra@0', holder: '@domain.storage'),
+            source + window(role: 'data', partition: 0, device: '/extra@0', holder: '@domain.storage'),
             against, message: /a block device with a drive window has no other window/)
+  end
+
+  # The domain that holds a block device's drive holds that device and nothing else
+  # (docs/design-drives.md, "A drive and its medium"): no other unit, no window, no
+  # service and no facet but the log's, and it is a configured domain.
+  def test_a_block_drive_s_holder_holding_anything_else_is_refused
+    message = ->(scope) { /the holder of drive disk0, disk, holds nothing but its device's unit and log facets, and its #{scope} row names it/ }
+    source, against = block_drive_source
+    units, = block_drive_source(holders: USB_HOLDERS.merge('stick' => '@domain.disk'))
+    refused(Erx::Manifest::Invalid, 'units', units, against, message: message.call('units'))
+    refused(Erx::Manifest::Invalid, 'windows', source + spare_window('@domain.disk'),
+            against, message: message.call('windows'))
+    refused(Erx::Manifest::Invalid, 'services', source + "service disk_tree\n  server @domain.disk\n  interface files\n",
+            against, message: message.call('services'))
+    refused(Erx::Manifest::Invalid, 'facets', source + files_facet('start', '@domain.disk', rights: 'rw'),
+            against, message: message.call('facets'))
+    held, = block_drive_source(holder: 'system')
+    refused(Erx::Manifest::Invalid, 'unit.holder', held, against,
+            message: /the device of drive disk0 is held by a configured domain/)
   end
 
   # Who holds drive windows (docs/design-drives.md, "Manifest rows"): the media domain, the
   # server of the one media service, alone, and only with one.
   def test_a_drive_window_held_by_another_domain_than_the_media_domain_is_refused
     usb_refused('service.server', /the service named media is served by the holder of every drive window/,
-                media_source + drive_window('disk0', holder: '@domain.storage'))
+                media_source + drive_window('disk0', holder: '@domain.web'))
     usb_refused('service.server', /the service named media is served by the holder of every drive window/,
-                media_source + drive_window('disk0') + drive_window('disk1', name: 'other', holder: '@domain.display'))
+                media_source + drive_window('disk0') + drive_window('disk1', name: 'other', holder: '@domain.web'))
     usb_refused('service.name', /a manifest with a drive window holds one service named media/,
-                usb_source + drive_window('disk0'))
+                usb_source + drive_window('disk0', holder: '@domain.usb'))
+    second = @source[/^domain usb\n(?:  .*\n)*/].sub("domain usb\n", "domain media_too\n") +
+             "service media_too\n  name \"media\"\n  server @domain.media_too\n  interface files\n"
+    usb_refused('service.name', /a manifest with a drive window holds one service named media/,
+                media_source + second + drive_window('disk0'))
     usb_refused('service.name', /a manifest without a drive window holds no service named media/, media_source)
   end
 
   # The system domain serves no media: a crafted volume reaches a configured domain alone.
   def test_a_media_service_of_the_system_domain_is_refused
-    served = changed(media_source).sub("server @domain.web\n  interface files", "server system\n  interface files")
+    served = changed(media_source).sub("server @domain.media\n  interface files", "server system\n  interface files")
     usb_refused('service.server', /the media service is served by a configured domain/,
                 served + drive_window('disk0', holder: 'system'))
   end
 
+  # The media domain holds an allow-list (docs/design-drives.md, "Manifest rows"): drive
+  # windows, log facets and the media service; every other row that names it is refused.
+  MEDIA_HOLDS = /the media domain, media, holds nothing but drive windows, log facets and the media service, and its/
+
+  def test_a_media_domain_holds_drive_windows_log_facets_and_the_media_service
+    usb_admit(media_source + drive_window('disk0') + log_facet('@domain.media'))
+  end
+
   def test_a_media_domain_holding_a_unit_is_refused
-    usb_refused('unit.holder', /the media domain, web, holds no unit/,
-                media_source(USB_HOLDERS.merge('stick' => '@domain.web')) + drive_window('disk0'))
+    usb_refused('units', /#{MEDIA_HOLDS} units row names it/,
+                media_source(USB_HOLDERS.merge('stick' => '@domain.media')) + drive_window('disk0'))
   end
 
   def test_a_media_domain_holding_a_window_of_another_role_is_refused
-    usb_refused('window.holder', /the media domain, web, holds drive windows alone/,
-                media_source + drive_window('disk0') + window(role: 'data', partition: 0, holder: '@domain.web'))
+    usb_refused('windows', /#{MEDIA_HOLDS} windows row names it/,
+                media_source + SPARE_UNIT + drive_window('disk0') + spare_window('@domain.media'),
+                usb_platform(spare: [spare_block_row]))
   end
 
-  # A storage service is one a storage domain serves, a configured domain that holds a
-  # window of another role than drive: here packages, which the storage domain serves.
-  def test_a_media_domain_holding_a_facet_of_a_storage_service_is_refused
-    usb_refused('facet.grantee', /the media domain, web, holds a facet of packages, a storage service/,
-                media_source + drive_window('disk0') + files_facet('packages', '@domain.web'))
+  # A system domain's tree, start or machine, rw, or the storage domain's packages: any
+  # facet but the log's is refused, whoever serves it.
+  def test_a_media_domain_holding_a_facet_but_the_log_s_is_refused
+    %w[start machine].each do |tree|
+      usb_refused('facets', /#{MEDIA_HOLDS} facets row names it/,
+                  media_source + drive_window('disk0') + files_facet(tree, '@domain.media', rights: 'rw'))
+    end
+    usb_refused('facets', /#{MEDIA_HOLDS} facets row names it/,
+                media_source + drive_window('disk0') + files_facet('packages', '@domain.media'))
+  end
+
+  def test_a_media_domain_serving_another_service_is_refused
+    usb_refused('services', /#{MEDIA_HOLDS} services row names it/,
+                media_source + drive_window('disk0') + "service media_more\n  server @domain.media\n  interface files\n")
   end
 
   # Nothing runs from a drive (docs/design-drives.md, "Links and rights"): no media grant is rx.

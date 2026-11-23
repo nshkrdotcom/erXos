@@ -11,9 +11,8 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   names, landing in this order:
   1. `abi/manifest.txt` and the manifest check: the window role `fat` becomes `drive`, which names no
      partition and is held only by the media domain; the rules of design-drives.md's "Manifest rows",
-     each with a seeded manifest; `media_volumes_max` and `media_volume_bytes` as limits; the 9P
-     statfs type `media` in `abi/protocols/9p.txt`; the `media` service, its mount point in `erx_ns`, and its durability facet
-     to the system domain in the facet table.
+     each with a seeded manifest; the 9P statfs type `media` in `abi/protocols/9p.txt`; the `media`
+     service and its mount point in `erx_ns`. The two limits are step 3's.
   2. The whole-medium window: `erx_usb_bot`'s block service with one window over the medium and
      `erx_blk_drive`, the drive grant, which, asked again for a window it answered, ends and restarts
      the medium's block service first through the medium reference the issuing process checks (on USB the
@@ -22,15 +21,19 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
      serving a `block` device's medium as a drive. Its moduledoc's "not started yet" goes.
   3. `erx_media_table` (MBR, GPT with both copies and the metadata rule, none, whole-table refusal,
      `place/3`) and `erx_media_probe` with `abi/formats/probe.txt`, pure, with their fuzz targets and
-     seeds; FAT's row through the FAT server's boot-sector decoder, FAT12 refused by name.
+     seeds; FAT's row through the FAT server's boot-sector decoder, FAT12 refused by name;
+     `media_volumes_max` and `media_volume_bytes` as limits beside `erx_media_table`.
   4. The `erx_media` application: the drive process, the medium supervisor and reader, the volume
      process with its probe and memory bound, the media tree with `status`, `ctl` and the two-volume
      `exdev` rule, the writable rule over the formats the build writes, the finish shared by `eject` and the freezing
      checkpoint; the release check that `erx_media` lies only in the media domain's release, which names
      no `erx_storage` or `erx_blk`, and in a release build no `erx_lfs`; the resolver's no-follow rule
-     as a `nofollow` mark a provider carries, from the `media` service's row in `abi/services`; the
-     ordered end's step 2 freezing the media service; the shell's `mount` and `umount` forms
-     ([todo-shell.md](todo-shell.md)).
+     as a `nofollow` mark a provider carries, the provider `{facet, media}` marked by `erx_ns` by the
+     facet's name (design-drives.md, "Links and rights"); the ordered end's step 2 freezing the media
+     service; the shell's `mount` and `umount` forms ([todo-shell.md](todo-shell.md)). The media
+     domain's durability facet to the system domain in the facet table, and the board manifests'
+     media domain, service and drive rows, land here and not in step 1: the durability interface
+     does not exist before this step, and no release serves media before `erx_media` does.
   5. The FAT server, `erx_fat`, over a FAT16 or FAT32 volume: its read path, then its batches, dirty flag
      and finish.
   6. EROFS: `erx_erofs` reading through its mount's source function, with `mount_source/2` beside

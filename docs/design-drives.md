@@ -323,8 +323,8 @@ updating or loading code from a drive.
   existing. The names this design adds are a window role, `drive`; the
   grant's restart of a block service asked twice, and the medium
   reference that `erx_blk`'s device process checks for it, USB's rule; one service, `media`,
-  with its mount point, its durability facet and a `nofollow` mark on its
-  row; the decoder's source entry, `erx_erofs:mount_source/2`; the
+  with its durability facet, and its mount point and `nofollow` mark in
+  `erx_ns`'s table of facets; the decoder's source entry, `erx_erofs:mount_source/2`; the
   probe's table, `abi/formats/probe.txt`; two limits, `media_volumes_max`
   and `media_volume_bytes`; one statfs type, `media`; the
   argument forms of the shell's `mount` and `umount`; and the modules of
@@ -373,7 +373,8 @@ that drives its medium's transport:
   the device's driver runs. The domain that holds the device runs
   `erx_blk` with that device's transport and serves its medium as the
   drive instead of reading the boot medium's layout. Such a domain holds
-  that device and nothing else, so property 9 of
+  that device's unit and nothing else but its log facets (the list of
+  [Manifest rows](#manifest-rows)), so property 9 of
   [design-system.md](design-system.md#the-manifest) holds for an
   unconfined one.
 
@@ -439,8 +440,36 @@ finish, and that drive process has ended, so the writer of `eject` gets
 
 A drive is one window row: role `drive`, no partition, the drive's
 number in its `drive` field, on the row of a `usb` device or of a
-`block` device, and the media domain as its holder. The manifest check
-refuses:
+`block` device, and the media domain as its holder. The packed row
+carries `mf_none` in its `partition` field, since the window covers
+whatever medium the drive holds, whole, and every window of another role
+carries `mf_none` in its `drive` field. The media domain is the
+configured domain that serves the service named `media`; the manifest
+names it no other way.
+
+What the media domain and a block device's drive holder may hold is an
+allow-list, as for the domain `pcie` (the check of
+[design-fiasco.md](design-fiasco.md#the-phase-1-manifest-check)): every row of the
+manifest that names the domain must be one the list admits, so a table
+the manifest gains later names it only once its list admits it.
+
+* **The media domain's list:** its drive windows; the one service it
+  serves, `media`; its facets of the `log` interface
+  ([design-log.md](design-log.md#the-log-facet)); and its place in the
+  boot order. It holds no unit and no other window, and no facet of any
+  other service, the system domain's `start` and `machine` trees and
+  every storage domain's tree among them. Its drives' grants come from
+  its drive windows, through the device service's introduction
+  ([design-usb.md](design-usb.md#media-and-drives)), never through a
+  facet row.
+* **A block drive holder's list:** the one unit that places the drive's
+  device and no other device, its facets of the `log` interface, and its
+  place in the boot order. It is a configured domain, and it holds no
+  window and serves no service, so the domain that drives the device
+  parses nothing a medium holds and nothing else of the machine sits
+  with the device ([A drive and its medium](#a-drive-and-its-medium)).
+
+The manifest check refuses:
 
 * a `drive` window with a partition, or without a drive number; a drive
   number on a window of another role;
@@ -448,8 +477,10 @@ refuses:
 * a `block` device with a `drive` window and any other window;
 * a drive window held by a domain other than the media domain, or two
   domains holding drive windows;
-* a media domain that holds a unit, a window of any other role, or a
-  facet of a storage service;
+* a `media` service served by the system domain, and a row naming the
+  media domain that its list does not admit;
+* a block drive's device held by the system domain, and a row naming
+  its holder that the holder's list does not admit;
 * more drives on one USB domain's controllers than `usb_drives_max`;
 * a `media` facet row with rights `rx`.
 
@@ -981,16 +1012,29 @@ follows none in an app's tree: where it would follow one, it answers
 `eacces`, as FreeBSD's `nosymfollow` mount does, and an operation on the
 link itself acts on it
 ([design-app-trees.md](design-app-trees.md#links)). The rule belongs to
-the provider: the `media` service's row in `abi/services` is marked
-`nofollow`, the facet provider the namespace builds from it carries the
-mark, and every bind of `/media` or of a volume under it, and every
-program's table that takes its entries, keeps it. The resolver keeps one
-rule, to follow no link in a tree whose provider carries the mark
-([design-files.md](design-files.md#building-binding-and-mounting)). A drive is a
-stranger's bytes: a link there to `/root/.ssh/authorized_keys` must not
-make a copy onto the stick write root's keys. No `media` grant is `rx`,
-so nothing runs from a drive; a program on a stick is copied off and
-run from where its user may run it.
+the provider: `erx_ns` marks the facet provider `{facet, media}`
+`nofollow` by the facet's name, in its one table of the facets it knows
+by name, the table that gives `media` its mount point
+(`erx_ns:place/1`), as it marks `{facets, svc}`. So every mount of a
+`media` facet carries the mark, wherever it is mounted and whatever
+options the mount names, and every bind of `/media` or of a volume under
+it, and every program's table that takes its entries, keeps it. The
+resolver keeps one rule, to follow no link in a tree whose provider
+carries the mark
+([design-files.md](design-files.md#building-binding-and-mounting)). A
+drive is a stranger's bytes: a link there to `/root/.ssh/authorized_keys`
+must not make a copy onto the stick write root's keys. No `media` grant
+is `rx`, so nothing runs from a drive; a program on a stick is copied
+off and run from where its user may run it.
+
+The mark lies in the namespace because the namespace alone can apply it.
+`abi/services` declares interfaces, and `media` is an instance of
+`files`, whose other instances follow links. A mark on the manifest's
+`media` service row would need a field the service row lacks and a path
+that carries it to every grantee's runtime, which learns its facets by
+name alone (`erx:caps/0`, `erx:granted/0`). The manifest check's entry
+for the well-known service `media` is the build's and never reaches a
+runtime.
 
 The tree is one grant over many volumes, so the media tree keeps apart
 what the namespace's own `exdev` rule cannot see: a rename or a link
@@ -1017,7 +1061,9 @@ directory, as for `/data`
 facet's mount"). `mount` prints it as `PID:/media on /media (media)`,
 whatever the drives hold, since it shows the session's entries and not
 the media domain's volumes; a statfs anywhere in the tree answers the
-tree's own, type `media`, and what each volume is, and how large, is its
+tree's own, type `media`, whose value in `abi/protocols/9p.txt` is
+`0x6964656d`, "medi", the first four bytes of its name read as a
+little-endian word; what each volume is, and how large, is its
 drive's `status`.
 
 Reading `/media/disk0/status` is itself a walk of `disk0`, so looking at
