@@ -2693,9 +2693,9 @@ A domain's limits, fixed at creation within its principal's ceilings:
 | `cpu` | its group's grant: quota per period, cpuset, ceiling | the kernel | the principal's share |
 | `lane` | the data area of each lane it reads, a power of two from 4 KiB to 16 MiB ([Connections](#connections)) | the domain library, which sizes the object | 64 KiB |
 | `connections` | connections it may have at once, the system connection included, and the slots of its control table ([Connections](#connections)) | the domain service, at an introduction | 256; for the system domain, the manifest's `max_domains` ([design-system.md](design-system.md#the-manifest)) |
-| `max_frame` | the largest payload it takes into a buffer of its own, which grows as the bytes arrive; a longer one is dropped as it passes | its own runtime; a protocol's floor, by the client side of that protocol (**Floors from a protocol**, below) | 1 MiB, at most `ERX_FRAME_MAX`; for the system domain, the largest `max_request` its configuration lets a grant name; at least the `net` protocol's floor, which its schema sets, in a domain that holds `net`, `files_max_frame_min` in a domain that serves or holds a facet of an interface served as a tree (`files`, `windows`, `line`), and `inspect_max_frame_min` in a domain that holds an `inspect` facet and in the system domain (property 16 of design-system.md), and the `code` protocol's floor in every domain, which a domain's code server checks at its start and the manifest's check holds the system domain to ([design-live.md](design-live.md#the-code-server)) |
-| `max_message_heap` | the largest decoded message it accepts | its own runtime; a protocol's floor, as for `max_frame` | 8 MiB, at most 256 MiB; at least the socket protocol's floor in a domain that holds `net`, and `inspect_message_heap_min` in a domain that holds an `inspect` facet and in the system domain, and the `code` protocol's floor in every domain, as for `max_frame` |
-| `funnel_depth` | nesting outside tail positions in a frame it accepts | its own runtime; a protocol's floor, as for `max_frame` | 16,384; at least the socket protocol's floor in a domain that holds `net`, and `inspect_funnel_depth_min` in a domain that holds an `inspect` facet and in the system domain, and the `code` protocol's floor in every domain, as for `max_frame` |
+| `max_frame` | the largest payload it takes into a buffer of its own, which grows as the bytes arrive; a longer one is dropped as it passes | its own runtime; a protocol's floor, by the client side of that protocol (**Floors from a protocol**, below) | 1 MiB, at most `ERX_FRAME_MAX`; for the system domain, the largest `max_request` its configuration lets a grant name; at least the `net` protocol's floor, which its schema sets, in a domain that holds `net`, `files_max_frame_min` in a domain that serves or holds a facet of an interface served as a tree (`files`, `windows`, `line`), and `inspect_max_frame_min` in a domain that holds an `inspect` facet and in the system domain (property 16 of design-system.md), and the `code` protocol's floors: its load floor in every configured domain and session template and its answer floor in the system domain, which the manifest's check holds them to, its facet floor in each grantee and server of a `code` facet, and the load floor again in a domain's code server at its start ([design-live.md](design-live.md#the-code-server)) |
+| `max_message_heap` | the largest decoded message it accepts | its own runtime; a protocol's floor, as for `max_frame` | 8 MiB, at most 256 MiB; at least the socket protocol's floor in a domain that holds `net`, and `inspect_message_heap_min` in a domain that holds an `inspect` facet and in the system domain, and the `code` protocol's floors, as for `max_frame` |
+| `funnel_depth` | nesting outside tail positions in a frame it accepts | its own runtime; a protocol's floor, as for `max_frame` | 16,384; at least the socket protocol's floor in a domain that holds `net`, and `inspect_funnel_depth_min` in a domain that holds an `inspect` facet and in the system domain, and the `code` protocol's floors, as for `max_frame` |
 | `exports` | entries in its export table | its own runtime | 16,384 |
 | `peer_held`, `peer_held_total` | what its runtime holds because of other domains' processes, each link or monitor counted as 256 bytes and each queued signal as its bytes, for one connection and for all; past them it answers `system_limit` and ends the connection | its own runtime | 4 MiB; 64 MiB; for the system domain's own `peer_held`, 64 KiB per connection, the manifest's `peer_held` ([design-system.md](design-system.md#the-manifest)) |
 | `tmp` | bytes its RAM file system may hold | its own runtime | an eighth of `memory` |
@@ -2714,7 +2714,13 @@ floors from `abi/services/net.txt`, for each operation the largest
 frame, decoded size and nesting of any message it carries either way,
 rounded up to a power of two, as constants of the generated admission
 modules, and fails the build when a floor passes the limit's default
-([design-network-stack.md](design-network-stack.md#message-sizes)).
+([design-network-stack.md](design-network-stack.md#message-sizes),
+property 14). `abi/services/net.txt` holds one of them,
+`net_max_frame_min`, written by hand rather than generated, an open
+item of [todo-network.md](todo-network.md) ("the socket protocol's
+floors"). The `code` protocol's floors are computed by the ABI
+generator from `abi/services/code.txt`'s limits
+([design-live.md](design-live.md#the-code-server)).
 A floor binds only a domain that receives the protocol: a client that
 holds the grant, and the domain that serves it; the system domain holds
 no `net` grant ([design-system.md](design-system.md#the-manifest),
@@ -2742,12 +2748,16 @@ anything is sent:
 
 The `code` protocol sets floors too, since a dropped load shows only as
 its deadline, which stops a supervised domain. Every domain but the
-system domain receives its loads, whatever its configuration, so each
-such domain's code server checks the floors against its own limits at
-its start and fails the start below them; the system domain, which
-receives the code servers' answers, is held to the floors in that
-direction by the manifest's check
-([design-live.md](design-live.md#the-code-server)).
+system domain receives its loads, whatever its configuration, so the
+manifest's check holds every configured domain's and session template's
+limits to the load floors, the system domain's, which receives the code
+servers' answers, to the answer floors, and each grantee and server of a
+`code` facet to the facet floors
+([design-system.md](design-system.md#the-manifest), property 16). A
+domain made from a request runs with the limits its request names,
+which no manifest check sees, so every code server checks the load
+floors against its own limits at its start and fails the start
+below them ([design-live.md](design-live.md#the-code-server)).
 
 Every limit a receiver enforces protects the receiver itself, which is why
 its own runtime may enforce it; the limits that protect someone else, a
@@ -2967,7 +2977,7 @@ from a control slot, and the agent acts only on the system domain's.
 -spec erx:caps() -> #{atom() => pid()}.
 -spec erx:owner(pid() | reference() | port()) -> pos_integer().
 %% The limits the calling domain's runtime enforces, as it installed them
-%% at its start (design-runtime.md, "Data model"), lowered by its options.
+%% at its start (design-runtime.md, "Data model").
 -spec erx:limits() -> #{max_frame := pos_integer(),
                         max_message_heap := pos_integer(),
                         funnel_depth := pos_integer()}.

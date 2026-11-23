@@ -2535,8 +2535,19 @@ and writes nothing that must outlive it.
   domain at a reset) and the domain service never calls `erx_code`, so
   neither ever waits on the other in a cycle.
 * A domain of a supervised specification carries the `supervised` flag
-  in its boot information, which the domain service sets from the
-  specification's `restart` ([Overlays](#code-from-the-host)). Its code
+  in its boot information: a configured domain whose row allows a
+  restart, or a created domain whose specification's restart is
+  `permanent` or `transient`, the domains the domain service restarts;
+  a session, a temporary domain and a partial-boot program do not
+  ([Overlays](#code-from-the-host)). The domain library sets the flag
+  from the plan, which carries the specification's restart, with no key
+  of its own, and reports it in its answer to the build. That answer is
+  the one owner of whether a domain is supervised: the domain service
+  records it with the domain and passes it on, to `erx_code` among
+  others, and no Erlang code recomputes it from a specification. The code
+  server reads it with `erx_dist:supervised/0` and its runtime's frame
+  limits with `erx:limits/0`, both BIFs over what the runtime installed
+  at its start ([design-runtime.md](design-runtime.md#erlang-visible-behaviour)). Its code
   server waits for its start load and returns from its start only once
   `erx_code` has said the start load was taken. `kernel`'s start
   therefore completes, and every other application starts, over the
@@ -2584,32 +2595,46 @@ Every message of a load carries its alias. A message sent to an alias does
 not say which alias it came through, so the receiver needs the alias in
 the message to know which load it belongs to. The 30 s deadline is
 `code_load_wait`, 30,000 ms, which `abi/services/code.txt` declares
-beside the piece, module and byte limits and the floors, so both sides
-read it from one place. No message carries an overlay revision: the
+beside the piece, module and byte limits, so both sides read it from
+one place. No message carries an overlay revision: the
 revision is `erx_code`'s fact, and the code server has no use for it.
 
 **Floors.** The protocol cannot survive the funnel dropping one of its
 messages: a dropped load or piece shows only as the load's deadline,
 which leaves the load unpublished, a dropped word of publication ends a
 supervised domain whose batch was published, and a dropped start load
-fails every start of its specification. So `abi/services/code.txt` sets a floor on
-each of the three limits the funnel applies to a frame, `max_frame`,
-`max_message_heap` and `funnel_depth`, for each direction, and its
-generator computes them as the `net` generator computes its floors
+fails every start of its specification. So the code protocol has a floor
+on each of the three limits the funnel applies to a frame, `max_frame`,
+`max_message_heap` and `funnel_depth`, for each direction
 ([design-domains.md](design-domains.md#principals-sessions-and-quotas),
-"Floors from a protocol"): into a domain, from a load of
-`code_modules_max` modules with 255-byte names and from a piece of
-`code_piece_max` bytes; out of it, from an answer that names every
-module of such a load; each rounded up to a power of two, and the build
-fails when one passes its limit's default. Every domain but the system
-domain receives loads, whatever its configuration, so its code server
-checks the floors into a domain against its own limits as `erx:limits/0`
-reports them, after its options, before it sends its report. A domain
-below a floor fails its start with one log line naming the limit, its
-value and the floor, so no domain runs whose funnel would drop a load.
-The system domain, which receives the answers, is held to the floors out
-of a domain by the manifest's check, as it is held to the `inspect`
-floors ([design-system.md](design-system.md#the-manifest), property 16).
+"Floors from a protocol"). The ABI generator computes them from
+`abi/services/code.txt`'s `code_modules_max` and `code_piece_max`
+(`tools/lib/erx/abi_code_bounds.rb`), each rounded up to a power of two:
+the load floors `code_load_*_min`, from a load of `code_modules_max`
+modules with 255-byte names, a piece of `code_piece_max` bytes and the
+word of publication; the answer floors `code_answer_*_min`, from the
+report, a request for a piece and an answer that names every module of
+such a load, each with the longest reason of `code_load_reason`
+(**An answer**, below); and the facet floors `code_facet_*_min`, from a code
+facet's requests (a load into the system domain or into a domain named
+by 255 bytes, a reset and a put) and its replies (the hashes a
+`missing` lacks, and a refusal naming every module of a load), since a
+floor binds both receivers of a facet. It derives `code_request_max`,
+the longest request of the `code` interface in its call envelope, from
+the same two limits. Every
+domain but the system domain receives loads, whatever its
+configuration, so the manifest check holds every configured domain's
+and session template's runtime limits to the load floors and the system
+domain's to the answer floors, every facet of the `code` interface to a
+`max_request` of at least `code_request_max`, and its grantee and
+server to the facet floors
+([design-system.md](design-system.md#the-manifest), property 16). A
+domain made from a request runs with the limits its request names,
+which no manifest check sees, so every code server also checks the
+load floors against its own limits as `erx:limits/0` reports them
+before it sends its report. A domain below a
+floor fails its start with one log line naming the limit, its value and
+the floor, so no domain runs whose funnel would drop a load.
 Since a candidate overlay never names more than `code_modules_max`
 modules (**A send**, below), every published overlay reaches its next
 domain in one message.
@@ -2760,8 +2785,14 @@ request resolved to.
   as `invalid`.
 * **An answer** is valid in the same envelope and to the same alias,
   with a result of the shape in the table whose every `Name` is one of
-  the manifest's. `ok` is the domain's runtime's report that the batch
-  loaded (**What an answer proves**, below).
+  the manifest's and every `What` a member of `abi/services/code.txt`'s
+  `code_load_reason`, the closed set of reasons `code:atomic_load/1`
+  gives, `system_limit` from the JIT's exhausted code space among them.
+  The answer floors count `What` as that set's longest member, so an
+  answer of any other atom, which could outgrow them, is invalid, and a
+  code server whose batch is refused for a reason outside the set ends,
+  with its domain, rather than send one. `ok` is the domain's runtime's
+  report that the batch loaded (**What an answer proves**, below).
   * `ok` to a facet's load into a supervised target publishes the
     candidate with a new revision: `erx_code` replaces the target's
     overlay with it, which cannot fail, since the candidate was charged

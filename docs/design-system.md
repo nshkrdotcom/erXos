@@ -587,18 +587,32 @@ violation fails the build with the property, the record and the field:
     `inspect_message_heap_min` and a `funnel_depth` of at least
     `inspect_funnel_depth_min`, so no funnel drops a valid answer
     ([design-live.md](design-live.md#the-inspect-service)).
-    The `code` interface (`abi/services/code.txt`) holds the system
-    domain, which receives every domain's code server's answers, to its
-    floors for that direction the same way; every other domain receives
-    loads, and its code server checks the other direction's floors
-    against its own limits at its start
+    The `code` protocol holds its receivers to its floors whatever they
+    are granted, since every domain but the system domain receives
+    loads: every configured domain and session template runs with at
+    least the load floors `code_load_max_frame_min`,
+    `code_load_message_heap_min` and `code_load_funnel_depth_min`, and
+    the system domain, which receives every code server's answers, with
+    at least the answer floors `code_answer_*_min`; and every facet of
+    the `code` interface has a `max_request` of at least
+    `code_request_max`, the longest request `load` sends, and its
+    grantee and server, which receive its requests and replies, run with
+    at least the facet floors `code_facet_*_min`. The ABI generator
+    computes the nine floors and the bound from
+    `abi/services/code.txt` (`tools/lib/erx/abi_code_bounds.rb`)
     ([design-live.md](design-live.md#the-code-server)).
     Seeded violations: a check that reads only the grantee's limits, which
     admits a server below the floor; a session template that holds
     `inspect` with a `max_frame` below its floor; a check of
     `max_frame` alone, which admits a template whose `max_message_heap`
-    is below `inspect_message_heap_min`; and a system domain whose
-    `max_frame` is below the `code` floor for the answers it receives.
+    is below `inspect_message_heap_min`; a `code` check of configured
+    domains alone, which admits a session template below a load floor;
+    one of `max_frame` alone, which admits a template whose
+    `max_message_heap` is below `code_load_message_heap_min`; and one
+    that holds the system domain to the load floors, which admits its
+    `funnel_depth` below `code_answer_funnel_depth_min`; and a `code` check
+    without the facet floors, which admits a code facet whose grantee
+    runs below `code_facet_max_frame_min`.
 17. **Start rows are well formed:** every `start` row names a principal
     with a session template, at most one row for each principal; every
     such principal's name begins with a letter, and no two rows share a

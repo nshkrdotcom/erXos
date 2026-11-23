@@ -540,7 +540,7 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
 * [Medium] code service, atoms from loads (`erlang/apps/erx_code/src/erx_code.erl`):
   `activate/1` makes each manifest name an atom before ERTS's loader checks it
   against the module's bytes, so a load the loader refuses still leaves up to
-  1,024 atoms of at most 255 bytes, with no bound across loads; a holder of the
+  `code_modules_max` atoms of at most 255 bytes, with no bound across loads; a holder of the
   install facet can exhaust the system domain's atom table, sized by the
   manifest's `atoms` (65,536 in the development manifest), and reset the
   machine. A successful load also makes every atom of each module's atom table.
@@ -597,24 +597,47 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
 
 ## Planned features
 
-* [Medium] code server, its runtime inputs (`erlang/apps/erx/src/erx_code_agent.erl`,
-  `erxos_env/2`): on erXos the code server runs with `supervised` false, its limits
-  unknown and no release, because the runtime has none of the three inputs
-  [design-live.md](design-live.md#the-code-server) gives it: `erx:limits/0` (the funnel's
-  `max_frame`, `max_message_heap` and `funnel_depth` as the runtime enforces them), the
-  boot information's `supervised` flag (an `abi/erx_abi.txt` `boot_flags` bit, set by the
-  domain service from the specification's `restart` and read by a BIF), and a reader of
-  the domain's release manifest (blob by hash, and a release module's hash). The code
-  protocol's floors into and out of a domain are not yet in `abi/services/code.txt`, nor
-  computed by its generator, nor held to the system domain by the manifest's check. Until
-  all of these land, a domain does not check the floors (it logs that its limits are
-  unknown), no domain waits for a start load, and a blob only the release holds is asked
-  of `erx_code`, which ends the load as `invalid`; all fail safe, and none matters before
-  `erx_code` sends loads to domains, which needs all of them first. Until the flag lands,
-  `erx_code_target` makes a supervised target with `supervised_flag` false, which refuses
-  every load `enotsup` and sends no start load, so a code server that does not know its
-  domain is supervised is never sent a batch it would keep unpublished; the change that
-  sets the flag passes `supervised_flag` true.
+* [Medium] code server, the rest of its inputs (`erlang/apps/erx/src/erx_code_agent.erl`,
+  `erxos_env/2`; `erlang/apps/erx_code/src/erx_code_target.erl`): the code server reads
+  its boot information's `supervised` flag and its runtime's limits, but no reader of the
+  domain's release manifest is built (blob by hash, and a release module's hash), so a blob
+  only the release holds is asked of `erx_code`, which ends the load as `invalid`. This
+  fails safe, and does not matter before `erx_code` sends loads to domains.
+* [Medium] code service, start loads to supervised domains
+  (`erlang/apps/erx_code/src/erx_code.erl`, `erx_code_target.erl`;
+  `erlang/apps/erx_domain/src/erx_domain_pid.erl`; `liberx/system/dom_core.c`,
+  `erx_dom_plan_boot_flags`): the code server's supervised path, the boot information's
+  `supervised` flag, its reader and `erx_dist:supervised/0` are built, but no domain is
+  supervised, because nothing sends a start load and a supervised code server would wait
+  for one until its boot timeout ([design-live.md](design-live.md#the-code-server),
+  "`erx_code`'s side"). Missing:
+  * `erx_code`'s target effect layer: no code makes a target. It needs the targets and
+    their aliases, the 30 s timer per load, the monitor of the code server, serving the
+    pieces a code server asks for, routing a domain's answers by alias,
+    `{erx_code_published, Alias, Lifeline}` after a supervised domain's `ok`, and ending a
+    domain through the domain service. A target made before this refuses every load
+    `enotsup`.
+  * The domain service: the domain pid passes `{domain_code_agent, Ref, Id, Agent}` on,
+    but the domain service ignores it. It records the domain's code server, its supervised
+    flag and its release hash with the domain, and for a supervised domain sends
+    `erx_code` the notice that the domain started.
+  * The domain library's build answer carries no flags; it reports the supervised flag the
+    plan set, for the domain service to record.
+  * The plan never sets `supervised`. It sets it for a configured row that allows a
+    restart, and, once `erx_domain:create`'s restart is built and the request plan carries
+    the specification's `restart`, for a created domain whose restart is `permanent` or
+    `transient`.
+  * Three open design questions: what `Target` is as a key in `erx_code`'s state; where a
+    domain's release hash comes from (the domain record holds none); and whether an alias
+    send from a domain to `erx_code` crosses the funnel as design-live.md assumes.
+
+  Until then every domain is unsupervised, which fails safe: its code server starts it at
+  once on its release, and no domain is sent a start load.
+* [Low] code bounds, the model's words and depth against the funnel
+  (`tools/lib/erx/abi_code_bounds.rb`, `liberx/erx_etf.c`): the bytes agree with stock
+  OTP's `external_size/1`, but the words and depth the floors use are counted by hand from
+  `erx_etf.c`'s heap sizes. Add a host test that runs the largest terms through
+  `erx_etf_check` and asserts its words and depth do not exceed the model's.
 * [Low] code service, overlays across reboots and `erx_code` restarts
   (`erlang/apps/erx_code/src/erx_code.erl`): design-live.md keeps every overlay, hot store and history in
   `erx_code`'s memory, so a reboot returns every domain to its release and an `erx_code` restart ends the

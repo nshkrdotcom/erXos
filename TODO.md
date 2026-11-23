@@ -157,7 +157,7 @@ document's "residual risks accepted" paragraph.
 * [liberx and the ABI](docs/todo-liberx.md#planned-features): liberx and its program layer, the ABI and its generators, the domain library.
   12 items (10 Medium, 2 Low).
 * [Domains and the system manifest](docs/todo-domains.md#planned-features): the domain service, domains, the code service, facets, the system manifest and its checks, the funnel.
-  11 items (5 Medium, 6 Low).
+  14 items (6 Medium, 8 Low).
 * [Network](docs/todo-network.md#planned-features): the network stack (`erx_net`), WiFi and HTTPS clients.
   21 items (8 Medium, 13 Low).
 * [USB](docs/todo-usb.md#planned-features): the USB stack and its class drivers.
