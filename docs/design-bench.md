@@ -276,11 +276,15 @@ in under a second, and records:
   the other, stamps `b` on receipt and passes it back; A stamps `c` on its
   return. Causality gives `b - c <= offset <= b - a`, each end widened by
   the smallest increment. Over 1,000 rounds the offset lies in the
-  intersection: from the largest `b - c` to the smallest `b - a`. The
-  interval is never narrower than the fastest round trip, so a 50-tick
-  offset hidden inside 100-tick transfers widens it rather than passing
-  as zero; an empty intersection means the stamps contradict each other
-  and the pair is refused;
+  intersection: from the largest `b - c` to the smallest `b - a`. Each
+  round's interval holds the offset whatever its transfers took, so a
+  50-tick offset hidden inside 100-tick transfers stays inside the
+  interval instead of passing as zero; rounds whose transfers split
+  differently narrow the intersection, and an empty one means the stamps
+  contradict each other and the pair is refused. The construction
+  assumes the offset does not change during the run, so calibration runs
+  again after the run's cells, and the cells across that pair are
+  refused unless the two intervals overlap;
 * the rounding of a timed wait (`erx_fiasco_time_wait_us` rounds a
   deadline up to the microsecond, `liberx/backend/fiasco/time_table.c`),
   so lateness under a microsecond is recorded as unresolvable;
@@ -289,11 +293,13 @@ in under a second, and records:
   is set; that the board allows the read is unverified), and otherwise
   `unknown`.
 
-A one-way interval across CPUs is corrected by the interval's middle and
-reported with its half-width as its uncertainty. A cross-CPU cell whose
-half-width exceeds a tenth of its median reports `unsupported: counters
-across CPUs not bounded closely enough`. A round trip is never halved
-into a one-way number.
+The rule applies to a cell whose start and end stamps are read on
+different CPUs; a round trip stamped on one CPU needs no calibration,
+wherever its work ran. Such a one-way interval is corrected by the
+interval's middle and reported with its half-width as its uncertainty,
+and its cell reports `unsupported: counters across CPUs not bounded
+closely enough` when the half-width is more than a tenth of its median.
+A round trip is never halved into a one-way number.
 
 **Short operations.** An operation whose warm-up median is under 100
 ticks is timed in batches: the smallest power of two of operations that
@@ -335,11 +341,17 @@ Two rules hold in every profile, so no benchmark declares them:
   ticks, and deadlines a whole period apart would all fall at one phase,
   set by when the run happened to start. Deadline k is therefore the first
   deadline, plus k periods, plus `(7k mod 16) / 16` of a period, which
-  visits sixteen phases in turn. Lateness is reported per phase: each
-  phase's minimum is the timer's rounding at that phase, and each
-  sample's excess over its phase's minimum is the scheduling delay, the
-  two reported apart. Whether Fiasco's timed waits end only at ticks is
-  unverified until the sweep shows it.
+  visits sixteen phases in turn. Within a run, lateness is reported per
+  sweep phase as the minimum observed lateness and the excess above that
+  minimum. The minimum holds the timer's rounding together with whatever
+  delivery and scheduling cost every period paid, so it is not called
+  rounding, and the excess is not called scheduling delay; telling them
+  apart needs a stamp of the timer's own firing, which no cell has. A
+  sweep phase is counted from the run's first deadline, not from the
+  tick, so phases are not matched across runs: comparisons use the
+  distribution over all phases. Whether Fiasco's timed waits end only at
+  ticks is unverified; a minimum that varies across the phases by about a
+  tick is the sign of it.
 
 ### Environments
 
@@ -409,11 +421,15 @@ number changes by a new run. A record of an older format is refused with
 a diagnostic, never read.
 
 **Where records are written.** `Erx::BenchRecord.write` is the only
-writer. It resolves the history root by real path, symbolic links
-included, and refuses it unless it is the top of a git work tree whose
-common git directory is not the erXos repository's, and unless it lies
-outside every worktree `git worktree list` gives for the erXos
-repository. A missing root is refused, never replaced by a fallback.
+writer. It refuses the history root unless it exists, is the top of a
+git work tree whose common git directory is not the erXos repository's,
+and lies, by real path, outside every worktree `git worktree list` gives
+for the erXos repository. It then checks the destination itself, not
+only the root: it walks from the root to the run directory one
+component at a time, refuses any component that is a symbolic link, and
+refuses unless the run directory's real path lies under the root's and
+outside every erXos worktree. A missing root is refused, never replaced
+by a fallback.
 The separate repository is identified by these derived facts; no
 marker file declares it. Scratch work (images being
 built, the boot directories QEMU writes into) stays under `build/` and is
@@ -664,12 +680,18 @@ that every response edge belongs to one stimulus:
 * the responder acts on each rising edge it handles by inverting the
   response pin once, so its k-th response edge answers the k-th
   stimulus;
+* a capture begins only when the responder is ready: it has been
+  started afresh, has cleared the GPIO bank's event status for its pin
+  and acknowledged its line, so no old event is pending, and has printed
+  `ready` on the console; the analyser starts the stimulus only after
+  that line;
 * a stimulus whose response edge has not come before the next rising
-  edge ends the cell: what came before stands, the cell is `partial`
-  with the stimulus's number and a lower bound on its latency (the gap
-  to the next stimulus), and the next cell starts from a fresh count,
-  with the responder's count reset by its restart. No later edge is
-  matched to it.
+  edge ends the capture: matching stops there for the rest of the
+  capture, what came before stands, and the cell is `partial` with the
+  stimulus's number and a lower bound on its latency (the gap to the next
+  stimulus). Another capture starts only by the same sequence: stimulus
+  stopped, responder restarted, its `ready` seen. Silence on the pins
+  never resumes matching.
 
 The interval from a stimulus's rising edge to its response edge is one
 sample of `wake.gpio-edge`, on the analyser's clock, for every system
@@ -757,8 +779,8 @@ the native bench guest of `wake`.
 
 | Operation | Exact act | Correct result | Profile |
 | --- | --- | --- | --- |
-| `root-same-space` | a thread of the root stamps, sends the root service a request its decoder refuses (a call whose request has more than one word, sent with only the caller's word), and stamps the reply | `ERX_EINVAL`, and the service's count of messages received (`erx_fiasco_test_received`, the test accessor beside `erx_fiasco_test_pool_free`) risen by exactly the requests made, which tells the decoder's refusal from a failed IPC that the stub also reports as `ERX_EINVAL` | fast, on the service's CPU and on another |
-| `root-cross-space` | the same from a thread of a test task; the root reads the count before the task starts and after it ends | the same | fast, the same placements |
+| `root-same-space` | a thread of the root stamps, sends the root service a request its decoder refuses (a call whose request has more than one word, sent with only the caller's word), and stamps the reply | `ERX_EINVAL` | fast, on the service's CPU and on another |
+| `root-cross-space` | the same from a thread of a test task | the same | fast, the same placements |
 | `kernel` | the cheapest call Fiasco answers alone, chosen from Fiasco's source when the guest is written and named in the record (a candidate is the invocation of an empty capability slot) | the error Fiasco gives that call | fast |
 
 The request needs no new call in the root service. The decoder refuses a
@@ -768,7 +790,17 @@ answers it through the same receive and reply as every request
 (`service_message`, `liberx/backend/fiasco/service.c`). The cell is a
 decoder-refusal round trip: the IPC, the receive, the decode and the
 reply that every request pays, without the dispatch to a body, which an
-accepted request adds. Nothing is added for a benchmark to keep secure. On erXos's kernel, `kernel` is its
+accepted request adds. Nothing is added for a benchmark to keep secure.
+
+The stub reports a failed IPC as `ERX_EINVAL` too, so the status alone
+does not show that the decoder answered. One correctness case shows it
+for the request's shape, before any task starts and while no other
+thread of the guest runs: the root reads the service's count of messages
+received (`erx_fiasco_test_received`, the test accessor beside
+`erx_fiasco_test_pool_free`), makes 1,000 of the requests, and reads it
+again; the count must have risen by exactly 1,000. The cells do not
+repeat the count, since a task's start and stop send requests of their
+own. On erXos's kernel, `kernel` is its
 null call, the one the speculation mitigations are priced by
 ([design-arch-aarch64.md](design-arch-aarch64.md#speculation-mitigations)),
 and the root operations go, since there is no root service.
@@ -792,8 +824,13 @@ once and untimed, the check `native_memory`'s suite makes for that call
 (`test/guest/native_memory/guest.c`): a committed page reads zero, a
 written page reads back after a protect to read-only and back, a
 decommitted and recommitted page reads zero, and the free page count is
-what it was once the range is released. A failed check makes the cell
-`failed`.
+what it was once the range is released. A protect that does nothing
+leaves a page writable and its contents whole, which no read can see,
+so `protect` also has a check that must fault, as `native_crash`'s
+read-only case does (`test/guest/native_crash/guest.c`): a disposable
+test task protects a written page to read-only and writes it, and the
+root expects that task's fault record at the page's address. A failed
+check, or a task that exits without the fault, makes the cell `failed`.
 
 | Operation | Exact act | Correct result | Profile |
 | --- | --- | --- | --- |
@@ -929,7 +966,7 @@ fault that must fail it:
 
 | Test | Passing case | Seeded failure that must fail it |
 | --- | --- | --- |
-| the writer's destination | a record under a temporary separate repository is written; one inside a second worktree of the erXos repository, one through a symbolic link into the tree, and one in a plain directory that is no git work tree are each refused | the worktree check dropped: the write into the second worktree succeeds |
+| the writer's destination | a record under a temporary separate repository is written; one inside a second worktree of the erXos repository, a history root that is a symbolic link into the tree, a separate repository whose `bench` directory is a symbolic link into an erXos worktree, and a plain directory that is no git work tree are each refused | the worktree check dropped: the write into the second worktree succeeds; the destination's walk dropped, leaving the root's check: the write through the `bench` link succeeds |
 | comparability | a TCG record against a native one is refused, `g3`'s TCG report holds no ratio, and two cells differing only in batch size are refused | the kind check dropped: the report shows a ratio; the batch size left out of the cell: the comparison is made |
 | the percentile rule | 1,000 samples give a 99th percentile and 999 do not; 10,000 give a 99.9th and 9,999 do not; 20 give a median and 19 do not | the count test written `>= 9`: 999 samples report a 99th percentile |
 | the verdict | three baseline runs and three candidates: within the band is `same`, two of three above it by more than the threshold `slower`, one of three `inconclusive` | one of three accepted as `slower` |
@@ -937,14 +974,15 @@ fault that must fail it:
 | a replayed log | a replayed boot's numbers appear in the report and are refused as a baseline run | the replay mark ignored: a replayed log counts as a third baseline run |
 | the histogram (C and Erlang, on the host) | samples spread over twenty octaves each land in a bucket whose bounds contain them and whose width is at most 1/64 of its lower bound | an off-by-one in the sub-bucket index: a sample lands outside its bucket |
 | the `BENCH` line reader | a fuzz target over the line validator, with the guests' own lines as seeds, runs its budget clean | a removed bound on the histogram's length: the fuzzer finds the overrun |
-| the cross-CPU offset | host stamps with a true offset of 50 ticks and 100-tick transfers give an interval that contains 50 and is at least 200 wide, so a cell with a 1,000-tick median is refused | the ordering test of the stamps used instead of the causal interval: a bound of one tick is reported |
+| the cross-CPU offset | host stamps with a true offset of 50 ticks and every transfer 100 ticks give, with the one-tick widening, the interval `[-51, 151]`: it contains 50, its half-width is 101, a cell with a 1,010-tick median is accepted and one of 1,009 refused; stamps whose offset moves by 300 ticks between the calibration before and after give disjoint intervals and the cells are refused; a round trip stamped on one CPU is never refused | the ordering test of the stamps used instead of the causal interval: a bound of one tick is reported |
 | a periodic deadline | the classifier, given the stamps of a 5 ms stall at period 100, reports at least four missed periods and a maximum lateness of at least 5 ms, and given a return 10 us before its deadline, one early return | the next deadline taken from the return: the stall shows as one late period; the early test written `<=` the deadline: an on-time return counts as early |
-| the phase sweep | deadlines over 160 periods visit each of the sixteen phases ten times, and a fake timer that fires only on ticks gives each phase a different minimum lateness, reported apart from the excess | the phase term dropped: every deadline has one phase |
+| the phase sweep | deadlines over 160 periods visit each of the sixteen phases ten times, and a fake timer that fires only on ticks gives a minimum observed lateness that varies across phases by about a tick, with each sample's excess above its phase's minimum reported | the phase term dropped: every deadline has one phase |
 | a lost wake | in the guest, the `wake` handshake reports `measured` and no loss | the wake sent to another slot: B's park times out after 1 s and the cell is `failed` |
 | `otp-switch` | two yielders on one scheduler observe nearly every yield as a switch | the yield removed: no switch observed, the measurement `failed` |
-| `nullcall` | the refusal answers `ERX_EINVAL` and the service's received count rises by exactly the requests made | the request sent to the `kernel` cell's empty slot instead of the service: the stub still answers `ERX_EINVAL`, the count does not move, and the cell is `failed` |
-| `vm` | each cell's untimed check passes | `erx_space_protect` made to answer `ERX_OK` without calling the service: the written page's check after the protect fails |
-| the GPIO probe's matching | the importer, given a capture whose third stimulus has no response before the fourth, ends the cell after the second sample, `partial`, and matches nothing until 100 ms of quiet | the next response matched to the third stimulus: the cell holds a sample for it |
+| `nullcall` | the correctness case: 1,000 refusals answer `ERX_EINVAL` and the service's received count rises by exactly 1,000 | the request sent to the `kernel` cell's empty slot instead of the service: the stub still answers `ERX_EINVAL`, the count does not move, and the case is `failed` |
+| `vm` | each cell's untimed check passes, and the disposable task's write to its read-only page faults at that address | `erx_space_protect` made to answer `ERX_OK` without calling the service: the task's write succeeds, it exits with no fault, and the cell is `failed` |
+| the GPIO probe's matching | the importer, given a capture whose third stimulus has no response before the fourth, ends the cell after the second sample, `partial`, and matches no later edge of that capture | the next response matched to the third stimulus: the cell holds a sample for it |
+| the interrupt-entry pairing (with the patch) | given receipts and `irq_entry` records, one entry between two receipts makes a sample, and none, two, or a window with a record counted as overwritten makes the receipt `partial` | the window's lower end dropped, pairing each receipt with the latest entry before it: the two-entry case yields a sample |
 
 **Sensitivity runs** check, on a real environment, that a benchmark
 moves when the cost it watches moves. They are experiments, not proofs:
@@ -995,19 +1033,46 @@ benchmark back to its design rather than letting it land.
    listed in [design-fiasco.md](design-fiasco.md), stamps each entry, or
    the limits start at the first user-mode stamp and the analyser's
    `gpio-edge` bounds the kernel's part separately, which changes the
-   accepted definition. **Recommendation:** the patch, under this
-   contract: its storage is kernel-owned and of fixed size, one slot per
-   line holding the last entry's counter value and a count of the line's
-   entries, which the root compares with its own count of the line's
-   deliveries, so each stamp is matched to its delivery and a count that
-   has moved on by more than one shows the stamp was overwritten; only
-   the root can map it, read-only; a stamp overwritten
-   before the root read it, or missing, makes that receipt `partial`,
-   never a guessed time; and the patch's code and mapping sit behind a
-   configuration option that only the development Fiasco build sets and
-   that the release configuration's exact allowlist
-   ([design-fiasco.md](design-fiasco.md#the-releases-fiasco-build))
-   does not admit. It keeps the accepted
+   accepted definition. **Recommendation:** the patch, writing trace
+   records rather than a slot of its own, under this contract:
+   * **What it writes.** At each interrupt entry the kernel writes one
+     `irq_entry` record, naming the line, into a ring of `erx_trace_record`
+     records for its CPU, stamped with the counter the user-mode accessor
+     reads. The layout and the event enum are the ones every trace ring
+     uses (`abi/kernel.txt`), and erXos's kernel records interrupts in its
+     own rings ([design-kernel.md](design-kernel.md#trace-ring)), so the
+     patch adds a source, not a format.
+   * **Coherence.** Each ring has one writer, its CPU, with interrupts off
+     in the entry path, and the record is written by the protocol of
+     [Sequence-counted records](design-kernel.md#sequence-counted-records).
+     The root reads it with the trace ring's own reader
+     ([design-fiasco.md](design-fiasco.md#the-trace-ring)), which keeps a
+     record only when both loads of its count agree and counts every
+     other one as overwritten, so a reader never takes a stamp from one
+     entry and a line from another. Nothing new pairs a time with a count.
+   * **Association.** The two lines the limits time are level-triggered,
+     and Fiasco masks such a line at its firing until its holder
+     acknowledges it (the paragraph on what a line delivers in
+     [design-fiasco.md, Urgency](design-fiasco.md#urgency)), so exactly one entry of the line falls between
+     two consecutive receipts of it. Receipt k is paired with the line's
+     `irq_entry` records stamped after receipt k - 1 (for the first, after
+     the cell's start) and before receipt k. Exactly one makes a sample.
+     None, more than one, or any record of that CPU's ring counted as
+     overwritten in that window makes the receipt `partial`, never a
+     guessed time. A line found edge-triggered, whose entries can merge,
+     has every receipt `partial`; that both lines are level-triggered in
+     the board's device tree is unverified until the patch lands.
+   * **Authority and builds.** The rings are kernel-owned, of fixed size,
+     and mapped read-only into the root alone. The patch's code and
+     mapping sit behind a configuration option that only the development
+     Fiasco build sets and that the release configuration's exact
+     allowlist ([design-fiasco.md](design-fiasco.md#the-releases-fiasco-build))
+     does not admit.
+
+   Trace records win over a per-line slot because the format, the
+   coherence protocol and the reader already exist and are tested: a
+   slot would need a publication protocol and a rule pairing its count
+   with deliveries, and the record needs neither. It keeps the accepted
    definition, gives one timeline from entry to the driver on one clock,
    and goes with Fiasco when erXos's kernel, whose rings record
    interrupts, replaces it.
