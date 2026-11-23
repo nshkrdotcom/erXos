@@ -73,14 +73,15 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   root's `erx_fiasco_band_domain` at the space step, after the carve steps ran. Checking it in the planner's grant
   validator refuses it before anything is applied; the root's check then guards only the root's own request.
 * [Medium] 0.2 on Fiasco, `liberx/backend/fiasco`: every thread start reads the band table only because each
-  `l4_scheduler_run_thread` site (`service.c`, `watchdog_thread.c`) calls `erx_fiasco_band_priority`; a new
+  `l4_scheduler_run_thread` site (`service.c`, `watchdog_thread.c`) calls `erx_fiasco_band_levels`; a new
   site with its own `l4_sched_param` builds. Make `band.c` the one producer of the scheduling parameters,
-  from a band and a CPU mask, with a chokepoint rule refusing `l4_sched_param(` elsewhere (the CPU narrowing
+  from a band, a slice and a CPU mask, with a chokepoint rule refusing `l4_sched_param(` elsewhere (the CPU narrowing
   above wants the same function) ([design-fiasco.md](design-fiasco.md#bands)).
-* [High] 0.2 on Fiasco, `test/guest`: the band suite of [the verification](design-fiasco.md#verification),
-  its band, sub-space band, app session band and root-only domain form rows, each with its seeded failure.
-  The pure decisions and their seeds are host tests (`test/host/fiasco_band_test.rb`,
-  `test/host/dom_core_test.rb`); what a spinning domain does to a higher band's echo needs the guest.
+* [High] 0.2 on Fiasco, `test/guest`: the rest of the band suite of
+  [the verification](design-fiasco.md#verification), its sub-space band, app session band and root-only domain
+  form rows, each with its seeded failure in a guest. The band row is `native_task`'s `band` case and base
+  sharing the `system_domain` suite's load; the pure decisions and their seeds are host tests
+  (`test/host/fiasco_band_test.rb`, `test/host/dom_core_test.rb`).
 * [Medium] 0.2 on Fiasco, `liberx/backend/fiasco`: whole-space pause and resume by the root, for `fork`'s copy
   and job control: the request answered only once every thread is held, the root never waiting for a thread;
   each thread not already held stopped by `ex_regs` with `Exr_cancel` and `Exr_trigger_exception`, its
@@ -497,9 +498,10 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   share CPU 0 at the same Fiasco priority (history repository commits 924e652 and de6a618,
   `pi4/2026-11-22-irq-probe/`, images A to C). With ERTS's busy-wait spinning off (image E, commit 66b1a9e)
   the SD line's receipts all fall under 615 us, but the console's lags stay at 0.6 to 2.1 ms. The work is
-  erXos's, the bands of docs/design-fiasco.md ("Bands", "Urgency", "Scheduling"): one normal scheduler pinned to each CPU,
-  parks in place of spinning, the grant's 1 ms slice as the quantum, and an executor that holds work of priority `high`
-  raised above every domain's ordinary work. Which threads the owner waited behind is not recorded, so the
+  erXos's, the bands of docs/design-fiasco.md ("Bands", "Urgency", "Scheduling"); the levels, the bands and the
+  grant's 1 ms slice as the quantum are built, and what remains is one normal scheduler pinned to each CPU, parks in
+  place of spinning, and an executor that holds work of priority `high` raised above every domain's ordinary work.
+  Which threads the owner waited behind is not recorded, so the
   Pi 4's measurement of that document's "Verification" is run as each lands.
 
 * [Medium] Fiasco backend, `liberx/backend/fiasco/park.c`: `erx_park` and `erx_group_take_ready` refuse a thread

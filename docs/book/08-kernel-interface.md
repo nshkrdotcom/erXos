@@ -671,7 +671,7 @@ In the design, each domain has a priority **band**, the lowest and
 highest priority its threads may run at, and a **CPU set**, the CPUs
 its threads may use; chapter 9 treats both
 ([design-fiasco.md, Threads, bands and stops](../design-fiasco.md#threads-bands-and-stops)).
-Bands in that form and CPU sets are designed and not built.
+The bands are built; CPU sets are designed and not built.
 
 A thread that waits for another thread blocks in Fiasco; it never
 spins or yields in a loop. A thread that leaves a wait takes its CPU at

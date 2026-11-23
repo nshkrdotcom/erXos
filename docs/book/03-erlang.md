@@ -1031,9 +1031,9 @@ may run at, and a set of processors. The configured domains do their
 ordinary work at one priority, untrusted code below it, and only urgent
 work above it, so a spinning app delays no configured domain
 ([design-fiasco.md, Bands](../design-fiasco.md#bands)). The bands are
-**Designed** and not built: each thread starts at a priority its band
-takes from one table of the root service, which ranks the bands one
-above another (`liberx/backend/fiasco/band.c`).
+**Built**: each thread starts at its band's base, from one table of the
+root service (`liberx/backend/fiasco/band.c`); the urgent work that runs
+above the base is **Designed** and not built.
 
 Scheduling has two levels: ERTS switches between Erlang processes as
 section 3.5.2 describes, and the kernel schedules ERTS's threads by

@@ -919,17 +919,16 @@ threads and waits; section 3.5.2 for schedulers and reductions.
 **Background boxes.** A C library, and musl.
 
 **Status.** Built: ERTS in user mode in every domain, with its Erlang
-processes as the system's one kind of process; Fiasco running each
-task's threads at the priority of its band, from one table that ranks
-the bands; a call to the root service on the caller's remaining slice;
+processes as the system's one kind of process; the four levels and the
+bands as a base and a ceiling, with Fiasco running each task's threads
+at its band's base, no rank among the configured domains, and its
+domain grant's slice as each thread's quantum; a call to the root service on the caller's remaining slice;
 executors and workers and how
 they park and wake; the event table that turns a doorbell into work;
 the system domain on the interpreter, with BeamAsm available to other
 domains; musl under ERTS, with FreeBSD's errno and signal numbers;
 hosted mode; `ps` over Erlang processes; and `erx:trace`. Designed:
-the four levels and the bands as a base and a ceiling, with no rank
-among the configured domains; pinned schedulers, the 1 ms slice and
-parking in place of spinning; the urgent scheduler; CPU sets and thread
+pinned schedulers and parking in place of spinning; the urgent scheduler; CPU sets and thread
 limits; refusing an executor every
 other blocking wait; refusing code that is not installed; one shared
 copy of common code; native programs in `ps`; and services that admit
@@ -946,8 +945,8 @@ each client within a share of their time.
    ordinary work at one level; pinned schedulers, a 1 ms slice and
    parking in place of spinning; the urgent scheduler, which waits above
    the base for a trusted runtime's interrupts and runs its `high` work,
-   and its roster; CPU sets and thread limits. All designed and not
-   built but the band's priority from one table, which ranks the bands.
+   and its roster; CPU sets and thread limits. The levels, the bands and
+   the slice are built; the rest is designed and not built.
    *Draws on:* [design-fiasco.md, Scheduling](../design-fiasco.md#scheduling),
    [design-fiasco.md, Bands](../design-fiasco.md#bands),
    [design-fiasco.md, Urgency](../design-fiasco.md#urgency),

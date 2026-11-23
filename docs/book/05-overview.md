@@ -163,9 +163,8 @@ urgent work, such as handling an interrupt, runs above. A **CPU set**
 names the processors they may use, and a **thread limit** caps how
 many there are
 ([design-fiasco.md, Threads, bands and stops](../design-fiasco.md#threads-bands-and-stops)).
-These limits are **Designed** and not built. Each thread starts at a
-priority its band takes from one table of the root service, which
-ranks the bands one above another
+These limits are **Designed** and not built. The bands are built: each
+thread starts at its band's base, from one table of the root service
 ([chapter 9](09-processes.md#922-levels-and-bands)).
 
 ### 5.1.5 Budget

@@ -2,17 +2,17 @@
 
 > **Status.** **Built:** ERTS in user mode in every domain, with its
 > Erlang processes as the system's one kind of process; Fiasco running
-> each task's threads at the priority of its band, from one table that
-> ranks the bands; a call to the root service on the caller's remaining
-> slice; the two classes of
+> each task's threads at its band's base, from one table of the four
+> levels and of each band's base and ceiling, with no rank among the
+> configured domains; each domain's slice, 1 ms, as its threads' quantum;
+> a call to the root service on the caller's remaining slice; the two classes of
 > runtime thread and how they sleep and wake; the table that turns a
 > doorbell into work; the system domain on the interpreter, with
 > BeamAsm available to other domains; musl under ERTS, with FreeBSD's
 > errno and signal numbers; hosted mode on macOS; `ps` over Erlang
-> processes; and `erx:trace`. **Designed:** the four levels and the
-> bands as a base and a ceiling, with no rank among the configured
-> domains; pinned schedulers, the 1 ms slice and parking in place of
-> spinning; the urgent scheduler; CPU sets and thread limits; refusing a scheduler thread every other blocking wait;
+> processes; and `erx:trace`. **Designed:** pinned schedulers and
+> parking in place of spinning; the urgent scheduler, the one way a
+> thread runs above its band's base; CPU sets and thread limits; refusing a scheduler thread every other blocking wait;
 > refusing code that is not installed; one shared copy of common code;
 > native programs in `ps`; and services that admit each client within a
 > share of their time.
@@ -223,13 +223,12 @@ session's programs run at the app band, as does an app's own session
 whatever its template names
 ([design-fiasco.md, Bands](../design-fiasco.md#bands)).
 
-The levels and bands of tables 9.1 and 9.2 are **Designed** and not
-built. What is built is the band in each task's row and one table of
-priorities in the root service that every thread start reads
-(`liberx/backend/fiasco/band.c`); that table ranks the bands one above
-another, the system band above the driver band above the interactive
-band above the app band, where the design puts the first three at one
-base level.
+The levels and bands of tables 9.1 and 9.2 are **Built**: each task's
+row holds its band, and one table of the root service holds the four
+levels and each band's base and ceiling, which every thread start reads
+(`liberx/backend/fiasco/band.c`). The urgent scheduler, the one way a
+thread reaches its band's ceiling, is **Designed** and not built, so
+every thread runs at its band's base.
 
 ### 9.2.3 Where the schedulers run
 
@@ -263,12 +262,12 @@ of 818.8 ms with spinning off against 642.8 ms with stock ERTS's
 spinning, over 11 boots each (`bench/2026-11-22-spin/`, in the same
 repository). The design accepts that price.
 
-Pinned schedulers, the 1 ms slice and parking in place of spinning are
+The 1 ms slice is **Built**: the root service starts every thread with
+its domain grant's slice as its quantum, and the development manifests
+carry 1 ms. Pinned schedulers and parking in place of spinning are
 **Designed** and not built. As built, ERTS names no processor for its
 schedulers, so a domain's executors share one processor and take turns
-on it; they do not run in parallel, whatever figure 9.1 suggests. The
-development manifests carry the 1 ms slice, and the root service starts
-each thread with Fiasco's default.
+on it; they do not run in parallel, whatever figure 9.1 suggests.
 
 ### 9.2.4 Urgent work
 
@@ -838,9 +837,7 @@ dirty scheduler
 **A domain spins.** In the design its threads take turns at its band's
 base: a configured domain's with every other configured domain's
 threads on those processors, which slow down but run, and an app's
-only while nothing above the app level is ready. The built table ranks
-the bands instead, so there a spinning domain keeps every lower band
-off its processors.
+only while nothing above the app level is ready.
 
 **An executor dies.** The park protocol's *release* event frees the
 slot, advances the group's epoch and wakes the longest-parked

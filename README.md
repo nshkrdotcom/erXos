@@ -87,7 +87,7 @@ than mirroring pixels. The [overview](docs/overview.md) tells the longer story.
 * **Two-level scheduling, one CPU authority.** In erXos's own kernel, the
   kernel grants CPU time to groups of threads, enforces every grant and
   never calls back into a runtime's scheduler. On Fiasco a domain is meant to get a
-  priority band, a CPU set and a thread limit instead; bands are designed, not built, and every thread but the watchdog runs at one priority today. Either way each
+  priority band, a CPU set and a thread limit instead; the bands are built, with every configured domain's threads at one level, untrusted code below it and only the watchdog above it. Either way each
   runtime schedules its processes on its threads without a kernel call. *Psyche*,
   *Akaros* and *Barrelfish* showed the way; *scheduler activations*, long
   abandoned, showed what to avoid.
