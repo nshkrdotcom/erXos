@@ -1886,18 +1886,20 @@ prototyped ([research-fiasco-vs-kernel.md](research-fiasco-vs-kernel.md)).
   refused; a program's `sem_wait` interrupted by a signal returns
   `EINTR`, and a signal sent during a wait is handled before the wait
   returns.
-* **F4, hardening** (FD32 closed, unless 0.2's release build carried its
-  patch; FD29's early-boot clause closed; FD33 narrowed; 150 to 450
+* **F4, hardening** (FD32 closed if the patch costs nothing measurable,
+  otherwise it stays a published downside; FD29's early-boot clause closed; FD33 narrowed; 150 to 450
   lines and an audit). Branch-predictor hardening at Fiasco's AArch64
   entry from user mode and at each switch between address spaces, as
   [design-arch-aarch64.md](design-arch-aarch64.md#speculation-mitigations)
-  chooses from the CPU, in the release's Fiasco build whatever its cost;
+  chooses from the CPU, shipped only if the null-request bench shows it
+  costs nothing measurable, as 0.2's condition says; whether to ship it
+  whatever its cost is deferred;
   Fiasco's boot arms the board's watchdog before the root starts; an
   audit of Fiasco's asynchronous-error and interrupt paths. Exit
   criteria: a probe records whether the Raspberry Pi 4's firmware offers
   SMCCC's workaround call, the entry makes the mitigation the CPU and
-  firmware allow, and the null-request bench is recorded before and
-  after; a hang injected in Fiasco's boot before the root's first
+  firmware allow, the null-request bench is recorded before and after,
+  and the patch is carried only if the bench shows no measurable cost; a hang injected in Fiasco's boot before the root's first
   instruction resets the board, under the QEMU harness and once by hand
   on the Pi 4; the audit is a research record naming each path read and
   what it found, and each finding is fixed or a clause of FD33; an
