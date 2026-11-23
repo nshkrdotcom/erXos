@@ -483,7 +483,7 @@ module Erx
     # alone. Since both messages come from one process over one lane, a frame that ended the
     # connection leaves SdLq without sd_new, whatever the three seconds of SdNw saw.
     # SdLsv is the supervised flag of the library's build answer for the later peer
-    # (erx_domain_lib:create/1's map, docs/design-live.md, "Targets"). erx_domain:create/1
+    # (erx_domain_lib:create/1's map, docs/design-live.md, "Overlays"). erx_domain:create/1
     # returns only a domain handle, so the shell traces the domain service's call into the
     # library and reads the flag from its return_from, matched by the domain's id. The trace
     # is switched off in create's after clause, so it ends even if create raises, and the

@@ -101,7 +101,7 @@ its number, 0 for none, and also the label the system domain's bell is bound wit
 the domain's side, and bell, the domain's bell, are slots of the system domain's table;
 peer_side is the system domain's side; reader and system_lane are the data areas of the
 lanes the domain and the system domain read. supervised is the supervised bit of the boot
-information the library wrote (docs/design-live.md, "Targets"), which erx_dom_plan_boot_flags
+information the library wrote (docs/design-live.md, "Overlays"), which erx_dom_plan_boot_flags
 decides; Erlang code reads it here and never recomputes it.
 """.
 -type created() :: #{id := pos_integer(), connection := non_neg_integer(), side := non_neg_integer(),
