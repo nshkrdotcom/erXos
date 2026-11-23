@@ -254,7 +254,7 @@ module Erx
       design: "#{KERNEL}#chokepoint-checks",
       awaits: ['liberx/**/*'],
       existing: GROUPS.values.flat_map(&:unchecked_objects).sort.freeze,
-      reason: "reads liberx's target objects, which no build produces yet"
+      reason: "needs a reader of liberx's target objects (llvm-nm, llvm-objdump) in the check"
     )
 
     # Every rule, whichever file declared it. The kinds are read from the

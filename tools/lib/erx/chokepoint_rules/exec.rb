@@ -34,13 +34,12 @@ module Erx
                   'otp/erts/emulator/nifs/erxos/seeded.c' => "static void *plan = (void *)erx_elf_plan;\n" }
         ),
         # Both are the text half of the design's link check, whose object leg
-        # waits for liberx's target objects (unchecked_objects below).
+        # waits for its reader of liberx's target objects (unchecked_objects below).
         #
         # liberx's one function that maps an executable file's code into a
-        # program. Only erx_exec calls it; the program that runs it at
-        # libexec/erx_exec is not in the tree yet, so no site outside the
-        # loader names it but its host driver, which runs it over memory
-        # calls of its own.
+        # program. Only the loader program erx_exec is to call it
+        # (docs/todo-shell.md); its sites are the loader's own module and its
+        # host driver, which runs it over memory calls of its own.
         Chokepoints::Forbidden.new(
           name: 'exec-code-map',
           rule: "only erx_exec maps an executable file's code into a program: erx_exec_load " \
