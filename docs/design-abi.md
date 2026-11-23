@@ -1834,12 +1834,20 @@ HELPER`.
 * A `parameter` declares a typed scope or option value: its KIND, one of
   `u64`, `i64`, `boolean`, `identifier`, `namespace_path`, `domain`,
   `principal`, `device`, `bytes` and `member`; its cardinality, `one`,
-  `optional` or `set MAX_COUNT` (a set of `u64`, at least 2, packed one
-  row per element in strictly ascending order); its BOUND, `range MIN
+  `optional` or `set MAX_COUNT` (a set of `u64` or of `identifier`,
+  MAX_COUNT at least 2); its BOUND, `range MIN
   MAX` for an integer, `bytes MAX_BYTES` for text and bytes, `boolean`,
   `member ENUM` naming a gapless enum the ABI declares, or `target
   TABLE` for a reference, with `system yes|no` on a domain reference;
-  and the checked helper that consumes it. A member value is spelled as
+  and the checked helper that consumes it. A set is packed one row per
+  element in strictly ascending order: numeric for `u64`, and for
+  `identifier` lexicographic over unsigned bytes, a name before every
+  longer name it begins. So no element appears twice, and the packer
+  and the boot view each refuse a set out of order, with an element
+  twice or past its MAX_COUNT. The `ble` interface's `parameter
+  services 1 identifier set 8 bytes 63 checked_by ble_grant`
+  ([design-bluetooth.md](design-bluetooth.md#the-ble-facet)) is one.
+  A member value is spelled as
   the member's bare name in the source and reaches the domain service as
   that atom. Inactive fields are zero. Opaque bytes are legal only where
   the service contract defines them as opaque; they cannot encode an

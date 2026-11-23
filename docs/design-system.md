@@ -2684,8 +2684,10 @@ the boot path, is the one place a row is decoded: it checks each facet's
 rows against the parameters its service's interface declares, from a
 table the build generates from `abi/services` (`erx_service_parameters`
 in `erx/abi.h`), so each declared parameter appears once, except a set,
-whose elements are consecutive rows in ascending order, in number
-order, of its declared kind and within its declared bound, and no
+whose elements are consecutive rows in strictly ascending order,
+numeric or, for an identifier set, by bytes
+([design-abi.md](design-abi.md#services-facets-and-their-parameter-schemas)),
+in number order, of its declared kind and within its declared bound, and no
 parameter the interface requires is left out. A device reference, such
 as the `line` grant's `device`, is the index of its device row, which the
 manifest check resolves from the device-tree path the facet row states

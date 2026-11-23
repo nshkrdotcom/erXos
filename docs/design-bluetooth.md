@@ -389,7 +389,7 @@ stack's owners do
 | --- | --- | --- | --- |
 | the **controller process**, `erx_bt_hci` | the bring-up, the command slot, ACL credits, the map from handles to links, advertising | `erx_bt_hci_core` | items for its writer, which writes `data` and `ctl`; acknowledgements to its reader; starting and ending link processes ([The controller process's effects](#the-controller-processs-effects)) |
 | a **link process**, `erx_bt_link`, one per connection | L2CAP reassembly, the ATT bearer (MTU, the request in progress, queued commands, the prepared write, the indication in flight), the notifications waiting for credits, subscriptions, its one key and whether it is encrypted, the pairing in progress | `erx_bt_link_core`, over `erx_gatt_server`, `erx_gatt_gate` and `erx_smp_core` | messages to the controller process, the registry, the window and the store, and its two calls at its start ([The link's messages](#the-links-messages)) |
-| the **registry**, `erx_gatt_srv` | the table, each service's handler, the live `Conn` map, the writes handed to handlers, the `ble` facets | `erx_gatt_registry` | a monitor of each link and each handler, events to handlers, requests to links |
+| the **registry**, `erx_gatt_srv` | the table, each service's handler, the live `Conn` map, the writes handed to handlers | `erx_gatt_registry` | a monitor of each link and each handler, events to handlers, requests to links |
 | the **store**, `erx_bt_store` | the identity address, from stage 1; the bonds, from stage 4 | `erx_bt_state` (stage 4) | reads and writes through the store's backend; a monitor of each link holding a bond, and `forgotten` to it (stage 4) |
 | the **window**, in `erx_bt_fs` (stage 4) | whether a pairing window is open, its mode and its opener's fid; the pairing wait | `erx_bt_window` | lines on the opener's `pair` file; a monitor of each link that owes it a pairing's outcome |
 
@@ -464,10 +464,14 @@ no device. Its release script, `bt`, ships `kernel`, `stdlib`, `erx`, `erx_files
   `name`, `appearance`, `connections`, `patch`, a file of `erx_bt`'s
   `priv` directory, `patch_manufacturer` and `console`. The host name is
   the host part of the domain's node name
-  ([design-system.md](design-system.md#identifiers)). Every release only
-  loads `erx_bt` and the `crypto` it requires, and the row's `-eval`,
-  `{ok,_}=application:ensure_all_started(erx_bt,permanent)`, starts both
-  once init holds the ready answer's facets;
+  ([design-system.md](design-system.md#identifiers)). The release's boot
+  script starts `erx_bt`, and the `crypto` it requires, before init's
+  ready report, and `erx_bt` then runs only the mint of `ble` ([The
+  `ble` facet](#the-ble-facet)); the row's `-eval`,
+  `ok=erx_bt_top:start_stack()`, starts the rest, `erx_bt_sup`, once
+  init holds the ready answer's facets, the `line` grant among them, as
+  the PCIe domain starts its enumerator
+  ([design-pcie.md](design-pcie.md#processes));
 * at stage 4, the store's grant: in a release build the vault's state
   facet `{state, "bt"}` ([design-system.md](design-system.md#state-slots)),
   and in a development build a files service of its own that the storage
@@ -477,7 +481,8 @@ no device. Its release script, `bt`, ships `kernel`, `stdlib`, `erx`, `erx_files
 * at stage 4, the system domain's login facet, when the console is
   configured ([The console](#the-console)).
 
-It serves three things: the `ble` facet to apps ([The `ble`
+It serves three things: the `ble` facet to apps, as the service `ble`
+that the manifest declares beside the domain's row ([The `ble`
 facet](#the-ble-facet)); its **control tree**, an instance of `files`
 with `ctl` and `pair` ([Stage 4](#stage-4-pairing-and-bonding)), which
 the manifest grants to administrators' sessions and to whichever app
@@ -1554,10 +1559,21 @@ reads a declaration at run time, so it is not an input to fuzz.
 
 Which services a machine serves is the manifest's: each `ble` facet row
 names, in its `services` parameter, the services its grantee handles, and
-the Bluetooth domain's row names its console's. The manifest check refuses
-a service no file declares, a service two rows name, two served services
-of one UUID, more than `gatt_services_max` services, and advertising data
-that do not fit.
+the Bluetooth domain's row names its console's; the domain serves exactly
+these. The packer and the boot view take a `services` set only in strict
+byte order, with no name twice and at most 8 names
+([design-abi.md](design-abi.md#services-facets-and-their-parameter-schemas)).
+`ble_grant`, the parameter's checker, refuses a service of the `ble`
+interface not named `ble`, as the line service's is named `line`
+([design-system.md](design-system.md#the-manifest), property 8), or served
+by no configured domain; a `ble` grant to the system domain, whose
+handler would take a phone's bytes (B8); a service no file declares, a
+service two rows name, two served services of one UUID, and advertising
+data that do not fit. Every served set is thus a subset of `abi/gatt`'s
+services with none served twice, so the declarations bound what a
+machine serves and no count of its own is needed: the host tests build
+the table of every declared service ([The attribute
+table](#the-attribute-table)).
 
 ### The attribute table
 
@@ -1636,12 +1652,52 @@ it (GATT 5.2.1).
 ### The `ble` facet
 
 An app reaches the Bluetooth domain only through its `ble` facet, an
-instance of the interface `abi/services/ble.txt` declares, with one
-parameter, `services`, a set of at most `gatt_services_max` identifiers.
-The facet is a process of the Bluetooth domain that the registry makes
-when the domain service introduces the grantee, as the network service
-makes its grants
-([design-system.md](design-system.md#the-network-domain)). Its operations:
+instance of the interface `abi/services/ble.txt` declares. Its one
+parameter names the services the grantee handles, at most 8 names of
+`abi/gatt`, an identifier set in strict byte order
+([design-abi.md](design-abi.md#services-facets-and-their-parameter-schemas)):
+
+```text
+parameter services 1 identifier set 8 bytes 63 checked_by ble_grant
+```
+
+The bound is written there once; [Declarations](#declarations-abigatt)
+gives what `ble_grant` refuses. The interface declares the five
+operations below, `attach 1`, `set 2`, `notify 3`, `indicate 4` and
+`reply 5`. A facet row of `ble` says `operations none`, and the facet's
+`admit/3` decides what passes, as the `pcie` facet's does
+([design-pcie.md](design-pcie.md#processes)), since the boot refuses
+operations on a row whose service a configured domain serves: nothing
+there would check them ([design-time.md](design-time.md#on-fiasco)).
+
+**The service and its mint.** The Pi 4's board manifest declares the
+service `ble`, served by the `bt` domain, beside that domain's row, and
+the QEMU Bluetooth suite's manifest declares rows of the same name. The
+mint of `ble`, `erx_ble_facet`, is a process of its own below `erx_bt`'s
+top supervisor, `erx_bt_top`, and starts with the boot script, as it
+must: it names itself the service's mint with `erx_facet:provide/2`, which is refused
+after init's ready report, while the registry starts only from the
+row's `-eval`, after the report ([The Bluetooth
+domain](#the-bluetooth-domain)). For each configured grant the domain
+service sends it, the mint starts a facet bound to the grantee, within
+the row's limits, that ends with the mint
+([design-system.md](design-system.md#facets-a-configured-domain-serves)).
+The mint outlives every restart of the registry, and its end ends the
+domain ([Concurrency](#concurrency)), whose restart mints every grant
+anew.
+
+**The one check.** A facet's `init/1` keeps its grant's `services`, and
+its `admit/3` refuses a request naming any other service with `{error,
+not_granted}` and one of no operation's shape with `{error, badarg}`;
+the facet is the only path to the registry from another domain, so this
+is the one check of a grant, and the registry checks none. It finds the
+registry by its registered name at each request, refusing `{error,
+unavailable}` while none is registered, and forwards the request with
+its caller, the grantee's process, which it took from the call. The
+registry's entry, `erx_gatt_srv:facet/3`, takes that caller and the
+operation and no grant; the forwarded call's `From` names the facet,
+and the caller in the request is the process that becomes a service's
+handler, hears its events and alone answers the writes handed to it.
 
 | Operation | Answer |
 | --- | --- |
@@ -1649,6 +1705,7 @@ makes its grants
 | `set(Service, Char, Value)` | `ok`: reads return `Value` from now on |
 | `notify(Conn, Service, Char, Value)` | `ok` once queued for the link, or `{error, busy}` when its queue holds `bt_notify_queue` |
 | `indicate(Conn, Service, Char, Value)` | `ok` once the phone confirms |
+| `reply(Req, ok \| {error, Code})` | `ok`: the answer goes to the write's link when `Req` names a write the registry handed to the caller and not yet answered; any other answer is dropped |
 
 `Service` is one the grant names; `Char` one the declaration names. A
 handler receives, through the envelope rule, which the client module
@@ -1674,7 +1731,16 @@ handler serves reads from its values and answers writes Unlikely Error.
 
 `connected` and `disconnected` come from the registry, which monitors
 every link: so every handler of a link's services hears of its end,
-however the link ended. `erx_gatt_service`, a behaviour over the facet,
+however the link ended, while the registry lives. A registry that ends,
+by its own crash or the store's restart before it, takes every
+attachment, every write handed to a handler and the values the
+handlers set with it, and its
+restart ends every link ([Concurrency](#concurrency)); the facets live
+on and reach the new registry at their next request, but a handler is
+not told: it hears no `disconnected` for those links and no event
+after, its `reply` to a write handed out before is dropped, and its
+services serve reads from their declared initial values and answer
+writes Unlikely Error until it attaches and sets them again. `erx_gatt_service`, a behaviour over the facet,
 turns these into callbacks for an app that wants them, and `erx_gatt`'s
 calls are what it uses.
 
@@ -2430,7 +2496,8 @@ a radio peer can do:
 
 | Adversary | Can | Cannot |
 | --- | --- | --- |
-| A radio peer, anyone in range | send any packet the controller forwards; connect while a slot is free and so hold it; read and write `open` characteristics; pair during a `nodisplay` window and so reach `encrypted` characteristics | reach an `encrypted` characteristic without a bond made in a window, or an `authenticated` one without the passkey the window showed; make the system domain parse a radio byte; make the Bluetooth domain hold more than its bounds; replace a bond |
+| A radio peer, anyone in range | send any packet the controller forwards; connect while a slot is free and so hold it; read and write `open` characteristics; pair during a `nodisplay` window and so reach `encrypted` characteristics | reach an `encrypted` characteristic without a bond made in a window, or an `authenticated` one without the passkey the window showed; make the system domain parse a radio byte, since no `ble` grant names it; make the Bluetooth domain hold more than its bounds; replace a bond |
+| An app holding a `ble` grant | attach to, set, notify and indicate the services its grant names, and answer the writes handed to it; keep its facet's requests in flight up to the row's `in_flight` | handle, set or notify a service its grant does not name, which its facet refuses before the registry sees it; answer a write handed to another process; reach a link, the store or the controller except through the registry |
 | The controller, its closed firmware | everything a radio peer can; read every LTK erXos gives it; forge what a bonded peer could send | reach anything erXos does not send it: it sees the line, not the machine |
 | A compromised Bluetooth domain | everything the controller can; read the bonds; act as any bonded phone toward the apps it serves; see every byte of the console's lines, passphrases included | reach a device, a partition or a facet beyond its row's; log anyone in without the passphrase, which the vault checks |
 
@@ -2523,6 +2590,14 @@ its line at the system domain's `/proc`: bytes each way, breaks, resets.
   controller group in the domain's `rest_for_one` supervisor, so a
   controller restart ends every link, every handler hears `disconnected`
   for each, and handlers stay attached.
+* **The mint and the facets outlive the registry.** The mint sits beside
+  `erx_bt_sup`, not below it, and each facet finds the registry by name
+  at each request, so a registry restart ends no facet and a facet never
+  holds a registry of an earlier start; a request between the registry's
+  end and its restart is refused `{error, unavailable}`. A facet never
+  blocks on the registry, since `erx_facet` sends a forward with an
+  alias and passes the reply on when it comes, and the registry waits on
+  no facet.
 * **A disconnection during a handler's answer** drops the answer: the
   reply goes to the link's pid, whose process no longer exists; the handler
   has already heard `disconnected` from the registry or hears it next.
@@ -2571,17 +2646,27 @@ its line at the system domain's `/proc`: bytes each way, breaks, resets.
 The supervision tree of `erx_bt`:
 
 ```text
-erx_bt_sup                      rest_for_one
-  erx_bt_store                  the identity address and the bonds
-  erx_gatt_srv                  the table, handlers, Conn map, ble facets
-  erx_bt_fs                     the control tree and the window
-  erx_bt_host_sup               one_for_all, at most 5 restarts in 60 s
-    erx_bt_link_sup             a temporary link per connection
-    erx_bt_line_rx              the reader, registered
-    erx_bt_line_tx              the writer, registered
-    erx_bt_hci                  the controller process, started last
-  erx_bt_console                when configured
+erx_bt_top                      one_for_all, intensity 0
+  erx_ble_facet                 the mint of ble, from the boot script; the ble facets
+  erx_bt_sup                    rest_for_one, from the row's -eval
+    erx_bt_store                the identity address and the bonds
+    erx_gatt_srv                the table, handlers, Conn map
+    erx_bt_fs                   the control tree and the window
+    erx_bt_host_sup             one_for_all, at most 5 restarts in 60 s
+      erx_bt_link_sup           a temporary link per connection
+      erx_bt_line_rx            the reader, registered
+      erx_bt_line_tx            the writer, registered
+      erx_bt_hci                the controller process, started last
+    erx_bt_console              when configured
 ```
+
+`erx_bt_top` restarts nothing: the mint's end, or `erx_bt_sup`'s past
+its own intensity, ends `erx_bt`, a permanent application, and so the
+domain, which the domain service restarts within the row's intensity,
+as the PCIe domain's supervisor does
+([design-pcie.md](design-pcie.md#processes)). The facets are not
+children of the tree: each is a process the mint started with
+`erx_facet:start/3`, and ends with the mint.
 
 The controller group starts in that order, so the controller process
 finds its siblings running and registered when it starts
@@ -2597,6 +2682,8 @@ and stops in the reverse order, the controller process first.
 | a link whose backlog of the controller's messages reaches `bt_link_backlog` | the controller process | the link: its handle is disconnected with `0x14` and it ends at `link_down` | the phone reconnects |
 | a malformed ATT request | the ATT server | nothing: Invalid PDU | none needed |
 | a handler that does not answer in 5 s | the link's deadline | nothing: Unlikely Error | none |
+| the registry's crash, or the store's restart before it | `erx_bt_sup` | the registry, with every attachment, every write handed to a handler and the values handlers set; what follows it in `erx_bt_sup`, every link included | `erx_bt_sup` restarts them; the facets and the mint stay, a request meanwhile is refused `{error, unavailable}`, and each app must attach and set its values again, though nothing tells it to ([The `ble` facet](#the-ble-facet)) |
+| the mint's end | `erx_bt_top` | the domain: every facet ends with its mint | the domain service restarts the domain within its intensity, and its mint mints every grant anew |
 | a handler that ends | the registry's monitor | the handler's attachment | the app attaches again |
 | the store answers `unavailable`, returns a blob that does not decode, or leaves a `put` unconfirmed, a backend call past `bt_store_timeout_ms` included | the store | the pairing; at start, the bonds: the domain runs without them and refuses pairing; the configuration write; `forget` | `/proc/bt` and the log say `store_unavailable` or `store_unreadable`; the store is `unknown`; after an unconfirmed `put` a change reads first and fails unless the read succeeds; after the start's read the next start reads again; `forget all` alone replaces a blob that does not decode ([Bonds and the store](#bonds-and-the-store)) |
 | a broken line, its driver's start failed included | the line service | reads of `data`; with no driver, writes too | the controller group's restart writes `reset`, which starts the driver again |
@@ -2620,10 +2707,10 @@ and stops in the reverse order, the controller process first.
 | the control tree's `ctl` | `einval` | any write but `forget ADDRESS` or `forget all` |
 | | `eio` | `forget ADDRESS` while the store stays `unknown`, or any `forget` whose `put` is unconfirmed |
 | | `enoent` | no bond has that identity |
-| `ble` facet | `{error, not_granted}` | a service the grant does not name |
+| `ble` facet | `{error, not_granted}` | a service the grant does not name, refused by the facet before the registry sees it |
 | | `{error, attached}` | the service already has a handler |
-| | `{error, no_such_service}` | a granted service the domain does not serve |
-| | `{error, badarg}` | an operation of another shape |
+| | `{error, badarg}` | an operation of another shape, refused by the facet |
+| | `{error, unavailable}` | no registry is registered: before the row's `-eval` has started it, or while it restarts |
 | | `{error, no_such_characteristic}`, `{error, not_allowed}` | an unknown name; an access the declaration does not allow |
 | | `{error, too_long}` | a value over the characteristic's maximum, or a notification over the bearer's `Mtu - 3` |
 | | `{error, busy}` | the link's notification queue holds `bt_notify_queue` |
@@ -2679,6 +2766,7 @@ Each core's test is paired with the seeded faults it must catch.
 | the line keeper's core (`erx_line_core`), explored | from a fresh line, with and without a power line, every event in every reachable state up to three requests and two power-cycling resets, each start both answering and refusing: no driver of flow `none` outside a reset, the one live driver of the grant's flow the core's and the only one sent bytes, a reset always waiting on an event still to come, `ok` only at the fresh start and `eio` only with the line broken | a failed reset answered while its holding driver still runs; a failing reset that never takes its holding driver's end |
 | the mailbox core's answer check, `erx_vc_answer`, over buffers the test writes | `set_gpio_state` with response word 0, and with bit 31 set, and pin word 0 is `ERX_OK` with no bytes; with either word and the pin word left at 128, as an untouched buffer has it, `ERX_ENOTSUP`; `notify_xhci_reset` with word 0 is `ERX_ENOTSUP`; a nonzero word without bit 31 is `ERX_ENOTSUP` for both; a wrong code or first tag is `ERX_EPROTO`; both request words of a `set_gpio_state` row reach the buffer, and one of a `notify_xhci_reset` row | `result_word` ignored, so the power line's answer is refused as the probe saw; `result_word` taken as true for every tag, so an ignored VL805 notification reads as performed; the pin word's check dropped, so an untouched buffer reads as performed; the request built from the row's first word alone |
 | the manifest generator's firmware request rows | the Pi 4's record packs UART0's power row as `bt_off`, words 128 and 0, at index 0 and `bt_on`, words 128 and 1, at index 1, and the VL805's row with its one word; a row that names `set_gpio_state` itself, a power row naming a power line `fw_power_line` does not declare, a device other than a placed UART, or a device another row names, and `arguments` longer or shorter than a tag's request are refused | the refusal of a row that names `set_gpio_state` itself removed, so a record row with pin 131, `GLOBAL_RESET`, packs |
+| the manifest check's `ble` rows (`ble_grant`) and the identifier sets of the packer and the boot view | a `ble` grant to a suite domain packs, and the boot view reads it; each refusal of [Declarations](#declarations-abigatt) fires on a manifest that differs from a passing one in it alone: a service of the `ble` interface named otherwise, a `ble` grant to the system domain, an undeclared name, a name two rows give, two served services of one UUID, a ninth name, advertising data one octet too long; the packer and the boot view take `nus`, `nusb`, `nv` in that order, and refuse a name twice and every other order | the system domain's refusal removed (a manifest granting `ble` to the system domain packs); identifiers compared length first (`nv` before `nusb`); a prefix ordered after its extension; the duplicate check dropped from the boot view (a forged packed set with a name twice reaches the mint) |
 | the line service through a real `erx_fs` grant, reader and writer on one `data` file | a write is answered within 1 s while a read waits, and the driver's answer reaches the read once; a `reset` answers a waiting read `eio`; a clunk during a waiting read is answered within 1 s and the next reader gets the next bytes whole | a `read` that waits inside its callback; a dropped flush of a waiting read |
 | flushes of begun and buffered requests, with power notifications held by the test | a `reset` flushed at any step is answered once its last step is done, then the flush; a write flushed after the driver took its bytes answers its count; a read flushed with bytes buffered answers with them, and before bytes arrive `eintr`, the next read getting them whole | a flushed `reset` answered `eintr` while its steps run; a read held while bytes are buffered |
 | the identity address | 10,000 addresses have the static form and parse in Bumble's `Address` as static | the top bits cleared |
@@ -2687,6 +2775,7 @@ Each core's test is paired with the seeded faults it must catch.
 | the link's start, against a store and a registry that hold its calls until the test releases them | `start_child` returns while both calls wait; what the controller process sends meanwhile is stepped in order once the core is built; a phone whose address resolves gets its bond's key | the store's `resolve` called from `init/1`, so `start_child` does not return within the test's deadline |
 | a link's end, with the window process and the registry running | a link killed by `exit(Link, kill)` after an `open` verdict writes `failed ADDR disconnected` and doubles the wait; a link that reports its outcome and then ends counts once; the handlers hear `disconnected` once | the window's monitor not taken (nothing written, the wait unchanged); the monitor kept after the outcome (counted twice) |
 | a notification to a link that ends before answering it | the registry's caller gets `{error, gone}` | the caller's `From` handed to the link in a plain message (the caller waits until its own timeout) |
+| the `ble` facet, over a registry the test registers, kills and registers again | a request naming a service its grant names reaches the registry with the grantee's caller in it, and the answer reaches the caller; one naming another service is refused `{error, not_granted}`, and the registry sees nothing; with no registry registered, `{error, unavailable}`; after the registry is killed and started again, the next request reaches the new one; an attaching caller, not the facet, hears the events, and only it answers its writes | the service check dropped from `admit/3` (another app's service attached); the registry's pid kept from the facet's start (the request after the restart is answered `{error, failed}`); the handler taken from the forwarded call's `From` (events go to the facet, which drops them) |
 | `forget` with bonded links connected | the link whose address resolved to the forgotten bond at its start ends; a link of another bond stays | the store taking a link's pid only at `keep` |
 | `erx_bt_hci_core`'s backlog, case by case | a link that acknowledges nothing is sent exactly `bt_link_backlog` messages, events and ACL packets alike; the next is dropped, the handle's disconnect is asked with `0x14`, and nothing more reaches the link; a link that acknowledges every message is never disconnected; a `taken` naming a gone link changes nothing, even on a reused handle | the bound compared one too late (33 sent); `completed` not counted; `taken` taken without its name (a gone link's acknowledgement lowers the next link's backlog) |
 | the link's backlog through the controller group, a link held at its start by a store that does not answer while the model line delivers 40 ACL packets for its handle | `HCI_Disconnect` with `0x14` is written after the 32nd; the link's mailbox never holds more than 32 of the controller's messages | the bound removed (all 40 delivered) |
@@ -2717,7 +2806,7 @@ let any host that reaches the development host write HCI traffic into
 the guest's line or the peer. It then boots QEMU `virt` with the
 suite's manifest, the Bluetooth suite's own, which places the
 virtio-console transport and a Bluetooth domain whose `line` grant names
-it, and that transport's
+it, with the `service ble` row it serves, and that transport's
 port 0 on a socket chardev that connects to the first controller's
 port, so the bytes erXos's line writes reach Bumble's controller
 unchanged ([The line on QEMU `virt`](#the-line-on-qemu-virt)). Bumble's stream transports carry H4 framing
@@ -2729,14 +2818,25 @@ peers' scripts, in `test/bt/peer/`, and `test/bt/bumble_decode.py`, which
 prints Bumble's decoding of the corpus for the codecs' comparison of
 [Fuzz targets](#fuzz-targets), started by `test/host/erx_bt_bumble_test.rb`.
 Each is started by argument vector, the peers by the harness, never on the
-target and never in build tooling. The stages' peers:
+target and never in build tooling.
+
+The handlers the peers of stages 2 and 3 talk to are those of
+`erx_gatt_echo_test`, a test-only application in
+`test/erlang/apps/erx_gatt_echo_test/` over `erx_gatt` and
+`erx_gatt_serial`, which answers each write as the peer script expects
+and sends the serial service's bytes back. It runs in a domain of the
+suite's own, which the suite's `ble` grant names, from a release only a
+test image carries, as the system-domain suite boots its test-only
+`erx_echo_test` (`tools/lib/erx/system_domain.rb`, `ECHO_BOOT`); no
+handler runs in the system domain, which `ble_grant` refuses (B8). The
+stages' peers:
 
 | Stage | Peer | Passes | Seeded fault |
 | --- | --- | --- | --- |
 | 1 | `examples/run_scanner.py tcp-client:...`, and a peer script that scans and prints each report as one JSON line | erXos's name and its advertised UUIDs appear; after a `reset` and bring-up they appear again | the advertising data built with the 16-bit list's type for 128-bit UUIDs: the UUIDs are missing |
 | 2 | `examples/run_gatt_client.py` and `apps/gatt_dump.py` | every attribute of the expected table is discovered, with its handle; `open` values read as set; `encrypted` ones answer Insufficient Authentication | the gate allows every read: the `encrypted` value is read |
 | 2 | `test/bt/peer/gatt_peer.py`: writes, a write past the maximum, a subscription, notifications, an indication and its confirmation, a long write | each answers as declared; the handler sees each write once, in order | the link takes a second request before the handler answered the first |
-| 3 | `test/bt/peer/serial_peer.py`: 64 KiB through an echo app with `write` with response | every byte comes back in order | `erx_gatt_serial:send/2` cutting at `Mtu` rather than `Mtu - 3` |
+| 3 | `test/bt/peer/serial_peer.py`: 64 KiB through `erx_gatt_echo_test` with `write` with response | every byte comes back in order | `erx_gatt_serial:send/2` cutting at `Mtu` rather than `Mtu - 3` |
 | 4 | `apps/pair.py --mode le --sc true --mitm true --io keyboard C tcp-client:...`, where the device configuration `C` fixes the peer's address and names its key store, `"keystore": "JsonKeyStore:K"` (`bumble/keys.py:198-206`, `:272-285`); the harness reads the passkey from the `pair` file and writes it to `pair.py`'s standard input, which `input()` reads (`apps/pair.py:102-107`, `:159-168`) | `bonded ... authenticated`; then `apps/gatt_dump.py --device-config C --encrypt` reads an `authenticated` value; after the Bluetooth domain restarts, it reads it again | the LTK reply sending a key of the wrong bond: encryption fails |
 | 4 | `apps/pair.py --sc false` | `failed ... secure_connections_required` | the Secure Connections flag check removed |
 | 4 | `apps/pair.py` while no window is open | Pairing Not Supported | the window check removed |
@@ -2757,7 +2857,8 @@ The Pi 4's checklist, by hand, with a phone and with a Bumble peer on a
 USB dongle on the development host, which makes the peer side scripted:
 the machine appears in the phone's scanner with its name; nRF-style GATT
 browsers show the declared table; a terminal app for Nordic's UART
-service echoes through an app; the phone pairs by typing the passkey the
+service echoes through an app, once the board has a home for one
+([Decisions](#decisions), 6); the phone pairs by typing the passkey the
 `pair` file shows, reboots the machine, and reads an `authenticated`
 value again; the console logs in from the phone; a `reset` written
 while a phone is connected is followed by a bring-up that reaches
@@ -2793,7 +2894,8 @@ list ([todo-performance.md](todo-performance.md)):
   word of `ctl` would cut it, if a measurement says the wait matters;
 * a phone's write reaching a handler and its answer coming back across
   two domains, measured by a peer script that times write requests
-  through an echo handler, on QEMU and on the board;
+  through the suite's echo handler on QEMU, and on the board once it
+  has one ([Decisions](#decisions), 6);
 * `erx_pl011`'s wait of 1 ms at a time while its transmit FIFO is full
   (`erx_pl011.erl:45`, `:236-243`), which bursts of notifications and a
   patch download meet.
@@ -2951,6 +3053,25 @@ list ([todo-performance.md](todo-performance.md)):
    design's ([design-wifi.md](design-wifi.md#facts-this-design-does-not-have), F1).
    A fixed line in the writer would be a second source of pins, which
    that design rules out.
+6. **Open: where the board's echo app runs.** The Bluetooth track's
+   demo ([plan.md](plan.md#track-b-bluetooth)) and the board's
+   checklist have a terminal app on the phone echo through an app on
+   the Pi 4, and no row of the Pi 4's manifests can grant one `ble`. An
+   app takes a service only through the `apps` row, whose facet rows
+   state no parameter and take each its service's default
+   ([design-packaging.md](design-packaging.md#the-apps-row)); `services`
+   has no default, and one would give every app the same services, of
+   which only one app at a time can handle each. The QEMU
+   suite's domain of its own runs from a release only a test image
+   carries. The choices: a configured domain in the Pi 4's development
+   manifest that runs the echo, granted `ble` with `services` naming
+   `nus`, from a release the development card carries; or an app's
+   package declaring the GATT services it handles, checked when it is
+   installed, which packaging's design would have to give a facet
+   parameter of an app's own. Recommendation: the configured domain,
+   as the QEMU suite has it, since it needs no new mechanism and the
+   demo's configuration is fixed; the package's declaration waits for
+   an installed app that handles a service of its own.
 
 ## Board probes
 
