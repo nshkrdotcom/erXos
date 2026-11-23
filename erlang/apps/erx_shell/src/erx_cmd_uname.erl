@@ -164,17 +164,13 @@ host(Node) when is_binary(Node) ->
 host(none) -> unknown.
 
 -doc """
-A time in seconds since the epoch as macOS's `date` writes it in UTC,
+A time in seconds since the epoch as FreeBSD's `date` writes `%+` in UTC,
 `%a %b %e %H:%M:%S %Z %Y`: `Sun Nov  8 18:02:11 UTC 2026`, the day of the
 month padded with a space to two places.
 """.
 -spec date(non_neg_integer()) -> binary().
 date(Seconds) ->
-    {{Year, Month, Day} = Date, {Hour, Minute, Second}} = calendar:system_time_to_universal_time(Seconds, second),
-    WeekDay = element(calendar:day_of_the_week(Date), {"Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"}),
-    MonthName = element(Month, {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"}),
-    iolist_to_binary(io_lib:format("~s ~s ~2w ~2..0w:~2..0w:~2..0w UTC ~w",
-                                   [WeekDay, MonthName, Day, Hour, Minute, Second, Year])).
+    erx_cmd_date:format(<<"%a %b %e %H:%M:%S %Z %Y">>, Seconds * 1000000000).
 
 -doc "The line uname writes for those fields, given what the running system supplied.".
 -spec line([field()], facts()) -> iodata().

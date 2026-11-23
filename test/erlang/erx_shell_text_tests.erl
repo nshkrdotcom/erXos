@@ -286,6 +286,14 @@ ls_long_test() ->
                  iolist_to_binary(erx_cmd_ls:long([{<<"f">>, Recent}, {<<"d">>, Old}, {<<"u">>, unknown}],
                                                   #{now => Now}))).
 
+%% An mtime before year 0, which a file server may report, is written as FreeBSD's
+%% strftime writes year -1, `-001`, not as a zero-padded `00-1`.
+ls_long_before_year_zero_test() ->
+    Info = #file_info{type = regular, mode = 8#100644, links = 1, uid = 0, gid = 0, size = 1,
+                      mtime = -62167219200 - 86400},
+    ?assertEqual(<<"-rw-r--r--  1 0 0 1 Dec 31  -001 f\n">>,
+                 iolist_to_binary(erx_cmd_ls:long([{<<"f">>, Info}], #{now => 1_800_000_000}))).
+
 %% At a terminal names are in columns and escaped; through a pipe one a
 %% line, as their bytes. A single directory has no heading, and an ls that
 %% ignored erx_cmd:isatty/2 would fail the second case.

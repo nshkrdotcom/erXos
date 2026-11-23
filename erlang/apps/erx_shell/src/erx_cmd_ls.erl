@@ -215,17 +215,12 @@ type_char(symlink) -> $l;
 type_char(device) -> $c;
 type_char(_Other) -> $?.
 
-%% `%b %e %R` within six months of now, `%b %e  %Y` otherwise.
+%% `%b %e %R` within six months of now, `%b %e  %Y` otherwise, by date(1)'s strftime.
 time(Seconds, Now) when is_integer(Seconds) ->
-    {{Year, Month, Day}, {Hour, Minute, _}} =
-        calendar:system_time_to_universal_time(Seconds, second),
-    Mon = element(Month, {<<"Jan">>, <<"Feb">>, <<"Mar">>, <<"Apr">>, <<"May">>, <<"Jun">>,
-                          <<"Jul">>, <<"Aug">>, <<"Sep">>, <<"Oct">>, <<"Nov">>, <<"Dec">>}),
-    Recent = Seconds + ?SIX_MONTHS > Now andalso Seconds < Now + ?SIX_MONTHS,
-    Tail = case Recent of
-               true -> io_lib:format("~2..0B:~2..0B", [Hour, Minute]);
-               false -> io_lib:format(" ~4..0B", [Year])
-           end,
-    iolist_to_binary([Mon, io_lib:format(" ~2.. B ", [Day]), Tail]);
+    Format = case Seconds + ?SIX_MONTHS > Now andalso Seconds < Now + ?SIX_MONTHS of
+                 true -> <<"%b %e %R">>;
+                 false -> <<"%b %e  %Y">>
+             end,
+    erx_cmd_date:format(Format, Seconds * 1000000000);
 time(_Missing, _Now) ->
     <<"-">>.
