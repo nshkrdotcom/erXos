@@ -22,7 +22,9 @@ header pin 11).
 Decisions every reader needs:
 
 * **One pin map per board decides every pin's use.** The platform
-  record holds a **header map**, its `pins` object: the device that
+  record holds the board's pin table
+  ([design-pinctrl.md](design-pinctrl.md#the-pin-table)), and the part
+  of it that covers the header is the **header map**: the device that
   sets pin functions, and one row for each of GPIO 0 to 27 naming what the pin is for (a bus
   device of the record, the console, the host link, JTAG, a reserved
   use, or plain GPIO) and, for a bus pin, its alternate function and
@@ -31,17 +33,17 @@ Decisions every reader needs:
   each bus pin's function before the kernel runs, the set of pins a GPIO
   driver may ever touch, which bus devices are driven, and the manifest
   check that keeps the pin controller out of untrusted hands.
-* **The firmware sets the bus pins, so no bus needs a run-time pin
-  holder.** I2C, SPI and the vault's TPM work with no domain holding the
-  GPIO page.
-* **The root sets the on-board pins.** Pins off the header that are
-  wired to a chip on the board, UART0's to the Bluetooth controller on
-  the Pi 4, have their functions set once at boot by the system
-  domain's root, from a table the manifest packer generates from the
-  map's on-board rows, before any domain starts
-  ([On-board pins](#on-board-pins)). One pin table has two writers,
-  separated by time: the root at boot for on-board pins, the GPIO driver
-  at run time for header pins.
+* **No bus driver asks for its pins.** The firmware sets the header's
+  bus pins from the map's `gpio=` lines before the kernel runs, and the
+  system domain's pin driver makes every device's pins what the table
+  says before any configured domain starts
+  ([design-pinctrl.md](design-pinctrl.md#at-start)). So I2C, SPI and
+  the vault's TPM depend on no domain but the system domain.
+* **The pin driver sets the on-board pins.** Pins off the header that
+  are wired to a chip on the board, UART0's to the Bluetooth controller
+  on the Pi 4, are rows of the same table, set with every other
+  device's pins ([On-board pins](#on-board-pins)). One table has one
+  writer.
 * **Whoever holds the pin controller holds the console's wires.** The
   GPIO page sets the function and pull of every pin, the console's and
   the host link's included, and reads every pin's level. A manifest
@@ -50,9 +52,9 @@ Decisions every reader needs:
   the trees they back, with no window, facet or introduction, which
   property 8 of the
   manifest check proves from the header map. The Pi 4's manifests give
-  it to the system domain, whose root writes the on-board pins with it
-  at boot and which serves no `/dev/gpio`; where run-time GPIO is served
-  from is settled when it is built ([Decisions](#decisions)).
+  it to the system domain, which runs the pin driver
+  ([design-pinctrl.md](design-pinctrl.md#placement-and-boot-order);
+  [Decisions](#decisions)).
 * **A pin, a chip select or a PWM channel is held by one grant at a
   time.** The first grant to open one of its files holds it; another
   grant's open answers `ebusy`; the hold ends when the holder's last file
@@ -199,18 +201,21 @@ on GPLEV are not shown; the QEMU suite below settles them.
 
 ## The construction: one map of the header
 
-The design rests on one table. The platform record holds `pins`, of four keys: `soc`, the
+The design rests on one table, the Raspberry Pi 4's pin table, whose
+form, checks and writer are
+[design-pinctrl.md](design-pinctrl.md#the-pin-table)'s. The platform
+record's `pins` holds it as its one controller entry: `soc`, the
 SoC pin table it is checked against (`bcm2711`); `controller`, the path
 of its **pin controller**, the device whose registers set the pins'
 functions (on the Pi 4 the GPIO controller); `onboard`, the
 [on-board pins](#on-board-pins) below; and `rows`, one row for each of
-GPIO 0 to 27, each with a **use** and,
+GPIO 0 to 27, each with a **use**, which is the pin's owner, and,
 for a pin a block other than GPIO drives, a **function** and a **pull**:
 
 | Use | Meaning | Function and pull |
 | --- | --- | --- |
 | `gpio` | a pin for plain GPIO, served by the pin controller's driver where a manifest gives that controller a holder | none |
-| a device path of the record | the pin is that device's, set by the firmware | the function's Table 94 name, such as `SDA1`; the pull, `none`, `up` or `down` |
+| a device path of the record | the pin is that device's, set by the firmware's line and by the pin driver | the function's Table 94 name, such as `SDA1`; the pull, `none`, `up` or `down` |
 | `jtag` | the ARM's JTAG, on development cards | the function's name, such as `ARM_TMS` |
 | `reserved` | nothing touches the pin | none |
 
@@ -252,11 +257,12 @@ build derives from it, so nothing else states a pin:
    and nothing on a release card. The host link's lines come from its
    rows, so `OVERLAY_PINS` is deleted; the console's rows give lines too,
    which agree with what `enable_uart=1` forces. The map's on-board rows
-   give no line: the root sets them ([On-board pins](#on-board-pins)).
-2. **The pin controller's record carries `PINS`**, a 28-bit mask of the
-   `gpio` rows, through the manifest's device row and its holder's
-   record, as the network record carries `MAC`
-   ([design-device-tree.md](design-device-tree.md#facts-into-records)),
+   give no line ([On-board pins](#on-board-pins)). A line sets early
+   what the pin driver sets at its start in any case
+   ([design-pinctrl.md](design-pinctrl.md#what-the-firmware-leaves)).
+2. **The pin driver's record carries the rows that are its to set**,
+   the `gpio` rows among them
+   ([design-pinctrl.md](design-pinctrl.md#what-is-generated-from-it)),
    on a manifest that gives the controller a holder.
 3. **Which bus devices are driven.** A bus device that a map row names
    has its class's role (below) and a record; a device of the same
@@ -287,13 +293,13 @@ a `gpio` row is refused too: a GPIO pin's pull is its holder's to set.
 
 Every rule about pins follows from the map instead of from a list:
 
-* **Only the pin controller's driver writes pin functions and pulls at
-  run time.** The firmware writes every bus pin before the kernel runs,
-  and the root every on-board pin before any domain starts;
-  the GPIO driver writes only pins in `PINS`, and only `000` or `001`
-  into their function fields: its register core takes a pin only from
-  the set its record gave it and has no way to write an alternate
-  function. That limits what the driver's clients can ask; it does not
+* **Only the pin driver writes pin functions and pulls once the kernel
+  runs.** It writes a device's pin only as the pin's row says, and a
+  `gpio` pin only as an input or an output: a GPIO client's `ctl` has no
+  word for an alternate function, and the driver's record has no row
+  for the console's pins
+  ([design-pinctrl.md](design-pinctrl.md#the-plan)). That limits what
+  the driver's clients can ask; it does not
   limit the domain that holds the page, which the next section places.
 * **The console's, the host link's, the HAT EEPROM's and JTAG's pins are
   never served**, since none of them is a `gpio` row. On a development
@@ -302,28 +308,30 @@ Every rule about pins follows from the map instead of from a list:
   impossible to write.
 * **Only header pins are served, but the registers are shared with bank
   1.** The map's `gpio` rows are bank 0's only, and its on-board rows
-  name pins of bank 1 for the root's boot table alone, so no pin of banks
+  name pins of bank 1 as devices' pins, so no pin of banks
   1 and 2 can be served. Their fields are not all in other registers,
   though: GPFSEL2 holds GPIO 20 to 29 (DS Table 66), PUP_PDN_CNTRL_REG1
   GPIO 16 to 31 (DS Table 91), and the edge enables GPREN0 and GPFEN0
-  GPIO 0 to 31 (DS Tables 78 and 80), so the GPIO driver's
-  read-modify-writes of those registers carry bank 1's GPIO 28 to 31
-  through unchanged. That is sound only while nothing else writes those
-  registers after boot. The root writes them only before any domain
-  starts. The design requires it of the firmware too: the
+  GPIO 0 to 31 (DS Tables 78 and 80), so a
+  read-modify-write of those registers for a header pin carries bank
+  1's GPIO 28 to 31 through unchanged. One process, the pin driver,
+  writes all of them, so no such write meets another writer's. That is
+  sound only while nothing else writes those
+  registers after hand-over. The design requires that of the firmware: the
   VideoCore writes the GPIO page at boot from `config.txt` and not
   afterwards. Raspberry Pi's documentation does not promise it; the
   board probe's two readings a minute apart are evidence, not proof, and
   a firmware that broke the rule would race the driver.
 * **No driver claims another block's pins.** A bus driver finds its
   pins already set when it starts, so the vault's SPI driver depends on
-  no other domain, and there is no claim protocol between drivers.
+  no domain but the system domain, and there is no claim protocol
+  between drivers.
 * **A pin is never both a bus pin and a GPIO pin.** It has one row.
 
 ### On-board pins
 
 Some of the SoC's pins off the header are wired on the board to a chip
-whose link needs the pin's function set at boot. On the Raspberry Pi 4,
+whose link needs the pin's function set. On the Raspberry Pi 4,
 GPIO 30 to 33 carry UART0 to the Bluetooth controller, a CYW43455, in
 ALT3 ([design-bluetooth.md](design-bluetooth.md#the-hardware)); the
 WiFi chip's SDIO lines on GPIO 34 to 39 are the same case. The
@@ -331,9 +339,8 @@ firmware cannot be relied on for them: on the Pi 4 it leaves GPIO 30
 and 31 inputs whatever a `gpio=` line asks, though it applies the
 header's lines
 ([research-bluetooth-pi4.md](research-bluetooth-pi4.md#2026-11-23-the-firmware-leaves-uart0s-flow-control-pins-unset)).
-So the system domain's root sets their functions once at boot, before
-any domain starts, as FreeBSD's pin controller driver does when it
-attaches: it walks the device tree and sets each pin group's function
+So erXos sets them itself, as FreeBSD's pin controller driver does when
+it attaches: it walks the device tree and sets each pin group's function
 from its `brcm,pins` and `brcm,function` properties
 (`sys/arm/broadcom/bcm2835/bcm2835_gpio.c`, releng/15.1, lines
 841-842 and 1250-1300; `sys/dev/fdt/fdt_pinctrl.c`, lines 118-154). The header map takes them as its `onboard`
@@ -343,10 +350,13 @@ list, beside `rows` in the record's `pins`:
 | --- | --- | --- |
 | 30 to 33 | UART0, `/soc/serial@7e201000` | `CTS0`, `RTS0`, `TXD0`, `RXD0` |
 
-A row states three things: the GPIO, the device path of the SoC block
-whose signal the pin carries, and the function's Table 94 name. It has
-no pull: the root writes only function fields, so each pin keeps the
-pull the firmware left it. Which on-board chips an image's
+An on-board row is a device row like the header's, with the same
+keys: the GPIO, the device of the SoC block whose signal the pin
+carries, the function's Table 94 name, and optionally a pull and
+further states
+([design-pinctrl.md](design-pinctrl.md#the-pin-table)). UART0's rows
+state no pull, so each pin keeps the pull the firmware left it, as in
+the board runs that brought the controller up. Which on-board chips an image's
 pins are set for is the record's list: a board's record holds a row for
 each on-board pin its images need set, and a row is added with the
 driver or bring-up that needs it, as a controller row is. The SoC table
@@ -355,43 +365,24 @@ written from Table 94 as the others are.
 
 What follows from the rows:
 
-* **The root's boot table.** The manifest packer writes each row as an
-  `onboard_pins` row of the manifest, its GPIO and the alternate number
-  of its function (`abi/manifest.txt`), and gives none a `config.txt`
-  line. When the manifest gives the system domain the pin controller's
-  unit, the root reads GPFSEL0 to GPFSEL5 at the window the
-  controller's row states, once the firmware's tree confirms that
-  window; plans the new words in a pure core
-  (`kernel/core/bcm2711_pins.c`) that changes only the named fields and
-  takes the plan whole or not at all; writes the words that change;
-  and reads them back. The core has a field only for GPIO 28 to 57,
-  banks 1 and 2, so no row can reach a header pin, the console's among
-  them. Each word the plan changes has its reserved bits cleared, so
-  the generated write takes it. The root reports one line: the pins
-  set and how many; the controller absent from the system domain, the
-  tree not confirming its window, or the rows or the controller's page
-  refused, each of which writes nothing; or the words written but
-  reading back otherwise. A boot whose pins are not set goes on: only
-  the chips on those pins fail, with their own diagnostics
-  ([design-fiasco.md](design-fiasco.md#the-raspberry-pi-4)). The one
-  exception is a malformed manifest row: a controller row whose tree
-  path is not a node path refuses the boot, as the watchdog's and the
-  mailbox's rows do.
-* **One pin table, two writers, separated by time.** The root writes
-  the on-board pins at boot, before any domain starts; the GPIO
-  driver writes header pins at run time, only those in `PINS`, and
-  only input or output. No pin is both, since an on-board pin is never
-  a header pin. A general per-device pin-state mechanism, as FreeBSD's
-  named states offer a driver (`fdt_pinctrl_configure_by_name`,
-  `fdt_pinctrl.c` line 61), waits for a consumer that changes a pin's
-  function at run time; no driver of the Pi 4's does.
-* **Nothing is served.** An on-board pin is never a `gpio` row, so
-  `PINS`, a mask of header pins, cannot name it, and no driver writes
-  its function or pull at run time.
+* **The pin driver sets them at its start**, with every other
+  device's pins, before the line service opens UART0 and before any
+  configured domain starts
+  ([design-pinctrl.md](design-pinctrl.md#at-start)). They give no
+  `config.txt` line. A boot whose pins are not set goes on: only the
+  chips on those pins fail, with their own diagnostics
+  ([design-fiasco.md](design-fiasco.md#the-raspberry-pi-4)).
+* **One table, one writer.** An on-board pin and a header pin differ
+  only in where the board wires them: both are rows, and the pin
+  driver alone writes either. The root's boot write of the on-board
+  rows' functions is the implementation the pin driver replaces
+  ([design-pinctrl.md](design-pinctrl.md#what-the-code-does-today)).
+* **Nothing is served.** An on-board pin is never a `gpio` row, so no
+  GPIO grant can name it.
 
 **What the reader refuses**, each with a diagnostic naming the row: an
-`onboard` that is not a list; a row with keys other than `gpio`,
-`device` and `function`, a pull among them; a GPIO that is a header
+`onboard` that is not a list; a row with a key no device row has; a
+GPIO that is a header
 pin, which its row in `rows` sets; a GPIO the SoC table has no row for;
 a device that is not a path of the record; a function the pin does not
 carry; rows out of increasing GPIO order, or naming one GPIO twice;
@@ -408,7 +399,7 @@ The unit rule makes the units; the manifest places them.
 
 | Unit | Devices | Line | Holder |
 | --- | --- | --- | --- |
-| `gpio` | the GPIO controller, the pin controller | 145 (bank 0); 146 to 148 go to no unit, as GENET's second line does | the system domain, whose root writes the on-board pins at boot ([On-board pins](#on-board-pins)); where run-time GPIO is served from is settled when it is built ([Decisions](#decisions)) |
+| `gpio` | the GPIO controller, the pin controller | 145 (bank 0); 146 to 148 go to no unit, as GENET's second line does | the system domain, which runs the pin driver ([design-pinctrl.md](design-pinctrl.md#placement-and-boot-order); [Decisions](#decisions)) |
 | `i2c` | BSC1, driven; BSC0 and BSC3 to BSC6, which share BSC1's line and BSC0's page, and BSC2 and BSC7 where the board's tree lists them, of no kind | 149, shared | the devices domain |
 | `spi` | SPI0, driven; SPI3 to SPI6 of no kind, which share its page and line | 150, shared | the devices domain; the vault's domain on a manifest with a TPM |
 | `pwm` | PWM0 and PWM1, on one page | none | no domain until PWM is built; then the devices domain, with PWM0 driven |
@@ -434,7 +425,7 @@ and has no lock (DS 5.2, Table 63). The kernel gives memory-mapped
 registers only as whole pages
 ([design-system.md](design-system.md#devices)), so whoever holds the
 page holds all of it, and any code in the holding domain can write any
-field whatever the GPIO driver's own `PINS` check says. A holder can:
+field whatever the pin driver's own table says. A holder can:
 
 * **take the console's line**, by rewriting GPIO 14's or 15's function
   or pull; the console, and with it the kernel's panic report, leaves
@@ -477,10 +468,9 @@ classes. The check fails the build naming property 8, the unit and the
 holder.
 
 The Pi 4's manifests give `gpio` to the system domain, which property
-8 allows: its root writes the on-board pins once at boot and no runtime
-drives the unit. I2C, SPI and the TPM need no run-time pin holder, so
-nothing else needs the pin controller until run-time GPIO is built
-([Decisions](#decisions)).
+8 allows, and the pin driver runs there
+([design-pinctrl.md](design-pinctrl.md#placement-and-boot-order);
+[Decisions](#decisions)).
 
 ### The buses
 
@@ -555,7 +545,7 @@ One directory per pin of the grant's scope, named by its GPIO number
   cancels a waiting read.
 
 A pin's **idle state** is input with no pull and no edge detection: the
-state that drives nothing. The driver puts every pin of `PINS` in it at
+state that drives nothing. The pin driver puts every `gpio` pin in it at
 its start, and a pin returns to it when its hold ends, so no holder
 inherits another's settings.
 
@@ -715,7 +705,9 @@ agreement check.
 Each block has one driver process in its holder, under the holder's
 supervisor (a configured domain's unit supervisor, or a supervisor of
 the system release), over the device NIF, in an application per device
-class: `erx_gpio`, `erx_i2c`, `erx_spi`, `erx_pwm` and `erx_rtc`. Each
+class: `erx_pins`, which is
+[design-pinctrl.md](design-pinctrl.md#the-pin-driver)'s and serves
+`/dev/gpio`, `erx_i2c`, `erx_spi`, `erx_pwm` and `erx_rtc`. Each
 splits as every erXos driver does
 ([style](style.md#functional-core)): a pure core that decides, a thin
 module that reads and writes the registers by name, and the tree module.
@@ -723,7 +715,7 @@ module that reads and writes the registers by name, and the tree module.
 | Core | Decides |
 | --- | --- |
 | `erx_hold` | the holder of each pin, chip select and channel, and whether an operation's handle is live, as above |
-| `erx_gpio_core` | the `ctl` grammar; from a pin in `PINS` and a request, the register writes: the GPFSEL field (register `pin div 10`, shift `3 * (pin rem 10)`), the pull field (register `pin div 16`, shift `2 * (pin rem 16)`), GPSET or GPCLR, the edge enables, each a read-modify-write that changes only the pin's field; from a GPEDS0 value, the served pins that fired and the bits to clear |
+| `erx_pins_core`, `erx_pins_bcm2711` ([design-pinctrl.md](design-pinctrl.md#the-plan)) | the `ctl` grammar; from a pin of a `gpio` row and a request, the register writes: the GPFSEL field (register `pin div 10`, shift `3 * (pin rem 10)`), the pull field (register `pin div 16`, shift `2 * (pin rem 16)`), GPSET or GPCLR, the edge enables, each a read-modify-write that changes only the pin's field; from a GPEDS0 value, the served pins that fired and the bits to clear |
 | `erx_bsc_core` | a transfer as a state machine: from the request and each status read, the next action (fill or drain the FIFO, start, set up the repeated start, finish) and its result; the service interval and the stall limit |
 | `erx_spi_core` | the `ctl` grammar, the divisor, and the held transfer: from the CS flags, what to write to and read from the FIFO next, chunk by chunk; the service interval and the stall limit |
 | `erx_pwm_core` | the `ctl` grammar and RNG and DAT from period, duty and clock |
@@ -795,13 +787,13 @@ FIFO is empty in mid-transfer is implied by DS 9.6.1's polled procedure
 but not stated; the board's loopback with a pause between chunks
 checks it.
 
-**GPIO events.** The GPIO driver binds line 145, a direct line, with
+**GPIO events.** The pin driver binds line 145, a direct line, with
 `erx_irq_line:attach/2`. A delivery reads GPEDS0, clears the bits of
-`PINS` that are set, counts an edge for each, answers the `event` reads
-waiting on those pins, and acknowledges. It enables edge detection only
-on pins of `PINS`; the board probe checks that nothing else enables
-detection on bank 0 at boot, since a bit outside `PINS` is never cleared
-and a level held on it would raise the line again.
+the `gpio` rows' pins that are set, counts an edge for each, answers the
+`event` reads waiting on those pins, and acknowledges. It enables edge
+detection only on those pins; the board probe checks that nothing else
+enables detection on bank 0 at boot, since a bit of another pin is never
+cleared and a level held on it would raise the line again.
 
 **What a device returns is untrusted.** Bytes read from an I2C or SPI
 device go to the client unchanged and unparsed. The RTC driver is the
@@ -832,8 +824,9 @@ grammars parse another domain's input and share one fuzz target over
 the trees' `ctl` lines and walk names.
 
 **The record's role in a restart.** A driver that crashes is restarted by
-its supervisor and resets its block: the GPIO driver puts every pin of
-`PINS` in its idle state, the I2C and SPI drivers reset their
+its supervisor and resets its block: the pin driver plans its table
+again, which puts every `gpio` pin in its idle state
+([design-pinctrl.md](design-pinctrl.md#concurrency-and-failure)), the I2C and SPI drivers reset their
 controllers, the PWM driver disables both channels. Its holds were its
 own state, so they end with it. Each handle carries the driver
 incarnation's reference, and the tree reaches the driver by its local
@@ -848,7 +841,11 @@ register access that aborts ends the domain, as everywhere
 PWM has no consumer in the first set (a fan, LED dimming and servos are
 the likely ones), and QEMU does not model it, so it is built when a
 consumer needs it. Until then the map's GPIO 18 and 19 are `gpio` rows
-and no domain holds the `pwm` or `clocks` units. Building it means:
+and no domain holds the `pwm` or `clocks` units. They stay `gpio` rows
+once it is built: a running channel borrows its pin, which is plain
+GPIO the rest of the time
+([design-pinctrl.md](design-pinctrl.md#a-pin-that-is-sometimes-a-devices)).
+Building it means:
 
 1. **Read the clock first.** The board probe already logs the PWM
    clock's control and divisor registers. If the firmware leaves
@@ -863,8 +860,7 @@ and no domain holds the `pwm` or `clocks` units. Building it means:
    design takes it to clock the UARTs and the SD controller as well
    (likely, unverified: the firmware lists UART, CORE and EMMC2 clocks,
    but no source read here places their registers in this page). Its
-   unit goes where the pin controller goes, whose run-time holder is
-   settled when run-time GPIO is built ([Decisions](#decisions)), never to the
+   unit goes where the pin controller goes ([Decisions](#decisions)), never to the
    PWM's holder, and when the record states that the console's clock
    comes from it, property 8's clause covers it as it covers the pin
    controller. The write obeys DS 5.4, Table 99, which forbids changing
@@ -971,13 +967,14 @@ else, and holds each pin while it keeps a file of it open.
 Each driver reports to its domain's inspector, at
 `[domains, D, header, Block, ...]`, shown under `/proc/domains/D/header/`
 ([design-live.md](design-live.md#the-proc-tree)), a schema addition of
-the inspector: for each served pin its holder (a `proc_id()` of the
-grant), direction, pull, edge, level and edge count; for the I2C bus its
+the inspector: for the I2C bus its
 transfers, `eio` and `etimedout` counts and its divisor; for each chip
 select its holder, mode and actual speed; for each PWM channel its
 holder, RNG, DAT and whether it runs, with the clock's state; for the
 RTC whether it answers and whether its oscillator stopped. A value the
-driver cannot know is `unknown`.
+driver cannot know is `unknown`. The pins are the pin driver's report,
+under `/proc/domains/D/pins/`
+([design-pinctrl.md](design-pinctrl.md#interfaces)).
 
 ## Concurrency and failure
 
@@ -998,9 +995,9 @@ driver cannot know is `unknown`.
 * A stalled transfer costs at most its stall limit and a controller
   reset. A device that holds the bus low keeps failing transfers until
   it lets go; the stall limit bounds each request, not the device.
-* The GPIO driver's read-modify-writes of GPFSEL2, PUP_PDN_CNTRL_REG1,
+* The pin driver's read-modify-writes of GPFSEL2, PUP_PDN_CNTRL_REG1,
   GPREN0 and GPFEN0 carry bank 1's fields through, which is sound only
-  while the firmware does not write those registers after boot
+  while the firmware does not write those registers after hand-over
   ([the map](#the-construction-one-map-of-the-header)).
 
 ## Refusals and error results
@@ -1040,9 +1037,9 @@ units (property 8); a `gpio` row's `pins` outside the header map's `gpio` rows;
   system domain or a domain of its own, which no other row of the
   manifest names, as property 8 proves from the header map. Its holder, whichever domain that is,
   joins the console's trusted base: no placement keeps a compromised
-  holder from reading or taking the console's line, and `PINS` and a
-  restricted SVD discipline correct driver code without limiting the
-  domain that holds the page.
+  holder from reading or taking the console's line, and the pin
+  driver's table and a restricted SVD discipline correct driver code
+  without limiting the domain that holds the page.
 * The clock manager goes to no domain, and if PWM needs it written,
   only to the pin controller's home ([PWM](#pwm)).
 * A grant reaches only what its tree shows: a GPIO grant its `pins`; an
@@ -1077,9 +1074,9 @@ so the case is known to reach the code it tests.
 | Test | Seeded fault that must fail it |
 | --- | --- |
 | `erx_hold`, exhaustive over two grants, two resources and every order of open, close, end and operation up to depth 6 | releasing at the first close instead of the last, which a grant with two handles exposes; the operation check removed, which the order end(A), open(B), operation(A) exposes |
-| `erx_gpio_core` register writes | a function shift of `3 * (pin rem 10) + 1`; a GPFSEL write that is not a read-modify-write, which zeroes GPIO 28 and 29 |
-| `erx_gpio_core` served set | the `PINS` check removed |
-| `erx_gpio_core` events | clearing the whole register |
+| the pin driver's GPIO register writes, `erx_pins_bcm2711` | a function shift of `3 * (pin rem 10) + 1`; a GPFSEL write that is not a read-modify-write, which zeroes GPIO 28 and 29 |
+| the pin driver's served set, `erx_pins_core` | a `ctl` line taken for a pin that is not a `gpio` row |
+| the pin driver's events | clearing the whole register |
 | `erx_bsc_core` repeated start, against a BSC model that ends a write with a stop as soon as DLEN bytes have left an empty FIFO and READ and ST are not pending, with any number of idle polls inserted between any two steps | the register address written to the FIFO before the first ST, as in DS 3.3.2, which the model ends with a stop when polls are inserted before READ and ST |
 | `erx_bsc_core` errors | ERR ignored; the stall limit removed, which the test's own timeout catches |
 | the stall limit, `erx_spi_core` against a model controller with a clock | the stall clock counted from the transfer's start instead of the last poll that found work, which fails the paused healthy transfer |
@@ -1089,9 +1086,9 @@ so the case is known to reach the code it tests.
 | the vault's TPM framing step, with the vault's TPM design, against a model TPM that inserts 0 to 3 wait states on reads and writes | the data sent right after the header without looking at the last bit |
 | `erx_pwm_core`, with a case of 100 ns at 27 MHz giving 3 ticks | rounding down instead of to nearest, which the 100 ns case exposes |
 | `erx_rtc_ds3231` | the nibble check removed; 12 AM taken as hour 12; the century bit ignored |
-| the header map reader | for each refusal of the reader, one map that breaks only it: a missing pin, a function not the pin's, the console on GPIO 13, `SDA1` on an SPI0 row, SPI0 without SCLK, a `gpio` row with a function, a driven bus that no row names; an on-board row on a header pin, with a pull, or with a function the pin does not carry, and UART0's on-board rows without `TXD0` |
+| the header map reader | for each refusal of the reader, one map that breaks only it: a missing pin, a function not the pin's, the console on GPIO 13, `SDA1` on an SPI0 row, SPI0 without SCLK, a `gpio` row with a function, a driven bus that no row names; an on-board row on a header pin, or with a function the pin does not carry, and UART0's on-board rows without `TXD0` |
 | the `config.txt` writer | `jtag` rows written as `gpio=` lines on a release card |
-| the root's on-board pin core, `erx_bcm2711_pins_plan`, against the board's reading of GPFSEL3, `0x00000fc0` | each field one pin off; a whole-register write, which zeroes FSEL34 to 39; a plan taken in part when a later row is refused; ALT4 and ALT5 swapped |
+| the pin plan and the pin table's states and refusals | [design-pinctrl.md](design-pinctrl.md#verification)'s |
 | property 8's pin controller clause | the same manifest giving `gpio` to the devices domain, which fails naming property 8 and the unit |
 | `gpio_grant` and `rtc_grant` | a `pins` holding GPIO 14; two `rtc` rows with different addresses; an `rtc` row whose `bus` names SPI0 |
 
@@ -1194,9 +1191,10 @@ controller a DMA device of
   GPIO driver to set its pins at start. It needs a protocol between
   drivers, a list of pins never to give out, and, with the TPM's SPI in
   the vault's domain and GPIO elsewhere, a dependency of the vault on
-  another domain at every start. Letting the firmware set the bus pins
-  from one generated map deletes all three, and leaves the buses
-  needing no pin holder at all. The cost is that changing which pins a
+  another domain at every start. Setting every device's pins from one
+  generated map, by the firmware's lines and at the pin driver's start,
+  deletes all three, and leaves the buses needing nothing but the
+  system domain. The cost is that changing which pins a
   bus uses needs a new card build, which is also how FreeBSD and the
   Pi's own firmware configure buses: at boot, from overlays and
   `config.txt`.
@@ -1255,25 +1253,21 @@ controller a DMA device of
 
 ## Decisions
 
-1. **The system domain holds the pin controller's unit, and its root
-   writes the on-board pins once at boot.** It needs no runtime and no
-   server: the root plans and writes GPFSEL0 to GPFSEL5 before any
-   domain starts ([On-board pins](#on-board-pins)), as it programs the
-   watchdog and the mailbox. Property 8's clause allows the system
-   domain as a holder.
+1. **The system domain holds the pin controller's unit and runs the pin
+   driver there.** The driver sets every device's pins at its start,
+   the on-board pins among them, and serves `/dev/gpio`
+   ([design-pinctrl.md](design-pinctrl.md#placement-and-boot-order)).
+   Property 8's clause allows the system domain as a holder, and one
+   holder is then both the writer at boot and the server at run time.
 
-   Run-time GPIO, its `/dev/gpio`, the LED and the button revisit the
-   unit's holder when they are built, since a unit has one holder.
-   The candidate is a trusted domain of its own, holding the pin
-   controller and the clock manager if PWM needs its clock written:
-   the PCIe domain's pattern for system-wide configuration authority
-   ([design-system.md](design-system.md#the-manifest), property 3).
-   Serving pins to apps is neither the system domain's policy nor its
-   console, and a defect in that domain's trusted code would reach the
-   GPIO page, not the root authority; but the root's boot write then
-   needs the unit at boot and the domain needs it after, which a unit
-   with one holder does not give as it stands. The header map, I2C,
-   the RTC, SPI and the TPM do not wait on that choice.
+   Two points of that are open decisions of
+   [design-pinctrl.md](design-pinctrl.md#open-decisions): that the pin
+   driver replaces the root's boot write of the on-board pins, and that
+   `/dev/gpio` is served from the system domain and not from a trusted
+   domain of its own, the PCIe domain's pattern for system-wide
+   configuration authority
+   ([design-system.md](design-system.md#the-manifest), property 3). The
+   header map, I2C, the RTC, SPI and the TPM wait on neither.
 
 ## References
 

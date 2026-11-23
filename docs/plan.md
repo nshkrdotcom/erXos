@@ -2516,12 +2516,14 @@ by side; (f) needs (b) and (c).
      same core, with its wait-state framing, along the vault's TPM
      design. Packages 2 and 3 each need only package 1, and go side
      by side.
-  4. **GPIO**, with the trusted domain of its own that holds the pin
-     controller ([design-header-io.md](design-header-io.md#decisions));
-     nothing else in (e) needs it:
-     the `gpio` unit's kind row, SVD and `PINS` field,
-     `erx_gpio_core`, the driver and `/dev/gpio` with its `gpio`
-     interface and `pins` parameter, and the LED and button.
+  4. **Pins and GPIO**, along
+     [design-pinctrl.md](design-pinctrl.md), in the system domain;
+     nothing else in (e) needs it: the pin table with pulls and
+     states, the manifest's `pins` table and the `pins` record, the
+     `gpio` unit's kind row and SVD, and `erx_pins` with its
+     `bcm2711` kind, which sets every device's pins at its start and
+     takes over the root's boot write; then `/dev/gpio` with its
+     `gpio` interface and `pins` parameter, and the LED and button.
 
   PWM is not a package of 1b-I. It is built when a consumer needs
   it, along the design's PWM section, starting from the boot probe's
@@ -2581,7 +2583,8 @@ by side; (f) needs (b) and (c).
   NIF's region call, `erx_device:fill/3` (`TODO.md`,
   `docs/design-display.md`).
 * (e): (a); 1b-E's configured domains, for the devices domain; for
-  package 4, the pin controller's trusted domain; for
+  package 4, open decisions 1 and 2 of
+  [design-pinctrl.md](design-pinctrl.md#open-decisions); for
   the TPM, the vault's TPM design and a module on the board.
 * (f): (b)'s storage domain on the board; (c)'s network domain on
   the board; for W5, the firmware's `sae_ext`, or another licensed
@@ -3676,7 +3679,7 @@ Phase 1b, in order of its demos (backend rows, hosted backend too; BeamAsm besid
            1b-H M13 on QEMU (any time; lowest priority)
            1b-I the Pi 4: (a) serial shell on raspi4b after Phase 1, then once on the board (GR)
              --> (b) storage after 1b-E, (c) network after 1b-G, (d) display after 1b-C part 3,
-                 (e) the header after 1b-E (its GPIO package also on where the pin controller lives)
+                 (e) the header after 1b-E (its pins package also on design-pinctrl's open decisions)
            1b-J the Pi 5: (a) headless boot, (b) serial shell and probe (GR5)
              --> (d) bridge and MIP after 1b-E --> (e) RP1 --> (f) Ethernet after 1b-G, (h) USB after track U (a);
                  (c) storage, (g) display after (b)

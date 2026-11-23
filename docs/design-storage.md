@@ -1253,11 +1253,14 @@ data in the platform record
   1.8 V signalling (Physical Layer Figure 3-16, p.22), so if the board
   probe finds that the firmware leaves the card at 1.8 V, or when UHS-I
   modes or removable cards are wanted, the start gains a power cycle and
-  the bank a holder: `gio_aon`, one 64-byte block, becomes a device row
-  given to the storage domain whole, its register layout taken into a
-  facts record with that change. Its line 9, the ACT LED, then belongs
-  to the storage domain too, which is where Linux's default trigger for
-  that LED, the SD card's activity, already puts it.
+  the lines an owner: lines 3 and 4 become rows of the Pi 5's pin table
+  owned by the SD controller, with a state for each arrangement of power
+  and signalling level, which the storage domain's driver selects by
+  name through its `pins` grant
+  ([design-pinctrl.md](design-pinctrl.md#states-at-run-time)). The bank
+  itself, `gio_aon`, one 64-byte block, lies in the always-on pin
+  controller's unit and stays with that unit's holder, its register
+  layout taken into a facts record with that change.
 
 The Pi 5's board probe runs the Pi 4's above on `sdio1` and also
 records the levels of lines 3, 4 and 5 and the SD pin selection as the

@@ -60,6 +60,7 @@ evidence, not design contracts.
 | [design-pcie.md](design-pcie.md) | PCIe: the PCIe domain's enumerator, BAR placement, bus mastering and interrupts |
 | [design-rp1.md](design-rp1.md) | RP1, the Raspberry Pi 5's I/O controller: its parts, interrupts, Ethernet and USB hosts |
 | [design-header-io.md](design-header-io.md) | the Raspberry Pi 4's 40-pin header: GPIO, I2C, SPI and PWM |
+| [design-pinctrl.md](design-pinctrl.md) | pin control: a board's pin table, the pin driver, a device's named pin states and plain GPIO |
 | [design-board-sensors.md](design-board-sensors.md) | the Raspberry Pi 4's firmware readings and `/proc/sensors` |
 | [design-shared-code.md](design-shared-code.md) | one image of shared loaded code mapped into every domain |
 | [design-programs.md](design-programs.md) | native programs and the POSIX-lite personality |
@@ -384,6 +385,7 @@ checks.
 | Copy-on-write shares only immutable pages | a parent is never written, a child is never a parent, and the child reserves its pages at creation | [design-kernel.md](design-kernel.md#invariants) K22, K23 |
 | No page is executable while another mapping or a confined device can write it, except a JIT object's pages in the one space that made them, and the kernel writes no machine code | the kernel refuses a mapping that is both; JIT objects only in spaces whose image allows them, never the system domain's | [design-kernel.md](design-kernel.md#invariants) K8 |
 | No register page and no interrupt line is held by two domains | devices sharing a page or line are one unit given whole to one domain; PCIe interrupts by MSI except on the Pi 4's closed bus | [design-shared-devices.md](design-shared-devices.md#invariants) SD1, [design-pcie.md](design-pcie.md#the-closed-bus) |
+| A pin has one owner, and one process writes a pin controller | the board's pin table has one row per pin, checked at build; the pin driver alone has a name for a pin register, and its record holds no row for the console's pins | [design-pinctrl.md](design-pinctrl.md#the-construction) |
 | A pid never names two processes | a pid carries its owner's creation, a domain id never reused within a boot | [design-domains.md](design-domains.md#invariants) D1 |
 | A domain reaches only what was exported to it, and cannot tell an unexported process from a dead one | the receiver's funnel decides from its own export table, and a refused operation gets what one on a dead process gets | D4, D9 |
 | Every frame a runtime accepts passed its funnel | a runtime reads a lane's ring only through the funnel, which copies each frame once | D3 |
@@ -637,6 +639,7 @@ owning design states its rules with their mechanism. The index:
 | the system manifest is read only by its two generated readers, and holds its properties | one checked configuration | [design-system.md](design-system.md#the-manifest) |
 | a driver reaches its device only through the device NIF and generated accessors; only the NIF writes a device address | DMA reach, one source for registers | [design-system.md](design-system.md#drivers), [design-runtime.md](design-runtime.md#the-device-nif) |
 | only `erx_irq_line` binds or acknowledges a line | a shared line has one owner | [design-shared-devices.md](design-shared-devices.md#invariants) |
+| only the pin driver's register modules name a pin controller's registers | a pin controller has one writer | [design-pinctrl.md](design-pinctrl.md#the-pin-driver) |
 | only the console's driver writes the console's UART after boot | what the operator types reaches only the system domain | [design-live.md](design-live.md#the-console) |
 | the host tool prints guest bytes raw only from `erx console`'s stream | the operator's terminal | [design-live.md](design-live.md#invariants) |
 | only the code service writes a hot store or an overlay | code integrity | [design-live.md](design-live.md#the-code-store) |

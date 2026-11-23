@@ -1378,7 +1378,8 @@ PCIe enumerator's parts, USB's cores and decoders, the TRB descriptor
 form, and the check of the Pi 4's header map. Built: the root's setting
 of the Pi 4's on-board pins at boot. Designed: the running PCIe
 and USB domains, MSI delivery, virtio over PCIe, the SD controller's
-ADMA2 form, the Pi 4's header drivers and `/proc/sensors`.
+ADMA2 form, the pin driver, which takes over the root's setting of
+pins, the Pi 4's header drivers and `/proc/sensors`.
 
 1. **A driver is a process.** Kill the network driver's process
    mid-transfer from the shell; its supervisor restarts it, the device
@@ -1439,10 +1440,12 @@ ADMA2 form, the Pi 4's header drivers and `/proc/sensors`.
    *Draws on:* [design-pcie.md, The construction](../design-pcie.md#the-construction),
    [design-pcie.md, The PCIe domain](../design-pcie.md#the-pcie-domain),
    [design-usb.md, The construction](../design-usb.md#the-construction).
-8. **The Raspberry Pi 4's own devices.** The 40-pin header (GPIO, I2C,
+8. **The Raspberry Pi 4's own devices.** The board's table of pins and
+   the pin driver, the 40-pin header (GPIO, I2C,
    SPI, PWM) and the firmware's sensor readings at `/proc/sensors`, as
    examples of small drivers under the same rules.
-   *Draws on:* [design-header-io.md](../design-header-io.md),
+   *Draws on:* [design-pinctrl.md](../design-pinctrl.md),
+   [design-header-io.md](../design-header-io.md),
    [design-board-sensors.md](../design-board-sensors.md).
 
 **Figures.** 15.1: a driver domain: supervisor, driver process, device

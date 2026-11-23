@@ -99,10 +99,10 @@ sees it (4.8.1); the Report Map is at most 512 octets (HIDS 2.6.1).
   a `gpio=30-33=a3` line in `config.txt` it still leaves GPIO 30 and 31
   inputs
   ([research-bluetooth-pi4.md](research-bluetooth-pi4.md#2026-11-23-the-firmware-leaves-uart0s-flow-control-pins-unset)).
-  So the system domain's root sets the four to ALT3 at boot, before any
-  domain starts, from the platform record's on-board pin rows
+  So the system domain sets the four to ALT3 from the platform record's
+  on-board pin rows, before the line service opens the line
   ([design-header-io.md](design-header-io.md#on-board-pins);
-  [Decisions](#decisions), 5). It writes the function fields alone, so
+  [Decisions](#decisions), 5). The rows state no pull, so
   each pin keeps its pull from power-on; the probe set the same function
   with the pulls untouched, and UART0 carried the controller's answers
   at once.
@@ -3261,12 +3261,13 @@ list ([todo-performance.md](todo-performance.md)):
   `RTSEN` would save a start, but the driver speaks the console's six
   messages and no other; a second fresh start, a few register writes,
   opens the flow with nothing new.
-* **Setting UART0's pins from erXos.** The pin controller's page sets
+* **Setting UART0's pins from the line service.** The pin controller's page sets
   every pin, the console's included, so a manifest gives it to no
   domain, the system domain or a domain of its own
   ([design-header-io.md](design-header-io.md#the-pin-controller-and-the-console)), and the line
-  service cannot count on holding it; `config.txt` sets the pins before
-  anything runs, as it sets UART3's.
+  service cannot count on holding it; the pin controller's own driver
+  sets the pins from the pin table
+  ([design-pinctrl.md](design-pinctrl.md#at-start)).
 * **The Pi 4 on its ROM alone.** The ROM advertises, accepts a
   connection and carries the first ATT PDU without the patch (probes
   B-P3 and B-P4), and leaving the patch out would save some eleven
@@ -3354,14 +3355,16 @@ list ([todo-performance.md](todo-performance.md)):
    [The bring-up](#the-bring-up)). The cost is some eleven seconds of
    every bring-up at 115200 baud, on the watch list
    ([Performance](#performance)).
-5. **Decided: the root sets UART0's pins from the platform record's
+5. **Decided: erXos sets UART0's pins from the platform record's
    on-board pin rows.** UART0's pins, GPIO 30 to 33, are on the board,
    not the header, so the header map's on-board rows name each with
    UART0's device path and its function; the manifest packer writes
-   them as the manifest's `onboard_pins` rows, and the system domain's
-   root writes their functions once at boot, banks 1 and 2 only, before
-   any domain starts
-   ([design-header-io.md](design-header-io.md#on-board-pins)). The pin
+   them into the manifest, and the system domain's pin driver sets them
+   at its start, before the line service opens the line
+   ([design-header-io.md](design-header-io.md#on-board-pins),
+   [design-pinctrl.md](design-pinctrl.md#at-start)). The root's write of
+   their functions at boot is the implementation that driver replaces
+   ([design-pinctrl.md](design-pinctrl.md#what-the-code-does-today)). The pin
    table `hw/pins/bcm2711.txt` carries the four pins from Table 94. A
    `config.txt` line is no substitute: the firmware leaves GPIO 30 and
    31 inputs whatever the line asks. Whether WiFi's slot sets GPIO 34

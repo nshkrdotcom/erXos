@@ -3644,7 +3644,9 @@ data, one `bootstrap` build, the random generator's read, and the kernel's other
   `erx: root task: on-board pins set: N rows`; or why it wrote nothing; or
   `erx: root task: on-board pins mismatch: ...` when the words were written but read back otherwise. A boot whose
   pins are not set goes on without them, except for a malformed manifest row: a controller row whose tree path is
-  not a node path refuses the boot, as the watchdog's and the mailbox's rows do.
+  not a node path refuses the boot, as the watchdog's and the mailbox's rows do. This step is the implementation
+  that the system domain's pin driver replaces: with it the root sets no pin, and the core, the manifest's
+  `onboard_pins` rows and the report line go ([design-pinctrl.md](design-pinctrl.md#what-the-code-does-today)).
 * **Entropy.** On the condition [Entropy sources](design-platforms.md#entropy-sources) states for the kernel's platform
   layer, the root also reads 32 bytes from the board's RNG200 random generator, waiting at most 100 ms, and seeds its
   generator from them, as that layer does on erXos's kernel. Where the generator is comes from one

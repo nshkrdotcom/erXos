@@ -109,12 +109,14 @@ domain, `rp1`, in every build. The rest follows from that:
   receiver and the interrupt controller tell the vectors apart. Nothing
   reads RP1's interrupt status to find out which part interrupted.
 * **No shared register written twice.** The registers that serve several
-  parts (the chip id, the clocks, the GPIO banks, the MSI-X configuration
+  parts (the chip id, the clocks, the MSI-X configuration
   block and the USB hosts' DWC3 globals) are the function's record's,
   written only by the function's driver, `erx_rp1`, but for the
   acknowledge the NIF makes for a level part ([Interrupts](#interrupts));
   a part's driver that
   needs one changed asks `erx_rp1` by message, as the unit rule has it.
+  The pin registers are parts of their own, written only by the unit's
+  pin driver ([Pins](#pins)).
 * **One reset boundary.** RP1 has no per-block reset that any source
   gives, so the unit is the smallest thing that restarts as a whole, and
   the function is never reset: its link and BARs are the bootloader's
@@ -158,7 +160,9 @@ so a USB part's window holds no DWC3 register
 entries are Linux's vector header and the triggers the Pi 5 tree's
 ([vector map](research-rp1.md#vector-map-hardware-interrupt-numbers--msi-x-vector-indices)).
 RP1's UARTs, I2C, SPI and the rest are not listed: nothing needs them
-yet, and each joins the table with the driver that does. Because the
+yet, and each joins the table with the driver that does. The pin
+blocks that the board's pin table names rows in are parts too, with no
+entry, held by the unit's pin driver ([Pins](#pins)). Because the
 parts are RP1's facts and come from the platform record and RP1's address
 map, they do not depend on which device tree the board boots
 ([design-platforms.md](design-platforms.md#the-pi-5s-device-tree-and-its-license)).
@@ -204,14 +208,12 @@ names only the registers its driver writes, each from
 | --- | --- |
 | `sysinfo` (`0x0`) | `CHIP_ID` |
 | `clocks_main` (`0x18000`) | the system PLL's `CS`, `PWR`, `FBDIV_INT`, `FBDIV_FRAC`, `PRIM` and `SEC`; the `CTRL`, `DIV_INT` and `SEL` of `clk_sys`, `clk_eth` and `clk_eth_tsu` |
-| `io_bank1` (`0xd4000`), `pads_bank1` (`0xf4000`) | GPIO 32's `STATUS`, `CTRL` and pad |
-| `io_bank2` (`0xd8000`) | GPIO 42's and 43's `CTRL` |
 | `pcie_apbs` (`0x108000`) | `MSIX_CFG_0` to `MSIX_CFG_63`, with the set alias at `+0x800` and the clear alias at `+0xc00` |
 | `usbhost0`, `usbhost1` (`0xc100` in each) | the DWC3 globals `GCTL`, `GUCTL`, `GUSB2PHYCFG0`, `GUSB3PIPECTL0` |
 
 The parts' registers lie inside that window and outside every name the
 `rp1` table has, so the function's driver cannot reach the GEM's or a
-host's operational registers by a wrong name
+host's operational registers, or a pin's, by a wrong name
 ([confinement by name](design-shared-devices.md#pages-inside-a-domain)).
 The DWC3 globals lie outside each USB part's window
 ([The parts](#the-parts)).
@@ -227,7 +229,7 @@ takes register readings and returns the next writes. Its start:
    ([The USB hosts](#the-usb-hosts)), and on every other host `GCTL`'s
    core soft reset set and left set, so a host no part names stays
    stopped.
-4. Clocks and pins, read first ([below](#clocks-and-pins-read-first)).
+4. Clocks, read first ([below](#clocks-read-first)).
 5. The MSI-X configuration: clear `ENABLE` of every vector no part names,
    through the clear alias, so a peripheral the firmware left enabled
    raises nothing; for each part's entry set or clear `IACK_EN` by its
@@ -235,7 +237,8 @@ takes register readings and returns the next writes. Its start:
    read-modify-write.
 6. The NIF writes the function's MSI-X table from its assigned messages
    ([design-pcie.md](design-pcie.md#the-choice)).
-7. Answer the unit supervisor, which starts the parts' drivers.
+7. Answer the unit supervisor, which starts the pin driver
+   ([Pins](#pins)) and then the parts' drivers.
 
 ### Mastering
 
@@ -325,7 +328,7 @@ On Fiasco the root binds each line of the MSI receiver as an edge line
 ([design-pcie.md](design-pcie.md#the-msi-frame-on-fiasco)), whose
 acknowledge comes after the `IACK` write.
 
-### Clocks and pins, read first
+### Clocks, read first
 
 Linux resets RP1 through a firmware call and then programs its clocks
 from the reset state
@@ -363,19 +366,46 @@ A start that ends with an error writes no clock; the unit
 supervisor restarts it within its intensity, and then the domain ends
 and the board runs without RP1, with the reading logged.
 
-**Pins.** GPIO 32 is the PHY's reset (`ETH_RST_N`). `erx_rp1` drives it
-through IO bank 1's own overrides, which RP1's documentation gives:
-`FUNCSEL` 5 (GPIO), output enable forced on (`OEOVER` 3) and the level
-forced by `OUTOVER` (2 low, 3 high), with the pad's output-disable bit
-clear ([section 6](research-rp1-clocks.md#6-pads-function-select-and-the-gpio-setup-found--not-found)).
+### Pins
+
+RP1's pin controller is its IO-bank and pad blocks. They are set by the
+pin driver of [design-pinctrl.md](design-pinctrl.md#the-pin-driver),
+`erx_pins`, from the Raspberry Pi 5's pin table, and by nothing else:
+`erx_rp1`'s register table names no pin register. The platform record
+lists as parts, with no entry and the role of a pin controller's
+device, `gpio`
+([design-header-io.md](design-header-io.md#placement-units-and-domains)),
+the blocks its rows need: `io_bank1` (`0xd4000`) and `pads_bank1` (`0xf4000`) for GPIO 32,
+and `io_bank2` (`0xd8000`) for GPIO 42 and 43. The header's bank joins
+them with the first driver of a header pin. The unit supervisor starts
+`erx_pins` after `erx_rp1` answers and before the parts' drivers, so
+every part finds its pins in their `default` state.
+
+The table's rows on RP1, of kind `rp1`:
+
+| GPIO | Owner | `default` | Other states |
+| --- | --- | --- | --- |
+| 32 | `eth` | `out`, level 1 | `reset`: level 0 |
+| 42, 43 | `usb0` | `vbus1` | |
+
+GPIO 32 is the PHY's reset (`ETH_RST_N`), active low. The `rp1` kind
+realizes `out` through IO bank 1's own overrides, which RP1's
+documentation gives: `FUNCSEL` 5 (GPIO), output enable forced on
+(`OEOVER` 3) and the level forced by `OUTOVER` (2 low, 3 high), with the
+pad's output-disable bit clear
+([section 6](research-rp1-clocks.md#6-pads-function-select-and-the-gpio-setup-found--not-found)).
 Linux drives the level through RP1's RIO block instead, whose base the
-record does not give. At start the pin is read and left at its level;
-a reset of the PHY is a request from the GEM's driver,
-`erx_rp1:phy_reset/1`, which drives the line low for 5 ms and then high,
-the tree's duration with Linux's post-delay of 0. GPIO 42 and 43 carry
-the USB ports' power enable and over-current input in function `vbus1`
-(`FUNCSEL` 2); `erx_rp1` sets that function where they read otherwise,
-as the Pi 5 tree selects it, and leaves their pads as they are.
+record does not give. The GEM's driver resets the PHY by selecting
+`reset`, waiting 5 ms and selecting `default`, the tree's duration with
+Linux's post-delay of 0; a driver that ends in between leaves the PHY
+out of reset, since a state lasts only while its selector lives. At the
+pin driver's start a PHY the firmware left in reset is released, and
+one already out of reset sees no write.
+
+GPIO 42 and 43 carry the USB ports' power enable and over-current input
+in function `vbus1` (`FUNCSEL` 2), which the Raspberry Pi firmware's
+tree gives `usb0` as its default state; which host drives which pin is
+not known, and the rows give no pull, so the pads stay as found.
 
 ## The Ethernet controller
 
@@ -422,7 +452,8 @@ record's.
    at or below 2.5 MHz from `clk_sys`'s rate, which `erx_rp1` reports: 96
    at 200 MHz. The 2.5 MHz limit is clause 22's, unverified against
    IEEE 802.3 here. Then `NET_CTRL` with the management port enabled.
-3. The PHY: `erx_rp1:phy_reset/1`, then `erx_phy_c22` at MDIO address 1.
+3. The PHY: its reset through the pin driver ([Pins](#pins)), then
+   `erx_phy_c22` at MDIO address 1.
    Energy-efficient Ethernet is not advertised, as the tree's
    `eee-broken-1000t` and `eee-broken-100tx` ask: the driver clears the
    PHY's EEE advertisement (MMD 7, register 60) through clause 22's MMD
@@ -624,8 +655,10 @@ Everything of the unit runs in one runtime, so the only concurrency is
 between processes and between the CPU and RP1's devices.
 
 * `erx_rp1` alone writes the function's registers, but for the NIF's
-  `IACK` writes. Part drivers reach them only by message (`phy_reset/1`,
-  `master/1`), answered in order.
+  `IACK` writes. Part drivers reach them only by message (`master/1`),
+  answered in order. `erx_pins` alone writes the pin registers, and a
+  part's driver changes its pins only by selecting a state
+  ([Pins](#pins)).
 * The NIF's `IACK` writes and `erx_rp1`'s vector setup write the same
   registers only through the set and clear aliases, each write touching
   only its own bits, so their order does not matter.

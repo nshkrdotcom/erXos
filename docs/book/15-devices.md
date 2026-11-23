@@ -12,7 +12,8 @@
 > the Pi 4's header map. Built: the root's setting of the Pi 4's
 > on-board pins at boot. Designed: the running PCIe and USB domains,
 > MSI delivery, virtio over PCIe, the SD controller's ADMA2 form, the
-> Pi 4's header drivers and `/proc/sensors`.
+> pin driver, which takes over the root's setting of pins, the Pi 4's
+> header drivers and `/proc/sensors`.
 
 **Background needed.** [Chapter 1](01-operating-systems.md), section
 1.5: registers, interrupts, DMA, caches and the device tree.
@@ -623,36 +624,62 @@ The Pi 4's 40-pin header carries pins that can be GPIO, I2C, SPI,
 UART or PWM signals, and its firmware reports the chip's temperature
 and clocks. Both follow the rules of every other device.
 
-### 15.8.1 One map of the header
+### 15.8.1 One table of pins
 
-Which pin does what is one table, the header map in the platform record
+A chip has more signals than pins, so each pin has a register field
+that says which block drives it, and another for its pull resistor.
+The device that holds those registers is the **pin controller**. A
+UART whose pins are still plain inputs sends nothing, so something
+must write those fields before a driver uses its device.
+
+Which pin does what is one table per board, the **pin table** in the
+platform record
+([design-pinctrl.md, The pin table](../design-pinctrl.md#the-pin-table)).
+A row gives a pin one owner: a device, plain `gpio`, the firmware
+(for the console and the JTAG debug port), or `reserved`. A device's
+row adds the pin's function and pull. A pin has one row, so two
+devices cannot own one pin, and the table is checked against a table
+of the chip's pins from its datasheet, so it cannot give the console's
+pins to SPI. On the Pi 4 the table has two lists: the **header map**,
+a row for each of GPIO 0 to 27
 ([design-header-io.md, The
-construction](../design-header-io.md#the-construction-one-map-of-the-header)).
-For each of GPIO 0 to 27 it gives a use: plain `gpio`, a device's signal
-with its function and pull, the JTAG debug port, or `reserved`. The map
-is checked against a table of the chip's pins from the BCM2711
-datasheet, so it cannot give the console's pins to SPI. That check is
-**Built**.
+construction](../design-header-io.md#the-construction-one-map-of-the-header)),
+and the **on-board pins**, which the board wires to a chip, such as
+GPIO 30 to 33, which carry UART0 to the Bluetooth controller. The
+check of the Pi 4's table is **Built**.
 
-The map also lists the board's **on-board pins**: pins off the header
-that the board wires to a chip, such as GPIO 30 to 33, which carry
-UART0 to the Bluetooth controller
-([design-header-io.md, On-board pins](../design-header-io.md#on-board-pins)).
-The firmware sets the header's bus pins from the `gpio=` lines the
-packer writes into `config.txt`, one for each device row of the map;
-the on-board pins get no line. The system domain's root sets them,
-once at boot and before any domain starts, from the rows the packer
-copies into the manifest. Its pure core has a
-field for GPIO 28 to 57 alone, so no row can reach a header pin, the
-console's among them; the root writes only the registers that change,
-reads them back, and prints one line saying how many pins it set,
-why it wrote none, or that what it wrote read back otherwise. That is **Built**. One pin table thus has two
-writers, apart in time: the root at boot for the on-board pins, and,
-in the design, the GPIO driver at run time for the header's plain
-GPIO pins. In the
-design, drivers serve `/dev/gpio`, `/dev/i2c1`, `/dev/spi0` and
-`/dev/pwm0`, each from the domain that holds its controller; they are
-designed and not built.
+In the design one driver, the **pin driver**, runs in the domain that
+holds a pin controller and is the only code with a name for a pin
+register ([design-pinctrl.md, The pin
+driver](../design-pinctrl.md#the-pin-driver)). At its start it reads
+the registers, and a pure function returns the writes that make every
+device's pins what the table says, or refuses the whole plan. The
+driver applies the plan and reads the registers back. A pin that is
+already right costs no write. Every other driver therefore finds its
+pins set and never asks for them.
+
+After its start the pin driver writes for two kinds of request only.
+One is a line written to `/dev/gpio`, for a plain GPIO pin that a
+grant holds. The other is the name of a **state**. A row may give a
+pin a second setting under a name, and a driver changes its own pins
+by selecting that name: the Pi 5's Ethernet driver resets its PHY by
+selecting `reset` and then `default`, and the table says which pin
+goes low. No driver sends a function number or a level. A state lasts
+while the process that selected it lives, so a driver that dies
+holding a chip in reset releases it. `/proc` shows each pin's owner,
+the setting the table wants and the setting its registers hold. The
+pin driver is designed and not built.
+
+What is **Built** is narrower. The firmware sets the header's bus
+pins from the `gpio=` lines the packer writes into `config.txt`, one
+for each device row of the map. The system domain's root sets the
+on-board pins' functions once at boot, from rows the packer copies
+into the manifest: its pure core has a field for GPIO 28 to 57 alone,
+so no row can reach a header pin, and it writes only the registers
+that change, reads them back and prints one line. The pin driver
+takes that job over. In the design, drivers serve `/dev/gpio`,
+`/dev/i2c1`, `/dev/spi0` and `/dev/pwm0`, each from the domain that
+holds its controller; they are designed and not built.
 
 ### 15.8.2 Readings from the firmware
 
@@ -732,9 +759,10 @@ domain; their cores are built.
 * [design-shared-devices.md](../design-shared-devices.md): units,
   line owners and the console.
 * [design-pcie.md](../design-pcie.md), [design-usb.md](../design-usb.md),
+  [design-pinctrl.md](../design-pinctrl.md),
   [design-header-io.md](../design-header-io.md) and
   [design-board-sensors.md](../design-board-sensors.md): PCIe, USB,
-  the Pi 4's header and its firmware readings.
+  pins, the Pi 4's header and its firmware readings.
 * Marshall Kirk McKusick, George V. Neville-Neil and Robert N. M.
   Watson, *The Design and Implementation of the FreeBSD Operating
   System*, second edition, 2014: its chapter on devices describes

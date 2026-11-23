@@ -132,6 +132,7 @@ gives the question the document settles.
 | [design-pcie.md](../design-pcie.md) | PCIe: the enumerator, BAR placement, bus mastering and interrupts |
 | [design-usb.md](../design-usb.md) | USB: xHCI, hubs, HID and mass storage |
 | [design-header-io.md](../design-header-io.md) | The Raspberry Pi 4's 40-pin header: GPIO, I2C, SPI and PWM |
+| [design-pinctrl.md](../design-pinctrl.md) | Pin control: a board's pin table, the pin driver, named pin states and plain GPIO |
 | [design-rp1.md](../design-rp1.md) | RP1, the Raspberry Pi 5's I/O controller: its parts, interrupts, Ethernet and USB hosts |
 | [design-board-sensors.md](../design-board-sensors.md) | The Raspberry Pi 4's firmware readings and `/proc/sensors` |
 | [design-network-stack.md](../design-network-stack.md) | The TCP/IP stack, FreeBSD's behavior in Erlang, and its fast path |

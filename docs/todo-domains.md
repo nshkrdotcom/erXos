@@ -502,10 +502,11 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   `tools/lib/erx/manifest.rb`; docs/design-system.md property 8, docs/design-header-io.md "The
   pin controller and the console"): the clause counts units only, as its text says ("a domain
   that holds only such units"), so a domain that serves services, windows or sessions holds
-  the GPIO page, and with it the console's pins, as long as it holds no other unit. The
-  design's intent puts the holder in the console's trusted base, a domain of its own. Decide
-  whether the clause also refuses a holder that serves or holds anything beyond those units,
-  and tighten the text and the check together. No shipped manifest places `gpio`.
+  the GPIO page, and with it the console's pins, as long as it holds no other unit. Open
+  decision 2 of [design-pinctrl.md](design-pinctrl.md#open-decisions) recommends tightening
+  the clause to "is the system domain's", which removes the case; tighten the text and the
+  check together when it is decided. The Pi 4's development manifest gives `gpio` to the
+  system domain.
 * [Medium] design, decisions made on the user's behalf and awaiting confirmation: the list that follows the
   risks table of [design.md](design.md#risks-and-open-questions) (translating from Fiasco, login
   credentials, the device secret through the root task, the vault's partition in the extended partition,

@@ -772,10 +772,51 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   their headers, about 3,600 lines), and `otp/erts/emulator/nifs/erxos/erx_device.c` (about 3,250 lines) holds the
   open, three forms' glue, MSI-X, the xHCI register walk and the virtio and GENET stand-ins. Give both a
   simplicity pass before either grows further.
-* [Low] platform (Raspberry Pi 4), the pin controller's holder for run-time GPIO
-  ([design-header-io.md](design-header-io.md), Decisions, item 1): the root needs the unit at boot and a run-time
-  GPIO domain would need it after, which a unit with one holder does not give; settle the holder, or a hand-over
-  of the unit, before `/dev/gpio`, the LED or the button is built.
+* [Medium] pin control, the pin table ([design-pinctrl.md](design-pinctrl.md#the-pin-table);
+  `tools/lib/erx/header_map.rb`, `config/platforms/raspi4b.json`, `abi/manifest.txt`): `pins` as a list of controller
+  entries; on-board rows in the device rows' form, with an optional pull and states; `in`, `out` and `level`; the
+  reader's refusals, each with a table that breaks only it; the manifest's `pins` table in place of `onboard_pins`;
+  the `pins` record and its packed layout in `abi/erx_abi.txt`, counted in the boot page's room; the map of function
+  numbers generated from `hw/pins/<kind>.txt`; the manifest check's unit and holder clauses.
+* [Medium] pin control, `erx_pins` on the BCM2711 ([design-pinctrl.md](design-pinctrl.md#the-pin-driver)), after the
+  table and on open decision 1: `erx_pins_core`, `erx_pins_bcm2711` with `plan/2` over function, pull and level, the
+  register module with `hw/svd/bcm2711_gpio`'s pull registers, the start plan in the system release before its device
+  drivers, the log line, the chokepoint entry and `/proc/domains/D/pins`. The platform record's `gpio` row is 180
+  bytes, shorter than the SVD's block of `0xf4`, which holds the pull registers at `0xe4`; widen it, since the device
+  NIF refuses a record smaller than its peripheral's block. In the same change the root's write goes:
+  `kernel/core/bcm2711_pins.c` and its header, `liberx/backend/fiasco/bcm2711_pins.c`, `board_pins` and
+  `root_report_pins`, the chokepoint group and `onboard_pins`. Parity on the board: GPFSEL3 reads `0x00000fff` and the
+  Bluetooth controller answers; the boot time before and after.
+* [Medium] pin control, `/dev/gpio` ([design-header-io.md](design-header-io.md#devgpio); plan.md 1b-I (e), package
+  4), on open decision 2: the `gpio` service of `erx_pins`, `erx_hold`, edge events, the LED and the button.
+* [Medium] pin control, RP1 ([design-rp1.md](design-rp1.md#pins)), with 1b-J's RP1 package: `hw/pins/rp1.txt` from
+  [research-rp1-clocks.md](research-rp1-clocks.md), section 6; the `rp1` kind; the pin parts and RP1's rows;
+  `erx_pins:select/2` with its monitor, first used by the GEM driver's PHY reset.
+* [Medium] pin control, the BCM2712's two pin controllers: no binding document exists for them at the pinned commit,
+  so a clean-room facts record of their function and pad registers and encodings comes first; then
+  `hw/pins/bcm2712.txt`, the `bcm2712` kind and the Pi 5's rows for the SD slot, the Bluetooth UART and the WiFi slot.
+  Until then those pins are as the firmware leaves them.
+* [Low] pin control, WiFi's SDIO pins ([design-wifi.md](design-wifi.md#facts-this-design-does-not-have), F1): GPIO 34
+  to 39 as on-board rows with their pulls, and their rows of `hw/pins/bcm2711.txt` from Table 94, once `erx_pins`
+  sets pulls.
+* [Low] pin control, the host link's overlay (`hw/dts/raspi4b-uart3.dtso`): remove `pinctrl-names` and `pinctrl-0`,
+  which nothing reads and which state rows 4 and 5 of the header map a second time.
+* [Low] pin control, `config.txt`'s `gpio=` lines (`tools/lib/erx/boot_partition.rb`): delete them with `erx_pins`'
+  landing if open decision 3 of [design-pinctrl.md](design-pinctrl.md#open-decisions) says so.
+* [Low] pin control, the `pins` service and `/dev/pins` ([design-pinctrl.md](design-pinctrl.md#interfaces)): built
+  with the first driver that selects a state from another domain, likely the Pi 5's SD power cycle
+  ([design-storage.md](design-storage.md#the-raspberry-pi-5s-controller)).
+* [Low] pin control, borrowed pins ([design-pinctrl.md](design-pinctrl.md#a-pin-that-is-sometimes-a-devices)): built
+  with PWM, their first consumer, with the select event in `erx_hold`'s exhaustive test.
+* [Low] pin control, rows from a board's tree ([design-pinctrl.md](design-pinctrl.md#rows-from-a-boards-tree)):
+  `erx_dt`'s pin query, the two group decoders and their fuzz targets, built for the first board that needs them, on
+  open decision 4.
+* [Low] pin control, pins per app ([design-packaging.md](design-packaging.md#the-declaration)): every app shares the
+  app template's `gpio` scope. If two apps of one image need different pins, the `apps` row offers pins and a
+  declaration chooses among them, one app to a pin, as `gatt` chooses GATT services.
+* [Low] pin control, research records: the surveys of other systems and the two clean-room facts records of
+  2026-11-23 that [design-pinctrl.md](design-pinctrl.md#references) rests on are not in the tree; land them as
+  research records and cite them from the design.
 * [Low] line groups (`erx_uart_sup:fresh/2`): a manifest binary whose line-interface service is not named `line`,
   which the manifest check refuses but the root's reader does not, gives a line record with no grant and a badmatch
   that stops `erx_uart`; refuse it with a stated reason.

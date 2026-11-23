@@ -854,10 +854,10 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
 
 * [Medium] Fiasco backend, the on-board pin window (`liberx/backend/fiasco/bcm2711_pins.c`, `vm.c`): the root maps
   the pin controller's page with `erx_fiasco_vm_device_page`, whose mappings last the root's life, so GPFSEL0 to
-  GPFSEL5 stay writable in the system domain after boot. "Two writers, apart in time"
-  ([design-header-io.md](design-header-io.md#on-board-pins)) then rests on the root calling the setter once and on no
-  stray store in the system domain's runtime; a release of root device pages, unmapping the window once the write
-  returns, makes it hold by construction.
+  GPFSEL5 stay writable in the system domain after boot. That no second writer exists then rests on the root calling
+  the setter once and on no stray store in the system domain's runtime. Deleting the root's write with the pin
+  driver's landing closes this ([design-pinctrl.md](design-pinctrl.md#what-the-code-does-today)): the page then has
+  one mapping, the driver's.
 * [High] Fiasco backend, rights per handle (`liberx/backend/fiasco`, `liberx/backend/core/handles.h`), blocks
   0.2: the design records erXos's rights in every handle entry, intersects them with the mask on a duplicate
   or a pass, and checks the right each call needs in the one lookup ([design-fiasco.md](design-fiasco.md#rights),

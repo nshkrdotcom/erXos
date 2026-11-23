@@ -164,8 +164,8 @@ document's "residual risks accepted" paragraph.
   8 items (4 Medium, 4 Low).
 * [Bluetooth](docs/todo-bluetooth.md#planned-features): the Bluetooth host and controller, GATT and the security manager.
   10 items (1 High, 9 Medium).
-* [Drivers and platforms](docs/todo-drivers.md#planned-features): drivers and the device layer: PCIe, DMA, the device tree, GENET, SD, UART, the platforms and boards.
-  29 items (18 Medium, 11 Low).
+* [Drivers and platforms](docs/todo-drivers.md#planned-features): drivers and the device layer: PCIe, DMA, the device tree, GENET, SD, UART, pin control, the platforms and boards.
+  42 items (23 Medium, 19 Low).
 * [Shell and programs](docs/todo-shell.md#planned-features): the command shell (rc), programs, the console line and the terminal.
   15 items (4 Medium, 11 Low).
 * [Sessions and SSH](docs/todo-session.md#planned-features): sessions, SSH, the vault and login.
