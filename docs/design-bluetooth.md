@@ -534,7 +534,8 @@ the release otherwise only loads, declared per script
   `-erx_net interfaces` (`config/manifest/qemu-virt-development.txt`):
   `name`, `appearance`, `connections`, `patch`, a file of `erx_bt`'s
   `priv` directory, `patch_manufacturer` and `console`. The host name is
-  the host part of the domain's node name
+  the host part of the domain's node name up to its first dot, so
+  `bt@pi.example.com` advertises `pi`
   ([design-system.md](design-system.md#identifiers)). The release's boot
   script starts `erx_bt`, and the `crypto` it requires, before init's
   ready report, and `erx_bt` then runs only the mint of `ble` ([The

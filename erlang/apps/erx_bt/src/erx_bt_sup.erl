@@ -48,8 +48,8 @@ gap() ->
 -doc """
 GAP's values (docs/design-bluetooth.md, "The Bluetooth domain" and "The attribute
 table") from the `name` and `appearance` application keys, as `application:get_env/2`
-answers them, and the node name: the name, by default the machine's host name, the
-host part of the node name, and the appearance, by default 0. A name that is not
+answers them, and the node name: the name, by default the machine's bare host name,
+the host part of the node name up to its first dot, and the appearance, by default 0. A name that is not
 UTF-8 text or is longer than GAP's Device Name allows fails with `{bad_name, Name}`,
 and an appearance that is not 16 bits with `{bad_appearance, Appearance}`, so the
 stack stops at its start.
@@ -59,7 +59,9 @@ gap(NameKey, AppearanceKey, Node) ->
     #{name => name(NameKey, Node), appearance => appearance(AppearanceKey)}.
 
 name(undefined, Node) ->
-    name({ok, lists:last(binary:split(atom_to_binary(Node), <<"@">>))}, Node);
+    Host = lists:last(binary:split(atom_to_binary(Node), <<"@">>)),
+    [Bare | _Domain] = binary:split(Host, <<".">>),
+    name({ok, Bare}, Node);
 name({ok, Name}, _Node) when is_list(Name); is_binary(Name) ->
     case unicode:characters_to_binary(Name) of
         Binary when is_binary(Binary), byte_size(Binary) =< ?ERX_GAP_DEVICE_NAME_MAX -> Binary;

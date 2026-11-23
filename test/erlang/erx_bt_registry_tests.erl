@@ -294,11 +294,12 @@ advertised(Services) ->
     unlink(Pid),
     try erx_gatt_srv:advertised() after stop(Pid) end.
 
-%% GAP's values from the application keys: the configured name, the host part of the
-%% node name by default, the 248-octet bound, text alone, and a 16-bit appearance.
+%% GAP's values from the application keys: the configured name, the bare host name
+%% of the node name by default, the 248-octet bound, text alone, and a 16-bit appearance.
 gap_from_the_keys_test() ->
     ?assertEqual(#{name => <<"bt">>, appearance => 16#03C1}, erx_bt_sup:gap({ok, "bt"}, {ok, 16#03C1}, 'a@b')),
     ?assertEqual(#{name => <<"erxos">>, appearance => 0}, erx_bt_sup:gap(undefined, undefined, 'bt@erxos')),
+    ?assertEqual(#{name => <<"pi">>, appearance => 0}, erx_bt_sup:gap(undefined, undefined, 'bt@pi.example.com')),
     Longest = binary:copy(<<"a">>, 248),
     ?assertMatch(#{name := Longest}, erx_bt_sup:gap({ok, Longest}, undefined, 'a@b')),
     [?assertError({bad_name, Name}, erx_bt_sup:gap({ok, Name}, undefined, 'a@b'))
