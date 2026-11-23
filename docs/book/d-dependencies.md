@@ -90,7 +90,6 @@ The table has about sixty rows, in a few groups.
 | Component | License | Why it pays |
 | --- | --- | --- |
 | Fiasco, with `bootstrap`, `sigma0`, `l4sys` and `mk` | MIT, with exceptions below | The kernel, an L4 microkernel with decades of use, behind erXos's interface `liberx` ([chapter 8](08-kernel-interface.md)). |
-| `stdarg.h`, `stdbool.h`, `stddef.h` of the cross GCC | GPL-3.0-or-later with the GCC Runtime Library Exception | Macros and types Fiasco's build includes; no GCC library is linked. |
 | `drivers-frst`, its PL011 UART part | MIT | `bootstrap`'s console while Fiasco starts. |
 | libfdt | BSD-2-Clause (dual GPL-2.0-or-later) | Reading the device tree, the board's description. |
 | TF-A's BL31 for the Pi 4 | BSD-3-Clause | The firmware calls that start CPUs and end the machine. |

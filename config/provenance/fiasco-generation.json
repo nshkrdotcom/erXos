@@ -1,7 +1,7 @@
 {
   "version": 1,
   "recipes": {
-    "config/fiasco/kernel.defconfig": "e1a8587ba053c1b1cb53e7e791623026fd22087c89045fbf0908a65617628955",
+    "config/fiasco/kernel.defconfig": "d8bec09f052cc89406748a56e607cebbfcef54d9e2d72b0f44471555f5938853",
     "config/fiasco/modules.list": "415aae92ab8b8baf1c43b9229bdf039cc931d580d58e0014f72fbbb63959e2fb",
     "config/fiasco/user.defconfig": "a21e9c2bbb12b9eb4749380fd532dc8abd691dbd5bfc0e224e921c29988e518d",
     "fiasco/bootstrap/server/src/Make.rules": "1ed4ed98cc2ea4a93527693ba50e597a2378e09e848b7d9ae3a60a610e4bc986",
@@ -201,7 +201,7 @@
       },
       "build/fiasco/kernel/Kconfig": {
         "mode": "text",
-        "sha256": "b33c8890f9b72a03bd7e407e49ed9c6beefbc4d345aeb41ecdf92680afa0f2ba"
+        "sha256": "2b307344e1218ded6770986a08c493caacef5b81f1098d049f11e26fa18e2cab"
       },
       "build/fiasco/kernel/bootstrap.fiasco.bin": {
         "mode": "binary",
@@ -209,7 +209,7 @@
       },
       "build/fiasco/kernel/bootstrap.fiasco.pre.o": {
         "mode": "binary",
-        "sha256": "e38dfea3d7aa3a0ee51c397c5f8eeeed611a9bffe5d74b63adc92dcbf8215af2"
+        "sha256": "2220942fb356c1b3f11b6a6554438a608bbbf100d3d6f1d955f161abfadfd647"
       },
       "build/fiasco/kernel/dump_tcboffsets": {
         "mode": "binary",
@@ -217,7 +217,7 @@
       },
       "build/fiasco/kernel/globalconfig.out": {
         "mode": "text",
-        "sha256": "476837186d9b9869cbf31bbe452df5ae20bbfa602575125845bfbbeb5baa08a9"
+        "sha256": "6e3d968d19a6133e844e413afdf5d6949cbe40fa297102b6a1296465028aa311"
       },
       "build/fiasco/kernel/scripts/kconfig/conf": {
         "mode": "binary",
@@ -229,11 +229,11 @@
       },
       "build/fiasco/users/.config": {
         "mode": "text",
-        "sha256": "7ea7956f2fe17e01383f3e7236bbafbda3c6dead98dc5cb19d1d5a16d845e666"
+        "sha256": "7968fdb7fef45089a5661c1965965cea79cf40d55ac3459350b9bc71d4df4185"
       },
       "build/fiasco/users/.config.all": {
         "mode": "text",
-        "sha256": "0e9adbe7acab3f6ecfba61a0fd81fdaa0f1defce2b11bd006133f292edb986a1"
+        "sha256": "b79f244636e33705859389433b325ca494f54bad0732ba6cab1ef509e83077bb"
       },
       "build/fiasco/users/include/generated/autoconf.h": {
         "mode": "text",
@@ -279,7 +279,7 @@
     "profiles": {
       "kernel/globalconfig.h": {
         "role": "configuration",
-        "output_sha256": "170e6f5e54bfc921d11e151d6d2bb2a12469a80ffae97f84a56baae14992b402",
+        "output_sha256": "cdd67bb20b9eb9ed1b004cbbec633ff683173f91bcd6a67fff9960573f435669",
         "code": [],
         "configuration": [
           "build/fiasco/kernel/globalconfig.out",

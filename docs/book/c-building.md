@@ -36,8 +36,7 @@ x86-64 is a host too. A build needs these tools
 * Ruby, any version, with minitest and REXML, for `tools/erx` and the
   tests;
 * GNU make, GNU sed, GNU timeout (`gtimeout`) and Perl;
-* LLVM's clang, lld and binary tools;
-* the AArch64 ELF GCC and binutils, which Fiasco's own build uses;
+* LLVM's clang, lld and binary tools, which build Fiasco and L4Re too;
 * Autoconf, Automake, Libtool and a host C and C++ compiler, which
   build fsimg, the tool that writes the read-only EROFS images;
 * QEMU 11.1, with its `virt-11.1` machine;
@@ -69,8 +68,8 @@ exactly LLVM 23.1.3, and their hashes are published so anyone can
 rebuild one and compare.
 
 On FreeBSD the same tools come from packages (`llvm23`, `gmake`,
-`coreutils` for `gtimeout`, `ruby` with its minitest and REXML gems,
-the `aarch64-none-elf-gcc` cross tools and the rest), and you run the
+`coreutils` for `gtimeout`, `ruby` with its minitest and REXML gems
+and the rest), and you run the
 top-level targets with GNU make: `gmake check`. `make setup` finds the
 newest `/usr/local/llvmNN` by itself when `ERX_CLANG` and `ERX_LLD` are
 unset. Hosted mode (section C.7) builds only on macOS, so on FreeBSD

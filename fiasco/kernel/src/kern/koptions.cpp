@@ -1,3 +1,4 @@
+// Modified by erXos: the AMP options name the fields erXos adds (koptions-def.h).
 INTERFACE:
 
 #include "koptions-def.h"
@@ -30,6 +31,8 @@ namespace Koptions_ns
                0,                              // tbuf_entries
                0,                              // out_buf
                cxx::int_value<Amp_phys_id>(Amp_node::phys_id(node)),
+               0,                              // erx_pad
+               {},                             // erx_handoff
              };
   }
 

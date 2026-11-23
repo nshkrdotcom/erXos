@@ -21,3 +21,7 @@ CONFIG_NO_VERSION=y
 # CONFIG_JDB_DISASM is not set
 # CONFIG_JDB_GZIP is not set
 # CONFIG_COV is not set
+# The build names its LLVM programs in Makeconf.local; these keep the record truthful.
+CONFIG_CC="clang"
+CONFIG_CXX="clang++"
+CONFIG_LD="ld.lld"
