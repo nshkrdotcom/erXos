@@ -7,8 +7,8 @@ The decisions of a session's line to the SSH domain (erx_ssh_line;
 docs/design-ssh.md, "Sessions, ttys and shells"), pure: which requests the
 line takes and how many channels it holds open.
 
-The line serves one peer, the SSH domain the system domain exported it to,
-which erx_session_line keeps and admits each request from. A request from the
+The line serves one peer, the SSH domain its facet is bound to, whose
+requests that facet admits and forwards (erx_session_line). A request from the
 peer is untrusted, so request/4 checks its whole shape before anything acts
 on it, and answers
 `{error, badarg}` for any shape but the one below, and for a channel that is

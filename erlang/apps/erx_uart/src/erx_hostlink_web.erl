@@ -53,7 +53,10 @@ with it, and the host opens the facet again.
 %% "Principals, sessions and quotas").
 -define(PRINCIPAL, <<"root">>).
 
--type line() :: #{principal := binary(), build := binary(), line => pid()}.
+%% What a connect names besides root's line, the facet of root's session if one was
+%% minted: whose connection it is and the machine's build.
+-type connect() :: #{principal := binary(), build := binary()}.
+-type line_of() :: fun((pos_integer(), pid()) -> #{line => pid()}).
 
 -doc """
 The root's answer to `{open, web}`, with the facets it opened. The facet
@@ -70,46 +73,45 @@ opens, and ends with `Link`, when all three hold:
 Otherwise, a release build or a manifest that cannot be read included,
 the answer is `{error, unsupported}` and no facet starts.
 
-Only once all three hold does the facet reach for root's line: the line of
-the session the console logged root in at (erx_console:login_session/0),
-which the system domain has exported to the web domain as the facet opens
-(erx_domain:line/3), so the web domain reaches no session before the
-host opens the facet. Its connections are bound to that line and their
-views are of root's session. With no such session, or a line that could
-not be exported, the facet opens all the same and every view a browser
-opens ends `unsupported`; the host opens the facet again once root has
-logged in.
+Only once all three hold does the facet reach for root's line, as it starts:
+the line of the session the console logged root in at
+(erx_console:login_session/0), minted as a facet for the web domain with
+this facet's process as its opening (erx_domain:line/4), so the web domain
+reaches no session before the host opens the facet, and the line's facet,
+with every view opened through it, ends when this facet does. Its
+connections are bound to that line and their views are of root's session.
+With no such session, or a line that could not be minted, the facet opens
+all the same and every view a browser opens ends `unsupported`; the host
+opens the facet again once root has logged in.
 """.
 -spec open(pid()) -> {{ok, pid()} | {error, unsupported}, [pid()]}.
 open(Link) ->
-    open(Link, erx:cap(web), erx_build:id(), erx_build:development(), fun root_line/1).
+    open(Link, erx:cap(web), erx_build:id(), erx_build:development(), fun root_line/2).
 
 -doc """
 open/1 on the relay, build identifier and development flag given, and
-`LineOf`, which exports root's line to the web domain whose id it is
-given and answers `#{line => Line}`, or `#{}` with no line. For the tests.
+`LineOf`, which the facet's process calls as it starts with the web domain's
+id and its own pid, the opening, and which answers `#{line => Line}`, root's
+line minted for that domain, or `#{}` with no line. For the tests.
 """.
--spec open(pid(), pid() | undefined, {ok, binary()} | {error, term()}, boolean(),
-           fun((pos_integer()) -> #{line => pid()})) ->
+-spec open(pid(), pid() | undefined, {ok, binary()} | {error, term()}, boolean(), line_of()) ->
           {{ok, pid()} | {error, unsupported}, [pid()]}.
 open(Link, Relay, {ok, Build}, true, LineOf) when is_pid(Relay) ->
-    Web = erx:owner(Relay),
-    Line = maps:with([line], LineOf(Web)),
-    {ok, Facet} = start(Link, Relay, Web, Line#{principal => ?PRINCIPAL, build => Build}),
+    {ok, Facet} = start(Link, Relay, #{principal => ?PRINCIPAL, build => Build}, LineOf),
     {{ok, Facet}, [Facet]};
 open(_Link, _Relay, _Build, _Development, _LineOf) ->
     {{error, unsupported}, []}.
 
-%% Root's line, exported to the web domain Web, or none. Every wait is bounded: the
-%% console's and the domain service's lookups by gen_server's default deadline, the
-%% introduction by the service's own (erx_domain:introduce/2) and the export by
-%% erx_domain:line/3's. A lookup that ends in an exit, a console not running or a
-%% deadline passed, leaves the facet without a line, as no session does.
-root_line(Web) ->
+%% Root's line, minted for the web domain Web within the life of Opening, or none.
+%% Every wait is bounded: the console's lookup by gen_server's default deadline and
+%% the mint by the domain service's line operation's own (erx_domain:line/4). A
+%% lookup that ends in an exit, a console not running, leaves the facet without a
+%% line, as no session does.
+root_line(Web, Opening) ->
     try
         maybe
             {ok, Session} ?= erx_console:login_session(),
-            {ok, Line} ?= erx_domain:line(web_line, Session, Web),
+            {ok, Line} ?= erx_domain:line(web_line, Session, Web, Opening),
             #{line => Line}
         else
             none -> #{};
@@ -125,13 +127,13 @@ no_line(Reason) ->
     #{}.
 
 -doc """
-Starts a facet that relays to `Relay`, the web domain's relay facet, whose
-domain is `Web`, binding each connection to `Line`, and ends when `Link` or
-`Relay` does.
+Starts a facet that relays to `Relay`, the web domain's relay facet, binding
+each connection to `Connect` and the line `LineOf` gives it, and ends when
+`Link` or `Relay` does.
 """.
--spec start(pid(), pid(), pos_integer(), line()) -> {ok, pid()}.
-start(Link, Relay, Web, Line) ->
-    proc_lib:start(?MODULE, init, [Link, Relay, Web, Line]).
+-spec start(pid(), pid(), connect(), line_of()) -> {ok, pid()}.
+start(Link, Relay, Connect, LineOf) ->
+    proc_lib:start(?MODULE, init, [Link, Relay, Connect, LineOf]).
 
 -doc """
 The payload of the cast to the host for a message the web domain sent, or
@@ -148,9 +150,11 @@ cast_of(_Message, _Web) ->
     drop.
 
 -doc false.
--spec init(pid(), pid(), pos_integer(), line()) -> no_return().
-init(Link, Relay, Web, Line) ->
+-spec init(pid(), pid(), connect(), line_of()) -> no_return().
+init(Link, Relay, Connect, LineOf) ->
     Watches = [erlang:monitor(process, Link), erlang:monitor(process, Relay)],
+    Web = erx:owner(Relay),
+    Line = maps:merge(Connect, maps:with([line], LineOf(Web, self()))),
     proc_lib:init_ack({ok, self()}),
     loop(#{link => Link, relay => Relay, web => Web, line => Line, watches => Watches}).
 

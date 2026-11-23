@@ -1,14 +1,18 @@
 %% Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
 %% SPDX-License-Identifier: BSD-2-Clause
 
-%% EUnit cases of the session's line to the web domain (erx_web_line;
-%% docs/design-web.md, "Views on the line"), and of the path from a browser's
-%% decoded `open {path, []}` through the web domain's relay connection and the line
-%% to an update carrying the machine's record. The inspector is a stand-in that
-%% answers a machine record of the schema; the test is each connection's sink.
+%% EUnit cases of the session's line to the web domain (erx_web_line over
+%% erx_session_line; docs/design-web.md, "Views on the line"; docs/design-system.md,
+%% "A session's lines"): the line's mint, its facet's replacement and lifetime, the
+%% views opened through the facet, and the bounds of a request and of a view's heap.
+%% The export table, the session's connection to the grantee and the opening are the
+%% test's stand-ins, and so is the inspector but in the cases of a domain's processes
+%% and of the scope, which ask it itself. The test is the domain pid a mint replies to
+%% (erx_facet:minted/2).
 -module(erx_web_line_tests).
 
 -include_lib("eunit/include/eunit.hrl").
+-include("generated/erx_abi.hrl").
 
 -export([owner/1, export/3]).
 
@@ -16,12 +20,11 @@
 -define(SYSTEM, 4).
 %% The name the test that watches the stand-in export table registers under.
 -define(EXPORTS, erx_web_line_tests_exports).
--define(BUILD, <<"00000000000000ff">>).
 
-%% The export table's stand-in: every name is the peer's unless a test has claimed it for
-%% another domain, and anything else no name, as erx_dist:owner/1 refuses it.
+%% The export table's stand-in: every name is the peer's, or the domain a test has made
+%% every name's, unless a test has claimed it for another domain, and anything else no name, as erx_dist:owner/1 refuses it.
 owner(Name) when is_pid(Name); is_reference(Name); is_port(Name) ->
-    persistent_term:get({?MODULE, owner, Name}, ?PEER).
+    persistent_term:get({?MODULE, owner, Name}, persistent_term:get({?MODULE, owner}, ?PEER)).
 
 %% Every export is taken, and told to the test registered as ?EXPORTS, if any.
 export(Name, Rights, Peer) ->
@@ -36,253 +39,300 @@ machine(Uptime) ->
     {ok, #{schema => 1, path => [], kind => machine, id => <<"m">>,
            attrs => #{First => {kernel, {ok, Uptime}}}, children => [cpus]}}.
 
+%% A process standing for the session's connection to the grantee or for the opening,
+%% which lives until it is told to stop.
+stand_in() ->
+    spawn(fun() -> receive stop -> ok end end).
+
+%% A line whose views read through Inspect, and the stand-in of its connection to any
+%% grantee, which Connection answers unless it refuses that grantee.
 line(Inspect) ->
-    {ok, Line} = erx_web_line:start_link(#{peer => ?PEER, system => ?SYSTEM, inspect => Inspect,
-                                           exports => ?MODULE}),
-    Line.
+    line(Inspect, fun(_Grantee) -> ok end).
 
-%% A line already serving its peer whose views read through the inspector itself as a
-%% facet of Scope answers them.
-line_at(Scope) ->
-    line(as_facet(Scope)).
+line(Inspect, Refuses) ->
+    Conn = stand_in(),
+    Connection = fun(Grantee) ->
+                         case Refuses(Grantee) of
+                             ok -> {ok, Conn};
+                             Error -> Error
+                         end
+                 end,
+    {ok, Line} = erx_web_line:start_link(#{system => ?SYSTEM, inspect => Inspect, exports => ?MODULE,
+                                           connection => Connection}),
+    #{line => Line, conn => Conn}.
 
-as_facet(Scope) ->
-    fun(Path) -> erx_inspector:inspect(Path, Scope, #{}) end.
+%% The mint request for Grantee within Opening's life, in Domain's envelope, and the
+%% line's reply, or none.
+mint(Line, Domain, Grantee, Opening) ->
+    mint(Line, Domain, web_line, Grantee, Opening).
 
-data(Relay, C, Message) ->
-    {ok, Bytes} = erx_web_proto:encode(browser, Message),
-    gen_server:call(Relay, {data, self(), C, Bytes}).
+mint(Line, Domain, Name, Grantee, Opening) ->
+    persistent_term:put({erx, domain_pid}, self()),
+    Tag = erlang:unique_integer([positive]),
+    Limits = (maps:get(web_line, ?ERX_LINES))#{opening => Opening},
+    Line ! {erx_origin, Domain, {erx_facet_mint, Tag, Name, Grantee, <<"root">>, Limits}},
+    receive {erx_facet_minted, Tag, Reply} -> Reply after 500 -> none end.
 
-sent(C) ->
+%% A line with its facet minted for the peer, as the host's opening of its `web` facet
+%% does.
+open_line(Inspect) ->
+    #{line := Line} = Opened = line(Inspect),
+    Opening = stand_in(),
+    {ok, Facet} = mint(Line, ?SYSTEM, ?PEER, Opening),
+    Opened#{facet => Facet, opening => Opening}.
+
+%% Request in Domain's envelope as a call, and the answer, or none.
+call(Facet, Request) ->
+    call(Facet, ?PEER, Request).
+
+call(Facet, Domain, Request) ->
+    Alias = alias([reply]),
+    Facet ! {erx_origin, Domain, {'$gen_call', {self(), [alias | Alias]}, Request}},
+    receive {[alias | Alias], Reply} -> Reply after 500 -> unalias(Alias), none end.
+
+%% The next message of View's.
+update(View) ->
     receive
-        {web, C, Bytes} -> {ok, Message} = erx_web_proto:decode(machine, Bytes), Message
-    after 5000 -> error(nothing_sent)
+        {web_view, View, Body} -> Body;
+        {web_view_ended, View, Reason} -> {ended, Reason}
+    after 5000 -> error(no_update)
     end.
 
-nothing_sent() ->
-    receive {web, _, _} = M -> error({sent, M}) after 200 -> ok end.
+nothing_sent(View) ->
+    receive {web_view, View, _} = M -> error({sent, M}) after 200 -> ok end.
 
-%% A browser's open of the machine's path, through the relay's connection and the
-%% line, is answered with one update carrying the machine's record; a `next` while
-%% the record is unchanged is not answered, and the browser's close ends the view.
+ended(Pid) ->
+    Watch = erlang:monitor(process, Pid),
+    receive {'DOWN', Watch, process, Pid, Reason} -> {ended, Reason} after 5000 -> lives end.
+
+%%% Views.
+
+%% An open through the facet is answered with a view whose first update carries the
+%% machine's record; a `next` while the record is unchanged is not answered; the view
+%% takes `stop` in the grantee's envelope alone.
 open_machine_record_test() ->
-    Line = line(fun([]) -> machine(7) end),
-    {ok, Relay} = erx_web_relay:start_link(#{system => 4}),
-    ?assertEqual(ok, gen_server:call(Relay, {connect, self(), 1, #{principal => <<"root">>, build => ?BUILD,
-                                                                   line => Line}})),
-    ?assertEqual(ok, data(Relay, 1, {hello, erx_web_proto:hash()})),
-    ?assertEqual({welcome, <<"root">>, ?BUILD}, sent(1)),
-    ?assertEqual(ok, data(Relay, 1, {open, 1, {path, []}})),
-    ?assertMatch({update, 1, {record, #{path := [], kind := <<"machine">>, id := {text, <<"m">>},
-                                        attrs := [{_, kernel, ok, {int, <<"7">>}}],
-                                        children := {complete, [{text, <<"cpus">>}]}}}},
-                 sent(1)),
-    [View] = views(Line),
-    ?assertEqual(ok, data(Relay, 1, {next, 1})),
-    nothing_sent(),
+    #{facet := Facet} = open_line(fun([]) -> machine(7) end),
+    {ok, View} = call(Facet, {open, {path, []}}),
+    ?assertMatch({record, #{path := [], kind := <<"machine">>, id := {text, <<"m">>},
+                            attrs := [{_, kernel, ok, {int, <<"7">>}}],
+                            children := {complete, [{text, <<"cpus">>}]}}},
+                 update(View)),
+    View ! {erx_origin, ?PEER, next},
+    nothing_sent(View),
     Watch = erlang:monitor(process, View),
-    ?assertEqual(ok, data(Relay, 1, {close, 1})),
+    View ! stop,
+    View ! {erx_origin, ?PEER + 1, stop},
+    receive {'DOWN', Watch, _, _, _} -> error(stopped_by_another) after 200 -> ok end,
+    View ! {erx_origin, ?PEER, stop},
     receive {'DOWN', Watch, process, View, normal} -> ok after 5000 -> error(view_lives) end.
 
-%% A view the inspector refuses ends with the inspector's reason, and a target the
-%% line does not serve is unsupported.
+%% A view the inspector refuses ends with the inspector's reason, one whose query got
+%% no answer ends `failed`, names that name nothing are `scope`, a target the line does
+%% not serve is unsupported, and a request of no operation is badarg.
 refused_views_end_test() ->
-    Line = line(fun([]) -> {error, scope} end),
-    {ok, Relay} = erx_web_relay:start_link(#{system => 4}),
-    ok = gen_server:call(Relay, {connect, self(), 2, #{principal => <<"root">>, build => ?BUILD, line => Line}}),
-    ok = data(Relay, 2, {hello, erx_web_proto:hash()}),
-    {welcome, _, _} = sent(2),
-    ok = data(Relay, 2, {open, 1, {path, []}}),
-    ?assertEqual({ended, 1, <<"scope">>}, sent(2)),
-    ok = data(Relay, 2, {open, 2, {path, [<<"nothing">>]}}),
-    ?assertEqual({ended, 2, <<"scope">>}, sent(2)),
-    ok = data(Relay, 2, {open, 3, uis}),
-    ?assertEqual({ended, 3, <<"unsupported">>}, sent(2)).
-
-%% A query the session's facet refuses as busy, its requests in flight all
-%% taken, ends the view `failed`, as any query that got no answer does.
-busy_view_fails_test() ->
-    Line = line(fun([]) -> {error, busy} end),
-    {ok, Relay} = erx_web_relay:start_link(#{system => 4}),
-    ok = gen_server:call(Relay, {connect, self(), 2, #{principal => <<"root">>, build => ?BUILD, line => Line}}),
-    ok = data(Relay, 2, {hello, erx_web_proto:hash()}),
-    {welcome, _, _} = sent(2),
-    ok = data(Relay, 2, {open, 1, {path, []}}),
-    ?assertEqual({ended, 1, <<"failed">>}, sent(2)).
+    #{facet := Facet} = open_line(fun([]) -> {error, scope} end),
+    {ok, View} = call(Facet, {open, {path, []}}),
+    ?assertEqual({ended, scope}, update(View)),
+    ?assertEqual({error, scope}, call(Facet, {open, {path, [<<"nothing">>]}})),
+    ?assertEqual({error, unsupported}, call(Facet, {open, uis})),
+    [?assertEqual({error, badarg}, call(Facet, Request)) || Request <- [nonsense, {open}, {next, View}]],
+    #{facet := Busy} = open_line(fun([]) -> {error, busy} end),
+    {ok, Failed} = call(Busy, {open, {path, []}}),
+    ?assertEqual({ended, failed}, update(Failed)).
 
 %% The session's processes through the inspector itself at the session's scope: the
 %% processes of the domain the runtime is, on a development host the system domain
-%% (erx_inspector:runtime_domain/0). The open of their listing's path, as /proc
-%% entry names, is answered with the listing, and with 1,000 idle processes beside
-%% the test's own it holds one partial page within one update: cut at 1,000
-%% entries or at inspect_reply_max encoded bytes, whichever comes first.
+%% (erx_inspector:runtime_domain/0). With 1,000 idle processes beside the test's own
+%% the listing holds one partial page within one update, and the view holding that
+%% page stays within its heap limit.
 session_processes_test() ->
     Idle = [spawn(fun() -> receive stop -> ok end end) || _ <- lists:seq(1, 1000)],
     try
-        Line = line_at([?SYSTEM]),
-        {ok, View} = gen_server:call(Line, {open, {path, [<<"processes">>]}}),
-        receive
-            {web_view, View, {record, #{path := WirePath, kind := Kind, id := Id, attrs := Attrs,
-                                        children := {Completeness, Children}}}} ->
-                ?assertEqual([{text, <<"processes">>}], WirePath),
-                ?assertEqual({{atom, <<"processes">>}, []}, {Id, Attrs}),
-                ?assertEqual(<<"listing">>, Kind),
-                ?assertEqual(partial, Completeness),
-                ?assert(length(Children) >= 1 andalso length(Children) =< 1000);
-            {web_view_ended, View, Reason} ->
-                error({ended, Reason})
-        after 5000 -> error(no_update)
-        end
+        #{facet := Facet} = open_line(as_facet([?SYSTEM])),
+        {ok, View} = call(Facet, {open, {path, [<<"processes">>]}}),
+        {record, #{path := WirePath, kind := Kind, id := Id, attrs := Attrs,
+                   children := {Completeness, Children}}} = update(View),
+        ?assertEqual([{text, <<"processes">>}], WirePath),
+        ?assertEqual({{atom, <<"processes">>}, []}, {Id, Attrs}),
+        ?assertEqual(<<"listing">>, Kind),
+        ?assertEqual(partial, Completeness),
+        ?assert(length(Children) >= 1 andalso length(Children) =< 1000),
+        true = erlang:garbage_collect(View),
+        ?assert(is_process_alive(View))
     after
         [Pid ! stop || Pid <- Idle]
     end.
 
-%% A process opened by the name its listing gives it, as the client's link names it,
-%% is answered with the process's record.
-listed_process_test() ->
-    Line = line_at([?SYSTEM]),
-    Name = erx_procfs_core:name(erx_inspector:proc_id(self())),
-    {ok, View} = gen_server:call(Line, {open, {path, [<<"processes">>, Name]}}),
-    receive
-        {web_view, View, {record, #{path := WirePath, kind := Kind}}} ->
-            ?assertEqual({[{text, <<"processes">>}, {text, Name}], <<"process">>}, {WirePath, Kind});
-        {web_view_ended, View, Reason} ->
-            error({ended, Reason})
-    after 5000 -> error(no_update)
+%% The inspector at Scope, answering in a process of its own as the session's inspect
+%% facet's query worker does, so the view holds the answer and not the query's work.
+as_facet(Scope) ->
+    fun(Path) ->
+            {Worker, Watch} = spawn_monitor(fun() -> exit({answer, erx_inspector:inspect(Path, Scope, #{})}) end),
+            receive {'DOWN', Watch, process, Worker, {answer, Answer}} -> Answer end
     end.
 
-%% A path outside the session's scope ends the view `scope`, as /proc answers enoent:
-%% for a session whose scope is another domain, a process of the domain the runtime
-%% is and that domain's record, and a machine-wide path. Names that name nothing, or
-%% are not names, are answered as a path outside the scope, and the line goes on
-%% serving.
+%% A process opened by the name its listing gives it is answered with its record.
+listed_process_test() ->
+    #{facet := Facet} = open_line(as_facet([?SYSTEM])),
+    Name = erx_procfs_core:name(erx_inspector:proc_id(self())),
+    {ok, View} = call(Facet, {open, {path, [<<"processes">>, Name]}}),
+    ?assertMatch({record, #{path := [{text, <<"processes">>}, {text, Name}], kind := <<"process">>}}, update(View)).
+
+%% A path outside the session's scope ends the view `scope`, as /proc answers enoent;
+%% names that name nothing, or are not names, are answered as such a path.
 scope_test() ->
-    Line = line_at([?SYSTEM + 5]),
+    #{line := Line, facet := Facet} = open_line(as_facet([?SYSTEM + 5])),
     Ended = fun(Names) ->
-                    {ok, View} = gen_server:call(Line, {open, {path, Names}}),
-                    receive
-                        {web_view_ended, View, Reason} -> Reason;
-                        {web_view, View, Body} -> error({answered, Names, Body})
-                    after 5000 -> error(no_end)
-                    end
+                    {ok, View} = call(Facet, {open, {path, Names}}),
+                    update(View)
             end,
-    ?assertEqual(scope, Ended([<<"processes">>, erx_procfs_core:name(erx_inspector:proc_id(self()))])),
-    ?assertEqual(scope, Ended([<<"domains">>, <<"4">>])),
-    ?assertEqual(scope, Ended([<<"kernel">>])),
-    [?assertEqual({error, scope}, gen_server:call(Line, {open, {path, Names}}))
+    ?assertEqual({ended, scope}, Ended([<<"processes">>, erx_procfs_core:name(erx_inspector:proc_id(self()))])),
+    ?assertEqual({ended, scope}, Ended([<<"domains">>, <<"4">>])),
+    ?assertEqual({ended, scope}, Ended([<<"kernel">>])),
+    [?assertEqual({error, scope}, call(Facet, {open, {path, Names}}))
      || Names <- [[<<"nothing">>], [<<"domains">>, <<"4">>, <<"..">>], [<<"domains/4">>], [<<>>],
                   [<<"domains">> | <<"4">>], [domains], [<<"processes">>, <<"0.1.0">>, <<"x">>]]],
     ?assert(is_process_alive(Line)).
 
 %% A line holds at most 64 views; past them an open is busy until one ends.
 bound_test() ->
-    Line = line(fun([]) -> machine(1) end),
-    Views = [begin {ok, V} = gen_server:call(Line, {open, {path, []}}), V end || _ <- lists:seq(1, 64)],
-    ?assertEqual({error, busy}, gen_server:call(Line, {open, {path, []}})),
-    flush_updates(),
-    hd(Views) ! stop,
+    #{line := Line, facet := Facet} = open_line(fun([]) -> machine(1) end),
+    Views = [begin {ok, V} = call(Facet, {open, {path, []}}), V end || _ <- lists:seq(1, 64)],
+    ?assertEqual({error, busy}, call(Facet, {open, {path, []}})),
+    hd(Views) ! {erx_origin, ?PEER, stop},
     wait_views(Line, 63),
-    ?assertMatch({ok, _}, gen_server:call(Line, {open, {path, []}})).
+    ?assertMatch({ok, _}, call(Facet, {open, {path, []}})).
 
-%% From another domain the line takes a call only in its peer's envelope, and a
-%% view a `next` likewise; the view answers its opener alone.
-envelope_test() ->
-    Line = line(fun([]) -> machine(1) end),
-    Alias = alias(),
-    Line ! {erx_origin, ?PEER + 1, {'$gen_call', {self(), [alias | Alias]}, {open, {path, []}}}},
-    receive {[alias | Alias], Refused} -> error({answered, Refused}) after 200 -> ok end,
-    Line ! {erx_origin, ?PEER, {'$gen_call', {self(), [alias | Alias]}, {open, {path, []}}}},
-    View = receive {[alias | Alias], {ok, V}} -> V after 5000 -> error(no_answer) end,
-    receive {web_view, View, {record, _}} -> ok after 5000 -> error(no_update) end,
-    Watch = erlang:monitor(process, View),
-    View ! {erx_origin, ?PEER + 1, stop},
-    receive {'DOWN', Watch, _, _, _} -> error(stopped_by_another_domain) after 200 -> ok end,
-    View ! {erx_origin, ?PEER, stop},
-    receive {'DOWN', Watch, process, View, normal} -> ok after 5000 -> error(view_lives) end.
-
-%% A peer's call whose alias is no reference is dropped unanswered, and the line
-%% goes on serving its peer.
-peer_alias_test() ->
-    Line = line(fun([]) -> machine(1) end),
-    process_flag(trap_exit, true),
-    Line ! {erx_origin, ?PEER, {'$gen_call', {self(), [alias | not_an_alias]}, {open, {path, []}}}},
-    Alias = alias(),
-    Line ! {erx_origin, ?PEER, {'$gen_call', {self(), [alias | Alias]}, {open, {path, []}}}},
-    receive
-        {[alias | Alias], {ok, _View}} -> ok;
-        {'EXIT', Line, Reason} -> error({line_ended, Reason})
-    after 5000 -> error(no_answer)
-    end,
-    process_flag(trap_exit, false).
-
-%% In the peer's envelope, a call whose caller or alias is another domain's is dropped
-%% unanswered and opens no view, so no reply and no update goes to a third domain.
+%% A call from a third domain, or whose caller is a third domain's, is answered
+%% nowhere and opens no view.
 third_domain_test() ->
-    Line = line(fun([]) -> machine(1) end),
-    Other = alias(),
-    persistent_term:put({?MODULE, owner, Other}, ?PEER + 1),
+    #{line := Line, facet := Facet} = open_line(fun([]) -> machine(1) end),
+    ?assertEqual(none, call(Facet, ?PEER + 1, {open, {path, []}})),
+    Caller = spawn(fun() -> receive _ -> ok end end),
+    persistent_term:put({?MODULE, owner, Caller}, ?PEER + 1),
     try
-        Line ! {erx_origin, ?PEER, {'$gen_call', {self(), [alias | Other]}, {open, {path, []}}}},
-        receive {[alias | Other], Answer} -> error({answered, Answer}) after 200 -> ok end,
-        Caller = spawn(fun() -> receive _ -> ok end end),
-        persistent_term:put({?MODULE, owner, Caller}, ?PEER + 1),
-        Alias = alias(),
-        Line ! {erx_origin, ?PEER, {'$gen_call', {Caller, [alias | Alias]}, {open, {path, []}}}},
+        Alias = alias([reply]),
+        Facet ! {erx_origin, ?PEER, {'$gen_call', {Caller, [alias | Alias]}, {open, {path, []}}}},
         receive {[alias | Alias], Answered} -> error({answered, Answered}) after 200 -> ok end,
-        persistent_term:erase({?MODULE, owner, Caller}),
         ?assertEqual([], views(Line))
     after
-        persistent_term:erase({?MODULE, owner, Other})
+        persistent_term:erase({?MODULE, owner, Caller})
     end.
 
-%% A line serves no domain until the system domain has it exported to one: the
-%% export is taken only in the system domain's envelope, from no other domain and
-%% from no process of the session, and the line serves the domain it was exported to.
-export_test() ->
-    register(?EXPORTS, self()),
-    {ok, Line} = erx_web_line:start_link(#{system => ?SYSTEM, inspect => fun([]) -> machine(1) end,
-                                           exports => ?MODULE}),
-    Alias = alias(),
-    Call = fun(D, Request) -> Line ! {erx_origin, D, {'$gen_call', {self(), [alias | Alias]}, Request}} end,
-    Call(?PEER, {open, {path, []}}),
-    receive {[alias | Alias], Early} -> error({served_before_export, Early}) after 200 -> ok end,
-    Call(?PEER, {export, ?PEER}),
-    Call(?PEER + 1, {export, ?PEER}),
-    receive {[alias | Alias], Forged} -> error({export_answered, Forged}) after 200 -> ok end,
-    ?assertEqual({error, badarg}, gen_server:call(Line, {export, ?PEER})),
-    receive {exported, _, _, _} = Unwanted -> error(Unwanted) after 0 -> ok end,
-    Call(?SYSTEM, {export, ?PEER}),
-    receive {[alias | Alias], Exported} -> ?assertEqual(ok, Exported) after 5000 -> error(no_answer) end,
-    receive {exported, Line, [send], ?PEER} -> ok after 0 -> error(not_exported) end,
-    Call(?PEER, {open, {path, []}}),
-    receive {[alias | Alias], {ok, View}} when is_pid(View) -> ok after 5000 -> error(not_served) end,
-    unregister(?EXPORTS).
+%% A flood of messages from the grantee that the view leaves unread ends that view
+%% alone at its heap limit: its queue is on its heap, and the binaries it references
+%% count toward the limit.
+view_heap_test() ->
+    #{line := Line, facet := Facet} = open_line(fun([]) -> receive never -> ok end end),
+    {ok, Flooded} = call(Facet, {open, {path, []}}),
+    {ok, Other} = call(Facet, {open, {path, []}}),
+    Watch = erlang:monitor(process, Flooded),
+    Chunk = 65536,
+    [Flooded ! {erx_origin, ?PEER, {junk, binary:copy(<<N:8>>, Chunk)}}
+     || N <- lists:seq(1, 2 * ?ERX_WEB_LINE_VIEW_HEAP_MAX * erlang:system_info(wordsize) div Chunk)],
+    %% The first collection takes the queued messages onto the heap, and the next finds
+    %% the heap past its limit.
+    [erlang:garbage_collect(Flooded) || _ <- [first, next]],
+    ?assertEqual(killed, receive {'DOWN', Watch, process, Flooded, Reason} -> Reason after 5000 -> lives end),
+    ?assert(is_process_alive(Other)),
+    ?assert(is_process_alive(Line)).
 
-%% The export changes whom the line serves, never what its views read: they read
-%% through the session's inspect facet before it and after it, so a session whose
-%% facet's scope is another domain gets `scope` for the machine-wide /proc/kernel
-%% both before the export and after it.
-export_widens_nothing_test() ->
-    {ok, Line} = erx_web_line:start_link(#{system => ?SYSTEM, inspect => as_facet([?SYSTEM + 5]),
-                                           exports => ?MODULE}),
-    Open = fun(Request) ->
-                   {ok, View} = gen_server:call(Line, Request),
-                   receive
-                       {web_view, View, {record, #{path := Path, kind := Kind}}} -> {Path, Kind};
-                       {web_view_ended, View, Reason} -> Reason
-                   after 5000 -> error(no_answer)
-                   end
-           end,
-    ?assertEqual(scope, Open({open, {path, [<<"kernel">>]}})),
-    %% An export asked by a process of the session, or in the peer's envelope, is
-    %% refused and widens nothing.
-    ?assertEqual({error, badarg}, gen_server:call(Line, {export, ?PEER})),
-    Line ! {erx_origin, ?PEER, {'$gen_call', {self(), [alias | alias()]}, {export, ?PEER}}},
-    ?assertEqual(scope, Open({open, {path, [<<"kernel">>]}})),
-    Alias = alias(),
-    Line ! {erx_origin, ?SYSTEM, {'$gen_call', {self(), [alias | Alias]}, {export, ?PEER}}},
-    receive {[alias | Alias], Exported} -> ?assertEqual(ok, Exported) after 5000 -> error(no_answer) end,
-    ?assertEqual(scope, Open({open, {path, [<<"kernel">>]}})).
+%%% The mint.
+
+%% The mint request in the system domain's envelope starts a facet bound to the
+%% grantee and exported to it with send alone; the same request in the grantee's
+%% envelope, naming the system domain as grantee, or naming another line starts none,
+%% and a call to the line process itself in the grantee's envelope reaches no callback.
+mint_test() ->
+    register(?EXPORTS, self()),
+    try
+        #{line := Line} = line(fun([]) -> machine(1) end),
+        Opening = stand_in(),
+        ?assertEqual(none, mint(Line, ?PEER, ?PEER, Opening)),
+        ?assertEqual(none, mint(Line, ?SYSTEM, ?SYSTEM, Opening)),
+        ?assertEqual(none, mint(Line, ?SYSTEM, ssh_line, ?PEER, Opening)),
+        receive {exported, _, _, _} = Early -> error(Early) after 0 -> ok end,
+        ?assertEqual(none, call(Line, {open, {path, []}})),
+        {ok, Facet} = mint(Line, ?SYSTEM, ?PEER, Opening),
+        receive {exported, Facet, [send], ?PEER} -> ok after 0 -> error(not_exported) end,
+        ?assertEqual(?PEER, maps:get(grantee, erx_facet:info(Facet))),
+        ?assertEqual(none, call(Line, {open, {path, []}})),
+        ?assertEqual([], views(Line)),
+        ?assertMatch({ok, _}, call(Facet, {open, {path, []}}))
+    after
+        unregister(?EXPORTS)
+    end.
+
+%% A second mint ends the first facet, and takes its 'DOWN', before the new facet is
+%% exported; the first facet's views end and the old grantee reaches the new facet
+%% nowhere. A forward the old facet sent before its end is served at the line, and the
+%% view it opens ends with that facet.
+replacement_test() ->
+    register(?EXPORTS, self()),
+    try
+        #{line := Line, facet := Old} = open_line(fun([]) -> machine(1) end),
+        receive {exported, Old, _, _} -> ok after 0 -> ok end,
+        {ok, OldView} = call(Old, {open, {path, []}}),
+        Opening = stand_in(),
+        Watch = erlang:monitor(process, OldView),
+        {ok, New} = mint(Line, ?SYSTEM, ?PEER + 1, Opening),
+        receive
+            {exported, New, [send], ?PEER + 1} -> ?assertNot(is_process_alive(Old))
+        after 0 -> error(not_exported)
+        end,
+        receive {'DOWN', Watch, process, OldView, _} -> ok after 2000 -> error(old_view_lives) end,
+        ?assertEqual(none, call(Old, {open, {path, []}})),
+        ?assertEqual(none, call(New, ?PEER, {open, {path, []}})),
+        persistent_term:put({?MODULE, owner}, ?PEER + 1),
+        ?assertMatch({ok, _}, call(New, ?PEER + 1, {open, {path, []}})),
+        persistent_term:erase({?MODULE, owner}),
+        Alias = alias([reply]),
+        Line ! {'$gen_call', {Old, [alias | Alias]}, {erx_session_line, ?PEER, self(), Old, {open, {path, []}}}},
+        Late = receive {[alias | Alias], {ok, V}} -> V after 5000 -> error(late_forward_unserved) end,
+        ?assertMatch({ended, _}, ended(Late))
+    after
+        unregister(?EXPORTS)
+    end.
+
+%% A new facet that fails to start leaves the line with none, the old one having
+%% ended, and the mint answers a refusal.
+failed_start_test() ->
+    #{line := Line} = line(fun([]) -> machine(1) end,
+                           fun(?PEER) -> ok; (_) -> {error, noconnection} end),
+    Opening = stand_in(),
+    {ok, Old} = mint(Line, ?SYSTEM, ?PEER, Opening),
+    ?assertEqual(refused, mint(Line, ?SYSTEM, ?PEER + 1, Opening)),
+    ?assertNot(is_process_alive(Old)),
+    ?assertEqual(none, call(Old, {open, {path, []}})).
+
+%% The facet, and every view opened through it, ends with the session's connection to
+%% the grantee, with the opening and with the line process.
+lifetime_test_() ->
+    [?_test(lifetime(fun(#{conn := Conn}) -> Conn ! stop end)),
+     ?_test(lifetime(fun(#{opening := Opening}) -> Opening ! stop end)),
+     ?_test(lifetime(fun(#{line := Line}) -> unlink(Line), exit(Line, kill) end))].
+
+lifetime(End) ->
+    #{facet := Facet} = Opened = open_line(fun([]) -> machine(1) end),
+    {ok, View} = call(Facet, {open, {path, []}}),
+    {record, _} = update(View),
+    Watches = [{Pid, erlang:monitor(process, Pid)} || Pid <- [Facet, View]],
+    End(Opened),
+    [receive {'DOWN', Watch, process, Pid, _} -> ok after 2000 -> error({lives, Pid}) end || {Pid, Watch} <- Watches].
+
+%%% A request's bound.
+
+%% The largest request the line serves, an open of a path of 16 segments of 256 bytes
+%% from a caller whose pid and alias are of a 255-character node name, fits web_line's
+%% max_request under both measures, and that bound is the smallest power of two not
+%% below the larger of them; through the facet such a request is admitted.
+request_bound_test() ->
+    Path = [binary:copy(<<"p">>, 256) || _ <- lists:seq(1, 16)],
+    Measure = erx_line_bound:measure({open, {path, Path}}),
+    Max = maps:get(max_request, maps:get(web_line, ?ERX_LINES)),
+    ?assert(Measure =< Max andalso Measure > Max div 2),
+    #{facet := Facet} = open_line(fun(_) -> {error, scope} end),
+    ?assertEqual({error, scope}, call(Facet, {open, {path, Path}})).
 
 views(Line) ->
     {links, Links} = erlang:process_info(Line, links),
@@ -293,6 +343,3 @@ wait_views(Line, N) ->
         N -> ok;
         _ -> timer:sleep(10), wait_views(Line, N)
     end.
-
-flush_updates() ->
-    receive {web_view, _, _} -> flush_updates() after 100 -> ok end.

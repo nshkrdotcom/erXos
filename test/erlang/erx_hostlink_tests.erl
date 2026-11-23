@@ -97,22 +97,31 @@ relay_answering(Test, Answer) ->
 %% Root's line stands in as the test process; the facet passes on only its line.
 -define(ROOT_LINE, #{principal => <<"root">>, build => <<"00000000000000ff">>, line => self()}).
 
+%% The facet asks for root's line as it starts, naming itself the opening, which the
+%% stand-in tells the test.
 open_web(Relay) ->
     Test = self(),
-    erx_hostlink_web:open(self(), Relay, {ok, <<"00000000000000ff">>}, true,
-                          fun(_Web) -> #{line => Test, principal => <<"forged">>} end).
+    Opened = erx_hostlink_web:open(self(), Relay, {ok, <<"00000000000000ff">>}, true,
+                                   fun(Web, Opening) ->
+                                           Test ! {line_of, Web, Opening},
+                                           #{line => Test, principal => <<"forged">>}
+                                   end),
+    {{ok, Facet}, [Facet]} = Opened,
+    Web = erx_dist:owner(Relay),
+    ?assertEqual({line_of, Web, Facet}, receive {line_of, _, _} = Asked -> Asked after 0 -> none end),
+    Opened.
 
 %% Root's line is reached for no open that is refused.
-no_line(_Web) -> error(line_reached).
+no_line(_Web, _Opening) -> error(line_reached).
 
 %% The root opens a web facet only where the domain holds the web domain's relay and
 %% knows its build.
 web_facet_needs_the_relay_test() ->
     Relay = spawn(fun() -> receive stop -> ok end end),
     ?assertEqual({{error, unsupported}, []},
-                 erx_hostlink_web:open(self(), undefined, {ok, <<"00">>}, true, fun no_line/1)),
+                 erx_hostlink_web:open(self(), undefined, {ok, <<"00">>}, true, fun no_line/2)),
     ?assertEqual({{error, unsupported}, []},
-                 erx_hostlink_web:open(self(), Relay, {error, {no_build, "none"}}, true, fun no_line/1)),
+                 erx_hostlink_web:open(self(), Relay, {error, {no_build, "none"}}, true, fun no_line/2)),
     persistent_term:put({erx, facets}, {1, #{web => Relay}}),
     try ?assertEqual({{error, unsupported}, []}, erx_hostlink:root({open, web}, self()))
     after persistent_term:erase({erx, facets})
@@ -126,7 +135,7 @@ web_facet_needs_the_relay_test() ->
 web_facet_needs_a_development_build_test() ->
     Relay = spawn(fun() -> receive stop -> ok end end),
     Build = {ok, <<"00000000000000ff">>},
-    ?assertEqual({{error, unsupported}, []}, erx_hostlink_web:open(self(), Relay, Build, false, fun no_line/1)),
+    ?assertEqual({{error, unsupported}, []}, erx_hostlink_web:open(self(), Relay, Build, false, fun no_line/2)),
     Relay ! stop.
 
 hostlink_call(Facet, Request) ->

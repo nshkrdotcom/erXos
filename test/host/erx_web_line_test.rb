@@ -14,8 +14,8 @@ require_relative '../fixtures/erlang_build'
 # which make check supplies). The export table is the test's stand-in, and so is the
 # inspector but in the cases of a domain's processes and of the scope, which ask it itself.
 class ErxWebLineTest < Minitest::Test
-  APPLICATIONS = %w[erx erx_files erx_web erx_web_line].freeze
-  TESTS = %w[test/erlang/erx_web_line_tests.erl].freeze
+  APPLICATIONS = %w[erx erx_files erx_web_line].freeze
+  TESTS = %w[test/erlang/erx_line_bound.erl test/erlang/erx_web_line_tests.erl].freeze
 
   def test_relay_cases_pass_under_eunit
     Dir.mktmpdir('erx-web-line-test') do |work|

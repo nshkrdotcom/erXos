@@ -12,21 +12,16 @@ what the session's user may and the line holds no scope of its own
 (docs/design-live.md, "How a query travels"; docs/design-web.md,
 "Overview").
 
-The line is an erx_session_line, which owns who reaches it: it serves one
-peer, the web domain the system domain exported it to when the host opened
-its `web` facet (erx_domain:line/3), and none until then, and it takes from
-that peer only calls in the peer's envelope whose caller and alias are names
-of the peer's, so a reply never goes to a third domain. The session names
-the line to the domain service in its ready report (erx_web_line_app). This
-module serves the calls the line admits (request/4) and the session's own
-messages to the line (info/3). A view takes `next` and `stop` only in the
-peer's envelope, as the peer was when the view opened; anything else from
-another domain is dropped. A process of this session may call the line and
-its views without an envelope, since it acts with the session's authority
-anyway.
+The line is an erx_session_line, which owns who reaches it: the web domain
+reaches it only through the facet the line mints when the system domain asks
+for it (erx_domain:line/4), as the host opens its `web` facet, and the facet
+forwards each of its grantee's calls with the grantee's caller and the facet
+itself. The session names the line to the domain service in its ready report
+(erx_web_line_app). This module serves the forwarded calls (request/4) and
+the session's own messages to the line (info/2).
 
 * `{open, Target}` starts a view and answers `{ok, View}`, the view's pid,
-  which the reply hands out to the peer with send alone
+  which the facet's reply hands out to the grantee with send alone
   (docs/design-domains.md, "Exports"); `{error, busy}` past ?VIEWS views,
   and `{error, unsupported}` for a target this line does not serve. The
   line serves the record view of `{path, Names}`: Names are /proc entry
@@ -35,8 +30,14 @@ anyway.
   `{error, scope}`, as a path outside the scope is, so the open tells no
   more than the view would (docs/design-web.md, "URLs"). Which paths the
   view reaches is the inspector's to decide, at the session's facet's scope.
-* A view belongs to the process that opened it, the caller of the open:
-  it answers that process alone and ends when that process ends.
+  Any other request is `{error, badarg}`.
+* A view acts for the grantee of the facet it was opened through: it
+  answers the grantee's caller of the open alone, takes `next` and `stop` in
+  the grantee's envelope alone, and ends when that caller ends or that facet
+  does, so a replaced facet's views never serve the new grantee. It runs
+  with its heap limited to ?ERX_WEB_LINE_VIEW_HEAP_MAX words, killed at the
+  limit with the binaries it references counted, and with its message queue
+  on its heap, so what waits unread counts toward the same limit.
 
 A view is one process with one query at a time. The open asks its first
 update and each `next` one more: the view queries the inspector, projects
@@ -55,71 +56,74 @@ at most one update of 64 KiB (W8).
 -behaviour(erx_session_line).
 
 -export([start_link/1]).
--export([init/1, request/4, info/3, view_init/1]).
+-export([init/1, request/4, info/2, view_init/1]).
 
 -export_type([config/0]).
 
-%% The line's keys, peer, system and exports, as erx_session_line:config() has them,
-%% and inspect, which answers a path's record as the session may see it,
-%% erx_inspector:inspect/1 or a host test's stand-in.
+-include("generated/erx_abi.hrl").
+
+%% The line's keys, as erx_session_line:config() has them, and inspect, which answers
+%% a path's record as the session may see it, erx_inspector:inspect/1 or a host test's
+%% stand-in.
 -type config() :: #{inspect => fun((list()) -> erx_inspector:answer()), atom() => term()}.
 
 %% The views one line holds at once (docs/design-web.md, "Views on the line").
 -define(VIEWS, 64).
 %% How long a view that found nothing new waits before it queries again.
 -define(REQUERY_MS, 2000).
+%% How a view is spawned: linked to the line, its heap limited by its interface's
+%% declared bound, killed at it with the binaries it references counted, and its queue
+%% on that heap (docs/design-system.md, "A session's lines", "Views and ttys").
+-define(VIEW_SPAWN, [link, {message_queue_data, on_heap},
+                     {max_heap_size, #{size => ?ERX_WEB_LINE_VIEW_HEAP_MAX, kill => true,
+                                       include_shared_binaries => true}}]).
 
 -doc "Starts the line for Config, linked to the caller.".
 -spec start_link(config()) -> {ok, pid()}.
 start_link(Config) when is_map(Config) ->
-    erx_session_line:start_link(?MODULE, maps:merge(#{inspect => fun erx_inspector:inspect/1}, Config)).
+    erx_session_line:start_link(?MODULE, maps:merge(#{name => web_line, inspect => fun erx_inspector:inspect/1},
+                                                    Config)).
 
 %% The line's state: Inspect, which every view queries, and the open views, each by
-%% its pid. An export changes whom the line serves, never what its views read: they
-%% read through the session's inspect facet before it and after it alike.
+%% its pid. Whom the line serves changes with its facet, never what its views read:
+%% they read through the session's inspect facet whoever the grantee is.
 -doc false.
 init(#{inspect := Inspect}) ->
     #{inspect => Inspect, views => #{}}.
 
-%% A call from the peer Peer, which the line admitted. It takes the same path,
-%% serve/4, as a call from a process of the session's own (info/3).
+%% A request the line's facet forwarded: open/3 decides it.
 -doc false.
-request(From, Request, Peer, State) ->
-    serve(From, Request, Peer, State).
+request(From, Request, Forward, #{views := Views} = State) ->
+    {Reply, Next} = open(Request, Forward, State),
+    gen:reply(From, Reply),
+    State#{views := maps:merge(Views, Next)}.
 
-%% The session's own messages to the line: a call from one of its processes, and the
-%% end of a view the line linked.
+%% The session's own message to the line that it acts on: the end of a view it linked.
 -doc false.
-info({'$gen_call', {Caller, _Tag} = From, Request}, Peer, State) when is_pid(Caller), node(Caller) =:= node() ->
-    serve(From, Request, Peer, State);
-info({'EXIT', View, _Reason}, _Peer, #{views := Views} = State) ->
+info({'EXIT', View, _Reason}, #{views := Views} = State) ->
     State#{views := maps:remove(View, Views)};
-info(_Message, _Peer, State) ->
+info(_Message, State) ->
     State.
 
-%% A call the line serves, from its peer or from the session: open/4 decides it.
-serve({Caller, _Tag} = From, Request, Peer, State) ->
-    {Reply, Next} = open(Request, Caller, Peer, State),
-    gen:reply(From, Reply),
-    State#{views := Next}.
-
-%% A request: what it is answered and the views the line then holds. A view answers
-%% Caller and takes its requests in Peer's envelope.
-open({open, _Target}, _Caller, _Peer, #{views := Views}) when map_size(Views) >= ?VIEWS ->
-    {{error, busy}, Views};
-open({open, {path, Names}}, Caller, Peer, #{inspect := Inspect, views := Views}) ->
+%% A request: what it is answered and the view it opened, if any. A view answers the
+%% grantee's caller, takes its requests in the grantee's envelope, and ends with the
+%% caller and with the facet.
+open({open, _Target}, _Forward, #{views := Views}) when map_size(Views) >= ?VIEWS ->
+    {{error, busy}, #{}};
+open({open, {path, Names}}, #{grantee := Grantee, caller := Caller, facet := Facet}, #{inspect := Inspect}) ->
     case inspector_path([], Names) of
         {ok, Path} ->
-            View = proc_lib:spawn_link(?MODULE, view_init, [#{conn => Caller, peer => Peer, inspect => Inspect,
-                                                               path => Path, last => none}]),
-            {{ok, View}, Views#{View => Path}};
+            View = proc_lib:spawn_opt(?MODULE, view_init, [#{conn => Caller, peer => Grantee, facet => Facet,
+                                                              inspect => Inspect, path => Path, last => none}],
+                                      ?VIEW_SPAWN),
+            {{ok, View}, #{View => Path}};
         error ->
-            {{error, scope}, Views}
+            {{error, scope}, #{}}
     end;
-open({open, _Target}, _Caller, _Peer, #{views := Views}) ->
-    {{error, unsupported}, Views};
-open(_Request, _Caller, _Peer, #{views := Views}) ->
-    {{error, badarg}, Views}.
+open({open, _Target}, _Forward, _State) ->
+    {{error, unsupported}, #{}};
+open(_Request, _Forward, _State) ->
+    {{error, badarg}, #{}}.
 
 %% Reads Names, untrusted /proc entry names, one at a time into the inspector's
 %% path below Path; `error` at the first name that names nothing there, or when
@@ -139,8 +143,9 @@ inspector_path(_Path, _Names) ->
 %%% A record view.
 
 -doc false.
-view_init(#{conn := Conn} = View) ->
+view_init(#{conn := Conn, facet := Facet} = View) ->
     _ = erlang:monitor(process, Conn),
+    _ = erlang:monitor(process, Facet),
     %% The open is the first request.
     view(answer(View)).
 
@@ -154,17 +159,17 @@ view(View) ->
             end
     end.
 
-%% What a message asks of the view: one more update, its end, or nothing.
+%% What a message asks of the view: one more update, its end, or nothing. Only the
+%% grantee asks, and the end of the caller or of the facet ends the view.
 asked({erx_origin, Peer, next}, #{peer := Peer}) -> next;
-asked(next, #{}) -> next;
 asked({erx_origin, Peer, stop}, #{peer := Peer}) -> stop;
-asked(stop, #{}) -> stop;
 asked({'DOWN', _Ref, process, Conn, _Reason}, #{conn := Conn}) -> stop;
+asked({'DOWN', _Ref, process, Facet, _Reason}, #{facet := Facet}) -> stop;
 asked(_Message, #{}) -> other.
 
 %% Queries until there is something new to send, sends it and returns the view
 %% with it as the last answer; ends the view when the query cannot be answered.
-%% While it waits to query again it takes only its end.
+%% While it waits to query again it takes only its end, its facet's among them.
 answer(#{conn := Conn, path := Path, inspect := Inspect, last := Last} = View) ->
     case body(Inspect(Path)) of
         {ok, Last} ->
