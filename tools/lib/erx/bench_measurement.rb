@@ -45,7 +45,6 @@ module Erx
     # names, and so its file name, are the declared ones the line is checked against.
     # A histogram needs no length bound of its own: its buckets are disjoint, each holds a
     # sample, and together they hold the cell's samples, at most what the profile asked.
-    LINE_PREFIX = 'BENCH '
     LINE_BYTES = 64 << 10
     TICK = (0..((1 << 64) - 1))
     COUNT = (0..1_000_000_000)
@@ -62,12 +61,19 @@ module Erx
                  'phases' => 'periodic', 'excess' => 'periodic' }.freeze
     CONDITIONS = %w[load placement parameters clock batch].freeze
     COUNTS = %w[lost early missed].freeze
+    # The CLOCK line: one per boot, the guest's calibration (docs/design-bench.md, "A
+    # benchmark", "The one clock"), which becomes the record's clock group.
+    CLOCK_FIELDS = %w[clock frequency_hz increment read_cost wait_rounding pairs].freeze
+    PAIR_FIELDS = %w[cpus before after].freeze
+    PAIRS = 64
+    CPU = (0..255)
+    OFFSET = (-(1 << 63)..((1 << 63) - 1))
 
     # The cell one BENCH line reports for benchmark, whose operations profiles maps to
     # the BenchRecord::Profile each ran at. Raises Erx::Error naming the first field that
     # is wrong; the line's text is never quoted.
     def cell(text, benchmark:, profiles:)
-      fields = decode(text)
+      fields = decode(text, kind: 'BENCH', required: REQUIRED, known: REQUIRED + OPTIONAL.keys)
       need(fields['benchmark'] == benchmark, 'field benchmark is not the benchmark run')
       operation = profiles.keys.find { |name| name == fields['operation'] }
       need(operation, 'field operation is not one the benchmark declares')
@@ -76,8 +82,7 @@ module Erx
       need(count?(samples) && samples <= profile.samples, 'field samples is not a count the profile allows')
       status = fields['status']
       need(GUEST_STATUSES.include?(status), 'field status is not one a guest reports')
-      frequency = fields['frequency_hz']
-      need(frequency.is_a?(Integer) && FREQUENCY_HZ.cover?(frequency), 'field frequency_hz is not a frequency')
+      need(frequency?(fields['frequency_hz']), 'field frequency_hz is not a frequency')
       # The cell itself holds a measured cell to every sample, the reason to its
       # character set and the extremes to their buckets, whether read from a line or a file.
       BenchRecord::Cell.new(benchmark: benchmark, operation: operation, conditions: conditions(fields['conditions']),
@@ -85,24 +90,39 @@ module Erx
                             detail: detail(fields, profile: profile.name, samples: samples))
     end
 
-    # The JSON object of a line: printable ASCII, bounded, no key twice, no key unknown,
-    # and no field of a profile other than the cell's.
-    def decode(text)
-      need(text.is_a?(String) && text.b.start_with?(LINE_PREFIX), 'is not a BENCH line')
-      body = text.b.delete_prefix(LINE_PREFIX)
+    # The clock group one CLOCK line reports, frozen. Each pair of CPUs a cell was stamped
+    # across has its offset interval before the cells and after them, each [lowest,
+    # highest] in ticks of the second CPU's counter less the first's, or null where the
+    # stamps contradicted each other. Raises Erx::Error naming the first wrong field.
+    def clock(text)
+      fields = decode(text, kind: 'CLOCK', required: CLOCK_FIELDS, known: CLOCK_FIELDS)
+      need(GUEST_CLOCKS.include?(fields['clock']), 'field clock is not a guest clock')
+      need(frequency?(fields['frequency_hz']), 'field frequency_hz is not a frequency')
+      need(tick?(fields['increment']) && fields['increment'].positive?, 'field increment is not a positive tick count')
+      %w[read_cost wait_rounding].each { |name| need(tick?(fields[name]), "field #{name} is not a tick count") }
+      pairs(fields['pairs'])
+      fields
+    end
+
+    # The JSON object of a kind's line: printable ASCII, bounded, no key twice, every
+    # required key and no unknown one, deeply frozen.
+    def decode(text, kind:, required:, known:)
+      prefix = "#{kind} "
+      need(text.is_a?(String) && text.b.start_with?(prefix), "is not a #{kind} line")
+      body = text.b.delete_prefix(prefix)
       need(body.bytesize <= LINE_BYTES, 'is longer than 64 KiB')
       need(body.each_byte.all? { |byte| byte.between?(0x20, 0x7e) }, 'holds a byte that is not printable ASCII')
       # No field's character set needs an escape, and a decoded \u escape could be invalid
       # UTF-8; json also reads /* */ comments. Refusing both keeps the bytes the values.
       need(!body.match?(%r{[\\/]}), 'holds a backslash or a slash')
-      fields = JSON.parse(body, max_nesting: 3, allow_nan: false, allow_duplicate_key: false,
-                                create_additions: false)
+      fields = JSON.parse(body, max_nesting: 4, allow_nan: false, allow_duplicate_key: false,
+                                create_additions: false, freeze: true)
       need(fields.is_a?(Hash), 'is not a JSON object')
-      need((REQUIRED - fields.keys).empty?, 'lacks a required field')
-      need((fields.keys - REQUIRED - OPTIONAL.keys).empty?, 'holds an unknown field')
+      need((required - fields.keys).empty?, 'lacks a required field')
+      need((fields.keys - known).empty?, 'holds an unknown field')
       fields
     rescue JSON::ParserError, JSON::NestingError
-      need(false, 'is not one JSON object nested at most three deep')
+      need(false, 'is not one JSON object nested at most four deep')
     end
 
     def conditions(value)
@@ -121,6 +141,26 @@ module Erx
     # An integer in range: JSON's 5.0 is a Float, which Range#cover? would let through.
     def tick?(value) = value.is_a?(Integer) && TICK.cover?(value)
     def count?(value) = value.is_a?(Integer) && COUNT.cover?(value)
+
+    def frequency?(value) = value.is_a?(Integer) && FREQUENCY_HZ.cover?(value)
+
+    def pairs(value)
+      need(value.is_a?(Array) && value.size <= PAIRS &&
+           value.all? { |pair| pair.is_a?(Hash) && pair.keys.sort == PAIR_FIELDS.sort },
+           'field pairs is not at most 64 objects of cpus, before and after')
+      need(value.all? { |pair| cpus?(pair['cpus']) }, 'field pairs holds cpus that are not two different CPUs')
+      need(value.map { |pair| pair['cpus'] }.uniq.size == value.size, 'field pairs names one pair twice')
+      need(value.all? { |pair| [pair['before'], pair['after']].all? { |interval| interval?(interval) } },
+           'field pairs holds an interval that is neither null nor a lowest and highest offset')
+    end
+
+    def cpus?(value) = value.is_a?(Array) && value.size == 2 && value.all? { |cpu| cpu.is_a?(Integer) && CPU.cover?(cpu) } &&
+                       value.uniq.size == 2
+
+    def interval?(value)
+      value.nil? || (value.is_a?(Array) && value.size == 2 && value.all? { |end_| end_.is_a?(Integer) && OFFSET.cover?(end_) } &&
+                     value.first <= value.last)
+    end
 
     def parameter?(value) = tick?(value) ||
                             (value.is_a?(String) && BenchRecord::NAME.match?(value))
@@ -183,10 +223,10 @@ module Erx
     end
 
     def need(valid, reason)
-      raise Error, "BENCH line #{reason}" unless valid
+      raise Error, "guest line #{reason}" unless valid
     end
 
-    private_class_method :measured, :decode, :conditions, :tick?, :count?, :parameter?, :counts, :detail, :histogram, :largest,
+    private_class_method :measured, :decode, :conditions, :tick?, :count?, :frequency?, :pairs, :cpus?, :interval?, :parameter?, :counts, :detail, :histogram, :largest,
                          :raw, :phases, :need
   end
 end

@@ -77,7 +77,7 @@ class BenchLineTest < Minitest::Test
 
   def test_a_line_that_is_not_one_bounded_json_object_is_refused
     [['BENCH ', /not one JSON object/], ['BENCH []', /not a JSON object/], ['BENCH {"a":1,"a":1}', /not one JSON/],
-     ["BENCH #{'[' * 4}1#{']' * 4}", /nested at most three/], ["BENCH {\"benchmark\":\"wake\"}\n", /printable/],
+     ["BENCH #{'[' * 5}1#{']' * 5}", /nested at most four/], ["BENCH {\"benchmark\":\"wake\"}\n", /printable/],
      ["BENCH {#{' ' * (64 << 10)}}", /longer than 64 KiB/], ['bench {}', /not a BENCH line/],
      [Fuzz.line('wake-same-cpu', status: 'partial', reason: 'x').sub('"x"', '"\udfff"'), /backslash/],
      ['BENCH {/* */}', /slash/]].each do |text, reason|

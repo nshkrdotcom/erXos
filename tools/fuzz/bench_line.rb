@@ -8,8 +8,9 @@ require 'json'
 require 'optparse'
 require_relative '../lib/erx/bench_measurement'
 
-# The BENCH line validator (Erx::BenchMeasurement.cell) over mutated lines, as a guest
-# could print them. Each input either raises Erx::Error and nothing else, or answers a
+# The BENCH and CLOCK line validators (Erx::BenchMeasurement.cell and .clock) over mutated
+# lines, as a guest could print them.
+# Each input either raises Erx::Error and nothing else, or answers a clock group or a
 # cell whose histogram holds no more samples than its profile asked for. Whether its
 # answers are right is test/host/bench_line_test.rb's.
 module Erx
@@ -48,7 +49,15 @@ module Erx
       "BENCH #{JSON.generate(fields.merge(overrides.transform_keys(&:to_s)))}"
     end
 
-    def seeds = PROFILES.keys.map { |operation| line(operation) }
+    # A valid CLOCK line, a two-CPU guest's calibration, and overrides merged over it.
+    def clock_line(**overrides)
+      fields = { 'clock' => 'counter', 'frequency_hz' => 24_000_000, 'increment' => 1, 'read_cost' => 2,
+                 'wait_rounding' => 24,
+                 'pairs' => [{ 'cpus' => [0, 1], 'before' => [-40, 12], 'after' => [-35, 15] }] }
+      "CLOCK #{JSON.generate(fields.merge(overrides.transform_keys(&:to_s)))}"
+    end
+
+    def seeds = PROFILES.keys.map { |operation| line(operation) } + [clock_line]
 
     # A seed's text mutated: bytes changed, cut or inserted, and the histogram's first
     # bucket repeated.
@@ -73,6 +82,8 @@ module Erx
     end
 
     def exercise(text)
+      return MEASUREMENT.clock(text) if text.start_with?('CLOCK')
+
       cell = MEASUREMENT.cell(text, benchmark: 'wake', profiles: PROFILES)
       histogram = cell.detail.fetch('histogram')
       samples = histogram.sum(&:last)
@@ -103,5 +114,5 @@ if $PROGRAM_NAME == __FILE__
   end.parse!(ARGV)
   raise OptionParser::InvalidArgument, 'budget of 1..60 seconds' unless options[:seconds].between?(1, 60)
 
-  puts "BENCH line validator: #{Erx::BenchLineFuzz.run(**options)} inputs"
+  puts "BENCH and CLOCK line validators: #{Erx::BenchLineFuzz.run(**options)} inputs"
 end
