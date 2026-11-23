@@ -3026,7 +3026,10 @@ faults that must make its tests fail where it has any.
   `console` command; seeded: an escaping step in `output/3` or in the
   console's copy. `prim_tty` from `init_ssh/3` here and in stock OTP
   29.1.2, the oracle, turns the same requests, every printable and
-  control character in `{putc, Binary}` among them, into the same bytes;
+  control character in `{putc, Binary}` among them, into the same bytes,
+  except a C0 control character other than tab, newline, return and escape, which stock shows with bit 5
+  set (`^ ` for NUL) and erXos in caret notation (`^@`; edit 79 of
+  [design-runtime.md](design-runtime.md#the-edits-outside-syserxos));
   seeded: a change to its caret rendering.
 * **The line discipline:** `erx_tty` explored exhaustively over its flags
   and a small alphabet of bytes, and differentially against a host

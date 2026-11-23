@@ -226,22 +226,19 @@ class RuntimeConsoleTest < Minitest::Test
       # Output that wraps by itself.
       ["lists:seq(1, 60).\r", /|\.\.\.\]\n#{PROMPT}14> \z/],
       ["io:put_chars(lists:duplicate(100, $x) ++ \"\\n\").\r", /^ok\n#{PROMPT}15> \z/],
-      # Caret notation for control characters, as stock's io:put_chars shows at a shell. Stock
-      # sets bit 040 of the character where a caret's letter has bit 0100, so \001 shows as
-      # ^!, an upstream quirk pinned here by the comparison.
-      ["io:put_chars(\"a\\001b\\n\").\r", /a\^!b\nok\n#{PROMPT}16> \z/],
-      ["io:put_chars(\"del\\dend\\n\").\r", /del\^\?end\nok\n#{PROMPT}17> \z/],
-      ["io:format(\"~s~n\", [[27, $[, $3, $1, $m, $r, 27, $[, $0, $m]]).\r", /^ok\n#{PROMPT}18> \z/],
+      # DEL in caret notation, as on stock.
+      ["io:put_chars(\"del\\dend\\n\").\r", /del\^\?end\nok\n#{PROMPT}16> \z/],
+      ["io:format(\"~s~n\", [[27, $[, $3, $1, $m, $r, 27, $[, $0, $m]]).\r", /^ok\n#{PROMPT}17> \z/],
       # Characters past ASCII, one of them two columns wide.
-      ["io:put_chars(\"h\\x{e9}llo\\n\").\r", /h\u00e9llo\nok\n#{PROMPT}19> \z/],
-      ["length(\"\u65e5\u672c\").\r", /^2\n#{PROMPT}20> \z/],
+      ["io:put_chars(\"h\\x{e9}llo\\n\").\r", /h\u00e9llo\nok\n#{PROMPT}18> \z/],
+      ["length(\"\u65e5\u672c\").\r", /^2\n#{PROMPT}19> \z/],
       # Completion.
       ["lists:rev\t", /lists:reverse\(\z/],
-      ["\"ab\").\r", /^"ba"\n#{PROMPT}21> \z/],
+      ["\"ab\").\r", /^"ba"\n#{PROMPT}20> \z/],
       # Ctrl-C interrupts what the shell is evaluating.
       ["io:put_chars(\"sleeping\\n\"), timer:sleep(infinity).\r", /^sleeping\n\z/],
-      [CTRL_C, /killed\n#{PROMPT}22> \z/],
-      ['abc', /#{PROMPT}22> abc\z/],
+      [CTRL_C, /killed\n#{PROMPT}21> \z/],
+      ['abc', /#{PROMPT}21> abc\z/],
       [CTRL_C, /> \z/],
       ["erlang:system_info(wordsize).\r", /^8\n#{PROMPT}\d+> \z/]
     ]
@@ -367,6 +364,16 @@ class RuntimeConsoleTest < Minitest::Test
     with_stock { |session| stock = resized(session) }
     assert_equal stock, erxos
     assert_includes erxos, "#{'a' * 25}\n"
+  end
+
+  # Caret notation for control characters. Stock sets bit 040 of the character where a
+  # caret's letter has bit 0100 and shows \001 as ^! and NUL as "^ ", an upstream bug
+  # (edit 79), so stock cannot be the comparison.
+  def test_a_control_character_is_shown_in_caret_notation
+    with_erxos do |session|
+      session.type("io:put_chars(\"a\\001b\\000c\\n\").\r")
+      session.wait_for(/a\^Ab\^@c\nok\n#{PROMPT}2> \z/)
+    end
   end
 
   def test_the_shell_stands_on_erx_console_and_no_nif_of_prim_tty

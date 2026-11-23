@@ -654,6 +654,10 @@ answers blocked. 38. `prim_tty`'s `isprint/1` is the ASCII printable test and
 reaches no NIF and counts the columns the terminal and musl count; `isatty/1`
 answers `false` and the terminfo calls answer that no capability exists, which is what
 `io_ansi` reads when a terminal has no terminfo.
+79\. `prim_tty` shows a C0 control character other than tab, newline, return and escape as `^` and the character
+with bit 6 set, caret notation (NUL as `^@`, Ctrl-A as `^A`, US as `^_`; DEL stays
+`^?`). Stock sets bit 5 instead and shows NUL as `^ ` and Ctrl-A as `^!`, an upstream
+bug. `test/host/prim_tty_caret_test.rb` and `test/integration/runtime_console_test.rb` pin it.
 39\. `standard_error` calls no `prim_tty`: its encoding is `unicode`, and it
 writes with `erlang:display_string(stderr, Bytes)`, which waits as any
 process's write does. 42. While another process holds `erx_tty_owner`,

@@ -16,7 +16,7 @@
 %% See the License for the specific language governing permissions and
 %% limitations under the License.
 %%
-%% Modified by erXos: no NIF; isprint/1, wcwidth/1 and the terminfo calls are pure, for terminal-less rendering.
+%% Modified by erXos: no NIF; isprint/1, wcwidth/1 and the terminfo calls are pure, for terminal-less rendering; a control character is shown in caret notation.
 %%
 %% %CopyrightEnd%
 %%
@@ -1281,7 +1281,7 @@ insert_buf(State, Bin, LineAcc, Acc) ->
                 {false, 8#177} -> %% DEL
                     insert_buf(State, Rest, ["^?" | LineAcc], Acc);
                 {false, _} ->
-                    insert_buf(State, Rest, ["^" ++ [Char bor 8#40] | LineAcc], Acc)
+                    insert_buf(State, Rest, ["^" ++ [Char bor 8#100] | LineAcc], Acc)
             end
     end.
 
