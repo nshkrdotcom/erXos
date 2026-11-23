@@ -39,43 +39,38 @@ steps(Inputs) ->
     lists:foldl(fun(Input, {_, Core}) -> step(Input, Core) end, {[], erx_gatt_registry:new(services())}, Inputs).
 
 attach_answers_the_limits_and_refuses_test() ->
-    {Actions, _} = steps([{facet, [a], ?H1, {attach, a}, from}]),
+    {Actions, _} = steps([{facet, ?H1, {attach, a}, from}]),
     ?assertEqual([{monitor, ?H1}, {reply, from, {ok, #{x => #{max => 4, access => #{write => open, notify => open}}}}}],
                  Actions),
-    ?assertMatch({[{reply, from, {error, not_granted}}], _}, steps([{facet, [b], ?H1, {attach, a}, from}])),
     ?assertMatch({[{reply, f2, {error, attached}}], _},
-                 steps([{facet, [a], ?H1, {attach, a}, f1}, {facet, [a, b], ?H2, {attach, a}, f2}])),
+                 steps([{facet, ?H1, {attach, a}, f1}, {facet, ?H2, {attach, a}, f2}])),
     %% A handler of two services is monitored once.
     ?assertMatch({[{reply, f2, {ok, _}}], _},
-                 steps([{facet, [a, b], ?H1, {attach, a}, f1}, {facet, [a, b], ?H1, {attach, b}, f2}])).
+                 steps([{facet, ?H1, {attach, a}, f1}, {facet, ?H1, {attach, b}, f2}])).
 
 attach_hears_the_live_links_test() ->
     C = make_ref(),
     {Actions, _} = steps([{join, ?L1, C, #{address => ?ADDRESS}, j},
                           {link, ?L1, {security, #{level => encrypted, bonded => true}}},
-                          {facet, [a], ?H1, {attach, a}, f}]),
+                          {facet, ?H1, {attach, a}, f}]),
     ?assertEqual({event, ?H1, {connected, C, #{address => ?ADDRESS, level => encrypted, bonded => true}}},
                  lists:last(Actions)).
 
 set_refusals_test() ->
-    Set = fun(Op) -> {[A], _} = steps([{facet, [a], ?H1, Op, f}]), A end,
+    Set = fun(Op) -> {[A], _} = steps([{facet, ?H1, Op, f}]), A end,
     ?assertEqual({reply, f, ok}, Set({set, a, x, <<1, 2, 3, 4>>})),
     ?assertEqual({reply, f, {error, too_long}}, Set({set, a, x, <<1, 2, 3, 4, 5>>})),
     ?assertEqual({reply, f, {error, no_such_characteristic}}, Set({set, a, y, <<>>})),
-    ?assertEqual({reply, f, {error, not_granted}}, Set({set, b, y, <<>>})),
     ?assertEqual({reply, f, {error, badarg}}, Set({set, a, x, not_a_binary})),
-    ?assertEqual({reply, f, {error, badarg}}, Set(unknown)),
-    ?assertMatch({[{reply, f, {error, no_such_service}}], _}, steps([{facet, [z], ?H1, {attach, z}, f}])),
-    ?assertMatch({[{reply, f, {error, no_such_service}}], _}, steps([{facet, [z], ?H1, {set, z, x, <<>>}, f}])).
+    ?assertEqual({reply, f, {error, badarg}}, Set(unknown)).
 
 notify_refusals_test() ->
     C = make_ref(),
     Joined = [{join, ?L1, C, #{address => ?ADDRESS}, j}],
     ?assertMatch({[{request, _, {notify, notify, {a, x}, <<1>>}, f}], _},
-                 steps(Joined ++ [{facet, [a], ?H1, {notify, C, a, x, <<1>>}, f}])),
-    ?assertMatch({[{reply, f, {error, gone}}], _}, steps(Joined ++ [{facet, [a], ?H1, {notify, make_ref(), a, x, <<1>>}, f}])),
-    ?assertMatch({[{reply, f, {error, too_long}}], _}, steps(Joined ++ [{facet, [a], ?H1, {indicate, C, a, x, <<1:40>>}, f}])),
-    ?assertMatch({[{reply, f, {error, not_granted}}], _}, steps(Joined ++ [{facet, [a], ?H1, {indicate, C, b, y, <<>>}, f}])).
+                 steps(Joined ++ [{facet, ?H1, {notify, C, a, x, <<1>>}, f}])),
+    ?assertMatch({[{reply, f, {error, gone}}], _}, steps(Joined ++ [{facet, ?H1, {notify, make_ref(), a, x, <<1>>}, f}])),
+    ?assertMatch({[{reply, f, {error, too_long}}], _}, steps(Joined ++ [{facet, ?H1, {indicate, C, a, x, <<1:40>>}, f}])).
 
 write_without_a_handler_is_unlikely_error_test() ->
     {Actions, _} = steps([{join, ?L1, make_ref(), #{address => ?ADDRESS}, j}, {write, ?L1, 1, {b, y}, <<0>>, req}]),
@@ -83,7 +78,7 @@ write_without_a_handler_is_unlikely_error_test() ->
 
 subscription_goes_to_its_service_alone_test() ->
     C = make_ref(),
-    {Actions, _} = steps([{facet, [a], ?H1, {attach, a}, f1}, {facet, [b], ?H2, {attach, b}, f2},
+    {Actions, _} = steps([{facet, ?H1, {attach, a}, f1}, {facet, ?H2, {attach, b}, f2},
                           {join, ?L1, C, #{address => ?ADDRESS}, j}, {link, ?L1, {subscribed, {b, y}, indicate}}]),
     ?assertEqual([{event, ?H2, {subscribed, C, y, indicate}}], Actions).
 
@@ -100,8 +95,8 @@ conn(L) -> maps:get(L, #{?L1 => c1, ?L2 => c2}).
 %% handed and a reply names the last one delivered.
 alphabet() ->
     [{join, ?L1}, {join, ?L2}, {write, ?L1, {a, x}}, {write, ?L2, {b, y}},
-     {attach, ?H1, [a], a}, {attach, ?H2, [b], b}, {attach, ?H2, [b], a}, {attach, ?H1, [a, b], b},
-     {set, ?H1, [a], <<7>>}, {notify, ?L1}, {notify, ?L2},
+     {attach, ?H1, a}, {attach, ?H2, b}, {attach, ?H2, a}, {attach, ?H1, b},
+     {set, ?H1, <<7>>}, {notify, ?L1}, {notify, ?L2},
      {reply, ?H1}, {reply, ?H2}, {reply_earlier, ?H1}, {down, ?L1}, {down, ?H1}, {security, ?L2}].
 
 %% From the empty registry, and from one where H1 handles a and L1 has joined, so that a
@@ -113,7 +108,7 @@ every_sequence_of_four_keeps_the_model_test_() ->
                                             Input = input(Symbol, M),
                                             {Actions, Next} = step(Input, C),
                                             {check(Input, Actions, M), Next}
-                                    end, {#model{}, Empty}, [{attach, ?H1, [a], a}, {join, ?L1}]),
+                                    end, {#model{}, Empty}, [{attach, ?H1, a}, {join, ?L1}]),
         ?assert(walk(4, alphabet(), #model{}, Empty, 0) > 10000),
         ?assert(walk(4, alphabet(), Model, Core, 0) > 10000)
     end}.
@@ -137,11 +132,11 @@ input({join, L}, #model{joined = J, ended = E}) ->
         false -> {join, L, conn(L), #{address => ?ADDRESS}, from}
     end;
 input({write, L, Key}, #model{writes = N}) -> {write, L, 1, Key, <<1>>, {req, N}};
-input({attach, H, G, S}, _M) -> {facet, G, H, {attach, S}, from};
-input({set, H, G, V}, _M) -> {facet, G, H, {set, a, x, V}, from};
-input({notify, L}, _M) -> {facet, [a], ?H1, {notify, conn(L), a, x, <<1>>}, from};
-input({reply, H}, #model{writes = N}) -> {facet, [a, b], H, {reply, {req, N - 1}, ok}, from};
-input({reply_earlier, H}, #model{writes = N}) -> {facet, [a, b], H, {reply, {req, N - 2}, ok}, from};
+input({attach, H, S}, _M) -> {facet, H, {attach, S}, from};
+input({set, H, V}, _M) -> {facet, H, {set, a, x, V}, from};
+input({notify, L}, _M) -> {facet, ?H1, {notify, conn(L), a, x, <<1>>}, from};
+input({reply, H}, #model{writes = N}) -> {facet, H, {reply, {req, N - 1}, ok}, from};
+input({reply_earlier, H}, #model{writes = N}) -> {facet, H, {reply, {req, N - 2}, ok}, from};
 input({down, P}, _M) -> {down, P};
 input({security, L}, _M) -> {link, L, {security, #{level => encrypted, bonded => false}}}.
 
@@ -164,7 +159,7 @@ check({write, L, Ref, {S, _}, _, Req}, Actions, #model{joined = J, handlers = H,
             ?assertEqual([], Actions),
             M
     end;
-check({facet, _G, Caller, {reply, Req, _}, From}, Actions, #model{delivered = D} = M) ->
+check({facet, Caller, {reply, Req, _}, From}, Actions, #model{delivered = D} = M) ->
     case D of
         #{Req := {Caller, L, Ref}} ->
             ?assertEqual([{reply, From, ok}, {to_link, L, {answer, Ref, ok}}], Actions),
@@ -173,11 +168,10 @@ check({facet, _G, Caller, {reply, Req, _}, From}, Actions, #model{delivered = D}
             ?assertEqual([{reply, From, ok}], Actions),
             M
     end;
-check({facet, G, Caller, {attach, S}, From}, Actions, #model{handlers = H} = M) ->
-    case {lists:member(S, G), H} of
-        {false, _} -> ?assertEqual([{reply, From, {error, not_granted}}], Actions), M;
-        {true, #{S := _}} -> ?assertEqual([{reply, From, {error, attached}}], Actions), M;
-        {true, _} ->
+check({facet, Caller, {attach, S}, From}, Actions, #model{handlers = H} = M) ->
+    case H of
+        #{S := _} -> ?assertEqual([{reply, From, {error, attached}}], Actions), M;
+        #{} ->
             ?assertEqual(1, length([ok || {reply, _, {ok, _}} <- Actions])),
             Hears = case lists:member(Caller, maps:values(H)) of
                         true -> 0;
@@ -186,10 +180,10 @@ check({facet, G, Caller, {attach, S}, From}, Actions, #model{handlers = H} = M) 
             ?assertEqual(Hears, length([ok || {event, P, {connected, _, _}} <- Actions, P =:= Caller])),
             M#model{handlers = H#{S => Caller}}
     end;
-check({facet, _G, _Caller, {set, S, C, V}, From}, Actions, #model{joined = J, values = Values} = M) ->
+check({facet, _Caller, {set, S, C, V}, From}, Actions, #model{joined = J, values = Values} = M) ->
     ?assertEqual([{reply, From, ok} | [{to_link, L, {set, {S, C}, V}} || L <- lists:sort(maps:keys(J))]], Actions),
     M#model{values = Values#{{S, C} => V}};
-check({facet, _G, _Caller, {notify, C, _, _, _}, From}, Actions, #model{joined = J} = M) ->
+check({facet, _Caller, {notify, C, _, _, _}, From}, Actions, #model{joined = J} = M) ->
     case [L || L := Conn <- J, Conn =:= C] of
         [L] -> ?assertMatch([{request, L, {notify, notify, _, _}, From}], Actions);
         [] -> ?assertEqual([{reply, From, {error, gone}}], Actions)
@@ -235,7 +229,7 @@ join_races_sets() ->
     Test = self(),
     Setter = spawn_link(fun() ->
                                 receive go -> ok end,
-                                [ok = erx_gatt_srv:facet([a], self(), {set, a, x, <<N:16>>}, ?WAIT_MS) || N <- lists:seq(1, 200)],
+                                [ok = erx_gatt_srv:facet(self(), {set, a, x, <<N:16>>}, ?WAIT_MS) || N <- lists:seq(1, 200)],
                                 Test ! set_done
                         end),
     Link = link_stand_in(Test),
@@ -253,27 +247,27 @@ heard_sets(Link) ->
     end.
 
 answer_only_from_its_handler() ->
-    H1 = handler_stand_in(self(), [a], a),
-    H2 = handler_stand_in(self(), [b], b),
+    H1 = handler_stand_in(self(), a),
+    H2 = handler_stand_in(self(), b),
     Link = joined_link(),
     erx_gatt_srv ! {erx_bt_link, Link, {write, 7, {a, x}, <<1>>}},
     Req = receive {handler, H1, {write, R, _Conn, x, <<1>>}} -> R after ?WAIT_MS -> error(no_write) end,
-    ok = erx_gatt_srv:facet([b], H2, {reply, Req, ok}, ?WAIT_MS),
-    ok = erx_gatt_srv:facet([a], H1, {reply, make_ref(), ok}, ?WAIT_MS),
-    ok = erx_gatt_srv:facet([a], H1, {reply, Req, {error, 16#80}}, ?WAIT_MS),
-    ok = erx_gatt_srv:facet([a], H1, {reply, Req, ok}, ?WAIT_MS),
+    ok = erx_gatt_srv:facet(H2, {reply, Req, ok}, ?WAIT_MS),
+    ok = erx_gatt_srv:facet(H1, {reply, make_ref(), ok}, ?WAIT_MS),
+    ok = erx_gatt_srv:facet(H1, {reply, Req, {error, 16#80}}, ?WAIT_MS),
+    ok = erx_gatt_srv:facet(H1, {reply, Req, ok}, ?WAIT_MS),
     sync(),
     ?assertEqual([{registry, {answer, 7, {error, 16#80}}}], drain(Link)).
 
 link_ends_mid_notification() ->
-    H1 = handler_stand_in(self(), [a], a),
+    H1 = handler_stand_in(self(), a),
     {Link, Conn} = joined_link_conn(),
     Caller = spawn_caller({notify, Conn, a, x, <<1>>}),
     receive {from_link, Link, {'$gen_call', _From, {notify, notify, {a, x}, <<1>>}}} -> ok after ?WAIT_MS -> error(no_request) end,
     Link ! stop,
     ?assertEqual({error, gone}, caller_answer(Caller)),
     receive {handler, H1, {disconnected, Conn}} -> ok after ?WAIT_MS -> error(no_disconnected) end,
-    ?assertEqual({error, gone}, erx_gatt_srv:facet([a], H1, {notify, Conn, a, x, <<1>>}, ?WAIT_MS)).
+    ?assertEqual({error, gone}, erx_gatt_srv:facet(H1, {notify, Conn, a, x, <<1>>}, ?WAIT_MS)).
 
 notification_answered() ->
     {Link, Conn} = joined_link_conn(),
@@ -320,9 +314,9 @@ joined_link_conn() ->
     receive {joined, Link, #{table := _}} -> {Link, Conn} after ?WAIT_MS -> error(no_join) end.
 
 %% A handler of Service: attaches and passes on its events.
-handler_stand_in(Test, Grant, Service) ->
+handler_stand_in(Test, Service) ->
     Pid = spawn(fun() ->
-                        {ok, _} = erx_gatt_srv:facet(Grant, self(), {attach, Service}, ?WAIT_MS),
+                        {ok, _} = erx_gatt_srv:facet(self(), {attach, Service}, ?WAIT_MS),
                         Test ! {attached, self()},
                         handler_loop(Test)
                 end),
@@ -333,7 +327,7 @@ handler_loop(Test) ->
 
 spawn_caller(Op) ->
     Test = self(),
-    spawn(fun() -> Test ! {answer, self(), erx_gatt_srv:facet([a, b], self(), Op, 10 * ?WAIT_MS)} end).
+    spawn(fun() -> Test ! {answer, self(), erx_gatt_srv:facet(self(), Op, 10 * ?WAIT_MS)} end).
 
 caller_answer(Caller) ->
     receive {answer, Caller, Answer} -> Answer after ?WAIT_MS -> error(no_answer) end.

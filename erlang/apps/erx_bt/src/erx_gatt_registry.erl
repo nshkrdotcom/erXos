@@ -13,7 +13,10 @@ service's handler, the live links with their `Conn`, and the writes handed to ha
   `connected` at level `open`, not bonded. Joins and sets are inputs of one core, so every
   set after the values a join answered goes to that link. At the link's end, its monitor's
   `down`, every handler hears `disconnected`, and its `Conn` is gone.
-- **Handlers.** A facet's operation carries the services its grant names and its caller.
+- **Handlers.** A facet's operation carries its caller, the grantee's process. The `ble`
+  facet (`erx_ble_facet`) has refused every service its grant does not name, and a grant
+  names only declared services, which are the ones the registry serves, so the core checks
+  no service: an operation names a served one.
   `attach` makes the caller a service's handler; the core asks for a monitor of a handler
   it does not yet watch, and a handler's `down` detaches it from every service. A handler
   that attaches hears `connected` for each live link, so it knows every `Conn` it may
@@ -24,7 +27,7 @@ service's handler, the live links with their `Conn`, and the writes handed to ha
   service with no handler answers the write Unlikely Error at once. An answer for a `Req`
   the core does not hold, another handler's, one already answered or one whose link
   ended, changes nothing.
-- **Notifications.** A notification or indication of a granted service's characteristic,
+- **Notifications.** A notification or indication of a served service's characteristic,
   within its maximum, becomes a request to the link, which the process sends with
   `gen_server:send_request/4` and answers the caller from; the link's gate and bearer
   decide the rest (access, subscription, MTU, queue). A `Conn` the core does not hold
@@ -32,14 +35,12 @@ service's handler, the live links with their `Conn`, and the writes handed to ha
 """.
 
 -export([new/1, step/2]).
--export_type([core/0, input/0, action/0, grant/0, limits/0]).
+-export_type([core/0, input/0, action/0, limits/0]).
 
 -type key() :: erx_gatt_db:key().
 -type level() :: erx_gatt_gate:level().
 -type from() :: gen_server:from().
 -type security() :: #{level := level(), bonded := boolean()}.
--doc "The services a facet's grant names.".
--type grant() :: [atom()].
 -doc "What a handler learns of a characteristic at `attach`: its maximum and its accesses.".
 -type limits() :: #{max := 0..512, access := #{erx_gatt_db:access() => level()}}.
 
@@ -61,14 +62,14 @@ service's handler, the live links with their `Conn`, and the writes handed to ha
             | {notify | indicate, reference(), atom(), atom(), binary()} | {reply, reference(), term()}.
 -doc """
 What the process steps: a link's `join` call and its messages, a write with the fresh
-`Req` the process made for it, a facet's operation with its grant and its caller, and the
+`Req` the process made for it, a facet's operation with its caller, and the
 `down` of a monitored process.
 """.
 -type input() :: {join, Link :: pid(), reference(), #{address := erx_smp_crypto:address()}, from()}
                | {write, Link :: pid(), Ref :: pos_integer(), key(), binary(), Req :: reference()}
                | {link, Link :: pid(), {subscribed, key(), none | notify | indicate} | {mtu, pos_integer()}
                                        | {security, security()}}
-               | {facet, grant(), Caller :: pid(), op(), from()}
+               | {facet, Caller :: pid(), op(), from()}
                | {down, pid()}.
 -doc """
 What the process performs: a call's answer, a monitor, an event to a handler, a message to
@@ -115,8 +116,8 @@ step({link, Link, Message}, #core{links = Links} = Core) ->
         #{Link := Joined} -> link(Link, Joined, Message, Core);
         #{} -> {[], Core}
     end;
-step({facet, Grant, Caller, Op, From}, Core) ->
-    try facet(Op, Grant, Caller, From, Core)
+step({facet, Caller, Op, From}, Core) ->
+    try facet(Op, Caller, From, Core)
     catch throw:{refused, Reason} -> {[{reply, From, {error, Reason}}], Core}
     end;
 step({down, Pid}, Core) ->
@@ -135,8 +136,7 @@ link(Link, #{conn := Conn, address := Address} = Joined, {security, #{level := _
 %% ---- a facet's operations ----
 
 %% A refusal is thrown as {refused, Reason} and answered once, in step/2.
-facet({attach, Service}, Grant, Caller, From, #core{handlers = Handlers} = Core) ->
-    granted(Service, Grant, Core),
+facet({attach, Service}, Caller, From, #core{handlers = Handlers} = Core) ->
     is_map_key(Service, Handlers) andalso throw({refused, attached}),
     New = not lists:member(Caller, maps:values(Handlers)),
     Connected = [{event, Caller, {connected, Conn, connected(Address, Security)}}
@@ -144,19 +144,19 @@ facet({attach, Service}, Grant, Caller, From, #core{handlers = Handlers} = Core)
                                  <- maps:iterator(Core#core.links, ordered)],
     {[{monitor, Caller} || New] ++ [{reply, From, {ok, maps:get(Service, Core#core.limits)}} | Connected],
      Core#core{handlers = Handlers#{Service => Caller}}};
-facet({set, Service, Char, Value}, Grant, _Caller, From, Core) when is_binary(Value) ->
-    within(Service, Char, Value, Grant, Core),
+facet({set, Service, Char, Value}, _Caller, From, Core) when is_binary(Value) ->
+    within(Service, Char, Value, Core),
     Key = {Service, Char},
     {[{reply, From, ok} | [{to_link, Link, {set, Key, Value}} || Link := _ <- maps:iterator(Core#core.links, ordered)]],
      Core#core{values = (Core#core.values)#{Key => Value}}};
-facet({Kind, Conn, Service, Char, Value}, Grant, _Caller, From, Core)
+facet({Kind, Conn, Service, Char, Value}, _Caller, From, Core)
   when (Kind =:= notify orelse Kind =:= indicate), is_binary(Value) ->
-    within(Service, Char, Value, Grant, Core),
+    within(Service, Char, Value, Core),
     case Core#core.conns of
         #{Conn := Link} -> {[{request, Link, {notify, Kind, {Service, Char}, Value}, From}], Core};
         #{} -> throw({refused, gone})
     end;
-facet({reply, Req, Answer}, _Grant, Caller, From, #core{writes = Writes} = Core) ->
+facet({reply, Req, Answer}, Caller, From, #core{writes = Writes} = Core) ->
     case Writes of
         #{Req := {Caller, Link, Ref}} ->
             {[{reply, From, ok}, {to_link, Link, {answer, Ref, Answer}}],
@@ -164,21 +164,12 @@ facet({reply, Req, Answer}, _Grant, Caller, From, #core{writes = Writes} = Core)
         #{} ->
             {[{reply, From, ok}], Core}
     end;
-facet(_Op, _Grant, _Caller, _From, _Core) ->
+facet(_Op, _Caller, _From, _Core) ->
     throw({refused, badarg}).
 
-%% The grant names Service, and the registry serves it.
-granted(Service, Grant, #core{limits = Limits}) ->
-    case lists:member(Service, Grant) of
-        true when is_map_key(Service, Limits) -> ok;
-        true -> throw({refused, no_such_service});
-        false -> throw({refused, not_granted})
-    end.
-
-%% A value for Service's Char: the grant names the service, the declaration the
-%% characteristic, and the value fits its maximum.
-within(Service, Char, Value, Grant, #core{limits = Limits} = Core) ->
-    granted(Service, Grant, Core),
+%% A value for Service's Char: the declaration names the characteristic, and the value
+%% fits its maximum.
+within(Service, Char, Value, #core{limits = Limits}) ->
     case Limits of
         #{Service := #{Char := #{max := Max}}} when byte_size(Value) =< Max -> ok;
         #{Service := #{Char := _}} -> throw({refused, too_long});

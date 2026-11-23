@@ -445,7 +445,10 @@ named `bt` (node `bt@erxos`), of the principal that owns the machine's
 services, on the BeamAsm image, whose OpenSSL its Security Manager calls
 through OTP's `crypto` ([Stage 4](#stage-4-pairing-and-bonding)). It holds
 no device. Its release script, `bt`, ships `kernel`, `stdlib`, `erx`, `erx_files`,
-`crypto` and `erx_bt`. Its manifest row holds:
+`crypto` and `erx_bt`, and starts `crypto`, which other releases only load, so that
+`erx_bt` starts before init's ready report: a release script may start an application
+the release otherwise only loads, declared per script
+([design-runtime.md](design-runtime.md#everything-else)). Its manifest row holds:
 
 * one grant of the `line` interface, which the system domain's line
   service serves as its service named `line`, its parameters naming the controller's UART
@@ -2717,7 +2720,7 @@ and stops in the reverse order, the controller process first.
 | | `enoent` | no bond has that identity |
 | `ble` facet | `{error, not_granted}` | a service the grant does not name, refused by the facet before the registry sees it |
 | | `{error, attached}` | the service already has a handler |
-| | `{error, badarg}` | an operation of another shape, refused by the facet |
+| | `{error, badarg}` | an operation of another shape, or a `reply` whose answer is not `ok`, `{error, value_not_allowed}` or `{error, Code}` with `Code` in `16#80..16#9F`, refused by the facet |
 | | `{error, unavailable}` | no registry is registered: before the row's `-eval` has started it, or while it restarts |
 | | `{error, no_such_characteristic}`, `{error, not_allowed}` | an unknown name; an access the declaration does not allow |
 | | `{error, too_long}` | a value over the characteristic's maximum, or a notification over the bearer's `Mtu - 3` |
@@ -2797,7 +2800,7 @@ Each core's test is paired with the seeded faults it must catch.
 the LE signaling decoder, `erx_att`, `erx_smp`, `erx_bt_state` and the
 development store's file names (`erx_bt_state_file:generation/1`), the line
 service's `ctl` grammar, the control tree's `pair` and `ctl` grammars,
-and the `ble` facet's request decoder; in the HID stage, the advertising
+and the `ble` facet's admission (`erx_ble_facet:admit/3`); in the HID stage, the advertising
 report decoder, the GATT client's response decoder and the Report
 Reference decoder (the Report Map is `erx_hid_desc`'s, which has its
 own). Each runs at the milestone gate's budget, and the codecs are also

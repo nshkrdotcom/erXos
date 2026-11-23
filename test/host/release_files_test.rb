@@ -161,12 +161,22 @@ class ReleaseFilesTest < Minitest::Test
   # resource file requires started before it.
   def test_every_started_application_finds_what_it_requires_started
     Erx::ReleaseFiles::RELEASE_SCRIPTS.each do |name, applications|
-      started = applications.select { |application| Erx::ReleaseFiles.started?(application) }
+      started = applications.select { |application| Erx::ReleaseFiles.started?(application, script: name) }
       started.each_with_index do |application, index|
         missing = required_applications(application, held: applications) - started.take(index)
         assert_empty missing, "the #{name} script starts #{application} without what it requires"
       end
     end
+  end
+
+  # The bt script starts erx_bt, so that its mint of ble is named before init's ready
+  # report (docs/design-bluetooth.md, "The Bluetooth domain"), and crypto, which erx_bt
+  # requires; every other script that holds crypto only loads it.
+  def test_the_bt_script_starts_erx_bt_and_crypto
+    assert(%w[crypto erx_bt].all? { |application| Erx::ReleaseFiles.started?(application, script: 'bt') })
+    others = Erx::ReleaseFiles::RELEASE_SCRIPTS.select { |name, applications| name != 'bt' && applications.include?('crypto') }
+    refute_empty others
+    others.each_key { |name| refute Erx::ReleaseFiles.started?('crypto', script: name), "the #{name} script starts crypto" }
   end
 
   # The applications application's resource file lists, but for an optional one that held,

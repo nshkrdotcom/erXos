@@ -3,7 +3,7 @@
 
 -module(erx_bt_sup).
 -moduledoc """
-The top of `erx_bt` (docs/design-bluetooth.md, "Concurrency"): `rest_for_one`, the store
+The stack below `erx_bt_top` (docs/design-bluetooth.md, "Concurrency"): `rest_for_one`, the store
 first, then the registry, then the file service `erx_bt_fs` with the pairing window, then
 the controller group. The store holds the identity address the controller group reads at
 each of its starts, and the window takes the store's state at its own start, so a store's

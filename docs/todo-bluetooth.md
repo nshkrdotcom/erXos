@@ -193,18 +193,14 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   the next boot, since only a new grant recovers it. Making the group
   `significant` with `auto_shutdown => any_significant`, or a chosen intensity, settles it in the design first.
 * [High] bluetooth, the `ble` facet's side in other domains (docs/design-bluetooth.md "The `ble` facet",
-  "Declarations: `abi/gatt`"; `erlang/apps/erx_bt/src/erx_gatt_srv.erl`'s `facet/4`): the registry takes a
-  facet's operations through `facet/4`, with the grant's services and the caller, but no app reaches it.
-  Missing: `ble_grant`'s refusals (`tools/lib/erx/manifest.rb`, `check_ble_grants`) of a service two rows
-  name, two served services of one UUID, and advertising data that do not fit; the facet process the
-  registry makes when the domain service introduces a grantee, with its mint and an admission module that
-  alone takes `{erx_origin, D, Msg}` off and bounds each operation, as `erx_net_admit` does, with its fuzz
-  target; the client `erx_gatt`, which takes the events' envelope off, and the `erx_gatt_service` behaviour;
-  and the served services read from the manifest's rows, where `erx_bt_sup` serves every declared service.
-  `facet/4` trusts the grant and the caller it is passed on every call; the facet should instead be made by
-  the registry, which records its grant, so an operation names the facet and the grant check holds by
-  construction. Whether a handler in another domain can be monitored from here, or the facet is the party
-  the registry monitors, is unverified.
+  "Declarations: `abi/gatt`"): `erx_ble_facet` admits a grantee's operations and forwards them to the registry,
+  but no app uses it. Missing: `ble_grant`'s refusals (`tools/lib/erx/manifest.rb`, `check_ble_grants`) of a
+  service two rows name, two served services of one UUID, and advertising data that do not fit; the client
+  `erx_gatt`, which takes the events' envelope off, and the `erx_gatt_service` behaviour; and the served
+  services read from the manifest's rows, where `erx_bt_sup` serves every declared service. Whether the
+  registry's monitor of a handler in another domain fires when that handler or its domain ends is unverified,
+  and so is the mint's success path: no suite grants `ble`, so no test sees the boot view's `services` and limits
+  reach `init/1` in the shape it takes.
 * [Medium] bluetooth, what a handler hears (`erx_gatt_registry`; docs/design-bluetooth.md "The `ble` facet"):
   `write` and `subscribed` name the characteristic without its service, though a handler may handle several
   services whose characteristics share a name; and a handler that attaches while a phone is connected hears

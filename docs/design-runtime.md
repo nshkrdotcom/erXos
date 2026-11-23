@@ -314,8 +314,11 @@ releases that ask for them, never in the system release, and the NIFs of
 the first two are linked into the interpreter and BeamAsm images alone,
 with OpenSSL 3.5; `inets` ships for its HTTP client, `httpc`
 ([design-crypto.md](design-crypto.md#otps-applications),
-[HTTPS clients](design-crypto.md#https-clients)). The rest are outside
-the shipped set.
+[HTTPS clients](design-crypto.md#https-clients)); a release only loads them, but a
+release script may start an application the release otherwise only loads, declared
+per script, as the Bluetooth domain's `bt` starts `crypto`
+([design-bluetooth.md](design-bluetooth.md#the-bluetooth-domain)). The rest are
+outside the shipped set.
 
 NIF libraries: `socket` and `net` dropped; `prim_file` kept with erXos's
 platform layer; `zlib`, `zstd`, `erl_tracer` and `prim_buffer` kept;

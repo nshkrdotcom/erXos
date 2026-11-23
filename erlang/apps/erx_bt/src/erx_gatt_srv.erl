@@ -10,20 +10,21 @@ every link, and handlers stay attached across the group's restarts.
 
 - **Inputs.** A link's `join/2` call; a link's messages, `{erx_bt_link, Link, Message}`,
   each a write for a handler, a subscription, a new MTU or the link's security; a facet's
-  operation, `facet/4`; and the `'DOWN'` of a link or a handler it monitors. For each of a
+  operation, `facet/3`; and the `'DOWN'` of a link or a handler it monitors. For each of a
   link's writes it makes the fresh reference `Req` the handler receives.
 - **Actions.** Answers, monitors, events to handlers, `{registry, Message}` to a link, and
   notification requests: `gen_server:send_request/4` to the link, labelled with the
   caller's `From`, so the link answers the request and the request's monitor answers for a
   link that ends first, with `{error, gone}` to the caller. Its collection of request ids
   holds one per notification pending.
-- **Facets.** `facet/4` is the one entry of a `ble` facet's operations, with the services
-  its grant names and its caller; the facet that takes them from another domain is in
-  TODO.md (Bluetooth).
+- **Facets.** `facet/3` is the one entry of a `ble` facet's operations, with its caller
+  and no grant: `erx_ble_facet`, the only path here from another domain, has checked the
+  grant, and forwards the call with the grantee's process as the caller, so the forwarded
+  call's `From` names the facet, and the caller is the handler.
 """.
 -behaviour(gen_server).
 
--export([start_link/1, join/2, facet/4]).
+-export([start_link/1, join/2, facet/3]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2]).
 
 -record(srv, {
@@ -48,24 +49,25 @@ join(Conn, Info) ->
     gen_server:call(?MODULE, {join, Conn, Info}).
 
 -doc """
-A `ble` facet's operation `Op` for `Caller`, whose grant names the services `Grant`:
+A `ble` facet's operation `Op` for `Caller`, the process that becomes a service's
+handler, hears its events and alone answers the writes handed to it:
 `{attach, Service}`, `{set, Service, Char, Value}`, `{notify | indicate, Conn, Service,
 Char, Value}` or `{reply, Req, Answer}`. The answers and refusals are the facet's
 (docs/design-bluetooth.md, "Refusals and error results"). An indication answers once the
 phone confirms it or the link's 30 s transaction timeout fails it, so `Timeout` must
 outlast that.
 """.
--spec facet(erx_gatt_registry:grant(), pid(), term(), timeout()) -> term().
-facet(Grant, Caller, Op, Timeout) ->
-    gen_server:call(?MODULE, {facet, Grant, Caller, Op}, Timeout).
+-spec facet(pid(), term(), timeout()) -> term().
+facet(Caller, Op, Timeout) ->
+    gen_server:call(?MODULE, {facet, Caller, Op}, Timeout).
 
 init(Services) ->
     {ok, #srv{core = erx_gatt_registry:new(Services), requests = gen_server:reqids_new()}}.
 
 handle_call({join, Conn, Info}, {Link, _Tag} = From, Srv) ->
     step({join, Link, Conn, Info, From}, Srv);
-handle_call({facet, Grant, Caller, Op}, From, Srv) ->
-    step({facet, Grant, Caller, Op, From}, Srv).
+handle_call({facet, Caller, Op}, From, Srv) ->
+    step({facet, Caller, Op, From}, Srv).
 
 handle_cast(_Message, Srv) ->
     {noreply, Srv}.

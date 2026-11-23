@@ -47,15 +47,11 @@ module Erx
     # (docs/design-runtime.md, edit 65), and the app template's start erx_app, once the
     # ready answer has also brought the app's record (docs/design-packaging.md,
     # "Starting an app"). The system release ships erx_session (SYSTEM_APPLICATIONS)
-    # and not erx_app, which only the app script holds. erx_bt, the Bluetooth domain's
-    # (docs/design-bluetooth.md, "The Bluetooth domain"), is started by its row's -eval,
-    # which also starts crypto, an application erx_bt requires and every release only
-    # loads (DOMAIN_IMAGE_ONLY): a boot script's start of erx_bt would find crypto not
-    # started, and init ignores what that start answers. erx_wifi, the WiFi domain's
+    # and not erx_app, which only the app script holds. erx_wifi, the WiFi domain's
     # (docs/design-wifi.md, "The WiFi domain"), is only loaded until the domain's
     # station starts it once it holds its facets. erx_ntpd, the ntpd session's
     # (docs/design-time.md, "Who does what"), is started by the ntpd template's -eval.
-    DOMAIN_ONLY = %w[erx_session erx_app erx_bt erx_wifi erx_ntpd].freeze
+    DOMAIN_ONLY = %w[erx_session erx_app erx_wifi erx_ntpd].freeze
     raise Error, "DOMAIN_ONLY names what the release does not ship: #{DOMAIN_ONLY - APPLICATIONS}" unless
       (DOMAIN_ONLY - APPLICATIONS).empty?
     # OTP's applications that only the domains' runtime images run (DomainImageApps).
@@ -70,6 +66,12 @@ module Erx
     # Every application a release only loads; it starts each other one it holds
     # (started?).
     LOADED = [*LOAD_ONLY, *DOMAIN_ONLY, *DOMAIN_IMAGE_ONLY].freeze
+    # The applications of LOADED a script starts all the same, by the script's name. The
+    # bt script starts crypto, which erx_bt requires, so that it can start erx_bt before
+    # init's ready report: erx_bt's start names the mint of ble, which the report ends
+    # (docs/design-bluetooth.md, "The Bluetooth domain"). crypto runs no process, so its
+    # start only marks it started.
+    SCRIPT_STARTS = { 'bt' => %w[crypto].freeze }.freeze
 
     NAME = 'erxos'
     BOOT_DEADLINE = 120
@@ -188,10 +190,11 @@ module Erx
     #   development manifest names it for its USB domain, which the usb QEMU suite boots
     #   (UsbBoot).
     # * bt, the Bluetooth domain's (docs/design-bluetooth.md, "The Bluetooth domain"): the
-    #   Bluetooth stack, erx_bt (DOMAIN_ONLY), so no other domain parses what a controller
-    #   writes, and crypto, which its Security Manager calls, both only loaded; the row's
-    #   -eval starts them. QEMU virt's Bluetooth suite's manifest names it (BtDomain), and
-    #   the Raspberry Pi 4's development manifest for its Bluetooth domain.
+    #   Bluetooth stack, erx_bt, so no other domain parses what a controller writes, and
+    #   crypto, which its Security Manager calls, both started (SCRIPT_STARTS), so that
+    #   erx_bt names the mint of ble before init's ready report; the row's -eval starts
+    #   the rest of the stack. QEMU virt's Bluetooth suite's manifest names it (BtDomain),
+    #   and the Raspberry Pi 4's development manifest for its Bluetooth domain.
     # * pcie, the PCIe domain's (docs/design-pcie.md, "The PCIe domain"): the enumerator,
     #   erx_pcie, so no other domain parses what a function writes to its configuration
     #   space. The pcie QEMU suite's manifest names it (Erx::PcieDomain).
@@ -248,14 +251,16 @@ module Erx
       def initialize(name:, applications:, test: false) = super
 
       # The applications the script starts, in release order (ReleaseFiles.started?).
-      def started = applications.select { |application| ReleaseFiles.started?(application) }
+      def started = applications.select { |application| ReleaseFiles.started?(application, script: name) }
     end
 
-    # Whether a release starts an application it holds: every one but those it only
-    # loads (LOADED). release_entry writes each start type by it and DomainBoot#started
+    # Whether the boot script named script starts an application it holds: every one but
+    # those it only loads (LOADED), unless the script starts it all the same
+    # (SCRIPT_STARTS). release_entry writes each start type by it and DomainBoot#started
     # reports by it, so what the checked context records a script starts is what the
     # script's release file says.
-    def self.started?(application) = !LOADED.include?(application)
+    def self.started?(application, script:) =
+      !LOADED.include?(application) || SCRIPT_STARTS.fetch(script, []).include?(application)
     # Every application a test image's domain boot script may take, in release order.
     TEST_APPLICATIONS = [*APPLICATIONS, *ErlangApps::TEST_ONLY].freeze
 
@@ -538,20 +543,20 @@ module Erx
           erl: @oracle.erl_path(Runtime::HOST_OTP_FLAVOUR), directory: directory, runner: @runner,
           paths: applications.map { |application| File.join(@otp, 'lib', application, 'ebin') },
           release: "{release,{\"#{@release.system ? @release.name : name}\",\"1\"},{erts,\"#{erts_version}\"}," \
-                   "[#{applications.map { |application| release_entry(application) }.join(',')}]}.\n"
+                   "[#{applications.map { |application| release_entry(application, script: name) }.join(',')}]}.\n"
         )
         sources = applications.map { |application| self.class.app_resource(root: @root, application: application) }
         ReleaseFile.new(path: "#{@release.prefix}bin/#{name}.boot", artifact: boot, sources: sources)
       end
     end
 
-    # An application's term in the boot script's release file: its name and version, and
-    # the start type load for one a release does not start (started?), DOMAIN_ONLY's and
-    # DOMAIN_IMAGE_ONLY's among them, in every release; the others take systools'
-    # default, permanent.
-    def release_entry(application)
+    # An application's term in the release file of the boot script named script: its name
+    # and version, and the start type load for one the script does not start (started?),
+    # DOMAIN_ONLY's and DOMAIN_IMAGE_ONLY's among them but for SCRIPT_STARTS; the others
+    # take systools' default, permanent.
+    def release_entry(application, script:)
       term = "#{application},\"#{version(application)}\""
-      if self.class.started?(application)
+      if self.class.started?(application, script: script)
         "{#{term}}"
       else "{#{term},load}"
       end

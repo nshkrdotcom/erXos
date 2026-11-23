@@ -662,7 +662,7 @@ module Erx
       module LoadOnly
         private
 
-        def release_entry(application)
+        def release_entry(application, script:)
           return "{#{application},\"#{version(application)}\",load}" if LOAD_ONLY.include?(application)
 
           super
