@@ -57,6 +57,16 @@ module Erx
 
     def self.plain_hash?(value) = value.is_a?(Hash) && value.keys.all?(String)
 
+    # Buckets [low, last, count] of tick counts, each holding low to last, both included,
+    # with a positive count, in ascending order and not overlapping
+    # (test/guest/bench/bench_hist.h).
+    def self.histogram?(value)
+      value.is_a?(Array) &&
+        value.all? { |bucket| bucket.is_a?(Array) && bucket.size == 3 && bucket.all?(Integer) } &&
+        value.all? { |low, last, count| !low.negative? && low <= last && count.positive? } &&
+        value.each_cons(2).all? { |(_, last, _), (low, _, _)| last < low }
+    end
+
     # Where a run happened. kind is one of KINDS; the name is derived from the fields
     # each kind uses, and details (memory, QEMU version, firmware hashes) are recorded
     # beside it and do not name the directory.
@@ -144,12 +154,11 @@ module Erx
     end
 
     # One operation under one set of conditions. Every status but measured carries its
-    # reason, so an unknown, partial, unsupported or timed-out result says why. summary
-    # is what the profile allows (run.json); detail is the histogram, largest and raw
-    # samples (the operation's file).
-    Cell = Data.define(:benchmark, :operation, :conditions, :profile, :status, :reason, :summary, :counts,
-                       :detail) do
-      def initialize(benchmark:, operation:, conditions:, profile:, status:, reason:, summary:, counts:, detail:)
+    # reason, so an unknown, partial, unsupported or timed-out result says why. detail is
+    # the histogram, extremes, largest and raw samples (the operation's file); the summary
+    # run.json shows is derived from it, never supplied beside it.
+    Cell = Data.define(:benchmark, :operation, :conditions, :profile, :status, :reason, :counts, :detail) do
+      def initialize(benchmark:, operation:, conditions:, profile:, status:, reason:, counts:, detail:)
         BenchRecord.check([benchmark, operation].all? { |name| name.is_a?(String) && NAME.match?(name) },
                           'benchmark or operation is not a declaration name')
         BenchRecord.check(conditions.is_a?(Conditions) && profile.is_a?(Profile), 'cell conditions are not typed')
@@ -159,13 +168,26 @@ module Erx
         BenchRecord.check(counts.is_a?(Hash) && counts.keys.sort == %w[early lost missed] &&
                           counts.values.all? { |count| count.is_a?(Integer) && !count.negative? },
                           'counts are not lost, early and missed')
-        BenchRecord.check(BenchRecord.plain_hash?(summary) && BenchRecord.plain_hash?(detail),
-                          'summary or detail is not a map')
+        BenchRecord.check(BenchRecord.plain_hash?(detail), 'detail is not a map')
+        BenchRecord.check(BenchRecord.histogram?(detail.fetch('histogram', [])),
+                          'histogram is not ascending [low, last, count] buckets')
         BenchRecord.check(status != 'measured' || (counts['lost'].zero? && counts['early'].zero?),
                           'a cell with a lost wake or an early return is failed, not measured')
-        BenchRecord.check(!NO_SUMMARY.include?(status) || summary.empty?, "a #{status} cell has no summary")
+        BenchRecord.check(!NO_SUMMARY.include?(status) || detail.fetch('histogram', []).empty?,
+                          "a #{status} cell has no samples")
         super(benchmark: benchmark, operation: operation, conditions: conditions, profile: profile, status: status,
-              reason: reason, summary: summary.freeze, counts: counts.freeze, detail: detail.freeze)
+              reason: reason, counts: counts.freeze, detail: detail.freeze)
+      end
+
+      # What the profile lets the cell claim, from its histogram: the sample count, the
+      # extremes, the percentiles the count allows, and whether the samples are partial.
+      # A cell whose status has no summary claims nothing.
+      def summary
+        return {} if NO_SUMMARY.include?(status)
+
+        histogram = detail.fetch('histogram', [])
+        { 'samples' => histogram.sum { |_, _, count| count }, 'partial' => status != 'measured' }
+          .merge(detail.slice('min', 'max'), BenchRecord.percentiles(histogram))
       end
 
       def key = [benchmark, operation, conditions]
@@ -277,7 +299,8 @@ module Erx
         'cells' => record.cells.map do |cell|
           cell.to_h.except(:detail).transform_keys(&:to_s)
               .merge('conditions' => cell.conditions.to_h.transform_keys(&:to_s),
-                     'profile' => cell.profile.to_h.transform_keys(&:to_s), 'file' => cell.file)
+                     'profile' => cell.profile.to_h.transform_keys(&:to_s), 'summary' => cell.summary,
+                     'file' => cell.file)
         end }
     end
 
@@ -287,7 +310,7 @@ module Erx
         conditions = Conditions.new(**keyword.call(cell.fetch('conditions')))
         detail = details.fetch(cell.fetch('file')).find { |entry| entry.fetch('conditions') == cell.fetch('conditions') }
         check(detail, 'an operation file lacks a cell the manifest lists')
-        Cell.new(**keyword.call(cell, 'conditions', 'profile', 'file'), conditions: conditions,
+        Cell.new(**keyword.call(cell, 'conditions', 'profile', 'summary', 'file'), conditions: conditions,
                                                                    profile: Profile.new(**keyword.call(cell.fetch('profile'))),
                                                                    detail: detail.fetch('detail'))
       end

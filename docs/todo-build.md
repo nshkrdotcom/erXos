@@ -26,12 +26,11 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   [design-bench.md](design-bench.md#the-construction)): `Erx::BenchRecord` with its one writer and
   `Erx::BenchCompare` with its band and verdicts exist; still to build are the side-by-side table, FD32's
   predicate, the existing runners moved into declarations in `tools/lib/erx/benches/` and the chain of name tests
-  in `tools/erx` deleted; `BenchMeasurement` grown into the validator of `BENCH` lines, with its fuzz target; and
+  in `tools/erx` deleted; and
   the three fixes of [Fixing the existing tools](design-bench.md#fixing-the-existing-tools) (`g3`'s TCG ratio,
   `otp-switch`'s observed switches, every runner's output under `build/bench`), with the guide's table in
   `docs/guide/tracing.md` brought to match. Tests: the remaining tool rows of design-bench.md's Verification,
-  each with its seed. Open review points of the first slice: `slower` and `faster` are not yet held to a paired
-  run; a cell's summary is supplied beside its histogram rather than derived from it, and it has no sample count.
+  each with its seed. Open review point of the first slice: `slower` and `faster` are not yet held to a paired run.
 * [High] benchmarks, `wake` ([design-bench.md](design-bench.md#1-wake-how-late-a-waiting-thread-runs)): the
   histogram and the periodic schedule of `test/guest/bench/` and the `bench` QEMU suite, whose cells are pending,
   exist; still to build are the library's calibration and `BENCH` lines, the native bench guest

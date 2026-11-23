@@ -18,8 +18,9 @@ class BenchCompareTest < Minitest::Test
       conditions: Record::Conditions.new(load: 'idle', placement: 'same-cpu', parameters: {}, clock: 'counter',
                                          batch: batch),
       profile: Record::Profile.new(name: 'fast', warmup: 1000, samples: 10_000, runs: 1),
-      status: status, reason: status == 'measured' ? nil : 'test', summary: { 'p50' => { 'value' => median, 'bucket' => bucket } },
-      counts: { 'lost' => 0, 'early' => 0, 'missed' => 0 }, detail: {}
+      status: status, reason: status == 'measured' ? nil : 'test',
+      counts: { 'lost' => 0, 'early' => 0, 'missed' => 0 },
+      detail: status == 'measured' ? { 'histogram' => [[median - bucket + 1, median, 20]] } : {}
     )
   end
 

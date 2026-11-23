@@ -41,15 +41,16 @@ class BenchRecordTest < Minitest::Test
     raise "git #{arguments.first} failed: #{error}" unless status.success?
   end
 
-  def cell(benchmark: 'wake', operation: 'park-deadline', batch: 1, status: 'measured', early: 0, summary: {})
+  def cell(benchmark: 'wake', operation: 'park-deadline', batch: 1, status: 'measured', early: 0,
+           histogram: [[1000, 1016, 2000]])
     Record::Cell.new(
       benchmark: benchmark, operation: operation,
       conditions: Record::Conditions.new(load: 'idle', placement: 'service-cpu', parameters: {}, clock: 'counter',
                                          batch: batch),
       profile: Record::Profile.new(name: 'periodic', warmup: 0, samples: 2000, runs: 1),
-      status: status, reason: status == 'measured' ? nil : 'test', summary: summary,
+      status: status, reason: status == 'measured' ? nil : 'test',
       counts: { 'lost' => 0, 'early' => early, 'missed' => 0 },
-      detail: { 'histogram' => [[1000, 1016, 2000]] }
+      detail: { 'histogram' => histogram, 'min' => 1000, 'max' => 1016 }
     )
   end
 
@@ -158,7 +159,24 @@ class BenchRecordTest < Minitest::Test
   def test_a_wrong_answer_is_not_measured_and_an_absent_result_has_no_summary
     assert_raises(Erx::Error) { cell(early: 1) }
     cell(status: 'failed', early: 1)
-    assert_raises(Erx::Error) { cell(status: 'timed_out', summary: { 'p50' => { 'value' => 1, 'bucket' => 1 } }) }
+    assert_raises(Erx::Error) { cell(status: 'timed_out') }
+    assert_empty cell(status: 'timed_out', histogram: []).summary
+  end
+
+  # The summary is derived from the histogram, with its sample count, never supplied.
+  def test_a_summary_is_derived_from_the_histogram
+    summary = cell.summary
+    assert_equal 2000, summary['samples']
+    assert_equal({ 'value' => 1016, 'bucket' => 17 }, summary['p50'])
+    assert_equal [1000, 1016, false], summary.values_at('min', 'max', 'partial')
+    assert cell(status: 'partial').summary['partial']
+    assert_raises(Erx::Error) { cell(histogram: [[10, 20, 1], [15, 30, 1]]) }
+  end
+
+  def test_the_summary_in_run_json_is_the_derived_one
+    run = write(@history)
+    manifest = JSON.parse(File.read(File.join(run, 'run.json')))
+    assert_equal 2000, manifest.fetch('cells').first.fetch('summary').fetch('samples')
   end
 
   def test_nothing_is_made_inside_a_worktree_at_the_history_roots_bench
