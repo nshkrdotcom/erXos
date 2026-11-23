@@ -20,10 +20,12 @@ stopped and confirmed by erx_device:stop_dma/1, which needs both queues' records
 receive buffer's reset and the MAC's, the largest frame and the buffers' settings,
 and the settings read back (erx_genet_core:buffer_check/0);
 set the port, the address, the promiscuous filter and the ring settings,
-`negotiate/2`, which installs both rings and starts them, enable the MAC and the
-interrupts, and bind the line. erx_device:stop_dma/1 and `negotiate/2` are each retried
-every millisecond while they answer `ebusy`, within erx_genet_core:stop_retry/1's
-bound, after which the device is not driven. The PHY
+`negotiate/2`, which installs both rings and starts them, hold the MAC in software reset
+with receive and transmit off and unmask the interrupts (erx_genet_core:start/0), and bind
+the line. Nothing flushes the transmit path or the receive buffer (erx_genet_core).
+erx_device:stop_dma/1 and `negotiate/2` are each retried every millisecond while they
+answer `ebusy`, within erx_genet_core:stop_retry/1's bound, after which the device is
+not driven. The PHY
 starts at the driver's first message to itself, so every PHY result, a failure at the
 reset included, comes through `event/2`.
 
@@ -33,9 +35,10 @@ reset included, comes through `event/2`.
 * **The PHY** is a BCM54213PE at MDIO address 1 (the board's device tree; the board pass
   confirms it). Each request of erx_phy_c22 is carried out at once: an MDIO operation
   polls the command register at most erx_mdio's bound, 10 us apart, and a pause is a
-  timer message. A link up sets the MAC's speed (erx_genet_core:link_up/1) and reports
-  `{link, up}`; a link down reports `{link, down}`; a PHY failure ends the driver, which
-  its supervisor restarts, resetting the PHY too.
+  timer message. A link up holds the MAC, sets its speed, then releases it and enables
+  receive and transmit (erx_genet_core:link_up/1), and reports `{link, up}`; a link down reports
+  `{link, down}`; a PHY failure ends the driver, which its supervisor restarts, resetting
+  the PHY too.
 * **Receiving.** At each interrupt the receive queue's completions are taken until
   64 KiB are copied, one `frames` batch; a batch that reached 64 KiB leaves the rest for a
   message to itself. The device NIF hands every buffer back itself, whether or not the
@@ -156,7 +159,7 @@ start(Spec) ->
         ok = apply_steps(Dev, erx_genet_core:configure(Lladdr)),
         ok = log_phase(negotiate),
         {ok, _Features} ?= retry_busy(negotiate, fun() -> erx_device:negotiate(Dev, 0) end, Dev),
-        ok = log_phase(enable),
+        ok = log_phase(hold),
         ok = apply_steps(Dev, erx_genet_core:start()),
         ok = log_phase(attach),
         {ok, Irq} ?= step(attach, erx_irq_line:attach(Dev, ?IRQ_LINE)),

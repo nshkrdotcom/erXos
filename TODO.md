@@ -50,7 +50,7 @@ goes to the document of the subsystem its component pointer names.
 * [Network](docs/todo-network.md#stopgap-replacements): the network stack (`erx_net`), WiFi and HTTPS clients.
   2 items (2 Medium).
 * [Drivers and platforms](docs/todo-drivers.md#stopgap-replacements): drivers and the device layer: PCIe, DMA, the device tree, GENET, SD, UART, the platforms and boards.
-  49 items (4 High, 26 Medium, 19 Low).
+  52 items (3 High, 29 Medium, 20 Low).
 * [Shell and programs](docs/todo-shell.md#stopgap-replacements): the command shell (rc), programs, the console line and the terminal.
   4 items (1 Medium, 3 Low).
 * [Apps and the start service](docs/todo-apps.md#stopgap-replacements): applications and packages, the demo apps.

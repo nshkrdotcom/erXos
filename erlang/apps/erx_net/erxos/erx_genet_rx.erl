@@ -25,7 +25,7 @@ the controller may write again.
 A completion whose length field says more bytes than came, which the NIF
 hands up only for a length past the buffer, is dropped as `too_long` first,
 so a board's counters keep those apart from the fragments they may also be
-(TODO.md, GENET's receive descriptors past the buffer). Then one whose flags
+(docs/todo-drivers.md, GENET's receive descriptors past the buffer). Then one whose flags
 carry any of the error bits 0 to 4, or lack the start or end of packet, is
 dropped with its reason, as is one shorter than the padding and an Ethernet
 header. The other published driver drops a length past the buffer and goes

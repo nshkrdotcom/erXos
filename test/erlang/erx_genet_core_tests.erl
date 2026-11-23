@@ -200,10 +200,10 @@ field_bits(Reg) ->
                 end, 0, [F || F <- xmerl_xpath:string("fields/field", R),
                              xmerl_xpath:string("access[text()='read-only']", F) =:= []]).
 
-start_enables_both_directions_and_only_the_dma_interrupts_test() ->
+start_holds_the_mac_and_unmasks_only_the_dma_interrupts_test() ->
     Start = erx_genet_core:start(),
     [?assert(lists:member(S, Start))
-     || S <- [{field, umac_cmd, txen, 1}, {field, umac_cmd, rxen, 1},
+     || S <- [{field, umac_cmd, sw_reset, 1},
               {field, intrl2_cpu_clear_mask, rxdma_done, 1},
               {field, intrl2_cpu_clear_mask, txdma_done, 1}]],
     %% Everything is masked before the two are unmasked.
@@ -216,9 +216,30 @@ configure_writes_the_address_in_freebsds_order_test() ->
     ?assert(lists:member({field, umac_mac1, addr, 16#0203}, Steps)),
     ?assert(lists:member({field, umac_cmd, promisc, 1}, Steps)).
 
-link_up_sets_the_speed_code_test() ->
-    [?assertEqual({field, umac_cmd, speed, Code}, lists:last(erx_genet_core:link_up(Speed)))
-     || {Speed, Code} <- [{10, 0}, {100, 1}, {1000, 2}]].
+%% The MAC runs only after link-up. start/0 holds it in software reset with transmit and
+%% receive off, and link_up/1 sets the RGMII out-of-band control and the speed, releases
+%% the MAC, and only then enables receive and transmit, as the other published driver
+%% keeps the MAC in software reset until link-up (docs/research-genet-bcm2711.md, "MAC
+%% reset, RX buffer flush and TX flush"). On the board at 100 Mb/s, transmit enabled from
+%% start/0 put frames on the wire 5 or 6 bytes short, and receive enabled there delivered
+%% each frame some 30 times, although link_up/1 rewrote the speed afterwards
+%% (~/erxos-history 19bc5cd, pi4/2026-11-22-rx-wedge). So every link-up, a later one
+%% included, first turns both directions off at a frame's end and holds the MAC: no
+%% link-up leaves the MAC running from before it.
+the_mac_runs_only_after_link_up_test() ->
+    ?assertEqual([], [S || {field, umac_cmd, F, 1} = S <- erx_genet_core:start(),
+                           F =:= rxen orelse F =:= txen]),
+    [begin
+         {Hold, Rest} = lists:split(5, erx_genet_core:link_up(Speed)),
+         {Link, Run} = lists:split(length(Rest) - 5, Rest),
+         ?assertMatch([{field, umac_cmd, rxen, 0}, {field, umac_cmd, txen, 0}, {wait_us, _},
+                       {field, umac_cmd, sw_reset, 1}, {wait_us, _}], Hold),
+         ?assert(lists:all(fun({field, ext_rgmii_oob_ctrl, _, _}) -> true; (_) -> false end,
+                           Link)),
+         ?assertMatch([{field, umac_cmd, speed, Code}, {field, umac_cmd, sw_reset, 0},
+                       {wait_us, _}, {field, umac_cmd, rxen, 1}, {field, umac_cmd, txen, 1}],
+                      Run)
+     end || {Speed, Code} <- [{10, 0}, {100, 1}, {1000, 2}]].
 
 %% --- Identification and the address -------------------------------------------------------
 

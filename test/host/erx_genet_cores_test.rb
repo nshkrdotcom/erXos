@@ -43,6 +43,11 @@ class ErxGenetCoresTest < Minitest::Test
       ['erx_genet_core', "{write, {tx_ring_mbuf_done_thres, ?RING}, ?TX_MBUF_DONE_THRES},\n", ''],
     'a field the SVD does not name' =>
       ['erx_genet_core', '{field, ext_rgmii_oob_ctrl, rgmii_link, 1}', '{field, ext_rgmii_oob_ctrl, link, 1}'],
+    'a later link-up leaving the MAC running' =>
+      ['erx_genet_core', "link_up(Speed) ->\n    [{field, umac_cmd, rxen, 0}, {field, umac_cmd, txen, 0}, {wait_us, ?FRAME_US},\n     {field, umac_cmd, sw_reset, 1}, {wait_us, ?RESET_US},\n", "link_up(Speed) ->\n    ["],
+    'receive enabled before the link speed' =>
+      ['erx_genet_core', '{field, umac_cmd, sw_reset, 1}, {wait_us, ?RESET_US},',
+       '{field, umac_cmd, sw_reset, 1}, {wait_us, ?RESET_US}, {field, umac_cmd, rxen, 1},'],
     'a full receive ring blamed on its index' =>
       ['erx_genet_core', 'Ahead when Ahead > ?ERX_GENET_RING_SIZE ->',
        'Ahead when Ahead >= ?ERX_GENET_RING_SIZE ->'],

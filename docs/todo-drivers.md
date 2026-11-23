@@ -247,31 +247,39 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   the old high half. If the board shows that matters, the NIF takes them as owned and
   writes them in its install after the confirmed stop (docs/design-device-dma.md,
   "GENET"), which also removes the driver's copy of the ring index.
-* [High] GENET, receive descriptors past the buffer, and the stop after a broken queue: on SD and
-  HTTP netboots the Pi 4 filled receive descriptors whose status shows end of packet without start
-  of packet and a length past the 2,048-byte buffer: `0x2d764800`, `0x1b954000` and `0x3dde4800`
-  (bits 27:16 3446, 2965 and 3550; bits 31:16 11638, 7061 and 15838; low half `0x4800` or `0x4000`),
-  20 ms to 1 s after link-up, at ring positions 6, 59 and 53 (the last with the producer index 0x37
-  and the consumer 0x20). The device NIF copies no bytes for such a length, hands the buffer back
-  and tags the completion with the whole status, and `erx_genet_rx` drops it as `too_long`
-  (docs/design-device-dma.md, "The register ring (GENET)"). Open, on the board: what these
-  descriptors are. With `UMAC_MAX_FRAME_LEN` 1536 and the buffer length 2048, as FreeBSD programs
-  them (`if_genet.c:520, 790-792`), no frame should span buffers; both widths of `BUFLEN` give
-  lengths past the buffer, so the width alone does not explain them, and whether bits 31:28 of the
-  descriptor register are length at all is unsettled (FreeBSD masks 27:16, `if_genetreg.h:169-171`).
-  Count the `too_long` and `fragment` drops on the board (`erx_net_driver:counters/1`), and read the
-  status of the descriptor before each `too_long` one: a start-of-packet descriptor there with a
-  length near 2048 would mean the controller does split frames, and the length is the frame's total.
-  Separately, after a broken queue the restart's `negotiate/2` timed out (`{negotiate,
-  stop_timeout}`) with `rx_dma_ctrl` 0 and `tx_dma_status` `0x3ffff`, so the receive engine never
-  showed its stop and the second open never came up. That restart ran the RBUF flush and
-  UniMAC reset before any DMA stop, while the facts record's other driver disables MAC receive,
-  waits a frame's time, stops and confirms the DMA, and flushes only after ("Where the drivers
-  disagree"); `rx_dma_status` `0x1fffe` at the timeout has bit 0 clear, so the receive engine had not stopped, and rings 0 to 15 read 1 while
-  transmit's `0x3ffff` has ring 16's bit 17 set; the inferred ring bit is not what failed. A full ring (the receive producer index 256 ahead of the
-  consumer in the same evidence line) or a reset that landed mid-frame remain; `reset/0` turns the MAC's receive off, waits a frame's time, and stops and confirms both DMA engines
-  (`erx_device:stop_dma/1`) before the receive buffer and MAC resets. Whether that ends the board's
-  timeout is a board experiment.
+* [Medium] GENET, receive descriptors past the buffer, and the stop after a broken queue: with
+  2,048-byte buffers and a reset that flushed both buffers, on SD and HTTP netboots the Pi 4 filled receive
+  descriptors whose status shows end of packet without start of packet and a length past the
+  buffer: `0x2d764800`, `0x1b954000` and `0x3dde4800` (bits 27:16 3446, 2965 and 3550), 20 ms to
+  1 s after link-up. The device NIF copies no bytes for such a length, hands the buffer back and
+  tags the completion with the whole status, and `erx_genet_rx` drops it as `too_long`
+  (docs/design-device-dma.md, "The register ring (GENET)"). With `reset/0` the UEFI firmware's
+  driver's reset, both rings' buffers 1,536 bytes and the MAC held until link-up, three boots
+  in a row at 100 Mb/s dropped no frame at all (`rx_dropped=0` after 60 s, `~/erxos-history` 19bc5cd,
+  `pi4/2026-11-22-rx-wedge/both-linkup-run{1,2,3}.uart.log`), so these descriptors most likely
+  came from the receive buffer's misconfiguration under a reset that flushed both buffers, which also chained 2 KiB pieces into frames of
+  4.7 and 5.4 KB (`uart-rx-wedge.log`). Open: whether a `too_long` drop ever returns on a long
+  run (`erx_net_driver:counters/1`), and, separately, the restart after a broken queue, whose
+  `negotiate/2` once timed out (`{negotiate, stop_timeout}`, `rx_dma_status` `0x1fffe`) when the
+  restart reset the receive buffer and MAC before any DMA stop; `reset/0` turns the MAC off, waits
+  a frame's time and stops and confirms both engines first, and no board run has broken a queue
+  with that order to show whether it ends the timeout.
+* [Medium] GENET, `erlang/apps/erx_net/erxos/erx_genet_core.erl` `start/0` and `link_up/1`, the
+  MAC's hold, at gigabit and at a later link-up: `start/0` holds the MAC in software reset, and
+  every link-up turns both directions off at a frame's end, holds the MAC, sets the RGMII control
+  and the speed, releases it and only then enables both directions, since on the board either
+  direction enabled before link-up gave short transmitted frames or each received frame some 30
+  times, even with the speed rewritten at link-up (`~/erxos-history` 19bc5cd,
+  `pi4/2026-11-22-rx-wedge`). Every working run linked at 100 Mb/s, with 1000BASE-T not
+  advertised; with it advertised, as erx_phy_c22 does, the link comes up at 1000 Mb/s, where the
+  `rgmii-rxid` timing matters most, and no run has tried this order there. The facts record's
+  other driver holds the MAC only until its first link-up (docs/research-genet-bcm2711.md,
+  `L.mii` 79-91); the hold at a later one is erXos's and untried, as are frames posted before the
+  first link-up, which wait in the transmit ring through the hold. Settle on the board: a gigabit
+  boot (frame lengths on the wire, receive deliveries per frame, ping); a cable pulled and
+  replugged at the same speed and moved between a gigabit and a 100 Mb/s port, counted the same
+  way; and the owned ring registers, the start and end addresses included, read back across the
+  hold and its release.
 * [Medium] GENET, `otp/erts/emulator/nifs/erxos/erx_device.c` `register_ring_stop`: the NIF writes both DMA
   stops, transmit first, then reads both idle reports; the other published driver stops and confirms
   transmit before it writes receive's stop, and at its interface stop waits 10 to 20 ms between (GENET

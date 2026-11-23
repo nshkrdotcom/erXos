@@ -1536,15 +1536,32 @@ and idle report under the device lock, so nothing that happens between
 the two calls can make a stale report free a buffer the device holds.
 The driver's sequence is the queues, `stop_dma/1`, its own resets and
 configuration, then `negotiate/2`, whose stop finds both engines
-stopped already. Within its resets the receive and transmit buffers
-take their settings (alignment, status blocks, the size control)
-first, then the receive buffer is reset and, with the MAC held in
-software reset, the buffers are flushed; the driver reads the settings
-back after both resets. This order is erXos's own, chosen from board
-runs: the published drivers write their settings after the receive
-buffer's reset ([The receive and transmit buffers' settings](research-genet-bcm2711.md#the-receive-and-transmit-buffers-settings)).
-No setting changes a buffer after its reset or flush, and none changes
-while an engine runs.
+stopped already. Its resets first turn both status blocks and the
+receive checksum check off; the rest is the UEFI firmware's driver's
+reset write for write (`GenetReset`, edk2-platforms 4db2845d1442,
+`GenetUtil.c:300-335`): the receive buffer's reset pulsed, the MAC
+held in software reset with local loopback and released, the MIB
+counters cleared, the largest frame, then the buffers' settings, the
+receive buffer's 2-byte alignment and the size control
+(`RBUF_TBUF_SIZE_CTRL`) 1, the very last write; the driver reads the
+settings back afterwards. Nothing flushes the receive buffer or the
+transmit path: on the board the transmit flush floods the receive ring
+and does not cure short transmitted frames (`~/erxos-history` 19bc5cd,
+`pi4/2026-11-22-rx-wedge`). No setting changes a buffer after its
+reset, and none changes while an engine runs. After `negotiate/2` the
+driver holds the MAC in software reset with receive and transmit off,
+as the other published driver holds it until link-up
+([MAC reset, RX buffer flush and TX flush](research-genet-bcm2711.md#mac-reset-rx-buffer-flush-and-tx-flush)),
+and every link-up turns both directions off at a frame's end and holds
+the MAC again, sets the RGMII control and the link's speed, releases
+the MAC and only then enables receive and transmit. Either direction
+enabled before link-up fails on the board, even with the speed
+rewritten at link-up: transmitted frames reach the wire 5 or 6 bytes
+short, and each received frame is delivered some 30 times (the same
+record, at 100 Mb/s). The hold comes and goes with the engines
+running, as that driver's release does, so it is among the resets the
+board pass reads the owned registers back across
+([Register ownership](#register-ownership)).
 A record without both its queues answers
 `{error, einval}`; every other form answers `{error, enotsup}`, since no
 other driver resets its controller between a stop and the install.
@@ -1953,7 +1970,7 @@ ran.
 
 ## Performance
 
-A 2 KiB buffer is 32 lines of 64 bytes, the line the Pi 4's CPU reports,
+A GENET buffer of 1,536 bytes is 24 lines of 64 bytes, the line the Pi 4's CPU reports,
 and is zeroed where no `out` bytes fill it and cleaned at a post, and
 cleaned and invalidated at a completion. Every driver register write
 takes the device lock. These costs are on the watch list

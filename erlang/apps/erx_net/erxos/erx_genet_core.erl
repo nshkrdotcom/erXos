@@ -18,7 +18,10 @@ The sequences follow FreeBSD 975e3605ebb1, `sys/arm64/broadcom/genet/if_genet.c`
    predecessor left it: the MAC's receive and transmit off and a full frame's time, as
    the MAC stops only at a frame's end, then both DMA engines stopped and the stop confirmed by the
    device NIF without the install (`dma_stop`, erx_device:stop_dma/1), so that no reset
-   of item 2 lands while an engine runs. This follows the other published driver's
+   of item 2 lands while an engine runs. (The MAC's software reset hold of items 5 and 6
+   comes and goes with the engines running, as the other published driver's release
+   does; that no owned DMA register changes across it is the board pass's to confirm,
+   docs/design-device-dma.md, "Register ownership".) This follows the other published driver's
    interface stop (the GENET facts record, docs/research-genet-bcm2711.md, "Stopping the
    DMA and confirming it stopped", steps 2, 3 and 5) with two differences: the hardware
    filter block, which that driver disables in step 2, is not written; and the NIF writes
@@ -51,9 +54,10 @@ The sequences follow FreeBSD 975e3605ebb1, `sys/arm64/broadcom/genet/if_genet.c`
    its DMA stop and turning transmit off (`GenetUtil.c:462-464`, run by its stop and
    shutdown, `SimpleNetwork.c:88, 256`), and item 1 stands for that stop at a restart
    without it, so a restart differs from that driver's shutdown and initialization by
-   that one flush. Both rings' buffers are as long as that driver's (`buffer/0`). Whether
-   the size control 1 written this way gives one delivery per frame on the Pi 4 after
-   its boot loader is the board's to settle (TODO.md). erx_genet reads the five buffer
+   that one flush, which erXos leaves out on purpose: on the board every run that
+   flushed the transmit path flooded the receive ring, and the flush did not cure short
+   transmitted frames (~/erxos-history 19bc5cd, pi4/2026-11-22-rx-wedge). Both rings'
+   buffers are as long as that driver's (`buffer/0`). erx_genet reads the five buffer
    settings back after `reset/0` and stops on a difference (`buffer_check/0`): a lost
    alignment setting would otherwise cut two bytes off every frame.
 3. `configure/1`, the part of `gen_init_locked` before the rings
@@ -70,14 +74,27 @@ The sequences follow FreeBSD 975e3605ebb1, `sys/arm64/broadcom/genet/if_genet.c`
    stop finds both engines stopped already.
 5. `start/0`: every interrupt masked and cleared first, as FreeBSD's `gen_disable_intr`
    does (`if_genet.c:540-546`), so no completion's interrupt is cleared after it lands;
-   then the rest of `gen_enable` (`if_genet.c:528-537`, `gen_enable_intr` `:710-715`),
-   whose buffer settings `reset/0` wrote: transmit and receive enabled, and the receive
-   and transmit done interrupts unmasked.
-6. `link_up/1` at each `{link, up, Speed}` of erx_phy_c22, `gen_update_link_locked`
-   (`if_genet.c:1729-1781`): the RGMII out-of-band control on, its link bit set and
-   ID mode left enabled, since the board's PHY is wired `rgmii-rxid` (the PHY delays
-   the receive clock, erx_phy_c22), then the command register's speed. A link down
-   writes nothing, as in FreeBSD.
+   then the receive and transmit done interrupts unmasked, as `gen_enable_intr` does
+   (`:710-715`). Of the rest of `gen_enable` (`:528-537`), the buffer settings are
+   `reset/0`'s and the MAC's enables `link_up/1`'s: `start/0` holds the MAC in software
+   reset with transmit and receive off, as the other published driver holds it until
+   link-up (the GENET facts record, "MAC reset, RX buffer flush and TX flush"). On the
+   board at 100 Mb/s, transmit enabled here, before link-up, put frames on the wire 5 or
+   6 bytes short, and receive enabled here delivered each frame some 30 times, although
+   `link_up/1` rewrote the speed afterwards (~/erxos-history 19bc5cd,
+   pi4/2026-11-22-rx-wedge).
+6. `link_up/1` at each `{link, up, Speed}` of erx_phy_c22: first both directions off, a
+   frame's time and the MAC held, so that every link-up, a later one included, starts
+   from the state `start/0` leaves and none leaves the MAC running from before it; then
+   `gen_update_link_locked` (`if_genet.c:1729-1781`): the RGMII out-of-band control on,
+   its link bit set and ID mode left enabled, since the board's PHY is wired
+   `rgmii-rxid` (the PHY delays the receive clock, erx_phy_c22), then the command
+   register's speed; then, as the other published driver's link handler does (the facts
+   record, `L.mii` 79-91), the MAC released and, after a wait, receive and transmit
+   enabled. A link down writes nothing, as in FreeBSD. The facts record shows that driver
+   holding the MAC until link-up, not at a later one; the hold at every link-up is
+   erXos's, from the board evidence above, and is the board's to confirm
+   (docs/todo-drivers.md).
 """.
 
 -export([identify/1, lladdr/1, reset/0, configure/1, start/0, link_up/1]).
@@ -259,19 +276,30 @@ ring_settings() ->
      {field, {rx_ring_xon_xoff_thres, ?RING}, lo, ?RX_XON_XOFF_LO},
      {field, {rx_ring_xon_xoff_thres, ?RING}, hi, ?RX_XON_XOFF_HI}].
 
--doc "The MAC's enables and the interrupts, after the rings.".
+-doc """
+The interrupts, after the rings, with the MAC held in software reset and transmit and
+receive off until `link_up/1` sets the link's speed.
+""".
 -spec start() -> [step()].
 start() ->
     [{write, intrl2_cpu_set_mask, ?ALL_IRQS}, {write, intrl2_cpu_clear, ?ALL_IRQS},
-     {field, umac_cmd, txen, 1}, {field, umac_cmd, rxen, 1},
+     {field, umac_cmd, sw_reset, 1}, {wait_us, ?RESET_US},
      {field, intrl2_cpu_clear_mask, rxdma_done, 1}, {field, intrl2_cpu_clear_mask, txdma_done, 1}].
 
--doc "The MAC set for a link up at `Speed` Mb/s.".
+-doc """
+The MAC set for a link up at `Speed` Mb/s: both directions off at a frame's end and the
+MAC held, as `start/0` leaves it, then the RGMII out-of-band control and the speed, then
+the MAC released, and receive and transmit enabled only after that.
+""".
 -spec link_up(10 | 100 | 1000) -> [step()].
 link_up(Speed) ->
-    [{field, ext_rgmii_oob_ctrl, oob_disable, 0}, {field, ext_rgmii_oob_ctrl, rgmii_link, 1},
+    [{field, umac_cmd, rxen, 0}, {field, umac_cmd, txen, 0}, {wait_us, ?FRAME_US},
+     {field, umac_cmd, sw_reset, 1}, {wait_us, ?RESET_US},
+     {field, ext_rgmii_oob_ctrl, oob_disable, 0}, {field, ext_rgmii_oob_ctrl, rgmii_link, 1},
      {field, ext_rgmii_oob_ctrl, rgmii_mode_en, 1}, {field, ext_rgmii_oob_ctrl, id_mode_disable, 0},
-     {field, umac_cmd, speed, speed_code(Speed)}].
+     {field, umac_cmd, speed, speed_code(Speed)},
+     {field, umac_cmd, sw_reset, 0}, {wait_us, ?RESET_US},
+     {field, umac_cmd, rxen, 1}, {field, umac_cmd, txen, 1}].
 
 %% The command register's speed field (if_genetreg.h:80-83).
 speed_code(10) -> 0;
