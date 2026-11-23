@@ -1197,7 +1197,7 @@ class ManifestCheckTest < Minitest::Test
 
   def test_a_second_system_window_is_refused
     second = window(role: 'system', partition: 0, holder: '@domain.storage').sub('window seeded', 'window system_again')
-    refused(Erx::Manifest::Invalid, 'window.role', @source + second, message: /at most one/)
+    refused(Erx::Manifest::Invalid, 'window.partition', @source + second, message: /two windows name one role, partition and drive/)
   end
 
   # Only the block device's holder runs the driver that serves the window, so a system
@@ -1289,18 +1289,6 @@ class ManifestCheckTest < Minitest::Test
     source = appless.sub(/^service system\n(?:  .*\n)*/, '')
     refute_equal appless, source
     refused(Erx::Manifest::Invalid, 'service.name', source, message: /a system window holds one service named system/)
-  end
-
-  # The storage domain mounts the system window through the system_image row's image
-  # length, tree and root hash, so neither comes without the other.
-  def test_a_system_window_without_a_system_image_row_is_refused
-    refused(Erx::Manifest::Invalid, 'window.role', changed(@source.sub("system_image\n  input @artifact.release\n", '')),
-            message: /system_image row/)
-  end
-
-  def test_a_system_image_row_without_a_system_window_is_refused
-    refused(Erx::Manifest::Invalid, 'system_image', changed(@source.sub(/^window system\n(?:  .*\n)*/, '')),
-            message: /system window it describes/)
   end
 
   # Root's login keys on the medium (docs/design-ssh.md, "Who publishes it"): the
@@ -1405,12 +1393,12 @@ class ManifestCheckTest < Minitest::Test
             message: /record_volume window/)
   end
 
-  # The count is checked before the holder and before two windows on one role and
-  # partition are refused as such, so the second window, on another holder, fails it.
+  # A second record_volume window lies on the system window's block device, as the
+  # first does, so it names the first's role and partition, and fails as such.
   def test_a_second_record_volume_window_is_refused
     second = record_volume(holder: '@domain.network', label: 'record_volume_again')
-    refused(Erx::Manifest::Invalid, 'window.role', login_keys_source(window: record_volume + second),
-            message: /at most one record_volume window/)
+    refused(Erx::Manifest::Invalid, 'window.partition', login_keys_source(window: record_volume + second),
+            message: /two windows name one role, partition and drive of a device/)
   end
 
   # A second block device, which its holder's driver does not serve, is no medium the
@@ -1418,14 +1406,16 @@ class ManifestCheckTest < Minitest::Test
   def test_a_record_volume_window_on_another_device_than_the_system_window_s_is_refused
     source, against = with_extra_device(role: 'block')
     window = record_volume.sub(BLOCK, '/extra@0')
-    refused(Erx::Manifest::Invalid, 'window.holder',
-            without_login_keys(source) + window + LOGIN_KEYS_SERVICE + login_keys_facet, against, message: /on its device/)
+    refused(Erx::Manifest::Invalid, 'window.device',
+            without_login_keys(source) + window + LOGIN_KEYS_SERVICE + login_keys_facet, against, message: /lies on the system window's block device/)
   end
 
+  # The view refuses a record_volume window held by another domain than the system
+  # window's holder; the login_keys service its holder serves fails first.
   def test_a_record_volume_window_on_another_domain_than_the_system_window_s_holder_is_refused
     %w[@domain.web @domain.network].each do |holder|
-      refused(Erx::Manifest::Invalid, 'window.holder', login_keys_source(window: record_volume(holder: holder)),
-              message: /holder of the system window/)
+      refused(Erx::Manifest::Invalid, 'service.server', login_keys_source(window: record_volume(holder: holder)),
+              message: /served by the holder of the record_volume window/)
     end
   end
 

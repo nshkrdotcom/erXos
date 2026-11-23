@@ -278,27 +278,21 @@ class DomPlannerTest < Minitest::Test
 
   # A session's principal and default display are the words its start adds after its
   # template's environment (erx_dom_plan_session). A template whose environment sets
-  # either variable, which would shadow its word, is refused: by the check (property 14),
-  # and by the view over bytes the check packed with another key that the test then
-  # renames. A key that only starts with one of them is the template's own. The view keeps
+  # either variable, which would shadow its word, is refused by the view, which the build
+  # runs. A key that only starts with one of them is the template's own. The view keeps
   # room for the words at their longest: an environment that leaves exactly that room is
   # admitted, one byte more is refused.
   def test_a_session_template_leaves_its_start_room_for_its_variables
     with_env = ->(words) { with_sessions.sub("session guest\n", "session guest\n  env \"#{words}\"\n") }
-    refused = ->(bytes, name) { view_lines(bytes, name).grep(/\Arefused /) }
-    { 'display' => 'dispXay', 'principal' => 'princXpal' }.each do |key, stand_in|
-      error = assert_raises(Erx::Manifest::Invalid) { admit(with_env.call("LANG=C #{key}=other")) }
-      assert_equal 'session.env', error.field
-      bytes = admit(with_env.call("LANG=C #{stand_in}=other")).bytes
-      assert_equal 1, bytes.scan("#{stand_in}=other").size
-      assert_equal ['refused manifest: a session template\'s environment sets a variable its start gives it'],
-                   refused.call(bytes.sub("#{stand_in}=other", "#{key}=other"), "session-#{key}")
-      assert_empty refused.call(admit(with_env.call("LANG=C #{key}ed=yes")).bytes, "session-#{key}ed")
+    view_refusal = ->(bytes, name) { view_lines(bytes, name).grep(/\Arefused /) }
+    %w[display principal].each do |key|
+      refused(with_env.call("LANG=C #{key}=other"), 'view', /a session template's environment sets a variable its start gives it/)
+      assert_empty view_refusal.call(admit(with_env.call("LANG=C #{key}ed=yes")).bytes, "session-#{key}ed")
     end
     # Guest's arguments as the check packs them (Erx::Manifest's boot_args): its release's binding alone.
     room = session_env_room - %w[-- -boot /bin/app --].sum { |arg| arg.bytesize + 1 }
     word =->(bytes) { "E=#{'a' * (bytes - 3)}" }
-    assert_empty refused.call(admit(with_env.call(word.call(room))).bytes, 'session-room')
+    assert_empty view_refusal.call(admit(with_env.call(word.call(room))).bytes, 'session-room')
     error = assert_raises(Erx::Manifest::Invalid) { admit(with_env.call(word.call(room + 1))) }
     assert_match(/a session template's arguments and environment leave the boot page's strings no reserve for its node names, principal and display/,
                  error.message)
@@ -477,24 +471,17 @@ class DomPlannerTest < Minitest::Test
     assert_match(/\Arefused manifest: a facet is granted to its service's own server\n\z/, File.binread(record.fetch('log')))
   end
 
-  # Two facets of one service name to one grantee, which the check never writes: the
-  # view refuses them, since the domain service would refuse them at boot. Facet ab
-  # grants alpha beta's b, facet bc grants beta gamma's c, also named b, and the
-  # patch makes alpha bc's grantee.
+  # Two facets of one service name to one grantee: the view refuses them, since the
+  # domain service would refuse them at boot, and so the build does. Facet ab grants
+  # alpha beta's b and facet ac gamma's c, also named b.
   def test_two_facets_of_one_service_name_to_one_grantee_are_refused_by_the_view
     facet = lambda do |name, grantee, service|
       "facet #{name}\n  grantee @domain.#{grantee}\n  service @service.#{service}\n  operations none\n" \
         "  max_request 1\n  in_flight 1\n  reductions 1\n  period_ns 1\n  max_heap_size 1\n"
     end
     services = "service b\n  server @domain.beta\n  interface 1\nservice c\n  name \"b\"\n  server @domain.gamma\n  interface 1\n"
-    manifest = admit(with_domains('alpha', 'beta', 'gamma', share: 'narrow') + NARROW + services +
-                     facet.call('ab', 'alpha', 'b') + facet.call('bc', 'beta', 'c')).bytes
-    offset = @codec.open('manifest', manifest).header.fetch('facets').fetch('offset')
-    paths = %w[manifest heads plan].map { |name| File.join(@directory, "facets-#{name}") }
-    bytes = manifest.dup.tap { |copy| copy[offset + 80 + 8, 4] = [0].pack('V') }
-    [bytes, '', "order 2\norder 1\norder 0\n"].zip(paths).each { |content, file| File.binwrite(file, content) }
-    record = @helper.run(paths, runner: @runner, name: 'dom-plan-facets', deadline: 30)
-    assert_match(/\Arefused manifest: a grantee takes two facets of one service name\n\z/, File.binread(record.fetch('log')))
+    refused(with_domains('alpha', 'beta', 'gamma', share: 'narrow') + NARROW + services +
+            facet.call('ab', 'alpha', 'b') + facet.call('ac', 'alpha', 'c'), 'view', /a grantee takes two facets of one service name/)
   end
 
   # The Ruby check takes any byte count; the library takes only whole pages.
@@ -1092,6 +1079,41 @@ class DomPlannerTest < Minitest::Test
     without = without_system_image(development_source)
     assert_equal (12 + 13 + (3 * 21) + 65 + 65 + 14) / 2, room.call(without, 'storage') - room.call(development_source, 'storage')
     assert_equal room.call(without, 'web'), room.call(development_source, 'web')
+  end
+
+  # The storage domain mounts the system window through the system_image row's image
+  # length, tree and root hash, so neither comes without the other (property 8). The
+  # view judges that, so the build refuses either alone through the planner. The row
+  # without the window goes without the services and the apps row that need the window.
+  def test_the_view_refuses_a_system_window_apart_from_its_row
+    rowless = ManifestContextFixture.substitute(development_source, /^system_image\n  input @artifact.release\n/, '')
+    windowless = [/^window system\n(?:  .*\n)*/, /^service system\n(?:  .*\n)*/]
+                 .reduce(without_record_volume(Erx::Manifest::Edit.without_apps(development_source))) do |text, record|
+      ManifestContextFixture.substitute(text, record, '')
+    end
+    [rowless, windowless].each do |source|
+      error = assert_raises(Erx::Manifest::Invalid) { admit_development(source) }
+      assert_equal 'view', error.field, error.message
+      assert_includes error.message, 'the domain library refuses the manifest\'s view: ' \
+                                     'a system window without its system_image row, or the row without the window'
+    end
+  end
+
+  # The record_volume window is held by the system window's holder (property 8), which
+  # the view judges: with the window and its login_keys service moved together, so no
+  # source rule fires first, one moved to another configured domain or to the system
+  # domain fails the build through the planner.
+  def test_the_view_refuses_a_record_volume_window_away_from_the_system_window_s_holder
+    { '@domain.web' => "a record_volume window not held by the system window's holder",
+      'system' => 'more than one record_volume window, or one held by no configured domain' }.each do |holder, reason|
+      source = [[/^(window record_volume\n  holder )@domain\.storage\n/, "\\1#{holder}\n"],
+                [/^(service login_keys\n  server )@domain\.storage\n/, "\\1#{holder}\n"],
+                [/^facet login_keys\n(?:  .*\n)*/, ''], [/^facet login_keys_session\n(?:  .*\n)*/, '']]
+               .reduce(development_source) { |text, (record, with)| ManifestContextFixture.substitute(text, record, with) }
+      error = assert_raises(Erx::Manifest::Invalid) { admit_development(source) }
+      assert_equal 'view', error.field, error.message
+      assert_includes error.message, "the domain library refuses the manifest's view: #{reason}"
+    end
   end
 
   # Whether the boot page holds source's arguments: false for the view's refusal for its

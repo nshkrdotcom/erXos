@@ -382,9 +382,9 @@ boot_kind(const erx_manifest_view_t *manifest, const erx_mf_device_t *device)
  * row's is, and its position, the device-tree row of role configuration
  * whose path its row names as its bridge, and its place on that bridge.
  * The manifest check proves the bridge a placed PCIe bridge; a row whose
- * bridge names none, or whose bus no PCIe bus number holds, is refused all
- * the same, so every function's entry names its bridge's. A function of no
- * kind is held, not driven, so no give makes its memory.
+ * bridge names none is refused all the same, so every function's entry
+ * names its bridge's. The reader bounds its bus to a PCIe bus number. A
+ * function of no kind is held, not driven, so no give makes its memory.
  */
 static const char *
 boot_function(const erx_manifest_view_t *manifest, const erx_mf_device_t *device, erx_dom_device_entry_t *entry)
@@ -404,8 +404,6 @@ boot_function(const erx_manifest_view_t *manifest, const erx_mf_device_t *device
 	}
 	if (entry->bridge == ERX_MF_NONE)
 		return ("manifest: a PCIe function's bridge names no PCIe bridge row");
-	if (device->bus > UINT8_MAX)
-		return ("manifest: a PCIe function's bus is not a PCIe bus number");
 	entry->bus = (uint8_t)device->bus;
 	entry->device = device->device;
 	entry->function = device->function;
@@ -810,10 +808,6 @@ boot_display(const erx_manifest_view_t *manifest, uint32_t row, const char *env,
 			continue;
 		if (served->name_len != 0)
 			return ("manifest: a configured domain serves two displays");
-		if (erx_mf_display_policy_name(display.policy) == NULL)
-			return ("manifest: a display's policy is no mf_display_policy member");
-		if (erx_mf_display_palette_name(display.palette) == NULL)
-			return ("manifest: a display's palette is no mf_display_palette member");
 		if (service.name.length == 0 || service.name.length > ERX_DOM_NAME_MAX)
 			return ("manifest: a service's name is not 1 to 63 bytes");
 		*served = (erx_dom_display_t){ .name = strings + service.name.offset,
@@ -852,17 +846,16 @@ boot_places(erx_dom_configured_t *configured, uint32_t nconfigured, const erx_ma
  * manifest's system window, plus one, or 0 for a manifest with none; and
  * system_image, the manifest's row that the holder's boot page alone
  * carries as -erx_record system_image
- * (docs/design-fiasco.md, "The booted slot"). The check gives a manifest
- * at most one system window, held by the configured domain that holds its
- * block device, and the system_image row with it (property 8). The view
- * refuses a second window, a holder past the domains table and a window
- * without the row or the row without it, so the record has one row to name
- * and one holder or none; that the holder holds the block device is the
- * check's alone. It sets record_volume when the manifest holds a
- * record_volume window, which the check gives that holder alone and at most
- * once (docs/design-ssh.md, "Who publishes it"); the view refuses a second
- * one and one held by any other row, so the record names the window only in
- * the boot page of the domain that holds it.
+ * (docs/design-fiasco.md, "The booted slot"). Property 8's rules across
+ * these rows are the view's to judge, and the build runs it (property 12):
+ * it refuses a second system window, a holder past the domains table and a
+ * window without the row or the row without it, so the record has one row
+ * to name and one holder or none; that the holder holds the block device is
+ * the check's alone. It sets record_volume when the manifest holds a
+ * record_volume window (docs/design-ssh.md, "Who publishes it"), and
+ * refuses a second one and one held by anything but the system window's
+ * holder, the system domain included, so the record names the window only
+ * in the boot page of the domain that holds it.
  */
 static const char *
 boot_system_image(erx_dom_lib_t *lib, const erx_manifest_view_t *manifest)
@@ -874,8 +867,9 @@ boot_system_image(erx_dom_lib_t *lib, const erx_manifest_view_t *manifest)
 		if (!erx_manifest_windows_at(manifest, index, &window))
 			return ("manifest: a window the reader cannot read");
 		if (window.role == ERX_MF_WINDOW_ROLE_RECORD_VOLUME) {
-			if (volume_holder != ERX_MF_NONE)
-				return ("manifest: more than one record_volume window");
+			/* A configured holder, so ERX_MF_NONE stays the mark of none seen. */
+			if (volume_holder != ERX_MF_NONE || window.holder >= manifest->header.domains.count)
+				return ("manifest: more than one record_volume window, or one held by no configured domain");
 			volume_holder = window.holder;
 		}
 		if (window.role != ERX_MF_WINDOW_ROLE_SYSTEM)

@@ -203,14 +203,9 @@ class ManifestDomainsTest < Minitest::Test
     assert_equal [1, 0], rows(view, 'boot_order').map { |row| row.fetch('domain') }
   end
 
-  # The registry installs a facet under its service's name, so one grantee takes one
-  # facet of a service name, and the system domain none of its own service.
-  def test_two_facets_of_one_service_name_to_one_grantee_are_refused
-    source = @source + service('b', '@domain.beta') + facet('ab', '@domain.alpha', '@service.b') +
-             facet('ab2', '@domain.alpha', '@service.b')
-    refused(Erx::Manifest::Invalid, 'facet.service', source, message: /a grantee takes two facets of one service name/)
-  end
-
+  # The system domain takes no facet of its own service. That one grantee takes one
+  # facet of a service name, since the registry installs a facet under its service's
+  # name, is the boot view's to judge (test/host/dom_planner_test.rb).
   def test_a_facet_of_the_system_domains_own_service_to_it_is_refused
     refused(Erx::Manifest::Invalid, 'facet.grantee', @source + service('probe', 'system') + facet('f', 'system', '@service.probe'),
             message: /the system domain takes no facet of its own service/)

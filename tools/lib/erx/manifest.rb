@@ -1626,11 +1626,6 @@ module Erx
           args = boot_args(record, field: 'session.args')
           invalid('arguments and environment exceed the boot page\'s strings', 'session.args') if
             args.bytesize + words(record, 'env').bytesize > @codec.constant('boot_strings_max')
-          # A session's start gives it its principal and display variables after the template's words, which may
-          # not shadow them.
-          started = %w[principal_key display_key].map { |key| @codec.fixed_bytes(key) }
-          invalid('a session template\'s environment sets a variable its start gives it', 'session.env') if
-            words(record, 'env').split("\0").any? { |word| started.include?(word.partition('=').first) }
           runtime = artifact(record, 'runtime', 'executable', field: 'session.runtime')
           release = artifact(record, 'release', 'release', field: 'session.release')
           { 'principal' => principal, 'limits' => limits, 'runtime' => runtime.fetch('entry'),
@@ -2213,8 +2208,6 @@ module Erx
         none = @codec.constant('mf_none')
         invalid('two facets of one grantee share a name', 'facet.name') unless
           rows.map { |row| [grantee.call(row), row.fetch('name')] }.uniq.size == rows.size
-        taken = rows.map { |row| [grantee.call(row), service_rows.fetch(row.fetch('service')).fetch('name')] }
-        invalid('a grantee takes two facets of one service name', 'facet.service') unless taken.uniq.size == taken.size
         invalid('the system domain takes no facet of its own service', 'facet.grantee') if
           rows.any? { |row| row.fetch('grantee_kind') == grantee_kind('system') && server.call(row) == none }
         control = fetch_interface('driver_control')
@@ -3262,33 +3255,26 @@ module Erx
         rights
       end
 
-      # At most one system window, held by a storage domain: a configured domain, never
-      # the system domain, that holds the window's block device. The window and the
-      # system_image row come together, since its holder opens the window's image by
-      # that row (docs/design-fiasco.md, "The booted slot").
+      # The system window is held by a storage domain, the configured domain that holds
+      # the window's block device (docs/design-fiasco.md, "The booted slot"). How many
+      # system windows there are, that one comes with its system_image row and that its
+      # holder is a configured domain are the boot view's to judge (property 12).
       def check_system_window(rows, tables)
-        system = rows.select { |row| row.fetch('role') == system_role }
-        invalid('a manifest has at most one system window', 'window.role') if system.size > 1
-        described = !records('system_image').empty?
-        invalid('a system window needs the system_image row that describes its image', 'window.role') if system.any? && !described
-        invalid('a system_image row needs the system window it describes', 'system_image') if system.empty? && described
-        system.each do |row|
-          holder = row.fetch('holder')
+        rows.select { |row| row.fetch('role') == system_role }.each do |row|
           device = tables.fetch('devices').fetch(row.fetch('device')).fetch('path')
           invalid('a system window is held by the configured domain that holds its block device', 'window.holder') unless
-            holder != @codec.constant('mf_none') && holder == unit_holder(tables, device)
+            row.fetch('holder') == unit_holder(tables, device)
         end
       end
 
-      # Root's login keys on the medium (docs/design-ssh.md, "Who publishes it"): at most one
-      # record_volume window, on the system window's medium and held by its holder, so the
-      # domain that reads the record partition is the one whose block driver serves it.
+      # Root's login keys on the medium (docs/design-ssh.md, "Who publishes it"): the
+      # record_volume window lies on the system window's block device, so the domain that
+      # reads the record partition is the one whose block driver serves it. That there is
+      # at most one, held by the system window's holder, is the boot view's to judge.
       def check_record_volume_window(rows)
-        volumes = rows.select { |row| row.fetch('role') == record_volume_role }
-        invalid('a manifest has at most one record_volume window', 'window.role') if volumes.size > 1
         system = rows.find { |row| row.fetch('role') == system_role }
-        invalid('the record_volume window is held by the holder of the system window, on its device', 'window.holder') if
-          volumes.any? { |volume| system.nil? || volume.values_at('holder', 'device') != system.values_at('holder', 'device') }
+        invalid('the record_volume window lies on the system window\'s block device', 'window.device') if
+          system && rows.any? { |row| row.fetch('role') == record_volume_role && row.fetch('device') != system.fetch('device') }
       end
 
       # A window lies on a block device, or on a USB controller, whose drives it names.

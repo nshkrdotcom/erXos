@@ -501,7 +501,21 @@ violation fails the build with the property, the record and the field:
     placement or a row the boot would refuse fails the build. The
     production build always runs the planner; a check without one plans
     nothing for an empty set of children, and fails closed for a
-    nonempty set.
+    nonempty set. Because the builder reads the manifest as untrusted
+    input ([The manifest](#the-manifest)), it is the one check of the
+    rules across records that it reads, such as one system window and
+    its `system_image` row, the `record_volume` window held by the
+    system window's holder, no grantee taking two facets of one service
+    name, and no session template's environment setting a variable its
+    start gives it: the build reaches each by running that same builder
+    here, and the source check does not restate it. The source check
+    judges what the view does not need to build the boot, such as which
+    configured domain holds a window's block device and that the
+    `record_volume` window lies on the system window's device. The
+    generated reader judges each structural rule of `abi/manifest.txt`
+    (enum members, ranges, indexes and table sizes); neither check
+    restates one, except where the view checks an index it is about to
+    follow.
 13. **The system configuration leaves headroom in `system`:** with each grant
     taken as a rate, its quota over its period (an uncapped grant's rate
     being the size of its cpuset), the configured service domains' grants
