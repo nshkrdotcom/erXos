@@ -1689,13 +1689,13 @@ line discipline `erx_tty`, a pure core with host tests, run by each
 session tty's terminal relay; the console's lines and `Ctrl-G` menu,
 which connects to a session or starts one; the start table with its
 settings in `/data/etc/rc.conf`, and `service`; root's SSH login to `rc`
-in development builds; the session's side of the SSH domain's line and
-the login facet's decoder. Designed: `/etc/start.conf` and start flags;
-interrupting and killing a session from the menu; terminal input to
-native programs through `/dev/tty`; stopping a native program with
-`Ctrl-Z`, the `Ctrl-T` status line, `within`, `rc` as a program for
-`system` and `popen`, toybox, the `secure` attribute and password logins
-at the console, the SSH domain itself with its host key in the vault,
+in development builds; the session's side of the SSH domain's line.
+Designed: `/etc/start.conf` and start flags; interrupting and killing a
+session from the menu; terminal input to native programs through
+`/dev/tty`; stopping a native program with `Ctrl-Z`, the `Ctrl-T` status
+line, `within`, `rc` as a program for `system` and `popen`, toybox, the
+`secure` attribute and password logins at the console, the SSH domain
+itself with its host key in the vault, the system domain's login facet,
 and evi, the screen editor run as `vi`.
 
 1. **UNIX look and feel, honestly.** What a UNIX user already knows is

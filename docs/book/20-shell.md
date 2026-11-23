@@ -9,15 +9,15 @@
 > and `Ctrl-G` menu, which connects to a session or starts one; the
 > start table with its settings in `/data/etc/rc.conf`, and `service`;
 > root's SSH login to `rc` in development builds; the session's side of
-> the SSH domain's line and the login facet's decoder. Designed:
+> the SSH domain's line. Designed:
 > `/etc/start.conf` and start flags; interrupting and killing a session
 > from the menu; terminal input to native programs through `/dev/tty`;
 > stopping a native program with `Ctrl-Z`, the `Ctrl-T` status line,
 > `within`, `rc` as a program for `system` and `popen`, toybox, the
 > `secure` attribute and password logins at the console, the SSH domain
-> itself with its host key in the vault, evi, the screen editor run
-> as `vi`, and the input-loss event that refuses a line which lost input
-> (built: a NUL the console UARTs put in their input, which the editor
+> itself with its host key in the vault, the system domain's login
+> facet, evi, the screen editor run as `vi`, and the input-loss event
+> that refuses a line which lost input (built: a NUL the console UARTs put in their input, which the editor
 > refuses to run).
 
 **Background needed.** [Chapter 3](03-erlang.md), sections 3.2 and
@@ -665,12 +665,10 @@ reaches the system shell whatever the configuration says. And a
 connection's end is a hangup, which ends its shells and, with them, the
 session, as a UNIX session ends with its terminal. The SSH domain, a
 login through it end to end and its host key in the vault are designed
-and not built. Two parts of the
-design are built: the session's side of the SSH domain's line,
+and not built. One part of the
+design is built: the session's side of the SSH domain's line,
 `erx_ssh_line`, through which a channel opens a tty and runs `rc` or
-`rc -c` on it, with host tests; and the login facet's decoder,
-`erx_ssh_wire`, which reads what the SSH domain hands the system domain
-at a login and has a fuzz target.
+`rc -c` on it, with host tests.
 
 ## 20.7 evi, the screen editor
 

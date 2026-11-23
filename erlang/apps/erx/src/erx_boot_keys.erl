@@ -76,9 +76,8 @@ file_max() -> ?FILE_MAX.
 -doc """
 The 32 key bytes of Blob when it is an `ssh-ed25519` key blob, the name and the
 key in their one layout, compared whole. This is the blob's one matcher: the
-decoder takes a key by it, the login facet's erx_ssh_wire:key_blob/1 is it, and
-a reader of the login_keys tree, whose file is the blobs end to end, cuts it at
-blob_size/0.
+decoder takes a key by it, and a reader of the login_keys tree, whose file is the
+blobs end to end, cuts it at blob_size/0.
 """.
 -spec key_blob(term()) -> {ok, key()} | {error, badarg}.
 key_blob(<<?ERX_SSH_ED25519_NAME_SIZE:32, Name:?ERX_SSH_ED25519_NAME_SIZE/binary,
