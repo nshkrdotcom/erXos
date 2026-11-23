@@ -396,8 +396,9 @@ before `user` ([design-log.md](design-log.md#the-kernels-records));
 ([design-tmp.md](design-tmp.md#starting-and-mounting)); `kernel_sup` starts
 `erx_code_agent`, the domain's code server, as a `permanent` child after
 `kernel_safe_sup`, in every domain but the system domain, so its end is
-the domain's end and the domain's overlay is in place before any other
-application starts ([design-live.md](design-live.md#the-code-server)); and
+the domain's end and, in a domain of a supervised specification, the
+domain's overlay is in place before any other application starts
+([design-live.md](design-live.md#the-code-server)); and
 `start_distribution false` leaves out only `net_sup` and `dist_ac`, so `rex`,
 `global_name_server` and `global_group` start as on a stock node that is not
 distributed. 65. Once the boot script has started every application, and
@@ -4369,7 +4370,7 @@ instead, and is no node.
 | `user` | `user_sup`, then `erx_console` and the group it registers |
 | `rex`, `global_name_server`, `global_group` | stock, with or without a carrier, as on a stock node that is not distributed: a name `global` registers without a carrier is known on this node alone (edit 41) |
 | `net_sup` | with a carrier only: `net_sup` holds `auth` and `net_kernel` over `erx_dist`, with no `erl_epmd`; `-kernel start_distribution false` leaves it and `dist_ac` out (edit 41) |
-| `erx_code_agent` | the domain's code server, `permanent`, after `kernel_safe_sup`: it reports itself to the domain pid and returns from its start once it has loaded the domain's start load; `ignore` in the system domain ([design-live.md](design-live.md#the-code-server), edit 41) |
+| `erx_code_agent` | the domain's code server, `permanent`, after `kernel_safe_sup`: it checks its runtime's limits against the `code` protocol's floors, reports itself to the domain pid, and returns from its start at once, or, in a domain whose boot information carries `supervised`, once it has loaded the domain's start load; `ignore` in the system domain ([design-live.md](design-live.md#the-code-server), edit 41) |
 
 The adapter's defaults and limits follow, in `erl`'s familiar spelling; a
 specification writes each `+` as `-`:

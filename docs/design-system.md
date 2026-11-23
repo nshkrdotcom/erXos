@@ -568,7 +568,7 @@ violation fails the build with the property, the record and the field:
     the same network domain could take a service's privileged port first.
     Seeded violation: two grants of one network domain listing the same
     port below 1,024.
-16. **Every receiver of `files` and of `inspect` takes its frames:** for each facet of an
+16. **Every receiver of `files`, of `inspect` and of `code` takes its frames:** for each facet of an
     interface `abi/services` declares `served_as tree` (`files`, `windows`
     and `line`), compared by number, the
     grantee (the system domain under the machine's system runtime limits, a
@@ -587,11 +587,18 @@ violation fails the build with the property, the record and the field:
     `inspect_message_heap_min` and a `funnel_depth` of at least
     `inspect_funnel_depth_min`, so no funnel drops a valid answer
     ([design-live.md](design-live.md#the-inspect-service)).
+    The `code` interface (`abi/services/code.txt`) holds the system
+    domain, which receives every domain's code server's answers, to its
+    floors for that direction the same way; every other domain receives
+    loads, and its code server checks the other direction's floors
+    against its own limits at its start
+    ([design-live.md](design-live.md#the-code-server)).
     Seeded violations: a check that reads only the grantee's limits, which
     admits a server below the floor; a session template that holds
-    `inspect` with a `max_frame` below its floor; and a check of
+    `inspect` with a `max_frame` below its floor; a check of
     `max_frame` alone, which admits a template whose `max_message_heap`
-    is below `inspect_message_heap_min`.
+    is below `inspect_message_heap_min`; and a system domain whose
+    `max_frame` is below the `code` floor for the answers it receives.
 17. **Start rows are well formed:** every `start` row names a principal
     with a session template, at most one row for each principal; every
     such principal's name begins with a letter, and no two rows share a
@@ -1507,7 +1514,10 @@ baseline remains the manifest's; runtime changes do not edit it.
       label of its own bell, the two data areas' sizes, the domain's own
       node name, the system domain's node name and id as the peer of its
       first connection, the number and serial of the domain pid the
-      request names, and each given device's record
+      request names, the `supervised` flag when the domain's
+      specification restarts it, which tells its code server to wait
+      for its start load ([design-live.md](design-live.md#the-code-server)),
+      and each given device's record
       ([Boot information](design-fiasco.md#boot-information))
       ([design-runtime.md](design-runtime.md#data-model));
    7. create the first thread, a worker in the domain's group, with the

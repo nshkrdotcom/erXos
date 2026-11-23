@@ -2069,9 +2069,11 @@ loads modules as [Atoms, code, ETS and names](#atoms-code-ets-and-names)
 says, and its `user` and logger proxy are those of
 [design-runtime.md](design-runtime.md#the-console-and-standard-io) and
 [design-live.md](design-live.md#the-console).
-While `kernel` starts, the domain's code server names itself to the
-domain pid and loads the domain's start load, its published overlay,
-before any other application starts
+While `kernel` starts, the domain's code server checks the domain's
+limits against the `code` protocol's floors and names itself to the
+domain pid; in a domain of a supervised specification, which its boot
+information's `supervised` flag marks, it then loads the domain's start
+load, its published overlay, before any other application starts
 ([design-live.md](design-live.md#the-code-server)).
 Init reports ready to the domain pid, naming the agents and the mints its
 services provide, in `{erx_ready, #{connections => Agent, inspect =>
@@ -2691,9 +2693,9 @@ A domain's limits, fixed at creation within its principal's ceilings:
 | `cpu` | its group's grant: quota per period, cpuset, ceiling | the kernel | the principal's share |
 | `lane` | the data area of each lane it reads, a power of two from 4 KiB to 16 MiB ([Connections](#connections)) | the domain library, which sizes the object | 64 KiB |
 | `connections` | connections it may have at once, the system connection included, and the slots of its control table ([Connections](#connections)) | the domain service, at an introduction | 256; for the system domain, the manifest's `max_domains` ([design-system.md](design-system.md#the-manifest)) |
-| `max_frame` | the largest payload it takes into a buffer of its own, which grows as the bytes arrive; a longer one is dropped as it passes | its own runtime; a protocol's floor, by the client side of that protocol (**Floors from a protocol**, below) | 1 MiB, at most `ERX_FRAME_MAX`; for the system domain, the largest `max_request` its configuration lets a grant name; at least the `net` protocol's floor, which its schema sets, in a domain that holds `net`, `files_max_frame_min` in a domain that serves or holds a facet of an interface served as a tree (`files`, `windows`, `line`), and `inspect_max_frame_min` in a domain that holds an `inspect` facet and in the system domain (property 16 of design-system.md) |
-| `max_message_heap` | the largest decoded message it accepts | its own runtime; a protocol's floor, as for `max_frame` | 8 MiB, at most 256 MiB; at least the socket protocol's floor in a domain that holds `net`, and `inspect_message_heap_min` in a domain that holds an `inspect` facet and in the system domain |
-| `funnel_depth` | nesting outside tail positions in a frame it accepts | its own runtime; a protocol's floor, as for `max_frame` | 16,384; at least the socket protocol's floor in a domain that holds `net`, and `inspect_funnel_depth_min` in a domain that holds an `inspect` facet and in the system domain |
+| `max_frame` | the largest payload it takes into a buffer of its own, which grows as the bytes arrive; a longer one is dropped as it passes | its own runtime; a protocol's floor, by the client side of that protocol (**Floors from a protocol**, below) | 1 MiB, at most `ERX_FRAME_MAX`; for the system domain, the largest `max_request` its configuration lets a grant name; at least the `net` protocol's floor, which its schema sets, in a domain that holds `net`, `files_max_frame_min` in a domain that serves or holds a facet of an interface served as a tree (`files`, `windows`, `line`), and `inspect_max_frame_min` in a domain that holds an `inspect` facet and in the system domain (property 16 of design-system.md), and the `code` protocol's floor in every domain, which a domain's code server checks at its start and the manifest's check holds the system domain to ([design-live.md](design-live.md#the-code-server)) |
+| `max_message_heap` | the largest decoded message it accepts | its own runtime; a protocol's floor, as for `max_frame` | 8 MiB, at most 256 MiB; at least the socket protocol's floor in a domain that holds `net`, and `inspect_message_heap_min` in a domain that holds an `inspect` facet and in the system domain, and the `code` protocol's floor in every domain, as for `max_frame` |
+| `funnel_depth` | nesting outside tail positions in a frame it accepts | its own runtime; a protocol's floor, as for `max_frame` | 16,384; at least the socket protocol's floor in a domain that holds `net`, and `inspect_funnel_depth_min` in a domain that holds an `inspect` facet and in the system domain, and the `code` protocol's floor in every domain, as for `max_frame` |
 | `exports` | entries in its export table | its own runtime | 16,384 |
 | `peer_held`, `peer_held_total` | what its runtime holds because of other domains' processes, each link or monitor counted as 256 bytes and each queued signal as its bytes, for one connection and for all; past them it answers `system_limit` and ends the connection | its own runtime | 4 MiB; 64 MiB; for the system domain's own `peer_held`, 64 KiB per connection, the manifest's `peer_held` ([design-system.md](design-system.md#the-manifest)) |
 | `tmp` | bytes its RAM file system may hold | its own runtime | an eighth of `memory` |
@@ -2737,6 +2739,15 @@ anything is sent:
   system manifest, and the manifest's build check compares each with its
   floor, so a server that would drop a correct client's frame does not
   build.
+
+The `code` protocol sets floors too, since a dropped load shows only as
+its deadline, which stops a supervised domain. Every domain but the
+system domain receives its loads, whatever its configuration, so each
+such domain's code server checks the floors against its own limits at
+its start and fails the start below them; the system domain, which
+receives the code servers' answers, is held to the floors in that
+direction by the manifest's check
+([design-live.md](design-live.md#the-code-server)).
 
 Every limit a receiver enforces protects the receiver itself, which is why
 its own runtime may enforce it; the limits that protect someone else, a
@@ -2877,7 +2888,7 @@ relays only the code server's report.
 | `{erx_facet_minted, Tag, Reply}` | a mint of the domain to domain pid | the reply to the mint request tagged `Tag`, `{ok, Facet}` or `refused`, sent with `erx_facet:minted/2` to the domain's own domain pid, which the agent names to the domain at its start ([design-system.md](design-system.md#facets-a-configured-domain-serves)) |
 | `{erx_inspect_ask, Alias, Query}` | the system domain's inspector to the domain's inspection agent | a question about the domain's own runtime, `Query` being `{inspect, Path, Options}` or `{entries, Path}` for a path the domain owns; the agent takes it only in the system domain's envelope and answers to `Alias`, which the question exported ([design-live.md](design-live.md#the-runtime-agent)) |
 | `{Alias, Answer}` | inspection agent to the inspector | the runtime's attributes for the path, of the inspector's answer types, within `inspect_reply_max`; the inspector validates and marks them `runtime` whatever they claim, and an answer missing after `inspect_agent_wait` is `{timeout, 500}` |
-| `{erx_code_agent, Agent}` | code server to domain pid | the domain's code server, sent once from `kernel` before init's ready report; the domain pid takes the first, keeps it only when the reporting incarnation owns it, node and creation both, and passes it to the domain service, which records it and tells the code service ([design-live.md](design-live.md#the-code-server)) |
+| `{erx_code_agent, Agent}` | code server to domain pid | the domain's code server, sent once from `kernel` before init's ready report; the domain pid takes the first, keeps it only when the reporting incarnation owns it, node and creation both, and passes it to the domain service, which records it and, for a domain of a supervised specification, tells the code service ([design-live.md](design-live.md#the-code-server)) |
 | `{erx_code_load, Alias, Manifest}`, `{erx_code_piece, Alias, Hash, Offset, Bytes}` | the code service to the domain's code server | a load and the pieces its code server asked for; the code server takes them only in the system domain's envelope ([design-live.md](design-live.md#the-code-server)) |
 | `{erx_code_get, Alias, Hash, Offset}`, `{erx_code_loaded, Alias, Result}` | code server to the code service, through `Alias` | a request for the next piece of the load in flight, and the load's outcome; the code service takes each only in the envelope of the domain the load went to, to that load's alias, while it is in flight ([design-live.md](design-live.md#the-code-server)) |
 

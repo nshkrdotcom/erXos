@@ -206,7 +206,7 @@ with it.
 | **V8.** A program appears only under its session | a program has no domain id and no pid space of its own: it is a sub-space the session created and a port of the session's runtime, so the kernel's topology under `INSPECT` on the session's space and the session's agent are the only sources that know of it, and both place it under the session's path | a path for a program outside its session; a program with a domain id | an inspection test that starts a program and finds it under `[domains, Id, programs]` and nowhere under `[domains]` |
 | **V9.** Text labelled with its source is displayed only through the line escape, and written into `/proc` only through the field escape | each display of it builds its line with the escape: `erx_console`'s log lines and menu, `logger_simple_h`'s early log, `erx_render`, which prints inspection records, `ls`, which writes names at a terminal through it, and the host tool's printer; `ps` and `top` write names through the field escape wherever their output goes, so they hold nothing the line escape would change; the kernel's log escapes on entry with its own ASCII class; `erx_procfs` writes every field of a `/proc` file through the field escape, so `cat` of one shows no raw control | a renderer that prints a name or a value raw; a `/proc` file that writes a reporter's text unescaped; a class of characters missing from the table; a print path in the host tool that skips its printer; a log event that reaches a terminal by another handler | tests that send every C0 and C1 control, every `Cf`, `Zl`, `Zp`, unassigned and default-ignorable character, invalid and overlong UTF-8 and every CSI, OSC, DCS, APC, PM and SOS form through each display and each host command, in a log record, a domain's name and an inspected value; a fuzz target per escaper; a test that re-derives the classes from OTP's Unicode data and fails if `abi/terminal.txt` disagrees; the source check on the host tool's output calls, with a seeded violation |
 | **V10.** An inspection answer hands out no name | the inspection schema has no pid, port, reference or fun type: a process is a `proc_id()` of three numbers and an alias its owner's `proc_id()` ([Inspection records](#inspection-records)), and the inspect service passes every answer through `erx_schema:validate_record/1`, which refuses a record holding any of them at any depth, before it leaves the system domain; so encoding an answer never adds a holder to the system domain's export table, whatever the facet's scope | a schema type that admits a live pid, or an attribute filled with one; an answer path that skips the validation | a test that reads `[processes, P]` of a system-domain process with a group leader, links and monitors, and `[domains, 4, exports]`, through a session's facet of scope `all`, and finds `erx:exports/1` of each name the record shows unchanged; seeded: a collector that puts the live group leader into the record, which the validation refuses, and a validation removed, which the exports check catches |
-| **V11.** A load reaches only the domains its facet's scope holds, by whichever route it came | every route ends in one exchange on a facet of the `code` interface held by the host link's session or by a session of the machine, whose scope the domain service fixed when it minted the facet, the system domain alone for the install facet and `erx_domain_core:code_scope/3`'s answer for a code facet, and which no request states; `erx_code` resolves the domain a load names against the facet's scope at each load, and no code facet's scope holds the system domain ([One load, three routes](#one-load-three-routes)) | a scope taken from a request; a code scope that holds the system domain; a route that reaches `erx_code` other than through a facet | `code_scope/3` over every principal and build flag; a load into a domain outside the scope gets `{error, scope}`, as one into a domain that does not exist, and a load with `-d 4` through the code facet gets it too; seeded: `all` for a principal that is not a system-shell principal, `all` in a release build and the system domain in a code scope, each failing a case of `code_scope/3` |
+| **V11.** A load reaches only the domains its facet's scope holds, by whichever route it came | every route ends in one exchange on a facet of the `code` interface held by the host link's session or by a session of the machine, whose scope the domain service fixed when it minted the facet, the system domain alone for the install facet and `erx_domain_core:code_scope/3`'s answer for a code facet, and which no request states; `erx_code` resolves the domain a load or a reset names against the facet's scope at each load, and no code facet's scope holds the system domain ([One load, three routes](#one-load-three-routes)) | a scope taken from a request; a code scope that holds the system domain; a route that reaches `erx_code` other than through a facet | `code_scope/3` over every principal and build flag; a load into a domain outside the scope gets `{error, scope}`, as one into a domain that does not exist, and a load with `-d 4` through the code facet gets it too; seeded: `all` for a principal that is not a system-shell principal, `all` in a release build and the system domain in a code scope, each failing a case of `code_scope/3` |
 
 ## Data model
 
@@ -353,7 +353,7 @@ adding attributes keeps it.
 | `[cpus]`, `[cpus, N]` | CPU: running thread, idle time, ready threads per urgency, interrupts taken, throttled groups | kernel |
 | `[groups]`, `[groups, Id]` | group: grant, capacity, usage, throttling, executors and their states, child groups; machine-wide, for scope `all` | kernel; the policy's intent, service |
 | `[domains, Id, group]`, `[domains, Id, budget]` | the domain's group and budget, as above, within the facet's scope | kernel |
-| `[domains]`, `[domains, Id]` | domain: name, principal, state and death record (service); budget guarantee, cap and spending, group usage, threads (kernel); atom count, ETS tables, modules, process count, run queue (runtime) | each attribute marked |
+| `[domains]`, `[domains, Id]` | domain: name, principal, state and death record, and for a domain of a supervised specification its overlay's published revision and the revision its start load carried (service, the last from the code service); budget guarantee, cap and spending, group usage, threads (kernel); atom count, ETS tables, modules, process count, run queue, and its answer to its start load as the code service received it (runtime) | each attribute marked |
 | `[domains, Id, threads]`, `[domains, Id, threads, T]` | the domain's threads by object id, from `ERX_INFO_THREAD` on its space; thread: state and wait kind | kernel |
 | `[domains, Id, capabilities]`, `[domains, Id, mappings]` | the domain's capability table and mapping records, paginated, from the space's `handles` and `mappings` topics; in development builds alone, on either kernel, for tests and development ([design-fiasco.md](design-fiasco.md#reporting-kernel-objects)) | kernel; on Fiasco the backend reporter `liberx_placements`, from the root's placement records, each record's object `partial` |
 | `[domains, Id, connections]`, `[domains, Id, connections, Peer]` | the domain's connections: the peer domain and each lane's size (service, from the domain service's records); each doorbell's trigger count (kernel, from the IRQ object); frames accepted and refused on each lane (runtime, from the domain's funnel) | each attribute marked |
@@ -363,7 +363,7 @@ adding attributes keeps it.
 | `[domains, Id, processes]` | the domain's pids, paginated | runtime |
 | `[domains, Id, crash]` | the domain's last crash dump, paginated; marked truncated when its header says so; in a development build, the device access trace of its last end, decoded, each entry without a recorded completion shown as such ([design-runtime.md](design-runtime.md#the-device-access-trace)) | service, from the crash area; the trace marked as the domain's report |
 | `[domains, Id, modules]`, `[..., modules, Module]` | module: version (its blob's SHA-256), OTP's `md5`, source file, origin (boot image, overlay, loaded in the domain), whether its source is in the boot image | runtime |
-| `[domains, Id, modules, Module, history]` | the last 16 hashes loaded for the module, newest first, with their times | service, from the code service |
+| `[domains, Id, modules, Module, history]` | the last 16 hashes the code service published for the module in its specification's overlay, newest first, with their times | service, from the code service |
 | `[domains, Id, modules, Module, source]` | source text, paginated by lines | runtime, from the boot image |
 | `[processes, ProcId]` | process: domain (from the `proc_id()` itself); state, priority, reductions, current function and location, heap and stack size, message queue length, registered name, group leader, `trap_exit`, links and monitors | the domain, by construction; the rest, runtime |
 | `[processes, Pid, source]` | the source lines around the process's current location | runtime |
@@ -2152,15 +2152,21 @@ and does not add application-state rollback.
     `code:prepare_loading/1` and `code:finish_loading/1` as `erx_code`
     does, so either all of them are current or none is, and answers; the
     code service publishes the candidate, with a new revision, when the
-    batch loaded, and otherwise discards it. Every ERTS runtime refuses a
+    batch loaded, and otherwise discards it. That the batch loaded is
+    the domain runtime's report; the published overlay is the code
+    service's own fact, and every report keeps the two apart
+    ([What an answer proves](#the-code-server)). Every ERTS runtime refuses a
     module with an `-on_load` function, as OTP's atomic loading does
     (`on_load_not_allowed`), so a NIF's module changes only with its
     image.
   * A domain started from the specification loads the published overlay
     before its release's applications start, through its start load
-    ([The code server](#the-code-server)), whose answer tells the code
-    service the revision it loaded, so no restart runs without published
-    code. An overlay whose
+    ([The code server](#the-code-server)). A start whose start load is
+    refused, goes unanswered or cannot be built fails, and the overlay
+    stays published, so no domain of the specification runs past
+    `kernel` on anything but its published overlay, as far as its
+    runtime reports; the operator's reset is the way back to the release
+    ([Resetting an overlay](#the-code-server)). An overlay whose
     release hash differs from the release the domain boots is dropped
     instead: after a system update, old modules never run over the new
     release, trial boots included.
@@ -2178,18 +2184,18 @@ and does not add application-state rollback.
 * **One load at a time for each target.** A load's **target** is the
   system domain, a supervised specification, or a domain no
   specification restarts. `erx_code` runs at most one load at a time for
-  each target, so a second load into a target waits until the first has
-  ended, runs over the code it left and writes its candidate over the
-  overlay it published; loads into different targets run at once, and an
-  install never waits for another domain. Each facet admits one request
-  at a time, so a target's queue holds at most one load per facet. The
-  service itself never waits on a domain: it serves `missing`, `put` and
-  the pieces a code server asks for while loads are in flight. A domain
-  started from a specification reads the published overlay in the same
-  order as the specification's loads, so it reads either the overlay a
-  load published or the one before that load, never one superseded while
-  it starts: a domain that ends while a load into it is in flight has its
-  next domain wait until that load has ended.
+  each target and keeps no queue: a load into a target that has one in
+  flight is answered `{error, busy}`, and its sender sends it again once
+  the first has ended, so it runs over the code the first left and
+  writes its candidate over the overlay the first published. Loads into
+  different targets run at once, and an install never waits for another
+  domain. The service itself never waits on a domain: it serves
+  `missing`, `put` and the pieces a code server asks for while loads are
+  in flight. A domain started from a specification reads the published
+  overlay in the same order as the specification's loads, so it reads
+  either the overlay a load published or the one before that load, never
+  one superseded while it starts: a start that arrives while a load is
+  publishing has its start load built once the publication has ended.
 * **The deadline.** A load into another domain ends at the first of
   three events: its code server answers, which publishes or discards the
   candidate; that server ends, which discards it and answers
@@ -2201,12 +2207,11 @@ and does not add application-state rollback.
   `kernel_sup`, whose intensity is 0
   (`otp/lib/kernel/src/kernel.erl:101-103`), so `{error, domain_ended}`
   always means the domain ended ([The code server](#the-code-server)).
-  The 30 s of a facet's load never include a boot: a load queued behind
-  a starting domain is sent only once that domain has answered its start
-  load ([The code server](#the-code-server)), a boot that hangs is the
-  boot timeout's ([design-system.md](design-system.md#boot)), and a
-  domain that ends before then gets the load `{error, domain_ended}`
-  with nothing sent. The start load's own 30 s run inside the boot,
+  The 30 s of a facet's load never include a boot: a load into a domain
+  that has not reported ready is answered `{error, busy}`
+  ([The code server](#the-code-server)), and a boot that hangs is the
+  boot timeout's ([design-system.md](design-system.md#boot)). The start
+  load's own 30 s run inside the boot,
   beside the boot timeout, and whichever passes first ends a start that
   hangs. A domain that never answers holds up only its own target, for
   30 s. An answer that arrives for a load no longer in flight is dropped.
@@ -2228,9 +2233,13 @@ and does not add application-state rollback.
     nothing. Without the stop, a batch the code server loaded after the
     candidate was discarded would run code no overlay names until the
     next restart reverted it. The specification's next domain starts
-    from its published overlay, and the domain runs the code its overlay
-    names once that domain reports the revision it loaded, not when
-    `{error, timeout}` is returned. A slow but healthy domain loses its
+    from its published overlay, and runs the code its overlay names once
+    that domain's runtime reports the overlay's revision loaded, not
+    when `{error, timeout}` is returned. The same stop ends a domain
+    whose answer was `invalid`, whose publication failed, or whose start
+    load failed, and the link of
+    [When `erx_code` ends](#the-code-server) ends it when the code
+    service itself fails during the load. A slow but healthy domain loses its
     running state at the deadline: a trade-off accepted for one rule that
     leaves no unknown state, with the time a 16 MiB batch takes on the
     slowest machines on the
@@ -2323,6 +2332,7 @@ the bridge directly.
 ```text
 load (-s | -d DOMAIN) [-v] FILE.beam ...
 load (-s | -d DOMAIN) [-v] -m MODULE[:BYTES] ...
+load -d DOMAIN -r
 ```
 
 `load` is a command of the session ([design-shell.md](design-shell.md#commands)).
@@ -2342,7 +2352,10 @@ out its size, and input that ends early or goes on past the last module
 loads nothing. Either way `load` reads every module whole into memory,
 at most 16 MiB in all, the default `overlay` limit, hashes it and then
 runs the exchange once, so each byte is read once and the bytes hashed
-are the bytes sent.
+are the bytes sent. The third form reads and loads nothing: it sends the
+code facet's `reset` for DOMAIN's specification, whose next domain then
+boots its release as built, the recovery from an overlay whose start
+load fails ([Resetting an overlay](#the-code-server)).
 
 A file is input to the code service and never code: it is not mapped,
 run or loaded in place, and the target domain loads only the blob the
@@ -2358,10 +2371,15 @@ from the command's standard input, which a job's pipes carry unchanged
 ([design-ssh.md](design-ssh.md#sessions-ttys-and-shells)).
 
 `load` prints nothing on success; `-v` prints each module with its hash
-and whether its blob was sent. It writes each failure to standard error
-as `load: NAME: REASON`, `NAME` the file or the module and `REASON` the
-code service's, and exits 1; a call without `-s` or `-d`, with both, or
-with no module is a usage error. FreeBSD has no command that loads code
+and whether its blob was sent, and for a load into another domain one
+line more, `DOMAIN: published revision R, loaded as its runtime
+reports` (`published none` for a domain no specification restarts),
+which names the code service's fact and the runtime's report apart
+([What an answer proves](#the-code-server)). It writes each failure to standard error
+as `load: NAME: REASON`, `NAME` the file or the module (DOMAIN for a
+reset) and `REASON` the code service's, and exits 1; a call without
+`-s` or `-d`, with both, with no module, or with `-r` beside `-s` or a
+module is a usage error. FreeBSD has no command that loads code
 into a running process, so `load` is erXos's own name (Alternatives
 considered, `kldload`).
 
@@ -2442,10 +2460,13 @@ which the host link's `update` facet takes, with the card left in the
 board.
 
 **What is logged.** The code service writes one log record per load,
-under the system domain's name: the facet's holder (the host link, or a
-session's domain id and principal), the target domain's id and name and
-its specification, each module's name and hash, and the outcome, the
-overlay's new revision or the step that refused and its reason. Module
+start load and reset, under the system domain's name: the facet's holder
+(the host link, or a session's domain id and principal; none for a start
+load), the target domain's id and name and its specification, each
+module's name and hash, and the outcome. A success records the overlay
+revision the code service published, as its own fact, and the domain's
+answer as its runtime's report; a failure records the step that refused
+and its reason. Module
 names are the holder's text and reach a display only through the log
 sink's escape (V9). How the session was logged into is the login's own
 record ([design-ssh.md](design-ssh.md#logging), [The console](#the-console)),
@@ -2460,10 +2481,10 @@ which `erx_code` loads code into that domain. It is not OTP's
 has one exchange: `erx_code` sends a manifest, the code server asks for
 the blobs it lacks one piece at a time, loads the batch whole and
 answers. Every load into the domain is that exchange, including the
-**start load** that puts the domain's published overlay in place before
-its applications start. Starting a domain, loading into it at run time and
-recovering from a missed deadline therefore share one path, with one
-queue and one deadline for each target.
+**start load** that puts a supervised specification's published overlay
+in place before its domain's applications start. A target has at most
+one load in flight, and a load into a target that has one is refused, so
+nothing is ever queued for a target.
 
 **The endpoint and its export.**
 
@@ -2476,7 +2497,9 @@ queue and one deadline for each target.
   `start_link/0` answers `ignore`: the system domain loads only through
   `erx_code`'s own install path (V5), so it has no code server to send a
   load to.
-* At its start the code server sends `{erx_code_agent, self()}` to the
+* At its start the code server compares its runtime's limits with the
+  protocol's floors (**Floors**, below) and fails its start when one is
+  below its floor. It then sends `{erx_code_agent, self()}` to the
   domain pid that `erx_dist:boot/0` names. Encoding that message hands
   the code server to the system domain with `send` (edit 8), so the
   domain needs no explicit export. The domain pid takes the first such
@@ -2486,24 +2509,30 @@ queue and one deadline for each target.
   inspection agent's pid passes ([The runtime agent](#the-runtime-agent)).
   Any other report it refuses, logs and counts. It passes a kept report
   to the domain service, which records the code server in the domain's
-  record and tells `erx_code` with `erx_code:started(Id, Target,
-  DomainPid, Agent)`, a message, not a call. `erx_code` calls the domain
-  service (to resolve a load, to stop a domain) and the domain service
-  never calls `erx_code`, so neither ever waits on the other in a cycle.
-* The code server then waits for its start load and returns from its
-  start only after it has answered it. `kernel`'s start therefore
-  completes, and every other application starts, over the published
-  overlay ([Overlays](#code-from-the-host)); the processes `kernel`
-  started before the code server take a loaded module at their next
-  call of it by name. If the report is refused, or the
-  start load never comes (an `erx_code` restart lost the notification),
-  the boot does not progress and the domain's boot timeout ends it
-  ([design-system.md](design-system.md#boot)). So no domain runs past
-  `kernel` without the overlay `erx_code` gave it.
-* A domain whose record names a code server and which has reported
-  ready has finished its start load. A restarted `erx_code`, which has
-  no notification for such a domain, takes it as its target's current
-  domain at the first load that resolves to it.
+  record and, for a domain of a supervised specification, tells
+  `erx_code` with `erx_code:started(Id, Target, DomainPid, Agent)`, a
+  message, not a call. `erx_code` calls the domain service (to resolve a
+  load, to stop a domain) and the domain service never calls `erx_code`,
+  so neither ever waits on the other in a cycle.
+* A domain of a supervised specification carries the `supervised` flag
+  in its boot information, which the domain service sets from the
+  specification's `restart` ([Overlays](#code-from-the-host)). Its code
+  server waits for its start load and returns from its start only after
+  it has answered it `ok`. `kernel`'s start therefore completes, and
+  every other application starts, over the published overlay; the
+  processes `kernel` started before the code server take a loaded module
+  at their next call of it by name. If the report is refused, the start
+  load never comes (an `erx_code` restart lost the notification), or the
+  start fails (**A start**, below), the boot does not progress, and
+  `erx_code`'s stop or the domain's boot timeout ends it
+  ([design-system.md](design-system.md#boot)).
+* In any other domain the code server returns from its start once it has
+  sent its report. Such a domain has no overlay, so its boot never waits
+  on `erx_code`.
+* A domain takes loads once its record names a code server and it has
+  reported ready. A restarted `erx_code`, which has no notification for
+  such a domain, takes it as its target's current domain at the first
+  load that resolves to it.
 
 **Messages.** Each message from `erx_code` reaches the code server as
 `{erx_origin, SystemId, Msg}`, the envelope of the system connection.
@@ -2524,10 +2553,35 @@ Every message of a load carries its alias. A message sent to an alias does
 not say which alias it came through, so the receiver needs the alias in
 the message to know which load it belongs to. The 30 s deadline is
 `code_load_wait`, 30,000 ms, which `abi/services/code.txt` declares
-beside the piece, module and byte limits, so both sides read it from one
-place. The load message carries no overlay revision: the revision is
-`erx_code`'s fact, which it records when the start load succeeds, and
-the code server has no use for it.
+beside the piece, module and byte limits and the floors, so both sides
+read it from one place. The load message carries no overlay revision:
+the revision is `erx_code`'s fact, and the code server has no use for
+it.
+
+**Floors.** The protocol cannot survive the funnel dropping one of its
+messages: a dropped load or piece shows only as the load's deadline,
+which stops a supervised domain, and a dropped start load fails every
+start of its specification. So `abi/services/code.txt` sets a floor on
+each of the three limits the funnel applies to a frame, `max_frame`,
+`max_message_heap` and `funnel_depth`, for each direction, and its
+generator computes them as the `net` generator computes its floors
+([design-domains.md](design-domains.md#principals-sessions-and-quotas),
+"Floors from a protocol"): into a domain, from a load of
+`code_modules_max` modules with 255-byte names and from a piece of
+`code_piece_max` bytes; out of it, from an answer that names every
+module of such a load; each rounded up to a power of two, and the build
+fails when one passes its limit's default. Every domain but the system
+domain receives loads, whatever its configuration, so its code server
+checks the floors into a domain against its own limits as `erx:limits/0`
+reports them, after its options, before it sends its report. A domain
+below a floor fails its start with one log line naming the limit, its
+value and the floor, so no domain runs whose funnel would drop a load.
+The system domain, which receives the answers, is held to the floors out
+of a domain by the manifest's check, as it is held to the `inspect`
+floors ([design-system.md](design-system.md#the-manifest), property 16).
+Since a candidate overlay never names more than `code_modules_max`
+modules (**A send**, below), every published overlay reaches its next
+domain in one message.
 
 **The code server's side.** The code server takes one load at a time and
 handles each in three steps:
@@ -2566,14 +2620,19 @@ next load only once it has ended the previous one. The code server
 enters each load through an external call, as a `gen_server` enters its
 callbacks. So a load that replaces the code server's own modules, or
 `erx_code_batch`, leaves it running: when a later load purges old code,
-the code server is not running any of it.
+the code server is not running any of it. The code server does not trap
+exits, so an exit signal from `erx_code` ends it, and with it its domain
+(**When `erx_code` ends**, below).
 
 **`erx_code`'s side.** `erx_code_target` is a pure state machine with one
 state for each target: its current domain (the last one whose code
-server reported), at most one load in flight, and a queue. `erx_code`
-does the effects: aliases, timers, monitors, sends, the store and the
-calls to the domain service. Each load is tied to the one domain id its
-request resolved to.
+server became current), at most one load in flight, which is either sent
+to the code server or publishing (a reset is in flight only while it
+publishes), and at most one **pending start**, the
+start of a domain that arrived while a load was publishing. `erx_code`
+does the effects: aliases, timers, monitors, links, sends, the store,
+the file calls of publication and the calls to the domain service. Each
+load is tied to the one domain id its request resolved to.
 
 * **A request.** A code facet's `load` is `{load, Domain, Manifest}`.
   `Domain` is a binary: decimal digits are a domain id, and anything
@@ -2582,37 +2641,43 @@ request resolved to.
   service minted it (`erx_domain_core:code_scope/3`). An install facet
   forwards `{load, Manifest}` with the scope `system`. `erx_code` reads
   `{load, Manifest}` only under `system` and `{load, Domain, Manifest}`
-  only under a code scope, and answers anything else
-  `{error, bad_request}`. A load into another domain is resolved by one
-  call to the domain service, which applies the scope to its records and
-  returns the domain's id, domain pid, target, principal, release and
-  code server, and whether the domain has reported ready, or `scope`. Next comes the plan: every hash must be in the store or in
-  the target's release manifest, or the answer is
-  `{error, {missing, Hashes}}`. The store keeps every blob that a queued
-  or in-flight load names until that load ends, so a piece the plan
-  found is still there when the code server asks for it. `erx_code` then
-  queues the load under its target and monitors the domain's domain pid.
+  and `{reset, Domain}` only under a code scope, and answers anything
+  else `{error, bad_request}`. A load into another domain is resolved by
+  one call to the domain service, which applies the scope to its records
+  and returns the domain's id, domain pid, target, principal, release and
+  code server, and whether the domain has reported ready, or `scope`. A
+  load into a target that has a load in flight, or into a domain that
+  has not reported ready with a code server, is answered
+  `{error, busy}`, and nothing is kept for it: its sender sends it again
+  later. Next comes the plan: every hash must be in the store or in the
+  target's release manifest, or the answer is `{error, {missing, Hashes}}`.
+  The store keeps every blob that the load in flight names until that
+  load ends, so a piece the plan found is still there when the code
+  server asks for it. `erx_code` then monitors the domain's domain pid
+  and sends the load.
 * **A start.** `started(Id, Target, DomainPid, Agent)` ends with
-  `{error, domain_ended}` every load of the target that is tied to
-  another domain. A specification has one live domain at a time, so the
-  start of its next domain means its last domain has ended, whichever of
-  this and the monitor's `'DOWN'` arrives first. `erx_code` then puts
-  the start load for `Id` at the head of the target's queue. Its
-  manifest is the published overlay, or no modules at all if the target
-  has no overlay or its overlay names another release, which is then
-  dropped ([Overlays](#code-from-the-host)). Loads that were queued for
-  `Id` while it started run after the start load. That makes the
-  existing ordering rule hold: a load queued behind a starting domain is
-  sent only once that domain has its overlay.
-* **A send.** When nothing is in flight and the head of the queue is
-  tied to the target's current domain, `erx_code` makes an alias and
-  writes the candidate overlay. For a supervised target the candidate is
-  the overlay now published with the load's modules over it; a start
-  load's candidate is the published overlay itself. A candidate with
-  more blob bytes than the specification's `overlay` limit, or more than
-  `code_modules_max` modules, refuses the load with
-  `{error, overlay_full}` before anything is sent. The module bound is
-  what lets every start load fit in one message. Then `erx_code` sends
+  `{error, domain_ended}` a load of the target that is sent to another
+  domain. A specification has one live domain at a time, so the start of
+  its next domain means its last domain has ended, whichever of this and
+  the monitor's `'DOWN'` arrives first. A load that is publishing is not
+  ended: its domain's batch loaded, and the start becomes the target's
+  pending start until the publication ends, so that the start load reads
+  the overlay that publication leaves. Then `erx_code` builds the start
+  load for `Id`. Its manifest is the published overlay, or no modules at
+  all if the specification has none; an overlay that names another
+  release is dropped first ([Overlays](#code-from-the-host)). A start
+  load that cannot be built, because the overlay cannot be read back or
+  names a blob the store no longer holds, fails the start as a refused
+  start load does, with nothing sent.
+* **A send.** For a facet's load into a supervised target, `erx_code`
+  first forms the candidate overlay in memory, charged to the
+  principal's hot store: the overlay now published with the load's
+  modules over it. A candidate with more blob bytes than the
+  specification's `overlay` limit, or more than `code_modules_max`
+  modules, refuses the load with `{error, overlay_full}` before anything
+  is sent. A start load's candidate is the published overlay itself.
+  Then `erx_code` makes an alias, links to the code server when the
+  target is supervised (**When `erx_code` ends**, below), sends
   `{erx_code_load, Alias, Manifest}` and starts its 30 s timer.
 * **A piece request** is valid only if it meets all of these
   conditions: it arrives in the envelope of the load's domain, to the
@@ -2626,17 +2691,47 @@ request resolved to.
   own bytes.
 * **An answer** is valid in the same envelope and to the same alias,
   with a result of the shape in the table whose every `Name` is one of
-  the manifest's. `ok` publishes the candidate with a new revision; for
-  a start load, it records the revision the domain now runs. An error
-  discards the candidate. A start load that is refused drops the overlay
-  instead, as an overlay of another release is dropped, so the domain
-  goes on to boot its release as built.
+  the manifest's. `ok` is the domain's runtime's report that the batch
+  loaded (**What an answer proves**, below).
+  * `ok` to a facet's load into a supervised target publishes the
+    candidate with a new revision (**Publication**, below), and the load
+    ends when the publication does, answering `{ok, Revision}`. Into a
+    domain no specification restarts, which has no overlay, `ok` answers
+    `{ok, none}`.
+  * `ok` to a start load records the revision the start load carried
+    and that the domain's runtime reported it loaded.
+  * An error to a facet's load discards the candidate and is the load's
+    answer.
+  * An error to a start load fails the start, and the published overlay
+    stays as it was. `erx_code` stops the domain by its id with the
+    reason `{start_load, Revision, Result}`, which the domain's death
+    record keeps, and writes one log record naming the specification,
+    the overlay's revision and the refusal. The failed start is one end
+    of the specification within its restart intensity, so an overlay
+    that no longer loads leaves its specification down once that
+    intensity is spent, never running its release in the overlay's
+    place. Recovery is the operator's explicit reset (**Resetting an
+    overlay**, below).
+* **Publication.** An overlay held in memory is published by replacing
+  it with the candidate, which cannot fail, since the candidate was
+  charged when it was formed. An overlay on the data partition is
+  published by writing the candidate to a file beside the overlay's file
+  and renaming it over that file. A worker of `erx_code` makes the two
+  file calls, so `erx_code` waits on neither, and the target takes no
+  other load until both have answered. If either fails, or does not
+  answer within the file client's own deadline, the outcome is unknown,
+  and it ends as a timeout does: the load answers
+  `{error, {publish, Reason}}` and the domain is stopped by its id. The
+  file is the published overlay and `erx_code`'s copy of it only a
+  cache, so after a publication fails `erx_code` drops that copy, and
+  the next start load reads the file, whichever of the two overlays it
+  holds.
 * **The ends.** A load ends at the first of these events:
-  * a valid answer;
-  * the end of its domain, through the domain pid's `'DOWN'` or the
-    start of the target's next domain, which answers
-    `{error, domain_ended}`, and does the same for every queued load
-    tied to that domain;
+  * a valid answer, and for an `ok` that publishes, the end of its
+    publication;
+  * the end of its domain while it is sent, through the domain pid's
+    `'DOWN'` or the start of the target's next domain, which answers
+    `{error, domain_ended}`;
   * its deadline, which answers `{error, timeout}`;
   * any other message from the domain to its alias, which answers
     `{error, invalid}`.
@@ -2644,32 +2739,99 @@ request resolved to.
   A timeout and `invalid` both mean the outcome is unknown, and both end
   the same way: the candidate is discarded, a supervised target's domain
   is stopped by its id, and any other target is left running
-  ([The deadline](#code-from-the-host)). Every end deactivates the
-  alias, cancels the timer, answers the facet (a start load has no
-  facet) and sends the next load. Once the alias is deactivated the
-  runtime drops every later message sent to it, so an answer that
-  arrives after its load has ended reaches nothing. No check is needed
-  for that case.
+  ([The deadline](#code-from-the-host)); for a start load they fail the
+  start as an error does. Every end deactivates the alias, cancels the
+  timer, removes the link, answers the facet (a start load has no
+  facet) and builds the pending start's start load, if there is one.
+  Once the alias is deactivated the runtime drops every later message
+  sent to it, so an answer that arrives after its load has ended reaches
+  nothing. No check is needed for that case.
 
-**Authority and who answered.** Only the holder of an install facet or
-a code facet can make `erx_code` start a load, and only into a domain
-its scope holds (V11). A start load carries only what earlier loads
-through such facets published for the same target. The target domain
-cannot start a load. It can only ask for the pieces of a load in flight,
-each piece once, within that load's 30 s. `erx_code` accepts an answer
-only from the domain it asked, through an alias that only that domain
-was handed, while the load is in flight. That is the inspection agent's
-rule ([The runtime agent](#the-runtime-agent)), and the protocol adds no
+**Resetting an overlay.** `{reset, Domain}` is the code interface's
+recovery from an overlay that no longer loads. `Domain` names a
+specification by the id of one of its domains or by the name they take,
+and the domain service resolves it under the facet's scope as it
+resolves a load, except that the specification need have no live
+domain, so one that refused start loads have left down can be reset. A
+reset is answered `{error, busy}` while a load into the target is in
+flight, and `{error, no_overlay}` for a domain no specification
+restarts. Otherwise `erx_code` first stops a live domain of the
+specification by its id, since that domain may run modules the empty
+overlay does not name, then publishes the empty overlay as any overlay
+is published, with the target taking no load meanwhile, and answers
+`{ok, Revision}`. A start of the specification's next domain that
+arrives during the publication is its pending start, so the start load
+reads the overlay the reset leaves, and an `erx_code` that ends between
+the stop and the publication leaves the old overlay published and no
+domain running anything else. The specification's next domain boots its
+release as built; one that its restart intensity left down stays down
+until it is started again, as after any other cause of its ends.
+`load -d DOMAIN -r` sends it ([One load, three routes](#one-load-three-routes)).
+
+**When `erx_code` ends.** `erx_code` traps exits and links to the code
+server of a supervised target for as long as a load into it is in
+flight, publication included. A code server's end reaches `erx_code` as
+a message it drops, since the domain pid's monitor already reports the
+domain's end. If `erx_code` ends with a load in flight, the link ends
+the code server, which does not trap exits, and so ends its domain; the
+specification's next domain starts from its published overlay, and the
+facet answers its caller `{error, failed}`, as for any service that
+ends before it replies
+([design-system.md](design-system.md#facets-a-configured-domain-serves)).
+A code server that had every piece and loads its batch after `erx_code`
+has ended therefore takes its domain down with it, as the deadline's
+stop would have. An exit signal that does not fit the system domain's
+queue for a domain whose lane is full ends the connection instead
+([design-domains.md](design-domains.md#flow-control)), and the link ends
+the same way. What this costs is the running state of a supervised
+domain whose load was in flight when `erx_code` ended, or whose
+publication had finished before the link was removed, after which it
+restarts from the overlay just published. A domain no specification
+restarts is never linked: it has no overlay to fall out of step with,
+so `erx_code`'s end leaves it running, and whether its batch loaded is
+its runtime's fact (**What is already current**,
+[Code from the host](#code-from-the-host)).
+
+**What an answer proves.** Only the holder of an install facet or a code
+facet can make `erx_code` start a load, and only into a domain its scope
+holds (V11). A start load carries only what earlier loads through such
+facets published for the same specification. The target domain cannot
+start a load. It can only ask for the pieces of a load in flight, each
+piece once, within that load's 30 s. `erx_code` accepts an answer only
+from the domain it asked, through an alias that only that domain was
+handed, while the load is in flight. That is the inspection agent's rule
+([The runtime agent](#the-runtime-agent)), and the protocol adds no
 identity scheme of its own. The system domain is in no code scope and
 runs no code server, so nothing this protocol carries can reach its
 runtime (V5).
 
+The envelope and the alias say which domain answered, not what it did.
+`ok` is that domain's runtime's report, and nothing in the system domain
+can see what another runtime loaded, so asking again would only ask the
+same witness. Two facts are therefore kept apart, and every report says
+which one it gives:
+
+* **the published overlay**, what the system domain stored and sends at
+  the specification's next start: the code service's own fact, reported
+  as `service`;
+* **the runtime's report** that a batch, or a start load's revision,
+  loaded: the domain's own word, reported as `runtime`.
+
+A load's answer `{ok, Revision}` gives the first and relays the second;
+its log record names both with their sources ([What is logged](#one-load-three-routes));
+and the inspector shows the published revision as `service` and the
+modules a domain runs, and its runtime's answer to its start load, as
+`runtime` ([Paths](#paths)). A runtime that answers `ok` falsely misleads
+only about itself: its domain can run any code of its own anyway, and
+its next domain receives the published overlay again.
+
 **Concurrency.** `erx_code` is one process, and every decision it makes
 is a function of `erx_code_target`'s state and one event. It never waits
-on a domain: it only sends, the system domain suspends no sender, and a
+on a domain: it only sends, the system domain suspends no sender, a
 message dropped past `system_queue`
 ([design-domains.md](design-domains.md#flow-control)) appears as the
-load's deadline passing. Loads into different targets interleave
+load's deadline passing, and a publication's file calls run in a worker
+whose results arrive as events. Loads into different targets interleave
 freely. An install runs in `erx_code`'s own runtime and waits on no
 domain. A facet waits for its load's answer with no timeout, and
 `erx_code` answers it with `gen_server:reply/2` when the load ends.
@@ -2677,8 +2839,9 @@ domain. A facet waits for its load's answer with no timeout, and
 **Failure paths.**
 
 * **The target restarts in the middle of a load.** The load answers
-  `{error, domain_ended}`, and so does every load queued for that
-  domain. The next domain's start load reads the published overlay.
+  `{error, domain_ended}`, unless it was publishing, in which case the
+  publication finishes first. The next domain's start load reads the
+  published overlay.
 * **A piece is refused.** A code server that follows the protocol never
   meets this: the plan found every blob, and the store keeps each one
   until its load ends. A piece request that `erx_code` cannot serve is
@@ -2689,30 +2852,38 @@ domain. A facet waits for its load's answer with no timeout, and
 * **The target domain ends.** This is the same as a restart, except
   that no next domain starts for a target that no specification
   restarts.
-* **`erx_code` restarts.** Its aliases end with it. Each code server
-  abandons the load it was working on at its own deadline, and each
-  facet answers its caller `{error, failed}`, as for any service that
-  ends before it replies
-  ([design-system.md](design-system.md#facets-a-configured-domain-serves)).
-  No stop can follow, so a code server that had every piece and loads
-  its batch after `erx_code` died leaves a supervised domain running
-  code its overlay does not name, until that domain next restarts. The
-  facet got an error, so nothing was reported as loaded.
+* **A publication fails.** The load answers `{error, {publish, Reason}}`,
+  the domain is stopped by its id, and the overlay file decides what its
+  next domain loads.
+* **A start load is refused, unanswered or cannot be built.** The start
+  fails, the domain is stopped by its id and the published overlay stays.
+* **`erx_code` ends.** Its aliases end with it, every supervised domain
+  with a load in flight ends through its link, and every facet waiting
+  on it answers its caller `{error, failed}`. A domain no specification
+  restarts abandons its load at its own deadline and runs on.
 
-**Refusals and error results** of a load into another domain:
+**Refusals and error results** of a load into another domain, and of a
+reset:
 
 * `{error, scope}`: outside the facet's scope, or no such domain.
 * `{error, bad_request}` and `{error, {bad_manifest, Why}}`: the request
   reader refused the request.
+* `{error, busy}`: the target has a load in flight, or the domain has
+  not reported ready; nothing is kept, and the sender sends the request
+  again.
 * `{error, {missing, Hashes}}`: blobs that neither the store nor the
   target's release holds.
 * `{error, overlay_full}`: the candidate overlay is past its byte or
   module bound.
 * `{error, no_memory}`: the hot store could not be charged.
+* `{error, no_overlay}`: a reset of a domain no specification restarts.
 * `{error, {hash_mismatch, Name}}` and `{error, {not_loaded, Failed}}`:
   the code server refused the load.
 * `{error, domain_ended}`, `{error, timeout}` and `{error, invalid}`, as
   above.
+* `{error, {publish, Reason}}`: the domain reported the batch loaded and
+  the publication failed; the outcome is unknown and the domain was
+  stopped.
 * `{error, unavailable}`: no `erx_code` is registered when the facet
   forwards the request.
 * `{error, failed}`: `erx_code` ended before it answered; the facet
@@ -2750,7 +2921,7 @@ its EROFS images' manifests, and an overlay is one.
   stays untrusted input to the loader, which fails or crashes only the
   domain that loads it.
 * **History and rollback.** The code service keeps, with each overlay, the
-  last 16 hashes loaded for each module and the time of each, so the
+  last 16 hashes it published for each module and the time of each, so the
   history survives the domain's restarts, and it frees a blob that no
   history, overlay or release of its principal names.
   `erx_code:history/2` and the inspector's
@@ -3169,7 +3340,12 @@ any 9P2000.L peer does.
 | A message of the files stream lost with a damaged frame | the frame's CRC or sequence | nothing | the request waits until the host's client flushes it |
 | QEMU's 9P server answers with bytes that fail the codec, or stops answering | `erx_9p` in the host-tree bridge; the client's flush | the request failed | `eio` for that request; `/host` stays mounted |
 | A load the domain refuses | the code server's reply | the candidate overlay discarded | the reply lists what loaded and what failed |
-| An overlay names another release, or the domain refuses its start load | the release hash at the domain's start; the code server's answer to the start load | the overlay dropped | a log line naming the specification; the domain runs its release as built |
+| An overlay names another release | the release hash at the domain's start | the overlay dropped | a log line naming the specification; the domain runs its release as built |
+| A start load is refused, goes unanswered for 30 s, answers `invalid`, or cannot be built because its overlay cannot be read back or names a blob the store no longer holds | the code server's answer, `erx_code`'s deadline or its check, or the start load's construction | the published overlay unchanged; the domain stopped by its id, counted against its specification's restart intensity, and left down once that is spent | a log record and the domain's death record naming the specification, the overlay's revision and the refusal; `load -d DOMAIN -r` resets the overlay, and the next domain boots its release |
+| A load or a reset names a target that has a load in flight, or a domain that has not reported ready | `erx_code`'s target state | nothing kept | `{error, busy}`; `load: NAME: busy`, and the sender sends it again |
+| The domain reports a load into a supervised specification loaded, and writing or renaming the overlay file fails or does not answer | the worker's file call | the overlay file as it stands is the published overlay; `erx_code`'s copy dropped; the domain stopped by its id | `{error, {publish, Reason}}`, outcome unknown |
+| `erx_code` ends with a load in flight | the link to the code server of a supervised target | a supervised domain ends with its code server and restarts from its published overlay; a domain no specification restarts runs on and abandons the load at its deadline | the facet's `{error, failed}`, outcome unknown |
+| A domain's limits are below the code protocol's floors | its code server, at its start | the domain ends before its applications start | a log line naming the limit, its value and the floor |
 | A code server's message to a load's alias that the load in flight does not expect: a piece out of order or of a blob outside the load, or an answer naming a module outside it | `erx_code_target`'s check | as at the deadline: the candidate discarded, a supervised domain stopped by its id | `{error, invalid}`, outcome unknown |
 | No writable data partition is mounted | the code service | overlays and stores in memory only | a log line at boot; a reboot drops them |
 | `erx_console` crashes | its supervisor | each session's group survives in its own process | the console restarts with every line showing a login: a restart ends every login and the system shell and its facet, and the sessions run on, reachable by a login; terminals on displays are the sessions' own and do not notice |
@@ -3179,7 +3355,7 @@ any 9P2000.L peer does.
 | A principal's hot store cannot hold a blob | the code service's charge to the principal's budget | nothing stored | the load fails with `{error, no_memory}` |
 | A load names a domain outside its facet's scope, or one that does not exist | `erx_code`'s scope check at `load` | nothing loaded; blobs already sent stay in the principal's store until it frees what nothing names | `{error, scope}`, alike for both; `load: NAME: scope` from the command |
 | A domain's code server does not answer a load within 30 s | `erx_code`'s deadline | the candidate discarded; a supervised domain stopped by its id, counted against its specification's restart intensity, and the next domain started from its published overlay; a domain no specification restarts left running | `{error, timeout}`, outcome unknown; loads into other targets were never held up |
-| The domain ends while a load into it is queued or in flight | `erx_code`'s monitor of the domain's domain pid, or the start of its specification's next domain, whichever comes first | the candidate discarded; the next domain's start load reads the published overlay | `{error, domain_ended}` |
+| The domain ends while a load into it is in flight | `erx_code`'s monitor of the domain's domain pid, or the start of its specification's next domain, whichever comes first | the candidate discarded; the next domain's start load reads the published overlay | `{error, domain_ended}` |
 | The connection ends before a load answers: a reset, a pulled cable, `ssh` ending, or the network domain stopped by the code being loaded; or the tool's 120 s pass | the tool | whatever the code service did, which is one of the endings above or the published candidate | the tool says the load's outcome is unknown and exits 1; the inspector's `[domains, Id, modules, Module]`, which the domain's runtime reports, shows the hash each module runs, `[..., history]` what was loaded, and the overlay's revision what a restart runs; sending the load again is a new load that skips what is still current |
 | A loaded driver breaks the network, and with it the SSH route | the operator | the host link and the console, which need no network | the operator loads a fix over the host link, `load`s at the console a file already on the machine, or reboots, which returns every driver domain to its release |
 | `load` reads more than 16 MiB, or its standard input ends before or goes on after its modules | the command, before the exchange | nothing sent | `load: NAME: too large`, `load: standard input: short` or `load: standard input: trailing bytes`, status 1 |
@@ -3472,18 +3648,20 @@ faults that must make its tests fail where it has any.
     through the code facet answered the same. Seeded: `all` for a
     principal that is not a system-shell principal; `all` in a release
     build; the system domain in a code scope (V11).
-  * Two loads into one domain at once publish one after the other, each
-    candidate over the other's published overlay. Seeded: a service that
-    admits a second load while the first is in its steps, under which
-    the second publishes an overlay without the first's modules.
+  * A second load into a domain while the first is in flight is answered
+    `{error, busy}` with nothing kept, and sent again once the first has
+    ended it publishes its candidate over the first's overlay. Seeded: a
+    service that admits the second load while the first is in its steps,
+    under which the second publishes an overlay without the first's
+    modules.
   * A silent target, in a host test with the deadline shortened: a stub
     code server of a supervised specification that never answers, and
     another that answers after the deadline. The load answers
     `{error, timeout}`, the stub's domain is stopped by its id, the late
     answer publishes nothing, and meanwhile an install and another
-    principal's load into another domain complete. Seeded: one queue for
-    every target, under which the other load waits behind the silent
-    one; the deadline removed, under which the silent load never
+    principal's load into another domain complete. Seeded: one load in
+    flight for the whole machine, under which the other load is answered
+    `busy`; the deadline removed, under which the silent load never
     answers.
   * The same silent stub in a domain no specification restarts: the
     load answers `{error, timeout}` and the domain still runs. Seeded: a
@@ -3491,16 +3669,59 @@ faults that must make its tests fail where it has any.
   * A stub domain whose name, at the deadline, is held by a later domain
     that the test started after ending the stub's: the later domain runs
     on. Seeded: a stop by name, under which it is stopped.
-  * A load queued while its supervised target starts, with the start held
-    in the test longer than the shortened deadline: the load is sent once
-    the domain reports its overlay revision and completes. Seeded: the
-    deadline counted from the queueing, under which the load times out
-    and the starting domain is stopped.
-  * A domain that ends between its code server's answer and the
-    publication, with the publication held in the test: its next domain
-    reads the new revision. Seeded: the start's overlay read served
-    outside its specification's order, under which the next domain runs
-    the previous revision.
+  * A facet's load into a domain that has not reported ready, a
+    supervised one whose start load is held in the test past the
+    shortened deadline and one no specification restarts that is still
+    booting, is answered `busy` with nothing sent, and the start
+    completes. Seeded: the ready check removed, under which the load
+    into the booting domain is sent and its 30 s run inside the boot.
+  * A domain no specification restarts boots to ready with `erx_code`
+    stopped, and a supervised one waits for its start load. Seeded: the
+    `supervised` flag ignored, under which every code server waits and
+    the first domain's boot ends at its boot timeout.
+  * A domain that ends while its load is publishing, with the
+    publication held in the test: its next domain's start load is built
+    once the publication has ended and carries the new revision. Seeded:
+    the start load built while the publication is pending, under which
+    the next domain runs the previous revision.
+  * A publication against a stub file server whose rename fails, one
+    whose rename takes effect but never answers, and one whose candidate
+    write never answers: each load answers `{error, {publish, Reason}}`,
+    the domain is stopped by its id, and the next start load carries the
+    overlay the file holds. Seeded: `erx_code`'s copy kept after the
+    failure, under which the second case's next domain loads the
+    previous overlay while the file holds the new one.
+  * A start load answered `{not_loaded, ...}`, one answered
+    `hash_mismatch`, one left unanswered, and one whose overlay file
+    cannot be read: each start fails, the domain is stopped by its id
+    with `{start_load, Revision, Result}` in its death record and in the
+    log, and the overlay stays published, so the next start sends it
+    again until the restart intensity is spent. Then `load -d D -r`
+    publishes the empty overlay and the next domain boots its release;
+    a reset of a specification with a live domain stops that domain by
+    its id. Seeded: the overlay dropped at a refusal, under which the
+    next domain boots the release with the overlay gone; a reset without
+    the stop, under which the live domain runs modules the empty overlay
+    does not name.
+  * `erx_code` killed in a host test while a supervised stub code
+    server holds every piece of its load and has not yet answered: the
+    stub's domain ends, its next domain loads the published overlay, and
+    the facet answers `{error, failed}`; the same kill with a load in
+    flight into a domain no specification restarts leaves that domain
+    running. Seeded: the link left out, under which the stub loads its
+    batch and runs on while the published overlay is the previous one;
+    a link to every target, under which the unsupervised domain ends.
+  * A domain whose `max_frame`, `max_message_heap` or `funnel_depth` is
+    below the code protocol's floor ends at its start with one log line
+    naming the limit, its value and the floor; one at every floor takes
+    a load of `code_modules_max` modules with 255-byte names. Seeded: the
+    floor check removed, under which the domain below the floor boots
+    and that load ends in `{error, timeout}`, its frame dropped by the
+    funnel.
+  * The inspector shows a specification's published revision with the
+    reporter `service` and a domain's answer to its start load with the
+    reporter `runtime`, and `load -v` prints both apart. Seeded: the
+    answer marked `service`, which V2's reporter test catches.
   * A load sent twice leaves a process that runs the module's previous
     code running, and so does a repeat after the code service restarts.
     Seeded: the skip of a module already current removed, under which
@@ -3513,22 +3734,33 @@ faults that must make its tests fail where it has any.
   * The code protocol, exhaustively, in a host test
     ([The code server](#the-code-server)). `erx_code_target` and the code
     server's core run against a model connection that can deliver, delay
-    or drop each message. The test tries every order of up to eight
-    events drawn from: two facet loads into domain D1 of one supervised
-    specification, D1's start, D2's start, D1's `'DOWN'`, the deadline,
-    and a code server that answers `ok`, answers an error, answers late,
-    sends an out-of-order piece request, or is silent. After each step
-    it checks five things. At most one load is in flight for the target.
-    Every request is answered exactly once. A load is sent only to the
-    domain it was resolved to, and only after that domain's start load.
+    or drop each message, and a model link that ends the code server
+    when the modelled `erx_code` ends. The test tries every order of up
+    to eight events drawn from: two facet loads into domain D1 of one
+    supervised specification, a reset of it, D1's start, D2's start,
+    D1's `'DOWN'`, the deadline, a publication that succeeds or fails,
+    the end of `erx_code`, and a code server that answers `ok`, answers
+    an error, answers late, sends an out-of-order piece request, or is
+    silent. After each step it checks these. At most one load is in
+    flight for the target, and a load or reset that arrives while one
+    is in flight is answered `busy`. Every request is answered exactly
+    once. A load is sent only to the domain it was resolved to, and a
+    facet's load only after that domain's start load was answered `ok`.
     A candidate is published only on an `ok` that came in the envelope
     of the domain the load was sent to while that load was in flight. A
-    timeout or `invalid` stops exactly that domain, by its id. Each
-    piece is served at most once per load. Seeded: an answer accepted
-    from any envelope, under which D2's late `ok` publishes D1's
-    candidate; a start load queued at the tail, under which a facet's
-    load reaches D2 before its overlay; the piece cursor removed, under
-    which a piece is served twice.
+    failed start load leaves the published overlay as it was. A start
+    load is built only when no publication is pending, and carries the
+    published overlay. A timeout, `invalid`, a failed publication or a
+    failed start stops exactly that domain, by its id. While a load into
+    the target is in flight its code server is linked, so the end of
+    `erx_code` ends that domain. Each piece is served at most once per
+    load. Seeded: an answer accepted from any envelope, under which D2's
+    late `ok` publishes D1's candidate; a start load built while a
+    publication is pending, under which D2 loads the overlay before it;
+    the overlay dropped at a refused start load; the link removed before
+    the publication ends, under which the end of `erx_code` leaves D1
+    running a batch its published overlay does not name; the piece
+    cursor removed, under which a piece is served twice.
   * The code server against a stub `erx_code`, on a host node: it skips
     a module already current, reads a blob its release lists from the
     release, fetches the rest in manifest order one piece at a time,
@@ -3542,7 +3774,7 @@ faults that must make its tests fail where it has any.
     load's purge ends the code server.
   * The domain pid keeps a code server report only from the domain's own
     incarnation. A report naming a pid of another creation is refused,
-    and the domain's boot ends at its boot timeout. Seeded: the
+    and a supervised domain's boot ends at its boot timeout. Seeded: the
     ownership check removed, under which the foreign pid is kept and
     sent the start load.
   * A fuzz target, `tools/fuzz/erx_code_reply.rb`, for `erx_code_target`'s
@@ -3837,6 +4069,45 @@ answers would hold up every load, recovery installs included, and the
 pieces a code server asks for would wait behind the load that needs
 them.
 
+**A queue for each target.** `erx_code` would hold a load into a busy
+target until the load in flight ended. It loses: a queued load holds its
+manifest and blobs in the system domain for as long as the target takes
+to drain, and a request the facet forwarded outlives the facet's
+revocation, so ending sessions does not bound what such a queue holds.
+No caller needs it: the host tool and `load` send one load at a time
+and report `busy`, and a start load needs no priority, since a target
+with a start load in flight refuses every other load until its domain
+has reported ready.
+
+**Dropping an overlay whose start load is refused.** The domain would
+boot its release as built, as when an overlay names another release. It
+loses: a refusal shows that this attempt failed, not that running the
+release is safe; the overlay may hold an unrelated working fix, and the
+release's code may meet data the overlay's code already changed. Keeping
+the overlay and failing the start leaves that choice to the operator's
+reset.
+
+**Stopping the domain from a restarted `erx_code`.** `erx_code` would
+record each load in flight where its restart finds it, and stop the
+domains whose loads it had not ended. It loses: the record is a second
+copy of the target's state, written before every send and read back
+after a crash; a link, which the runtimes already keep, ends the domain
+the moment `erx_code` ends, with nothing written.
+
+**A start load for every domain.** Every domain's code server would wait
+for a start load, with no modules when the domain has no overlay. It
+loses: a domain no specification restarts can have no overlay, and
+waiting would make its boot depend on `erx_code` for nothing.
+
+**A mark of a published overlay in the domain service.** `erx_code`
+would tell the domain service which specifications have an overlay, and
+only their domains would wait, so a supervised specification without an
+overlay would not wait either. It loses: the mark is a second copy of
+`erx_code`'s fact, and after a reboot it would have to be read back from
+every principal's data partition before any of that principal's
+specifications starts; a missing mark would boot a domain without its
+overlay. The start load asks the one copy when the domain starts.
+
 **Refusing a target after its deadline.** A target whose load missed the
 deadline would refuse loads until its domain ended. It loses: it adds a
 state and a refusal and leaves the domain's code unknown until someone
@@ -3865,9 +4136,11 @@ neither, since the runtime skips what is current.
 **The code server in init's ready report.** The code server would be
 named in `{erx_ready, ...}` beside the inspection agent, with no report
 of its own. It loses: the ready report comes after every application
-has started, and an overlay must be in place before they start, so
-domains would need a second way to fetch the overlay at boot. A report
-of its own, sent from `kernel`, lets the start load be an ordinary load.
+has started, and a supervised specification's overlay must be in place
+before they start, so its domains would need a second way to fetch the
+overlay at boot. A report of its own, sent from `kernel`, lets the start
+load be an ordinary load, and costs a domain without an overlay one
+message and no wait.
 
 **Pieces pushed by `erx_code`.** `erx_code` would send a load's blobs
 straight after the manifest. It loses: it would send blobs the domain
@@ -3893,7 +4166,8 @@ service bytes to load in one domain.
 | The emulated UART is too slow for comfortable uploads | medium | slow `erx watch` | `tools/erx bench hostlink`; virtio-console behind the same framing |
 | A board's host link at 115,200 baud is slow for large loads | high | about 0.8 s for a median module, 1.7 s for `erx_genet` and 17 s for the largest generated one ([Performance](#performance)) | the missing-blob exchange sends only changed modules; the SSH route loads at the network's speed |
 | A domain legitimately busy for 30 s meets a load's deadline | low | a supervised domain is stopped, loses its running state and restarts from its published overlay, an accepted trade-off | the deadline is `code_load_wait`, one constant of `abi/services/code.txt`; a load is a fetch over the domain's lane and an atomic load that runs none of its modules' code, which takes far less; the time of a 16 MiB batch on the Raspberry Pi 4 and under TCG is on the [performance watch list](todo-performance.md#erts-and-the-runtime) |
-| A loaded driver ends its domain at every start, from its published overlay | medium | the domain restarts as its specification says, without serving | a reboot, which drops a driver domain's overlay and returns it to its release; a driver that ends only its own process is reloaded while its domain runs |
+| A loaded driver ends its domain at every start, from its published overlay | medium | the domain restarts as its specification says, without serving | `load -d DOMAIN -r` at the console or over the host link, or a reboot, which drops a driver domain's overlay; either returns the domain to its release; a driver that ends only its own process is reloaded while its domain runs |
+| A persisted overlay no longer loads, after a store was damaged or a module's load began to fail | low | every start of its specification fails until the restart intensity leaves it down | the log record and the death record name the specification, the overlay's revision and the refusal; `load -d DOMAIN -r` resets the overlay, and the next domain boots its release |
 | `prim_tty`'s ssh mode misses a feature the shell uses | low | a rendering gap | the console tests cover every request type; erXos owns `prim_tty` and can extend it |
 | A domain answers inspections slowly | medium | sluggish `erx:i/1` | deadlines and `timeout` statuses; kernel and service attributes need no answer |
 | Records are larger than `inspect_reply_max` allows a listing page of 1,000 | medium | `erx:ps()` and listings at scope `all` page early and show `partial` | the cut is by bytes, so a page is never lost, only shorter; the record sizes are on the performance watch list |
@@ -3909,23 +4183,37 @@ only the facets its system configuration lists, by default none.
 
 Open decisions:
 
-* **A start load the domain refuses.** The overlay is dropped and the
-  domain boots its release as built, as when an overlay names another
-  release ([The code server](#the-code-server)). The alternative is to
-  stop the domain, which keeps "no domain runs without its published
-  overlay" without exception, but a persisted overlay that no longer
-  loads would then end its domain at every start, across reboots, until
-  someone removed the file by hand. Recommendation: drop the overlay
-  and log it.
-* **Every domain's boot waits on `erx_code`.** Every domain gets a start
-  load, with no modules when it has no overlay, so one path serves every
-  start. The cost is that every domain's boot now depends on `erx_code`
-  answering: a code service that is down or restarting when a domain
-  starts holds that boot until its boot timeout. The alternative is a
-  start load only for supervised specifications, which adds a second
-  kind of start and a rule for which domains wait. Recommendation: keep
-  one path; `erx_code` starts before the domain service in the system
-  release, so only a restart of it in the middle of a boot costs a boot.
+* **A supervised specification without an overlay still waits on
+  `erx_code`.** Only a domain of a supervised specification waits for a
+  start load, so a domain no specification restarts never depends on
+  `erx_code` at boot. A supervised specification's domain waits even
+  when its overlay is empty, and gets a start load with no modules,
+  because whether a specification has an overlay is `erx_code`'s fact,
+  read for a persisted overlay from the principal's data partition, and
+  asking at the start reads the one copy in the order the loads wrote
+  it. The cost is that a supervised domain that starts while `erx_code`
+  is down or restarting waits until its boot timeout. Sparing those
+  domains too needs the mark in the domain service that Alternatives
+  considered rejects, with the obligation to read every principal's
+  overlays back before its specifications start. Recommendation: keep
+  the wait for supervised specifications; `erx_code` starts before the
+  domain service, so only a restart of it during a boot costs a boot.
+* **What an `erx_code` restart does to overlays held in memory.** The
+  code service's store and history start empty when it restarts
+  ([What is already current](#code-from-the-host)), so an overlay held
+  in memory, that of a specification of the system configuration, of an
+  app, or of any
+  specification while no writable data partition is mounted, is lost
+  with it, and a domain that runs one runs code its now empty overlay
+  does not name until it restarts into its release. The link covers
+  only loads in flight. Recommendation: keep each principal's overlays
+  held in memory, with its store, in the hot store's memory object,
+  which the domain service creates and holds, and have a restarted
+  `erx_code` read them back with the decoder that reads the data
+  partition, so a restart loses nothing and both media share one
+  read-back path. The alternative, linking every domain that runs an
+  overlay held in memory to `erx_code` for its life, restarts the
+  storage and driver domains whenever the code service fails.
 
 ## References
 
