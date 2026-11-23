@@ -7,31 +7,31 @@ require_relative '../fixtures/xhci_core_cases'
 
 # Runs the case named for each seeded fault of test/erlang/erx_xhci_core_tests.erl (the cases
 # test/host/erx_xhci_core_test.rb passes unseeded) against the seeded module, in a file of its
-# own so these runs have their own deadline. Each seeded fault, applied to a copy of the module, must fail the case named
-# for it: Reset Endpoint issued on a stopped queue; a stopped EP0 dropped and
-# added; the translator's buffer left uncleared after a halt; a reset whose Stop Endpoint
-# still waits keeping it when the endpoint halts, so the stop goes to a halted queue; a
-# pipe that leaves open dropping the requests waiting on it unanswered; Disable Slot
-# posted while a queue runs a transfer, or before the stops; a halt on a draining queue
-# left running; a detach that frees the slot without Disable Slot; a reset in progress at
-# the detach left unanswered; a reset step's answer taken by a later reset of a pipe of
-# the same name on a slot enabled again; a detached reference left bound; a slot nobody
-# owns left enabled; an Enable Slot naming a held slot taken; an Address Device whose device
-# detached while it was posted left unanswered; the translator's clear skipped after a
-# failed address; the abort answered after Stop Endpoint alone; an aborted request's own
-# completion answered too; the control deadlines left out of next_deadline/1; a PORTSC write
-# keeping the change and enable bits it read; a change bit no clear reaches; the install
-# called while the BIOS still owns the controller; the BIOS's semaphore never polled
-# again, a start that stalls; an interrupt before the controller runs acknowledged at
-# once; a held interrupt acknowledged with a failure; a host system error ignored;
-# a host controller error ignored; a halt ignored; a running controller's status never read between
-# interrupts; an interrupt pass not bounded; the interrupter's pending bit left set
-# when the line is acknowledged; that bit cleared only after the event ring is read; a
-# lost command never failing the
-# controller; a reported change bit left set by its clear; a change bit cleared that
-# no status read reported; one port's reported changes taken as another's; and every
-# add of a configuration posted in one Configure Endpoint, past the adds one carries; and
-# the pipes of a configuration's first part lost when the next part is posted.
+# own so these runs have their own deadline. Each case passes unseeded when run alone, and
+# each seeded fault, applied to a copy of the module, must fail the case named for it:
+# Reset Endpoint issued on a stopped queue; a stopped EP0 dropped and added; the
+# translator's buffer left uncleared after a halt; a reset whose Stop Endpoint still waits
+# keeping it when the endpoint halts, so the stop goes to a halted queue; a pipe that leaves
+# open dropping the requests waiting on it unanswered; Disable Slot posted while a queue
+# runs a transfer, or before the stops; a halt on a draining queue left running; a detach
+# that frees the slot without Disable Slot; a reset in progress at the detach left
+# unanswered; a reset step's answer taken by a later reset of a pipe of the same name on a
+# slot enabled again; a detached reference left bound; a slot nobody owns left enabled; an
+# Enable Slot naming a held slot taken; an Address Device whose device detached while it was
+# posted left unanswered; the translator's clear skipped after a failed address; the abort
+# answered after Stop Endpoint alone; an aborted request's own completion answered too; the
+# control deadlines left out of next_deadline/1; a PORTSC write keeping the change and
+# enable bits it read; a change bit no clear reaches; the install called while the BIOS
+# still owns the controller; the BIOS's semaphore never polled again, a start that stalls;
+# an interrupt before the controller runs acknowledged at once; a held interrupt
+# acknowledged with a failure; a host system error ignored; a host controller error ignored;
+# a halt ignored; a running controller's status never read between interrupts; an interrupt
+# pass not bounded; the interrupter's pending bit left set when the line is acknowledged;
+# that bit cleared only after the event ring is read; a lost command never failing the
+# controller; a reported change bit left set by its clear; a change bit cleared that no
+# status read reported; one port's reported changes taken as another's; and every add of a
+# configuration posted in one Configure Endpoint, past the adds one carries; and the pipes
+# of a configuration's first part lost when the next part is posted.
 class ErxXhciCoreSeedsTest < Minitest::Test
   EXPLORED = 'the_pipe_machine_is_explored_to_a_fixed_point_test_'
   ADDRESS_EXPLORED = 'the_failed_address_is_explored_to_a_fixed_point_test_'
@@ -208,11 +208,15 @@ class ErxXhciCoreSeedsTest < Minitest::Test
   # Seeds run WORKERS at a time, each against only the case named for it.
   WORKERS = 4
 
+  # A seed's run that raised, naming the seed.
+  class SeedError < Erx::Error; end
+
   def test_each_seeded_fault_fails_its_case
     source = File.binread(File.join(ErlangBuild::ROOT, XhciCoreCases::CORE))
     SEEDS.each do |seed|
       assert_equal 1, source.scan(seed.anchor).size, "seed anchor for #{seed.fault} is not unique"
     end
+    assert_catching_cases_pass_unseeded
     runs = in_parallel(SEEDS) do |seed|
       XhciCoreCases.run(replaced: { XhciCoreCases::CORE => source.sub(seed.anchor) { seed.replacement } },
                         cases: [seed.catching_case])
@@ -225,7 +229,18 @@ class ErxXhciCoreSeedsTest < Minitest::Test
 
   private
 
-  # The block's value for each of items, in order, WORKERS at a time.
+  # A case that fails alone, unseeded, would "catch" every seed vacuously.
+  def assert_catching_cases_pass_unseeded
+    cases = SEEDS.map(&:catching_case).uniq
+    output, status = XhciCoreCases.run(cases: cases)
+    return if status.success?
+
+    failed = cases.select { |name| output.match?(/#{Regexp.escape(name)}[^\n]*\*failed\*/) }
+    flunk "cases that fail unseeded: #{failed.join(', ')}\n#{output}"
+  end
+
+  # The block's value for each of items, in order, WORKERS at a time. Every worker
+  # finishes before a block's failure is raised, as a SeedError naming the item.
   def in_parallel(items)
     pending = Queue.new
     items.each_index { |index| pending << index }
@@ -234,10 +249,17 @@ class ErxXhciCoreSeedsTest < Minitest::Test
     Array.new(WORKERS) do
       Thread.new do
         while (index = pending.pop)
-          results[index] = yield items[index]
+          results[index] = begin
+            yield items[index]
+          rescue StandardError => e
+            e
+          end
         end
       end
     end.each(&:join)
+    failure = results.zip(items).find { |result, _| result.is_a?(StandardError) }
+    raise SeedError, "#{failure[1].fault}: #{failure[0].class}: #{failure[0].message}" if failure
+
     results
   end
 end
