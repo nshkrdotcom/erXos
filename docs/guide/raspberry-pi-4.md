@@ -233,6 +233,56 @@ the DHCP client. In the steps, `%` is the command shell's prompt.
    `;; connection timed out; no servers could be reached` means the lease
    named no name server that answers.
 
+## Load code over SSH
+
+On a development image you can replace a module of the running system
+without writing a new card or rebooting. From your host, with the board
+on the network and your key in root's `authorized_keys` (see "What is on
+the card"):
+
+```sh
+tools/erx load --ssh ssh://root@BOARD-ADDRESS:2222 --system my_module.erl other.beam
+```
+
+`--ssh DEST` runs `ssh` for you, so your ssh configuration, agent and
+known hosts apply. `DEST` is OpenSSH's destination, `[user@]host` or
+`ssh://[user@]host[:port]`; the board listens on port 2222, so give the
+port in the `ssh://` form or in your ssh configuration. Each file is a
+compiled `MODULE.beam` or an Erlang source, which the tool compiles
+first. `--system` loads into the system domain. The tool names exactly
+one of `--ssh` and `--socket`, and exactly one of `--system` and
+`--domain D`; no code facet is granted yet, so `--domain D` over SSH is
+refused with `load: no code facet`.
+
+The tool sends every module of the batch to the board over the SSH
+connection, and the board's session loads them as one batch: either every
+module is current afterwards or none changed. A batch larger than the code
+protocol allows (`abi/services/code.txt`) is refused. A module name may hold letters, digits, `_`,
+`.`, `-` and `@`, and may not begin with `-`; the tool refuses `DEST` and
+names that break these rules before it starts `ssh`. On success it
+prints one line, `loaded NAME ... (sent N of M modules)`. A failure
+prints `load: NAME: REASON` on standard error, as the board reports it,
+and the exit status is 1. After 120 seconds the tool gives up and stops
+`ssh`; the outcome is then unknown, so check the board before you rely
+on it.
+
+To load each source of a directory when it changes, use `tools/erx watch
+--ssh DEST --system DIR` (`--interval SECONDS` sets how often it looks).
+
+On the board's own `rc` the same command is `load -s FILE.beam ...`, or
+`load -s -m MODULE:BYTES ...` to read modules from standard input;
+`load -v` prints each module with its hash.
+
+**Whoever holds a key in root's `authorized_keys` can load code into the
+system domain.** On development images root's SSH session holds the
+install facet, and code loaded into the system domain runs with that
+domain's authority, which reaches every domain. Treat each key in a
+development card's `authorized_keys`, on partition 1 and in
+`/root/.ssh/authorized_keys`, like root's password: put only keys you
+control on the card, and remove a key from both files when you stop
+trusting it. Release images carry no login key. Development images are
+for trusted code only, as the boot banner says.
+
 ## Netbooting from a Mac
 
 While you iterate on the boot image, the board can boot each build over
