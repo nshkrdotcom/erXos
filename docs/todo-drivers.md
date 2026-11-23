@@ -769,6 +769,10 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   their headers, about 3,600 lines), and `otp/erts/emulator/nifs/erxos/erx_device.c` (about 3,250 lines) holds the
   open, three forms' glue, MSI-X, the xHCI register walk and the virtio and GENET stand-ins. Give both a
   simplicity pass before either grows further.
+* [Low] platform (Raspberry Pi 4), the pin controller's holder for run-time GPIO
+  ([design-header-io.md](design-header-io.md), Decisions, item 1): the root needs the unit at boot and a run-time
+  GPIO domain would need it after, which a unit with one holder does not give; settle the holder, or a hand-over
+  of the unit, before `/dev/gpio`, the LED or the button is built.
 * [Low] line groups (`erx_uart_sup:fresh/2`): a manifest binary whose line-interface service is not named `line`,
   which the manifest check refuses but the root's reader does not, gives a line record with no grant and a badmatch
   that stops `erx_uart`; refuse it with a stated reason.

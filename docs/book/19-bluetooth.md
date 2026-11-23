@@ -102,8 +102,10 @@ handle, not a kernel handle of
 [chapter 8](08-kernel-interface.md#841-what-a-handle-names).
 
 On the Raspberry Pi 4 the controller is a Cypress CYW43455, wired to
-UART0
-([design-bluetooth.md, The hardware](../design-bluetooth.md#the-hardware)).
+UART0 on GPIO 30 to 33
+([design-bluetooth.md, The hardware](../design-bluetooth.md#the-hardware)),
+whose functions the system domain's root sets at boot
+([chapter 15](15-devices.md#1581-one-map-of-the-header)).
 The board's five UARTs are copies of the PL011, Arm's standard UART
 design, and share one register page and one interrupt line. Under the
 unit rule of [chapter 15](15-devices.md#1551-the-unit-rule) they are

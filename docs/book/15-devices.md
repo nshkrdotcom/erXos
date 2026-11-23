@@ -9,7 +9,8 @@
 > PCIe domain runs: the give of a PCIe function. Built as pure code
 > with host tests, driving no device: the PCIe enumerator's parts,
 > USB's cores and decoders, the TRB descriptor form, and the check of
-> the Pi 4's header map. Designed: the running PCIe and USB domains,
+> the Pi 4's header map. Built: the root's setting of the Pi 4's
+> on-board pins at boot. Designed: the running PCIe and USB domains,
 > MSI delivery, virtio over PCIe, the SD controller's ADMA2 form, the
 > Pi 4's header drivers and `/proc/sensors`.
 
@@ -620,7 +621,24 @@ For each of GPIO 0 to 27 it gives a use: plain `gpio`, a device's signal
 with its function and pull, the JTAG debug port, or `reserved`. The map
 is checked against a table of the chip's pins from the BCM2711
 datasheet, so it cannot give the console's pins to SPI. That check is
-**Built**. In the
+**Built**.
+
+The map also lists the board's **on-board pins**: pins off the header
+that the board wires to a chip, such as GPIO 30 to 33, which carry
+UART0 to the Bluetooth controller
+([design-header-io.md, On-board pins](../design-header-io.md#on-board-pins)).
+The firmware sets the header's bus pins from the `gpio=` lines the
+packer writes into `config.txt`, one for each device row of the map;
+the on-board pins get no line. The system domain's root sets them,
+once at boot and before any domain starts, from the rows the packer
+copies into the manifest. Its pure core has a
+field for GPIO 28 to 57 alone, so no row can reach a header pin, the
+console's among them; the root writes only the registers that change,
+reads them back, and prints one line saying how many pins it set,
+why it wrote none, or that what it wrote read back otherwise. That is **Built**. One pin table thus has two
+writers, apart in time: the root at boot for the on-board pins, and,
+in the design, the GPIO driver at run time for the header's plain
+GPIO pins. In the
 design, drivers serve `/dev/gpio`, `/dev/i2c1`, `/dev/spi0` and
 `/dev/pwm0`, each from the domain that holds its controller; they are
 designed and not built.

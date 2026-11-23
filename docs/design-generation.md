@@ -318,7 +318,10 @@ to: every readable field that stores what is written. A field whose write
 acts, beside fields to preserve, is written as the word read, masked to the
 preserve mask, with the driver's own bits, so such a register's read must have
 no side effect; it gets no lone clear operation, which would write zero to the
-preserved siblings, and its headers define the mask (`..._PRESERVE`). xHCI's
+preserved siblings, and its headers define the mask (`..._PRESERVE`). So do
+those of a register a driver updates by writing back the word read, where the
+mask is its writable bits: masking the word clears the reserved bits the
+generated write refuses. xHCI's
 `PORTSC` mask is the writable bits FreeBSD's `XHCI_PS_CLEAR` does not remove,
 derived rather than copied ([design-usb.md](design-usb.md#the-controller-process)).
 Hardware access remains an effect owned by the device shim or the

@@ -1227,11 +1227,33 @@ module Erx
          point('root-identity', /\Aerx: root task: build/n, identity),
          point('root-manifest', /\Aerx: root task: manifest/n, manifest),
          point('root-watchdog', /\Aerx: root task: watchdog/n, /\Aerx: root task: watchdog #{watchdog}\r?\n\z/n),
+         *onboard_pins_points(root, source),
          # ERTS's own lines are debug log records of the root's space (NativeRoot::DOMAIN_RECORD).
          point('erts-start', /\A#{NativeRoot::DOMAIN_RECORD}erx: erts: erl_start runs/n,
                /\A#{NativeRoot::DOMAIN_RECORD}erx: erts: erl_start runs, #{arguments} arguments\r?\n\z/n, seconds: 60),
          point('erts-executors', /\A#{NativeRoot::DOMAIN_RECORD}erx: erts: \d+ schedulers and/n, /\A#{NativeRoot::DOMAIN_RECORD}erx: erts: #{count} schedulers and #{count} dirty CPU schedulers hold executor slots\r*\n\z/n, seconds: 60),
          SLOGAN, RELEASE_SHELL].freeze
+      end
+
+      # The root's on-board pins line (docs/design-header-io.md, "On-board pins"): on a board
+      # whose header map has on-board rows, when the manifest gives the system domain the unit
+      # of the map's pin controller, the root sets every row before any domain starts, and
+      # QEMU's raspi4b keeps what it writes, so the words read back. Elsewhere the root prints
+      # no such line, or one this boot does not judge.
+      def self.onboard_pins_points(root, manifest)
+        platform = Platform.load(root: root, name: manifest.machine.string('platform'))
+        return [] if platform.pins.nil? || platform.pins.onboard.empty?
+
+        controller = platform.record.fetch('units').find do |unit|
+          unit.fetch('devices').any? { |device| device.fetch('path') == platform.pins.controller }
+        end
+        held = manifest.records.fetch('unit', []).any? do |unit|
+          unit.reference('holder') == 'system' && unit.string('placement') == controller&.fetch('key')
+        end
+        return [] unless held
+
+        [point('root-pins', /\Aerx: root task: on-board pins /n,
+               /\Aerx: root task: on-board pins set: #{platform.pins.onboard.size} rows\r?\n\z/n)]
       end
 
       # Schedulers are one per CPU of the system's share on this machine.

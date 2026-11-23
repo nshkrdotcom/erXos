@@ -292,9 +292,9 @@ line, UART0's, which share line 153 through its one owner
 the system domain runs no driver for the auxiliary SPI controllers or the
 other PL011s. UART0 carries the board's CYW43455 on GPIO 30 to 33 in
 function ALT3, as CTS0, RTS0, TXD0 and RXD0, with hardware flow control;
-the header map's on-board rows give `config.txt` the line
-`gpio=30-33=a3`, so the pins' function does not depend on what the
-firmware leaves in them
+the system domain's root sets that function once at boot, before any
+domain starts, from the header map's on-board rows, since the firmware
+leaves GPIO 30 and 31 inputs whatever `config.txt` asks
 ([design-header-io.md](design-header-io.md#on-board-pins)).
 The controller's power line is pin 0 of the firmware's GPIO expander,
 `BT_ON`, which the platform record names as UART0's power row, from
@@ -992,7 +992,7 @@ reads the marks instead of keeping a list of device classes
 | PCIe domain | the ECAM bridge's configuration window | the BCM2711 bridge's unit: its register window, with the configuration access in it, and its two lines, left masked ([design-pcie.md](design-pcie.md#the-bridge-seam)) | the root complex's configuration window |
 | USB domain | `qemu-xhci`, a PCIe function on the root bus, confined | the VL805's unit: its functions at bus 1, device 0 and the INTx line that position routes, unconfined ([design-usb.md](design-usb.md#who-holds-a-controller)) | none of its own: RP1's USB hosts are in RP1's unit, whose domain holds them |
 | System domain | the console's PL011 and the host link's PL011 | the mini UART's unit, the console's, with the auxiliary SPI controllers, which it leaves undriven; the PL011s' unit, with the host link | the debug PL011, the console |
-| Devices domain | the remaining slow devices | I2C, and the SPI controllers outside the mini UART's unit; never the GPIO controller, which sets the console's and the host link's pins and goes to no domain until run-time GPIO is built, and then to a trusted domain of its own ([design-header-io.md](design-header-io.md#decisions)) | the slow devices outside RP1 other than the console |
+| Devices domain | the remaining slow devices | I2C, and the SPI controllers outside the mini UART's unit; never the GPIO controller, which the system domain holds so that its root sets the on-board pins once at boot, and which goes to no other domain until run-time GPIO is built, and then to a trusted domain of its own ([design-header-io.md](design-header-io.md#decisions)) | the slow devices outside RP1 other than the console |
 | Domains of their own in a release build | each unit of virtio-mmio devices the manifest names, the transports of one page | the SD controller; Ethernet; each DMA engine the manifest names; the VL805's unit, which is the USB domain | each SD controller; RP1, one unit with its Ethernet, USB hosts and slow devices; a function on the external connector |
 | Left out of every resource | none | the VideoCore's message interface, beside the mailbox (PL2) | none |
 

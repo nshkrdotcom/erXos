@@ -19,17 +19,17 @@ module Erx
   #   Bluetooth controller), each a gpio number, the device path of the SoC block whose
   #   signal the pin carries, and the function.
   # The record reader (Platform) checks the map against the pin table and the record's own
-  # devices, and config.txt's gpio= lines, enable_jtag_gpio and core_freq are derived from
-  # it (BootPartition), so nothing else states a pin. A map that breaks a rule is refused
+  # devices; config.txt's gpio= lines, enable_jtag_gpio and core_freq are derived from it
+  # (BootPartition), and the manifest's onboard_pins from its on-board rows (Manifest), so
+  # nothing else states a pin. A map that breaks a rule is refused
   # whole, at its first broken rule, naming the row.
   module HeaderMap
     # One pin. use is "gpio" (plain GPIO, whose pull is its holder's to set), "reserved"
     # (nothing touches the pin), "jtag" (the ARM's JTAG, which enable_jtag_gpio sets on a
     # development card) or a device path of the record (the firmware sets the pin for that
     # device). function and alternate, the function's pin-table name and its alternate
-    # number, are a jtag or device row's, header or on-board; pull is a device row's alone:
-    # :none, :up or :down on a header row, :keep on an on-board row, whose power-on pull
-    # the firmware leaves.
+    # number, are a jtag or device row's, header or on-board; pull is a header device row's
+    # alone, :none, :up or :down, and nil on an on-board row, whose pull nothing sets.
     Row = Data.define(:gpio, :use, :function, :alternate, :pull) do
       def device? = use.start_with?('/')
     end
@@ -94,6 +94,16 @@ module Erx
       raise Error, "the record's driven device #{unnamed.first.inspect} has no pins in the map" unless unnamed.empty?
 
       Map.new(controller: controller, rows: rows.freeze, onboard: onboard.freeze, core_clock: core_clock(every, devices: devices))
+    end
+
+    # The on-board rows of record's map alone, each checked as read checks it, for a reader
+    # that needs no other row (the manifest's onboard_pins); none when it has no pins.
+    def read_onboard(record)
+      return [] unless record.key?('pins')
+
+      given = record.fetch('pins')
+      onboard_rows(given.fetch('onboard'), table: Pins.read(root: CODE_ROOT, soc: given.fetch('soc')),
+                                           devices: devices_by_path(record.fetch('units')))
     end
 
     # The record's devices that have a path, by path; a unit or device that is not an object
@@ -166,7 +176,7 @@ module Erx
         raise Error, "on-board GPIO #{gpio} is a header pin, set by its row in rows" if table.header_pin?(gpio)
         raise Error, "on-board GPIO #{gpio.inspect}: #{device.inspect} is not a device path of the record" unless devices.key?(device)
 
-        Row.new(gpio: gpio, use: device, function: function, alternate: table.alternate(gpio: gpio, function: function), pull: :keep)
+        Row.new(gpio: gpio, use: device, function: function, alternate: table.alternate(gpio: gpio, function: function), pull: nil)
       end
       unless onboard.each_cons(2).all? { |left, right| left.gpio < right.gpio }
         raise Error, 'on-board rows must be in increasing GPIO order, each GPIO once'

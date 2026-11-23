@@ -436,6 +436,19 @@ end
                   ['bt_on', '/soc/serial@7e201000', 0x0003_8041, 128, 1]], firmware_rows(admitted(pi, platform: 'raspi4b'))
   end
 
+  # The header's onboard_pins span (offset 488: offset u32, count u32) names the platform
+  # record's on-board rows in their order, each the GPIO u32 and its function's alternate
+  # number u32 (abi/manifest.txt, erx_mf_onboard_pin); QEMU virt's record has no pins. The
+  # Pi 4's are UART0's four pins to the Bluetooth controller, GPIO 30 to 33 in ALT3
+  # (docs/design-header-io.md, "On-board pins").
+  def test_the_onboard_pins_are_the_platform_record_s_onboard_rows
+    assert_equal 0, admitted.byteslice(488, 8).unpack1('x4L<')
+    pi = Erx::Platform.load(root: ROOT, name: 'raspi4b').manifest_source(ROOT)
+    bytes = admitted(pi, platform: 'raspi4b')
+    offset, count = bytes.byteslice(488, 8).unpack('L<L<')
+    assert_equal [[30, 3], [31, 3], [32, 3], [33, 3]], Array.new(count) { |row| bytes.byteslice(offset + (8 * row), 8).unpack('L<L<') }
+  end
+
   def test_a_firmware_request_of_an_unknown_tag_or_device_is_refused_at_the_packer
     pi = Erx::Platform.load(root: ROOT, name: 'raspi4b').manifest_source(ROOT)
     # A tag outside fw_tag, a path of no device, a PCIe function's empty path, a device that is
@@ -533,6 +546,25 @@ end
                           stdout_path: '/soc/serial@7e215040')
     assert status.success?, output
     assert_includes output, "held_mailbox none\n"
+  end
+
+  # The pin controller's row reaches the root as the mailbox's does: the shipped Pi manifest
+  # gives the system domain its unit, with the platform record's path and window (0xfe200000,
+  # 180 bytes), where the root sets the on-board pins once at boot; QEMU virt's gives none,
+  # so the root writes no pin. The packer gives the unit to no other domain but one of its
+  # own (manifest_check_test.rb) (docs/design-header-io.md, "On-board pins"). It is
+  # of no kind, so it makes no device record.
+  def test_the_pin_controller_row_reaches_the_root_only_from_a_unit_the_system_domain_holds
+    pi = Erx::Platform.load(root: ROOT, name: 'raspi4b').manifest_source(ROOT)
+    row = "unit gpio\n  placement \"gpio\"\n  holder system\n"
+    assert_includes pi, row
+    output, status = read(admitted(pi, platform: 'raspi4b'), stdout_path: '/soc/serial@7e215040')
+    assert status.success?, output
+    assert_includes output, "held_pins /soc/gpio@7e200000 #{0xfe200000} 180\n"
+    refute_match(/^device .* #{0xfe200000} /, output)
+    output, status = read(admitted)
+    assert status.success?, output
+    assert_includes output, "held_pins none\n"
   end
 
   # The RNG200's row reaches the root from the platform record only through a unit the

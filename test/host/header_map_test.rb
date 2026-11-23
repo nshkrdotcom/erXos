@@ -32,8 +32,8 @@ class HeaderMapTest < Minitest::Test
                    14 => [PI.record.fetch('console'), 5, :none], 15 => [PI.record.fetch('console'), 5, :none] },
                  map.device_rows.to_h { |row| [row.gpio, [row.use, row.alternate, row.pull]] })
     # UART0's pins to the Bluetooth controller, CTS0, RTS0, TXD0 and RXD0 in ALT3, with no pull.
-    assert_equal({ 30 => [UART0, 'CTS0', 3, :keep], 31 => [UART0, 'RTS0', 3, :keep], 32 => [UART0, 'TXD0', 3, :keep],
-                   33 => [UART0, 'RXD0', 3, :keep] },
+    assert_equal({ 30 => [UART0, 'CTS0', 3, nil], 31 => [UART0, 'RTS0', 3, nil], 32 => [UART0, 'TXD0', 3, nil],
+                   33 => [UART0, 'RXD0', 3, nil] },
                  map.onboard.to_h { |row| [row.gpio, [row.use, row.function, row.alternate, row.pull]] })
   end
 

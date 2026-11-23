@@ -9,6 +9,7 @@
 #include "erx/abi_reader.h"
 #include "erx/core/boot_handoff.h"
 #include "erx/core/dt.h"
+#include "liberx/backend/fiasco/bcm2711_pins.h"
 #include "liberx/backend/fiasco/entropy.h"
 #include "liberx/backend/fiasco/boot_args.h"
 #include "liberx/backend/fiasco/libc_start.h"
@@ -61,6 +62,17 @@ typedef enum erx_fiasco_board_mbox {
  */
 const char	*erx_fiasco_program_mailbox(const erx_dt_t *tree, const erx_manifest_view_t *manifest,
 		    erx_fiasco_board_mbox_t *found);
+
+/*
+ * The on-board pins (docs/design-header-io.md, "On-board pins"): the manifest's
+ * onboard_pins rows, set through the unit of ERX_BCM2711_PINS_COMPATIBLE that manifest
+ * gives the system domain (erx_boot_held_row) when tree, the one erx_fiasco_program_tree
+ * accepted, confirms its row (erx_fiasco_bcm2711_pins_set). *found says what was done.
+ * Returns NULL, or why the root cannot boot: the row's path is not a node path. A root
+ * built without a program sets no pin.
+ */
+const char	*erx_fiasco_program_pins(const erx_dt_t *tree, const erx_manifest_view_t *manifest,
+		    erx_fiasco_board_pins_t *found);
 
 /*
  * What the root task runs once it is up: it joins tree's facts to the manifest's devices,

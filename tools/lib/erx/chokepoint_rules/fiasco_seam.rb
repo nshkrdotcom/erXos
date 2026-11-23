@@ -58,6 +58,8 @@ module Erx
         liberx/backend/fiasco/arch/aarch64/root_start.S
         liberx/backend/fiasco/arch/aarch64/task_start.S
         liberx/backend/fiasco/arch/aarch64/thread_start.S
+        liberx/backend/fiasco/bcm2711_pins.c
+        liberx/backend/fiasco/bcm2711_pins.h
         liberx/backend/fiasco/cache.h
         liberx/backend/fiasco/console.c
         liberx/backend/fiasco/console.h

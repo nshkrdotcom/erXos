@@ -493,8 +493,11 @@ bootable file as `kernel8.img`, and enters BL31, which enters
 `bootstrap`. The packer writes `config.txt` itself, setting by setting
 (`tools/lib/erx/boot_partition.rb`). Among its settings are a 64-bit
 kernel at the address `bootstrap` is linked for, the armstub,
-and the mini UART with
-its clock pinned so its divisor holds. The firmware stays resident
+the mini UART with
+its clock pinned so its divisor holds, and a `gpio=` line for each
+of the header's bus pins; the pins the board wires to its own chips
+the root sets later, before any domain starts
+([chapter 15](15-devices.md#1581-one-map-of-the-header)). The firmware stays resident
 with access to all memory, and BL31 stays at EL3
 ([design-platforms.md, Firmware](../design-platforms.md#firmware));
 erXos trusts both, having no choice.

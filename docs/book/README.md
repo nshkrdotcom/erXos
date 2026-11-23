@@ -1364,7 +1364,8 @@ reader's DMA facts, the unit rule, the driver-control facet and both
 drivers' restarts. Built, and unexercised because no PCIe domain runs:
 the give of a PCIe function. Built as pure code with host tests: the
 PCIe enumerator's parts, USB's cores and decoders, the TRB descriptor
-form, and the check of the Pi 4's header map. Designed: the running PCIe
+form, and the check of the Pi 4's header map. Built: the root's setting
+of the Pi 4's on-board pins at boot. Designed: the running PCIe
 and USB domains, MSI delivery, virtio over PCIe, the SD controller's
 ADMA2 form, the Pi 4's header drivers and `/proc/sensors`.
 

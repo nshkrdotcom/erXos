@@ -78,6 +78,7 @@ static void root_report(const erx_boot_handoff_view_t *, uint32_t);
 static void root_report_manifest(const erx_manifest_view_t *, uint64_t);
 static void root_report_watchdog(const erx_watchdog_config_t *, erx_watchdog_mode_t, erx_fiasco_board_wdt_t);
 static void root_report_mailbox(erx_fiasco_board_mbox_t);
+static void root_report_pins(erx_fiasco_board_pins_t, uint32_t);
 
 void
 erx_fiasco_root_main(void)
@@ -135,11 +136,16 @@ root_boot(erx_boot_handoff_view_t *handoff, erx_manifest_view_t *manifest, erx_b
 	erx_fiasco_pm_wdt_t board;
 	erx_fiasco_board_wdt_t board_status;
 	erx_fiasco_board_mbox_t mailbox;
+	erx_fiasco_board_pins_t pins;
 
 	reason = erx_fiasco_program_watchdog(&root_tree, manifest, &board, &board_status);
 	if (reason != NULL)
 		return (reason);
 	reason = erx_fiasco_program_mailbox(&root_tree, manifest, &mailbox);
+	if (reason != NULL)
+		return (reason);
+	/* Before any domain starts, so no driver finds an on-board pin unset. */
+	reason = erx_fiasco_program_pins(&root_tree, manifest, &pins);
 	if (reason != NULL)
 		return (reason);
 	reason = erx_fiasco_watchdog_start(&config, mode, &board);
@@ -149,6 +155,7 @@ root_boot(erx_boot_handoff_view_t *handoff, erx_manifest_view_t *manifest, erx_b
 	root_report_manifest(manifest, free_pages);
 	root_report_watchdog(&config, mode, board_status);
 	root_report_mailbox(mailbox);
+	root_report_pins(pins, manifest->header.onboard_pins.count);
 	return (NULL);
 }
 
@@ -304,6 +311,47 @@ root_report_mailbox(erx_fiasco_board_mbox_t mailbox)
 	root_append(line, &used, "erx: root task: firmware mailbox ");
 	root_append(line, &used, mailbox == ERX_FIASCO_BOARD_MBOX_READY ? "mapped" :
 	    "none: its record is not confirmed or not mapped");
+	root_append(line, &used, "\n");
+	erx_fiasco_console_write(line, used);
+}
+
+/*
+ * A manifest with on-board pin rows has a line: that the root set them, and how many, or
+ * why it wrote nothing, or that it wrote them and they read back otherwise
+ * (docs/design-header-io.md, "On-board pins").
+ */
+static void
+root_report_pins(erx_fiasco_board_pins_t pins, uint32_t count)
+{
+	char line[ERX_ROOT_LINE_MAX];
+	size_t used = 0;
+	const char *what = NULL;
+
+	switch (pins) {
+	case ERX_FIASCO_BOARD_PINS_NONE:
+		return;
+	case ERX_FIASCO_BOARD_PINS_SET:
+		what = "set: ";
+		break;
+	case ERX_FIASCO_BOARD_PINS_ABSENT:
+		what = "absent: the system domain holds no pin controller";
+		break;
+	case ERX_FIASCO_BOARD_PINS_UNCONFIRMED:
+		what = "unconfirmed: the tree does not confirm the pin controller's record";
+		break;
+	case ERX_FIASCO_BOARD_PINS_REFUSED:
+		what = "not set: the rows or the controller's page are refused; nothing is written";
+		break;
+	case ERX_FIASCO_BOARD_PINS_MISMATCH:
+		what = "mismatch: written, but the function-select words read back otherwise";
+		break;
+	}
+	root_append(line, &used, "erx: root task: on-board pins ");
+	root_append(line, &used, what);
+	if (pins == ERX_FIASCO_BOARD_PINS_SET) {
+		root_append_decimal(line, &used, count);
+		root_append(line, &used, " rows");
+	}
 	root_append(line, &used, "\n");
 	erx_fiasco_console_write(line, used);
 }

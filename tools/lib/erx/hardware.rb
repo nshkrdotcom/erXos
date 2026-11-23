@@ -735,7 +735,7 @@ module Erx
         accessors = []
         accessors << "#{name}_read" unless register.access == 'write-only'
         accessors << "#{name}_write" unless register.access == 'read-only'
-        accessors << "#{name.upcase}_PRESERVE" if acting?(register)
+        accessors << "#{name.upcase}_PRESERVE" if preserved?(register)
         fields = register.fields.flat_map do |field|
           member = "#{name}_#{field.name.downcase}"
           values = field.values.keys.map { |label| "#{member.upcase}_#{label.upcase}" }
@@ -807,7 +807,7 @@ module Erx
               end
       owner = register.owned_by_nif ? ', owned by the device NIF' : ''
       place = register.cluster ? " of cluster #{register.cluster.cluster}, #{base_words(register.cluster)}" : ''
-      preserve = if acting?(register)
+      preserve = if preserved?(register)
                    name = "ERX_HW_#{device.name}_#{register.name}_PRESERVE".upcase
                    ["%% The bits a write keeps from the word read, so it changes only what it means to:",
                     "-define(#{name}, #{erlang_integer(preserve_mask(register))}).", '']
@@ -887,7 +887,7 @@ module Erx
           lines << "/* #{register.name.downcase} is in cluster #{register.cluster.cluster}: device is #{view}, its base " \
                    "#{base_words(register.cluster).delete_prefix('whose base ')}. */"
         end
-        if acting?(register)
+        if preserved?(register)
           lines << "#define #{name.upcase}_PRESERVE #{c_integer(preserve_mask(register), width: register.width)}"
         end
         if readable
@@ -948,6 +948,11 @@ module Erx
     # Whether some writable field of the register acts on a write rather than storing it, so a
     # driver writes the register as the word read, masked to preserve_mask, with its own bits.
     def acting?(register) = acting_fields?(register.fields)
+
+    # Whether the register's headers define its preserve mask: a register with an acting field,
+    # and one written back as the word read, whose mask keeps its reserved bits clear so the
+    # generated write, which refuses them, takes the word (the on-board pins' GPFSEL words).
+    def preserved?(register) = acting?(register) || plain_update?(register)
 
     def acting_fields?(fields) = fields.any? { |field| field.access != 'read-only' && !field.write.empty? }
 

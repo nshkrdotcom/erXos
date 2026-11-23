@@ -235,6 +235,12 @@ main(int argc, char **argv)
 			    (unsigned long long)row.window.base, (unsigned long long)row.window.size);
 		else
 			printf("held_mailbox none\n");
+		/* The device the root writes itself once at boot, the pin controller (On-board pins). */
+		if (erx_manifest_open(bytes, length, &view, &error) && erx_boot_held_row(&view, "brcm,bcm2711-gpio", &row))
+			printf("held_pins %.*s %llu %llu\n", (int)row.path.length, row.path.bytes,
+			    (unsigned long long)row.window.base, (unsigned long long)row.window.size);
+		else
+			printf("held_pins none\n");
 	}
 	printf("devices %zu\n", manifest.device_count);
 	for (size_t at = 0; at < manifest.device_count; at++) {

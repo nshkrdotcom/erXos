@@ -6,6 +6,7 @@ require 'digest'
 require_relative 'abi_binary'
 require_relative 'build_kind'
 require_relative 'device_kinds'
+require_relative 'header_map'
 require_relative 'generated_abi'
 require_relative 'manifest_frontend'
 require_relative 'package_key'
@@ -566,6 +567,7 @@ module Erx
         end
         normalize_units(rows)
         rows['firmware_requests'] = firmware_requests(rows.fetch('devices'))
+        rows['onboard_pins'] = onboard_pins
         device_memory = rows.fetch('devices').sum { |device| device.fetch('dma_memory') }
         # The Fiasco backend's contiguous pool holds every device's memory at once (RootStartup.contiguous_pool_bytes).
         if device_memory > RootStartup::CONTIGUOUS_POOL_MAX_BYTES
@@ -1193,6 +1195,16 @@ module Erx
           { 'name' => "#{stem}_#{state}", 'device' => path, 'tag' => 'set_gpio_state',
             'arguments' => firmware_words('set_gpio_state', [pin, @codec.constant("vc_#{line}_#{state}")]) }
         end
+      end
+
+      # The header map's on-board rows (docs/design-header-io.md, "On-board pins"), each its pin
+      # and its function's alternate number, in the map's increasing GPIO order, which the root
+      # sets at boot when the manifest gives the system domain the pin controller. HeaderMap
+      # refuses a header pin, so no row names the console's pins, and reads the on-board rows
+      # alone, so a test record whose header rows another check judges still packs them. A
+      # record without a map has none.
+      def onboard_pins
+        HeaderMap.read_onboard(@context.platform).map { |row| { 'gpio' => row.gpio, 'alternate' => row.alternate } }
       end
 
       # The words of a tag's request (abi/formats/vc_property.txt).

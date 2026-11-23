@@ -540,6 +540,24 @@ class ProductionImageTest < Minitest::Test
     points.find { |point| point.fetch(:name) == name }.fetch(:verify)
   end
 
+  # On the Pi 4, whose manifest gives the system domain the pin controller, the boot checks
+  # that the root set every on-board row: a mismatch, a refusal or another count fails it.
+  # QEMU's virt machine has no header map, so its boots name no such line.
+  def test_a_pi4_boot_checks_the_root_set_its_on_board_pins
+    raspi4b = Erx::Platform.load(root: ROOT, name: 'raspi4b')
+    rows = raspi4b.pins.onboard.size
+    verify = checkpoint_verifier('root-pins', manifest_source: raspi4b.manifest_source(ROOT))
+    verify.call("erx: root task: on-board pins set: #{rows} rows\r\n")
+    ["set: #{rows + 1} rows", 'mismatch: written, but the function-select words read back otherwise',
+     "not set: the rows or the controller's page are refused; nothing is written"].each do |outcome|
+      assert_raises(Erx::Error) { verify.call("erx: root task: on-board pins #{outcome}\r\n") }
+    end
+    points = Erx::ProductionImage::Run.checkpoints(FakeBuilt.new(build_id: 'aa', index_hash: 'bb', flags: 1, test_code: false),
+                                                   root: ROOT, watchdog: '1,30,600', cpus: 4,
+                                                   manifest_source: PLATFORM.manifest_source(ROOT), memory_mib: DEVELOPMENT.memory_mib)
+    assert_nil points.find { |point| point.fetch(:name) == 'root-pins' }
+  end
+
   # A production boot is of an image that carries no test code, and the kernel must report
   # the archive's own identity and flags, so a test image's mark would show.
   def test_a_production_boot_is_of_an_image_without_test_code

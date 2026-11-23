@@ -18,16 +18,16 @@ class BootPartitionTest < Minitest::Test
 
   # The Pi 4's card (docs/design-header-io.md, "Verification"): BSC1's, UART3's, SPI0's and
   # the console's pins from the header map, none for the gpio rows (GPIO 18 and 19, PWM0's,
-  # among them), UART0's on-board pins to the Bluetooth controller in their function alone,
-  # the core clock fixed at the map's 500 MHz, and the ARM's JTAG on a development card.
+  # among them), none for UART0's on-board pins to the Bluetooth controller, which the root
+  # sets at boot, the core clock fixed at the map's 500 MHz, and the ARM's JTAG on a
+  # development card.
   def test_config_txt_comes_from_the_record
     assert_equal %w[arm_64bit=1 kernel=kernel8.img kernel_address=0x200000 armstub=bl31.bin enable_uart=1
                     init_uart_clock=48000000 total_mem=1024 gpu_mem=76 framebuffer_depth=32
                     framebuffer_ignore_alpha=1 max_framebuffers=1 disable_overscan=1
                     core_freq=500 core_freq_fixed=1
                     uart_2ndstage=1 enable_jtag_gpio=1 dtoverlay=uart3
-                    gpio=2-3=a0,pn gpio=4=a4,pn gpio=5=a4,pu gpio=7-11=a0,pn gpio=14-15=a5,pn
-                    gpio=30-33=a3],
+                    gpio=2-3=a0,pn gpio=4=a4,pn gpio=5=a4,pu gpio=7-11=a0,pn gpio=14-15=a5,pn],
                  settings('development')
   end
 
@@ -50,11 +50,14 @@ class BootPartitionTest < Minitest::Test
     refute_includes lines, 'enable_jtag_gpio=1'
   end
 
-  # The gpio= lines set each of the map's device rows and on-board rows once and nothing
-  # else, so no pin of a gpio, reserved or jtag row gets a line.
-  def test_the_pin_lines_are_the_maps_device_and_onboard_rows
+  # The gpio= lines set each of the map's header device rows once and nothing else, so no
+  # pin of a gpio, reserved or jtag row gets a line, and no on-board pin does: the firmware
+  # leaves GPIO 30 and 31 inputs whatever config.txt says, so the root sets the on-board
+  # rows at boot (docs/design-header-io.md, "On-board pins").
+  def test_the_pin_lines_are_the_maps_header_device_rows
     pins = set_pins(settings('development'))
-    assert_equal (PI.pins.device_rows + PI.pins.onboard).map(&:gpio), pins
+    assert_equal PI.pins.device_rows.map(&:gpio), pins
+    assert_empty pins & PI.pins.onboard.map(&:gpio)
   end
 
   # The pins each gpio= line sets, in order; a line may name one pin or a range

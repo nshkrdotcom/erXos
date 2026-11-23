@@ -100,6 +100,15 @@ module Erx
     # registers, names the mailbox's header and accessors alone.
     VC_MBOX_SHIM = Chokepoints::Site.new(glob: 'liberx/backend/fiasco/vc_mbox.c',
                                          permits: %r{\A(?:#\s*include\s*"erx/hw/vc_mbox\.h"|erx_vc_mbox_\w+)\z})
+    # On Fiasco the root sets the on-board pins' functions once at boot, before any domain
+    # starts (docs/design-header-io.md, "On-board pins"): its one device shim, the only root
+    # code that touches the pin controller, names the controller's header and the
+    # function-select registers' accessors alone, and the pure core that plans the words
+    # only the header, the field setters and the field values.
+    PINS_SHIM = Chokepoints::Site.new(glob: 'liberx/backend/fiasco/bcm2711_pins.c',
+                                      permits: %r{\A(?:#\s*include\s*"erx/hw/bcm2711_gpio\.h"|erx_bcm2711_gpio_gpfsel[0-5]_(?:read|write))\z})
+    PINS_CORE = Chokepoints::Site.new(glob: 'kernel/core/bcm2711_pins.c',
+                                      permits: %r{\A(?:#\s*include\s*"erx/hw/bcm2711_gpio\.h"|erx_bcm2711_gpio_\w+_set|ERX_BCM2711_GPIO_\w+)\z})
 # The xHCI harness's stand-in controller answers the device NIF's register accesses and
 # reads the registers it wrote through the generated xHCI header, as GENET's harness does
 # for its engines; it is a host test and reaches no device.
@@ -160,25 +169,30 @@ XHCI_HARNESS = Chokepoints::Site.new(glob: 'test/fixtures/erx_device_xhci_harnes
         # import check, and a header and a call are all a bypass of erx_device needs.
         Chokepoints::Forbidden.new(
           name: 'device-peripheral-headers',
-          rule: "only the kernel platform layer, the header probe and the root's RNG200, watchdog and mailbox shims, the watchdog's core and the mailbox routine on Fiasco include a generated peripheral header",
+          rule: "only the kernel platform layer, the header probe and the root's RNG200, watchdog, mailbox and on-board pin shims, the watchdog's and the on-board pins' cores and the mailbox routine on Fiasco include a generated peripheral header",
           design: DEVICE_DESIGN,
           scope: DEVICE_SCOPE,
           pattern: PERIPHERAL_INCLUDE,
-          sites: [PLATFORM_LAYER, PROBE_HEADERS, RNG200_SHIM, PM_WDT_SHIM, PM_WDT_CORE, VC_MAILBOX_CORE, VC_MBOX_SHIM, XHCI_HARNESS],
+          sites: [PLATFORM_LAYER, PROBE_HEADERS, RNG200_SHIM, PM_WDT_SHIM, PM_WDT_CORE, VC_MAILBOX_CORE, VC_MBOX_SHIM, PINS_SHIM, PINS_CORE, XHCI_HARNESS],
           seed: { 'otp/erts/emulator/beam/seeded.c' => "#include <erx/hw/pl011.h>\n" }
         ),
         Chokepoints::Forbidden.new(
           name: 'device-peripheral-accessors',
-          rule: "only the generated peripheral headers, the kernel platform layer, the header probe, the root's RNG200, watchdog and mailbox shims and the watchdog and mailbox cores' field functions name their accessors",
+          rule: "only the generated peripheral headers, the kernel platform layer, the header probe, the root's RNG200, watchdog, mailbox and on-board pin shims and the watchdog, mailbox and on-board pin cores' field functions name their accessors",
           design: DEVICE_DESIGN,
           scope: DEVICE_SCOPE,
           pattern: /\b(?:#{PERIPHERAL_SYMBOLS.map { |symbol| Regexp.escape(symbol) }.join('|')})\b/,
           sites: PERIPHERAL_HEADERS.map { |header| Chokepoints::Site.new(glob: header) } +
-                 [PLATFORM_LAYER, PROBE_ACCESSORS, RNG200_SHIM, PM_WDT_SHIM, PM_WDT_CORE, VC_MAILBOX_CORE, VC_MBOX_SHIM, XHCI_HARNESS],
+                 [PLATFORM_LAYER, PROBE_ACCESSORS, RNG200_SHIM, PM_WDT_SHIM, PM_WDT_CORE, VC_MAILBOX_CORE, VC_MBOX_SHIM, PINS_SHIM, PINS_CORE, XHCI_HARNESS],
           seed: { 'otp/erts/emulator/nifs/erxos/seeded.c' => "void f(erx_mmio_t d) { erx_pl011_dr_write(d, 65); }\n",
                   # The watchdog's core may name its setters, never a register access.
                   'kernel/core/pm_wdt.c' => "void f(erx_mmio_t d) { erx_pm_wdt_rstc_write(d, 0); }\n",
-                  'kernel/core/vc_mailbox.c' => "void f(erx_mmio_t d) { erx_vc_mbox_write_write(d, 8); }\n" }
+                  'kernel/core/vc_mailbox.c' => "void f(erx_mmio_t d) { erx_vc_mbox_write_write(d, 8); }\n",
+                  # The on-board pins' shim reaches the function-select registers alone, never
+                  # another of the controller's, such as the pin levels.
+                  'liberx/backend/fiasco/bcm2711_pins.c' => "void f(erx_mmio_t d) { erx_bcm2711_gpio_gpset1_write(d, 1); }\n",
+                  # The on-board pins' core may name the field setters, never a register access.
+                  'kernel/core/bcm2711_pins.c' => "void f(erx_mmio_t d) { erx_bcm2711_gpio_gpfsel3_write(d, 0); }\n" }
         ),
         Chokepoints::Forbidden.new(
           name: 'device-register-callers',

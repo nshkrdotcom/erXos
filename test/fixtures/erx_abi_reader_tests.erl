@@ -91,7 +91,7 @@ set_u32(Bytes, Offset, Value) ->
 
 complete_fixture_test() ->
     ?assertEqual(1, ?ERX_ABI_VERSION),
-    ?assertEqual(488, ?ERX_MANIFEST_SIZE),
+    ?assertEqual(496, ?ERX_MANIFEST_SIZE),
     ?assertEqual((1 bsl 64) - 1, ?ERX_TIME_PAGE_SEQ_TERMINAL),
     ?assertEqual(-7, ?ERX_TIME_PAGE_SEQ_EXHAUSTION),
     {ok, View} = erx_manifest:open(fixture()),
@@ -131,9 +131,9 @@ references_and_inactive_payload_test() ->
     Bytes = fixture(),
     ?assertMatch({error, #{reason := string_range,
                           field := <<"principals[].name.offset">>}},
-                 erx_manifest:read(set_u32(Bytes, 488, 16#ffffffff))),
+                 erx_manifest:read(set_u32(Bytes, 496, 16#ffffffff))),
     ?assertMatch({error, #{reason := inactive, field := <<"limits[].spaces">>}},
-                 erx_manifest:read(set_u32(Bytes, 640, 1))),
+                 erx_manifest:read(set_u32(Bytes, 648, 1))),
     ?assertMatch({error, #{reason := index, field := <<"root.native_limits">>}},
                  erx_manifest:read(set_u32(Bytes, 204, 1))).
 

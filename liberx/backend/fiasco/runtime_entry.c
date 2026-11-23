@@ -17,6 +17,7 @@
 
 #include "erx/abi.h"
 #include "erx/abi_reader.h"
+#include "erx/core/bcm2711_pins.h"
 #include "erx/core/boot_pair.h"
 #include "erx/core/pm_wdt.h"
 #include "erx/core/vc_mailbox.h"
@@ -27,6 +28,7 @@
 #include "liberx/backend/core/boot_manifest.h"
 #include "liberx/backend/core/cpu_features.h"
 #include "erx/dom_lib.h"
+#include "liberx/backend/fiasco/bcm2711_pins.h"
 #include "liberx/backend/fiasco/boot_args.h"
 #include "liberx/backend/fiasco/console.h"
 #include "liberx/backend/fiasco/group.h"
@@ -413,6 +415,39 @@ erx_fiasco_program_mailbox(const erx_dt_t *tree, const erx_manifest_view_t *mani
 	if (!erx_fiasco_vc_mbox_open(row.window))
 		return (NULL);
 	*found = ERX_FIASCO_BOARD_MBOX_READY;
+	return (NULL);
+}
+
+/*
+ * Sets the board's on-board pins (runtime_entry.h), at the pin controller's row as the
+ * mailbox is mapped. The rows are copied out of the manifest first, so the plan is taken
+ * whole: more rows than the plan takes, or a row that cannot be read, writes nothing.
+ */
+const char *
+erx_fiasco_program_pins(const erx_dt_t *tree, const erx_manifest_view_t *manifest, erx_fiasco_board_pins_t *found)
+{
+	erx_mf_onboard_pin_t rows[ERX_BCM2711_PINS_ROWS_MAX];
+	const uint32_t count = manifest->header.onboard_pins.count;
+	erx_boot_row_t row;
+
+	*found = ERX_FIASCO_BOARD_PINS_NONE;
+	if (count == 0)
+		return (NULL);
+	*found = ERX_FIASCO_BOARD_PINS_ABSENT;
+	if (!erx_boot_held_row(manifest, ERX_BCM2711_PINS_COMPATIBLE, &row))
+		return (NULL);
+	if (!tree_path_set(row.path))
+		return ("the pin controller's record: its device-tree path is not a node path");
+	*found = ERX_FIASCO_BOARD_PINS_UNCONFIRMED;
+	if (erx_dt_registers(tree, tree_path, ERX_BCM2711_PINS_COMPATIBLE, row.window) != ERX_DT_REGS_OK)
+		return (NULL);
+	*found = ERX_FIASCO_BOARD_PINS_REFUSED;
+	if (count > ERX_BCM2711_PINS_ROWS_MAX)
+		return (NULL);
+	for (uint32_t at = 0; at < count; at++)
+		if (!erx_manifest_onboard_pins_at(manifest, at, &rows[at]))
+			return (NULL);
+	*found = erx_fiasco_bcm2711_pins_set(row.window, rows, count);
 	return (NULL);
 }
 

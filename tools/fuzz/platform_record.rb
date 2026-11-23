@@ -86,7 +86,7 @@ module Erx
       raise "PINS #{map.gpio_mask} past GPIO 27" unless map.gpio_mask < (1 << 28)
       raise 'a device row without an alternate' unless map.device_rows.all? { |row| (0..5).cover?(row.alternate) }
       raise 'an on-board row on a header pin or with a pull' unless
-        map.onboard.all? { |row| row.gpio >= 28 && (0..5).cover?(row.alternate) && row.pull == :keep }
+        map.onboard.all? { |row| row.gpio >= 28 && (0..5).cover?(row.alternate) && row.pull.nil? }
     rescue Erx::Error
       nil
     end

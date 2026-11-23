@@ -3072,6 +3072,18 @@ data, one `bootstrap` build, the random generator's read, and the kernel's other
 * **The hardware watchdog.** The board's power-management watchdog, a unit of the platform record
   (`config/platforms/raspi4b.json`) that the manifest gives the system domain, whose window only the root maps, armed
   and reloaded on every boot ([The watchdog](#the-watchdog)).
+* **On-board pins.** The pin controller, `gpio` in the platform record, is a unit the manifest gives the system
+  domain. After the watchdog and the mailbox are programmed and before any domain starts, the root sets the functions
+  of the board's on-board pins from the manifest's `onboard_pins` rows, UART0's GPIO 30 to 33 to the Bluetooth
+  controller, at the window the controller's row states and only once the firmware's tree confirms that window
+  ([design-header-io.md](design-header-io.md#on-board-pins)). Only GPIO 28 to 57, banks 1 and 2, can be written, by
+  construction: the pure core `kernel/core/bcm2711_pins.c` has a field for those pins alone, so no row reaches a
+  header pin, the console's among them. The plan is taken whole or not at all, only the words that change are
+  written, each with its reserved bits cleared, and all six are read back. The root reports one line,
+  `erx: root task: on-board pins set: N rows`; or why it wrote nothing; or
+  `erx: root task: on-board pins mismatch: ...` when the words were written but read back otherwise. A boot whose
+  pins are not set goes on without them, except for a malformed manifest row: a controller row whose tree path is
+  not a node path refuses the boot, as the watchdog's and the mailbox's rows do.
 * **Entropy.** On the condition [Entropy sources](design-platforms.md#entropy-sources) states for the kernel's platform
   layer, the root also reads 32 bytes from the board's RNG200 random generator, waiting at most 100 ms, and seeds its
   generator from them, as that layer does on erXos's kernel. Where the generator is comes from one

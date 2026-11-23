@@ -75,7 +75,7 @@ goes to the document of the subsystem its component pointer names.
 * [Fiasco](docs/todo-fiasco.md#bugs-by-subsystem): Fiasco, the release kernel, and `liberx`'s Fiasco backend: 0.2's work, the patches, the boot and the build.
   51 items (26 Medium, 25 Low).
 * [liberx and the ABI](docs/todo-liberx.md#bugs-by-subsystem): liberx and its program layer, the ABI and its generators, the domain library.
-  88 items (39 Medium, 49 Low).
+  89 items (39 Medium, 50 Low).
 * [Domains and the system manifest](docs/todo-domains.md#bugs-by-subsystem): the domain service, domains, the code service, facets, the system manifest and its checks, the funnel.
   60 items (1 High, 34 Medium, 25 Low).
 * [Network](docs/todo-network.md#bugs-by-subsystem): the network stack (`erx_net`), WiFi and HTTPS clients.
@@ -116,7 +116,7 @@ document's "residual risks accepted" paragraph.
 * [erXos's kernel](docs/todo-kernel.md#security-residuals): erXos's own kernel (Phase 2, Track K): the C17 cores, the chokepoint checks, the scheduler and the kernel ABI generator.
   5 items (4 Medium, 1 Low).
 * [Fiasco](docs/todo-fiasco.md#security-residuals): Fiasco, the release kernel, and `liberx`'s Fiasco backend: 0.2's work, the patches, the boot and the build.
-  13 items (3 High, 5 Medium, 5 Low).
+  14 items (3 High, 6 Medium, 5 Low).
 * [liberx and the ABI](docs/todo-liberx.md#security-residuals): liberx and its program layer, the ABI and its generators, the domain library.
   5 items (2 Medium, 3 Low).
 * [Domains and the system manifest](docs/todo-domains.md#security-residuals): the domain service, domains, the code service, facets, the system manifest and its checks, the funnel.
@@ -165,7 +165,7 @@ document's "residual risks accepted" paragraph.
 * [Bluetooth](docs/todo-bluetooth.md#planned-features): the Bluetooth host and controller, GATT and the security manager.
   10 items (1 High, 9 Medium).
 * [Drivers and platforms](docs/todo-drivers.md#planned-features): drivers and the device layer: PCIe, DMA, the device tree, GENET, SD, UART, the platforms and boards.
-  28 items (18 Medium, 10 Low).
+  29 items (18 Medium, 11 Low).
 * [Shell and programs](docs/todo-shell.md#planned-features): the command shell (rc), programs, the console line and the terminal.
   15 items (4 Medium, 11 Low).
 * [Sessions and SSH](docs/todo-session.md#planned-features): sessions, SSH, the vault and login.

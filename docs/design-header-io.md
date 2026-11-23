@@ -34,6 +34,14 @@ Decisions every reader needs:
 * **The firmware sets the bus pins, so no bus needs a run-time pin
   holder.** I2C, SPI and the vault's TPM work with no domain holding the
   GPIO page.
+* **The root sets the on-board pins.** Pins off the header that are
+  wired to a chip on the board, UART0's to the Bluetooth controller on
+  the Pi 4, have their functions set once at boot by the system
+  domain's root, from a table the manifest packer generates from the
+  map's on-board rows, before any domain starts
+  ([On-board pins](#on-board-pins)). One pin table has two writers,
+  separated by time: the root at boot for on-board pins, the GPIO driver
+  at run time for header pins.
 * **Whoever holds the pin controller holds the console's wires.** The
   GPIO page sets the function and pull of every pin, the console's and
   the host link's included, and reads every pin's level. A manifest
@@ -42,8 +50,9 @@ Decisions every reader needs:
   the trees they back, with no window, facet or introduction, which
   property 8 of the
   manifest check proves from the header map. The Pi 4's manifests give
-  it to no domain, and serve no `/dev/gpio`, until run-time GPIO is built;
-  its home then is a trusted domain of its own ([Decisions](#decisions)).
+  it to the system domain, whose root writes the on-board pins with it
+  at boot and which serves no `/dev/gpio`; where run-time GPIO is served
+  from is settled when it is built ([Decisions](#decisions)).
 * **A pin, a chip select or a PWM channel is held by one grant at a
   time.** The first grant to open one of its files holds it; another
   grant's open answers `ebusy`; the hold ends when the holder's last file
@@ -243,7 +252,7 @@ build derives from it, so nothing else states a pin:
    and nothing on a release card. The host link's lines come from its
    rows, so `OVERLAY_PINS` is deleted; the console's rows give lines too,
    which agree with what `enable_uart=1` forces. The map's on-board rows
-   give lines of their own ([On-board pins](#on-board-pins)).
+   give no line: the root sets them ([On-board pins](#on-board-pins)).
 2. **The pin controller's record carries `PINS`**, a 28-bit mask of the
    `gpio` rows, through the manifest's device row and its holder's
    record, as the network record carries `MAC`
@@ -279,7 +288,8 @@ a `gpio` row is refused too: a GPIO pin's pull is its holder's to set.
 Every rule about pins follows from the map instead of from a list:
 
 * **Only the pin controller's driver writes pin functions and pulls at
-  run time.** The firmware writes every bus pin before the kernel runs;
+  run time.** The firmware writes every bus pin before the kernel runs,
+  and the root every on-board pin before any domain starts;
   the GPIO driver writes only pins in `PINS`, and only `000` or `001`
   into their function fields: its register core takes a pin only from
   the set its record gave it and has no way to write an alternate
@@ -292,14 +302,15 @@ Every rule about pins follows from the map instead of from a list:
   impossible to write.
 * **Only header pins are served, but the registers are shared with bank
   1.** The map's `gpio` rows are bank 0's only, and its on-board rows
-  name pins of bank 1 for `config.txt` alone, so no pin of banks 1 and 2
-  can be served. Their fields are not all in other registers,
+  name pins of bank 1 for the root's boot table alone, so no pin of banks
+  1 and 2 can be served. Their fields are not all in other registers,
   though: GPFSEL2 holds GPIO 20 to 29 (DS Table 66), PUP_PDN_CNTRL_REG1
   GPIO 16 to 31 (DS Table 91), and the edge enables GPREN0 and GPFEN0
   GPIO 0 to 31 (DS Tables 78 and 80), so the GPIO driver's
   read-modify-writes of those registers carry bank 1's GPIO 28 to 31
   through unchanged. That is sound only while nothing else writes those
-  registers after boot. The design requires it of the firmware: the
+  registers after boot. The root writes them only before any domain
+  starts. The design requires it of the firmware too: the
   VideoCore writes the GPIO page at boot from `config.txt` and not
   afterwards. Raspberry Pi's documentation does not promise it; the
   board probe's two readings a minute apart are evidence, not proof, and
@@ -315,10 +326,18 @@ Some of the SoC's pins off the header are wired on the board to a chip
 whose link needs the pin's function set at boot. On the Raspberry Pi 4,
 GPIO 30 to 33 carry UART0 to the Bluetooth controller, a CYW43455, in
 ALT3 ([design-bluetooth.md](design-bluetooth.md#the-hardware)); the
-WiFi chip's SDIO lines on GPIO 34 to 39 are the same case. Rather than
-depend on what the firmware leaves in those pins, `config.txt` sets
-their function, and the header map takes them as its `onboard` list,
-beside `rows` in the record's `pins`:
+WiFi chip's SDIO lines on GPIO 34 to 39 are the same case. The
+firmware cannot be relied on for them: on the Pi 4 it leaves GPIO 30
+and 31 inputs whatever a `gpio=` line asks, though it applies the
+header's lines
+([research-bluetooth-pi4.md](research-bluetooth-pi4.md#2026-11-23-the-firmware-leaves-uart0s-flow-control-pins-unset)).
+So the system domain's root sets their functions once at boot, before
+any domain starts, as FreeBSD's pin controller driver does when it
+attaches: it walks the device tree and sets each pin group's function
+from its `brcm,pins` and `brcm,function` properties
+(`sys/arm/broadcom/bcm2835/bcm2835_gpio.c`, releng/15.1, lines
+841-842 and 1250-1300; `sys/dev/fdt/fdt_pinctrl.c`, lines 118-154). The header map takes them as its `onboard`
+list, beside `rows` in the record's `pins`:
 
 | GPIO | Device | Function |
 | --- | --- | --- |
@@ -326,9 +345,8 @@ beside `rows` in the record's `pins`:
 
 A row states three things: the GPIO, the device path of the SoC block
 whose signal the pin carries, and the function's Table 94 name. It has
-no pull: a `gpio=` line makes only the changes it names (Raspberry Pi
-documentation, `config_txt-gpio.adoc`), so a line that sets only the
-function leaves the pin's power-on pull as it was. Which on-board chips an image's
+no pull: the root writes only function fields, so each pin keeps the
+pull the firmware left it. Which on-board chips an image's
 pins are set for is the record's list: a board's record holds a row for
 each on-board pin its images need set, and a row is added with the
 driver or bring-up that needs it, as a controller row is. The SoC table
@@ -337,9 +355,36 @@ written from Table 94 as the others are.
 
 What follows from the rows:
 
-* **`config.txt`.** Each run of consecutive on-board rows of one
-  alternate gives one `gpio=N-M=aK` line, with no pull attribute; on the
-  Pi 4, `gpio=30-33=a3`. The rows are the line's one source.
+* **The root's boot table.** The manifest packer writes each row as an
+  `onboard_pins` row of the manifest, its GPIO and the alternate number
+  of its function (`abi/manifest.txt`), and gives none a `config.txt`
+  line. When the manifest gives the system domain the pin controller's
+  unit, the root reads GPFSEL0 to GPFSEL5 at the window the
+  controller's row states, once the firmware's tree confirms that
+  window; plans the new words in a pure core
+  (`kernel/core/bcm2711_pins.c`) that changes only the named fields and
+  takes the plan whole or not at all; writes the words that change;
+  and reads them back. The core has a field only for GPIO 28 to 57,
+  banks 1 and 2, so no row can reach a header pin, the console's among
+  them. Each word the plan changes has its reserved bits cleared, so
+  the generated write takes it. The root reports one line: the pins
+  set and how many; the controller absent from the system domain, the
+  tree not confirming its window, or the rows or the controller's page
+  refused, each of which writes nothing; or the words written but
+  reading back otherwise. A boot whose pins are not set goes on: only
+  the chips on those pins fail, with their own diagnostics
+  ([design-fiasco.md](design-fiasco.md#the-raspberry-pi-4)). The one
+  exception is a malformed manifest row: a controller row whose tree
+  path is not a node path refuses the boot, as the watchdog's and the
+  mailbox's rows do.
+* **One pin table, two writers, separated by time.** The root writes
+  the on-board pins at boot, before any domain starts; the GPIO
+  driver writes header pins at run time, only those in `PINS`, and
+  only input or output. No pin is both, since an on-board pin is never
+  a header pin. A general per-device pin-state mechanism, as FreeBSD's
+  named states offer a driver (`fdt_pinctrl_configure_by_name`,
+  `fdt_pinctrl.c` line 61), waits for a consumer that changes a pin's
+  function at run time; no driver of the Pi 4's does.
 * **Nothing is served.** An on-board pin is never a `gpio` row, so
   `PINS`, a mask of header pins, cannot name it, and no driver writes
   its function or pull at run time.
@@ -363,7 +408,7 @@ The unit rule makes the units; the manifest places them.
 
 | Unit | Devices | Line | Holder |
 | --- | --- | --- | --- |
-| `gpio` | the GPIO controller, the pin controller | 145 (bank 0); 146 to 148 go to no unit, as GENET's second line does | no domain on the Pi 4's manifests; its home once run-time GPIO is built is a trusted domain of its own ([Decisions](#decisions)) |
+| `gpio` | the GPIO controller, the pin controller | 145 (bank 0); 146 to 148 go to no unit, as GENET's second line does | the system domain, whose root writes the on-board pins at boot ([On-board pins](#on-board-pins)); where run-time GPIO is served from is settled when it is built ([Decisions](#decisions)) |
 | `i2c` | BSC1, driven; BSC0 and BSC3 to BSC6, which share BSC1's line and BSC0's page, and BSC2 and BSC7 where the board's tree lists them, of no kind | 149, shared | the devices domain |
 | `spi` | SPI0, driven; SPI3 to SPI6 of no kind, which share its page and line | 150, shared | the devices domain; the vault's domain on a manifest with a TPM |
 | `pwm` | PWM0 and PWM1, on one page | none | no domain until PWM is built; then the devices domain, with PWM0 driven |
@@ -431,9 +476,10 @@ controller is covered by its own map rather than by a list of device
 classes. The check fails the build naming property 8, the unit and the
 holder.
 
-The Pi 4's manifests give `gpio` to no domain. I2C, SPI and the TPM need
-no run-time pin holder, so nothing but run-time GPIO needs the pin
-controller's home, which is a trusted domain of its own
+The Pi 4's manifests give `gpio` to the system domain, which property
+8 allows: its root writes the on-board pins once at boot and no runtime
+drives the unit. I2C, SPI and the TPM need no run-time pin holder, so
+nothing else needs the pin controller until run-time GPIO is built
 ([Decisions](#decisions)).
 
 ### The buses
@@ -817,8 +863,8 @@ and no domain holds the `pwm` or `clocks` units. Building it means:
    design takes it to clock the UARTs and the SD controller as well
    (likely, unverified: the firmware lists UART, CORE and EMMC2 clocks,
    but no source read here places their registers in this page). Its
-   unit goes where the pin controller goes, to the trusted domain of its own
-   ([Decisions](#decisions)), never to the
+   unit goes where the pin controller goes, whose run-time holder is
+   settled when run-time GPIO is built ([Decisions](#decisions)), never to the
    PWM's holder, and when the record states that the console's clock
    comes from it, property 8's clause covers it as it covers the pin
    controller. The write obeys DS 5.4, Table 99, which forbids changing
@@ -1044,7 +1090,8 @@ so the case is known to reach the code it tests.
 | `erx_pwm_core`, with a case of 100 ns at 27 MHz giving 3 ticks | rounding down instead of to nearest, which the 100 ns case exposes |
 | `erx_rtc_ds3231` | the nibble check removed; 12 AM taken as hour 12; the century bit ignored |
 | the header map reader | for each refusal of the reader, one map that breaks only it: a missing pin, a function not the pin's, the console on GPIO 13, `SDA1` on an SPI0 row, SPI0 without SCLK, a `gpio` row with a function, a driven bus that no row names; an on-board row on a header pin, with a pull, or with a function the pin does not carry, and UART0's on-board rows without `TXD0` |
-| the `config.txt` writer | `jtag` rows written as `gpio=` lines on a release card; the on-board rows written with no line, which the Pi 4's `gpio=30-33=a3` exposes |
+| the `config.txt` writer | `jtag` rows written as `gpio=` lines on a release card |
+| the root's on-board pin core, `erx_bcm2711_pins_plan`, against the board's reading of GPFSEL3, `0x00000fc0` | each field one pin off; a whole-register write, which zeroes FSEL34 to 39; a plan taken in part when a later row is refused; ALT4 and ALT5 swapped |
 | property 8's pin controller clause | the same manifest giving `gpio` to the devices domain, which fails naming property 8 and the unit |
 | `gpio_grant` and `rtc_grant` | a `pins` holding GPIO 14; two `rtc` rows with different addresses; an `rtc` row whose `bus` names SPI0 |
 
@@ -1208,31 +1255,25 @@ controller a DMA device of
 
 ## Decisions
 
-1. **The units that control the console's wires, the pin controller and
-   the clock manager if PWM needs its clock written, go to one trusted
-   domain of their own** once run-time GPIO is built, holding those
-   units and nothing else: the PCIe domain's pattern for system-wide
-   configuration authority
-   ([design-system.md](design-system.md#the-manifest), property 3),
-   which property 8's clause allows. Run-time GPIO, its `/dev/gpio`,
-   the LED and the button wait on that domain's package, and nothing
-   else does: the header map, I2C, the RTC, SPI and the TPM go ahead
-   with the pin controller held by no domain. Serving pins to apps is
-   neither the system domain's policy nor its console, and a defect in
-   the trusted code reaches the GPIO page, not the root authority. The
-   domain costs one ERTS instance's memory and start, the price
-   [design-platforms.md](design-platforms.md#what-the-manifest-says)
-   already pays for each unconfined DMA unit of a Pi 4 release
-   manifest, and it adds a domain to the trusted base and to
-   `docs/design.md`'s placement decision.
+1. **The system domain holds the pin controller's unit, and its root
+   writes the on-board pins once at boot.** It needs no runtime and no
+   server: the root plans and writes GPFSEL0 to GPFSEL5 before any
+   domain starts ([On-board pins](#on-board-pins)), as it programs the
+   watchdog and the mailbox. Property 8's clause allows the system
+   domain as a holder.
 
-   The alternative was the system domain: no new domain and no new
-   authority, since it already holds the root authority, but it adds
-   a `/dev/gpio` server parsing other domains' `ctl` lines, an
-   interrupt binding and a register path to code whose defects act
-   with the root authority and whose faults reset the machine, and it
-   adds the pin controller to the system domain's devices
-   ([design-system.md](design-system.md#devices)).
+   Run-time GPIO, its `/dev/gpio`, the LED and the button revisit the
+   unit's holder when they are built, since a unit has one holder.
+   The candidate is a trusted domain of its own, holding the pin
+   controller and the clock manager if PWM needs its clock written:
+   the PCIe domain's pattern for system-wide configuration authority
+   ([design-system.md](design-system.md#the-manifest), property 3).
+   Serving pins to apps is neither the system domain's policy nor its
+   console, and a defect in that domain's trusted code would reach the
+   GPIO page, not the root authority; but the root's boot write then
+   needs the unit at boot and the domain needs it after, which a unit
+   with one holder does not give as it stands. The header map, I2C,
+   the RTC, SPI and the TPM do not wait on that choice.
 
 ## References
 
@@ -1263,7 +1304,8 @@ controller a DMA device of
   (`f5cec4ee...`), `bcm2835_spi.c` (`ea5d8544...`), `bcm2835_spireg.h`
   (`c4401a46...`), `bcm2835_pwm.c` (`8715c3fc...`), `bcm2835_clkman.c`
   (`696bd6c2...`), `bcm2835_clkman.h` (`906eb75a...`),
-  `sys/dev/gpio/gpiobus.c` (`1e84e42c...`); and, fetched for this
+  `sys/dev/gpio/gpiobus.c` (`1e84e42c...`), `sys/dev/fdt/fdt_pinctrl.c`
+  (`cb1f6048...`); and, fetched for this
   design from the FreeBSD GitHub mirror at the same commit,
   `sys/dev/iicbus/rtc/ds3231.c`
   (`62b7d80afdfe892bad7f62dc54518266fcc5c87dfbd95be8ded614ce3dffa046`),

@@ -95,15 +95,17 @@ sees it (4.8.1); the Report Map is at most 512 octets (HIDS 2.6.1).
   first PL011, on GPIO 30 to 33 in function ALT3: CTS0, RTS0, TXD0 and
   RXD0 (BCM2711 peripherals, section 5.3; Raspberry Pi documentation,
   `interfaces.adoc`, the table of primary and secondary UARTs). The
-  firmware leaves the four pins as inputs (probe B-P1,
-  [research-bluetooth-pi4.md](research-bluetooth-pi4.md#b-p1-uart0s-pins-at-erxoss-start)),
-  so the Pi 4's `config.txt` sets them with `gpio=30-33=a3`, as it sets
-  UART3's pins. The line names the function alone, so each pin keeps its
-  pull from power-on (a `gpio=` line makes only the changes it names,
-  Raspberry Pi documentation, `config_txt-gpio.adoc`); the probe set the
-  same function with the pulls untouched, and UART0 carried the
-  controller's answers at once. That `gpio=` line comes from the
-  platform record's on-board pin rows ([Decisions](#decisions), 5).
+  firmware does not set them: probe B-P1 found all four inputs, and with
+  a `gpio=30-33=a3` line in `config.txt` it still leaves GPIO 30 and 31
+  inputs
+  ([research-bluetooth-pi4.md](research-bluetooth-pi4.md#2026-11-23-the-firmware-leaves-uart0s-flow-control-pins-unset)).
+  So the system domain's root sets the four to ALT3 at boot, before any
+  domain starts, from the platform record's on-board pin rows
+  ([design-header-io.md](design-header-io.md#on-board-pins);
+  [Decisions](#decisions), 5). It writes the function fields alone, so
+  each pin keeps its pull from power-on; the probe set the same function
+  with the pulls untouched, and UART0 carried the controller's answers
+  at once.
 * **UART0 is held, undriven.** The five PL011s share one register page
   and one interrupt line, 153, so they are one unit, which the system
   domain holds for UART3, the host link
@@ -3352,18 +3354,21 @@ list ([todo-performance.md](todo-performance.md)):
    [The bring-up](#the-bring-up)). The cost is some eleven seconds of
    every bring-up at 115200 baud, on the watch list
    ([Performance](#performance)).
-5. **Decided: the line `gpio=30-33=a3` comes from the platform
-   record's on-board pin rows.** The Pi 4's `config.txt` gets its
-   `gpio=` lines from the header map. UART0's pins, GPIO 30 to 33, are
-   on the board, not the header, so the map's on-board rows name each
-   with UART0's device path and its function, and the `config.txt`
-   writer derives the line from them as it does from the header rows
-   ([design-header-io.md](design-header-io.md#on-board-pins)); the pin
-   table `hw/pins/bcm2711.txt` carries the four pins from Table 94.
-   Whether WiFi's slot sets GPIO 34 to 39, and with what pulls, is that
-   design's ([design-wifi.md](design-wifi.md#facts-this-design-does-not-have), F1).
-   A fixed line in the writer would be a second source of pins, which
-   that design rules out.
+5. **Decided: the root sets UART0's pins from the platform record's
+   on-board pin rows.** UART0's pins, GPIO 30 to 33, are on the board,
+   not the header, so the header map's on-board rows name each with
+   UART0's device path and its function; the manifest packer writes
+   them as the manifest's `onboard_pins` rows, and the system domain's
+   root writes their functions once at boot, banks 1 and 2 only, before
+   any domain starts
+   ([design-header-io.md](design-header-io.md#on-board-pins)). The pin
+   table `hw/pins/bcm2711.txt` carries the four pins from Table 94. A
+   `config.txt` line is no substitute: the firmware leaves GPIO 30 and
+   31 inputs whatever the line asks. Whether WiFi's slot sets GPIO 34
+   to 39, and with what pulls, is that design's
+   ([design-wifi.md](design-wifi.md#facts-this-design-does-not-have), F1).
+   A fixed write in the bring-up would be a second source of pins,
+   which that design rules out.
 6. **Decided: an installed app holds its own `ble` grant, scoped to the
    GATT services its package declares, and a second app declaring a
    service already held is refused at install.** Apps are installed at
@@ -3409,8 +3414,9 @@ it, and its readings go into a research record,
 are read; what they settle is in [The hardware](#the-hardware),
 [A reset](#a-reset) and [The power line](#the-power-line).
 
-* **B-P1, read.** GPIO 30 to 33 are inputs at erXos's start, so
-  `config.txt` sets them to ALT3 ([Decisions](#decisions), 5).
+* **B-P1, read.** GPIO 30 to 33 are inputs at erXos's start, and a
+  `config.txt` line leaves GPIO 30 and 31 so, so the root sets them to
+  ALT3 ([Decisions](#decisions), 5).
 * **B-P2, read.** The firmware leaves the controller powered; the
   enable line is expander pin 0, `BT_ON`, request pin 128, active high;
   300 ms off and 500 ms on bring the controller back at 115200; it sends

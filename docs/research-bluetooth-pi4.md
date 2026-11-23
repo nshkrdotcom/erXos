@@ -493,6 +493,38 @@ prerequisite of every stage. Run 5 reads the first: the ROM accepts a
 connection as a peripheral and carries the peer's first ATT PDU to the
 host without the patch.
 
+## 2026-11-23: the firmware leaves UART0's flow-control pins unset
+
+Four board runs, diag3 to diag6, of development cards whose
+`config.txt` carried the header map's `gpio=` lines and, from the
+map's on-board rows, `gpio=30-33=a3`, on the Raspberry Pi 4 Model B of
+B-P1 to B-P4 (EEPROM bootloader release `13c4219f`, 2026/10/30). The
+console logs, the packet captures and the scan are kept in
+`~/erxos-history/pi4/2026-11-23-ble-cts/`, at that repository's commit
+`50186a3`. A diagnostic line of the
+root, `bt diag root: ... fsel3 W ...`, gave GPFSEL3 as the root read it.
+
+| Reading | Value |
+| --- | --- |
+| GPFSEL3 as the firmware left it, every boot of every run | `0x00000fc0`: GPIO 32 and 33 ALT3, GPIO 30 and 31 input |
+| The firmware's `gpio_cmd` log lines | one for each header line (`2-3=a0,pn`, `4=a4,pn`, `5=a4,pu`, `7-11=a0,pn`, `14-15=a5,pn`); none for `30-33` in the kept logs |
+| HCI with GPIO 30 and 31 left input | `erx_bt_hci` stops on `command_timeout` (diag3 to diag5) |
+| GPFSEL3 after the root wrote ALT3 into GPIO 30 to 33 | `0x00000fff`, read back |
+| HCI with ALT3 written by the root | the controller answers; a host's BLE scan (`diag5-blew-scan.log`) lists the board's advertising name, `erxos` |
+
+**Reading:** the firmware applies the header's `gpio=` lines but
+leaves CTS0 and RTS0, GPIO 30 and 31, inputs whatever the line asks;
+with flow control on and CTS0 an input, the PL011 most likely never
+sees CTS asserted and does not send (not read directly). Why
+GPIO 32 and 33 read ALT3 while 30 and 31 do not is not settled here.
+**Feeds:** the on-board pins are set by the system domain's root at
+boot, from the platform record's on-board rows, and `config.txt`
+carries no line for them
+([design-header-io.md](design-header-io.md#on-board-pins)), as
+FreeBSD's pin controller driver sets the functions its device tree
+states when it attaches (`sys/arm/broadcom/bcm2835/bcm2835_gpio.c`,
+releng/15.1, lines 841-842 and 1250-1300).
+
 ## End
 
 The last lines are `bt probe: end reset ...`, the set that restores the

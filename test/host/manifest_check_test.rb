@@ -924,8 +924,12 @@ class ManifestCheckTest < Minitest::Test
 
   # The Raspberry Pi 4's development manifest and platform record
   # (docs/design-header-io.md), whose header map gives GPIO 14 and 15 to the console and
-  # GPIO 4 and 5 to the host link.
-  def pi_source = Erx::Platform.load(root: ROOT, name: 'raspi4b').manifest_source(ROOT)
+  # GPIO 4 and 5 to the host link. pi_source leaves out the shipped manifest's gpio unit,
+  # which the system domain holds for the on-board pins (docs/design-header-io.md,
+  # "On-board pins"), so each test places gpio itself.
+  def pi_shipped = Erx::Platform.load(root: ROOT, name: 'raspi4b').manifest_source(ROOT)
+  def pi_source = pi_shipped.sub(PI_GPIO_UNIT, '')
+  PI_GPIO_UNIT = "unit gpio\n  placement \"gpio\"\n  holder system\n"
   def pi_record = JSON.parse(File.read(File.join(ROOT, 'config/platforms/raspi4b.json')))
   def pi_context(record = pi_record) = context(platform: record)
   def pi_unit(name, holder) = "unit #{name}\n  placement \"#{name}\"\n  holder #{holder}\n"
@@ -977,12 +981,13 @@ class ManifestCheckTest < Minitest::Test
 
   # Property 8's pin controller clause (docs/design-header-io.md, "The pin controller and
   # the console"): whoever holds the GPIO page sets the console's pin functions, so the
-  # pin controller's unit, gpio, is unplaced (the shipped manifest), held by the system
-  # domain, or held by a domain of its own, which no row names but its units on the GPIO
+  # pin controller's unit, gpio, is unplaced, held by the system domain (the shipped
+  # manifest), or held by a domain of its own, which no row names but its units on the GPIO
   # page, the services of the interfaces they back and the boot order.
   def test_the_pin_controller_unit_is_unplaced_or_held_alone
     admit(pi_source, pi_context)
-    admit(pi_source + pi_unit('gpio', 'system'), pi_context)
+    assert_includes pi_shipped, PI_GPIO_UNIT
+    admit(pi_shipped, pi_context)
     admit(pi_source + pi_pins_domain + pi_unit('gpio', '@domain.pins'), pi_context)
   end
 

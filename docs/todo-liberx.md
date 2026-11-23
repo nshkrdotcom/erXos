@@ -174,6 +174,12 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
 
 ## Bugs by subsystem
 
+* [Low] ABI, the manifest test fixtures (`test/fixtures/abi_manifest_fixture.rb`,
+  `test/fixtures/abi_erlang_fixture.rb`, `test/fixtures/erx_abi_reader_tests.erl`, and
+  `test/host/abi_schema_test.rb`'s header size, `496`): their byte offsets
+  are written by hand and shifted by hand each time `erx_manifest`'s header grows in
+  `abi/manifest.txt`. A generator that derives them from the layout is missing.
+
 * [Low] liberx hosted backend (`liberx/backend/hosted/`): macOS only (`os_sync_wait_on_address`, and the stack switches in `arch/*/switch_stack.S` use Darwin's symbol names); a Linux host skips `test/host/hosted_function_api_test.rb`.
 
 * [Low] domain library, `liberx/system/dom_boot.c` (the apps budget and each principal's budget): both are
