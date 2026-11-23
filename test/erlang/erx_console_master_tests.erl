@@ -24,7 +24,10 @@ domain pid or facet ends gives the line back.
 
 -export([export/3, owner/1, shell/0, marker/1, log/2]).
 
--define(WAIT_MS, 3000).
+%% How long the test waits for something it expects before it fails: only a failing case
+%% waits it out, so it is long enough for a host loaded many times over, and within the
+%% master's 60 s. QUIET_MS is how long it listens for something it expects never to come.
+-define(WAIT_MS, 10000).
 -define(QUIET_MS, 300).
 -define(ESC, 16#1B).
 
@@ -332,24 +335,22 @@ the_end_line_is_escaped(Console) ->
 
 %% connect/1 once the console has taken the tty's naming, which arrives through the facet.
 wait_connect(Domain) ->
-    wait_connect(Domain, 20).
-
-wait_connect(Domain, 0) -> erx_console:connect(Domain);
-wait_connect(Domain, Left) ->
-    case erx_console:connect(Domain) of
-        {error, no_tty} -> timer:sleep(50), wait_connect(Domain, Left - 1);
-        Answer -> Answer
-    end.
+    connect_until(Domain, fun(Answer) -> Answer =/= {error, no_tty} end).
 
 %% connect/1 once the console has refused the tty that named itself.
 wait_refused(Domain) ->
-    wait_refused(Domain, 20).
+    connect_until(Domain, fun(Answer) -> Answer =:= {error, refused} end).
 
-wait_refused(Domain, 0) -> erx_console:connect(Domain);
-wait_refused(Domain, Left) ->
-    case erx_console:connect(Domain) of
-        {error, refused} = Refused -> Refused;
-        _ -> timer:sleep(50), wait_refused(Domain, Left - 1)
+%% connect/1's first answer that Done takes, or its last once WAIT_MS has passed: the
+%% tty's message reaches the console through the facet, so nothing answers when it has.
+connect_until(Domain, Done) ->
+    connect_until(Domain, Done, erlang:monotonic_time(millisecond) + ?WAIT_MS).
+
+connect_until(Domain, Done, Deadline) ->
+    Answer = erx_console:connect(Domain),
+    case Done(Answer) orelse erlang:monotonic_time(millisecond) >= Deadline of
+        true -> Answer;
+        false -> timer:sleep(50), connect_until(Domain, Done, Deadline)
     end.
 
 %% A console that stops, normally too, ends every console facet in front of it, so no
