@@ -108,15 +108,19 @@ module ErxManifestFuzz
     output.lines
   end
 
-  # The C verdict program, built in work under AddressSanitizer and UBSan; returns its path.
-  def c_program(work)
+  # The C verdict program, built in work under AddressSanitizer and UBSan, with target in
+  # place of the fuzz target's own source, tools/fuzz/manifest_fuzz.c, for a seeded fault;
+  # returns its path.
+  def c_program(work, target: nil)
     program = File.join(work, 'manifest-verdicts')
+    own = File.join(ROOT, 'tools/fuzz/manifest_fuzz.c')
+    sources = Erx::PackFuzz.source_paths(TARGET, root: ROOT).map { |path| path == own ? target || own : path }
     output, status = Open3.capture2e(ENV.fetch('ERX_CLANG', 'clang'), '-std=c17', '-Wall', '-Wextra', '-Werror',
                                      '-pedantic', '-O1', '-g', '-fsanitize=address,undefined',
                                      '-fno-sanitize-recover=undefined', '-fno-omit-frame-pointer',
                                      *Erx::PackFuzz.define_flags(TARGET),
                                      *Erx::PackFuzz.include_flags(TARGET, root: ROOT),
-                                     *Erx::PackFuzz.source_paths(TARGET, root: ROOT), File.join(ROOT, VERDICTS_SOURCE),
+                                     *sources, File.join(ROOT, VERDICTS_SOURCE),
                                      '-o', program,
                                      stdin_data: '')
     raise output unless status.success?

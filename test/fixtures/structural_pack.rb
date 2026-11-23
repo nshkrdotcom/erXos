@@ -55,7 +55,8 @@ module StructuralPackFixture
                                          catalog: rows.map { |row| row.reject { |key, _| %w[snapshot size plan].include?(key) } },
                                          root_entry: root_entry,
                                          artifacts: { 'root' => { 'kind' => 'executable', 'entry' => root_entry } }.merge(ManifestContextFixture.images),
-                                         provenance: provenance, device_kinds: ManifestContextFixture.device_kinds)
+                                         provenance: provenance, device_kinds: ManifestContextFixture.device_kinds,
+                                         gatt_services: ManifestContextFixture.gatt_services(codec))
     source = File.binread(File.join(root, 'test/fixtures/manifest_empty.txt'))
     structural = Erx::Manifest.admit(source: source, codec: codec, context: context)
     manifest_path = File.join(directory, 'manifest.bin')

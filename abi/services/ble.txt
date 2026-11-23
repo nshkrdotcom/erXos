@@ -1,0 +1,19 @@
+# Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
+# SPDX-License-Identifier: BSD-2-Clause
+# The ble interface (docs/design-bluetooth.md, "The `ble` facet"): what an app in another
+# domain asks of the Bluetooth domain's GATT registry for the services its grant names.
+# attach makes the caller a service's handler; set gives a characteristic's value for
+# reads; notify and indicate send a value on a link; reply answers a write handed to the
+# handler. A facet row says operations none and the facet's admit/3 decides what passes.
+# services names the GATT services the grantee handles, at most 8 names of abi/gatt, which
+# the packer sorts into strict byte order. ble_grant is its grant checker: the service of
+# this interface is named ble and served by a configured domain, no grant goes to the
+# system domain, and every name is a service abi/gatt declares.
+service ble 20
+  served_as message
+  operation attach 1
+  operation set 2
+  operation notify 3
+  operation indicate 4
+  operation reply 5
+  parameter services 1 identifier set 8 bytes 63 checked_by ble_grant

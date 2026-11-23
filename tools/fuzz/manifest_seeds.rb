@@ -22,8 +22,9 @@ module Erx
   # parameter of the windows interface a facet row may, so the facet table holds parameter
   # rows, the configured domains' with alpha granted the line on a UART of its own, so a
   # parameter row holds a device reference, the development manifest with its inspect grant
-  # naming both operations, so the facet table holds operation rows, and the configured
-  # domains' with an apps row
+  # naming both operations, so the facet table holds operation rows, the configured
+  # domains' with alpha granted the ble service beta serves, so a parameter span holds an
+  # identifier set, and the configured domains' with an apps row
   # offering one service, two packages, a signer and the build's development key, so each
   # of those tables holds rows.
   module ManifestSeeds
@@ -45,6 +46,9 @@ module Erx
     NET_PORTS = (2000...2016).to_a.freeze
     NET_PARAMETERS = "  parameter sockets 80\n#{NET_PORTS.reverse.map { |port| "  parameter ports #{port}\n" }.join}" \
                      "  parameter listen #{NET_PORTS.last}\n".freeze
+    # The services ble_grant's grant names, out of byte order, which the packer sorts:
+    # nus before nusb, its extension, and nusb before nv.
+    BLE_SERVICES = %w[nv nusb nus].freeze
     # The UART line_grant's grant names.
     LINE_UART = ManifestContextFixture::LINE_UARTS.fetch('line_a').first
 
@@ -76,6 +80,7 @@ module Erx
       PackFuzz.prefix_seeds(development.bytes).merge('empty' => empty.bytes, 'system-args-escape' => escape.bytes,
                                                      'windows-grant' => windows_grant(repository, codec),
                                                      'line-grant' => line_grant(repository, codec),
+                                                     'ble-grant' => ble_grant(source, codec, platform),
                                                      'operations-grant' => operations_grant(source, codec, platform),
                                                      'net-grant' => net_grant(repository, codec),
                                                      'domains' => domains.bytes, 'session-grantee' => session.bytes,
@@ -116,6 +121,17 @@ module Erx
       context = Manifest::Context.new(**ManifestContextFixture.arguments(codec), platform: platform_of(repository, 'qemu-virt'))
       Manifest.admit(source: source.sub(grant) { grant + NET_PARAMETERS }, codec: codec, context: context,
                      planner: ManifestContextFixture.accepting_planner).bytes
+    end
+
+    # The configured domains' manifest (ManifestContextFixture.domain_source) on QEMU virt
+    # with alpha granted the ble service beta serves, naming BLE_SERVICES
+    # (ManifestContextFixture.ble_grant), as the check packs it over a context whose
+    # abi/gatt declares them.
+    def ble_grant(source, codec, platform)
+      context = Manifest::Context.new(**ManifestContextFixture.arguments(codec), platform: platform,
+                                                                               gatt_services: ManifestContextFixture::GATT_NAMES)
+      Manifest.admit(source: ManifestContextFixture.domain_source(source) + ManifestContextFixture.ble_grant(BLE_SERVICES),
+                     codec: codec, context: context, planner: ManifestContextFixture.accepting_planner).bytes
     end
 
     # The configured domains' manifest (ManifestContextFixture.domain_source) on QEMU virt

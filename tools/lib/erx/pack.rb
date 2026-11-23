@@ -8,6 +8,7 @@ require 'fileutils'
 require_relative 'build_kind'
 require_relative 'device_kinds'
 require_relative 'elf_plan'
+require_relative 'gatt_decl'
 require_relative 'pack_provenance'
 require_relative 'pack_wire'
 
@@ -84,7 +85,8 @@ module Erx
         context = Manifest::Context.new(build_kind: build_kind, platform: platform,
                                         catalog: catalog, root_entry: root_entry,
                                         artifacts: artifacts, provenance: records,
-                                        device_kinds: DeviceKinds.context_rows(@root))
+                                        device_kinds: DeviceKinds.context_rows(@root),
+                                        gatt_services: GattDecl.services(root: @root, schema: @codec.schema).map(&:name))
         checked = Manifest.admit(source: manifest_source, codec: @codec, context: context, planner: @domain_planner)
         generated = { generated_path => checked.bytes, notices_path => @provenance.notices(records, budget: budget) }
         rows.each do |row|

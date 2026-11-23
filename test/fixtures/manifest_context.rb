@@ -7,6 +7,7 @@
 require 'digest'
 require_relative '../../tools/lib/erx/device_kinds'
 require_relative '../../tools/lib/erx/domain_startup'
+require_relative '../../tools/lib/erx/gatt_decl'
 require_relative '../../tools/lib/erx/production_image'
 
 module ManifestContextFixture
@@ -22,6 +23,9 @@ module ManifestContextFixture
 
   # The tree's own device kinds, which the checked context carries.
   def device_kinds = Erx::DeviceKinds.context_rows(File.expand_path('../..', __dir__))
+
+  # The names of the services the tree's abi/gatt declares, which the checked context carries.
+  def gatt_services(codec) = Erx::GattDecl.services(root: File.expand_path('../..', __dir__), schema: codec.schema).map(&:name)
 
   def platform
     { 'name' => 'fixture', 'cpuset' => 1, 'console' => '/uart@0', 'hostlink' => '',
@@ -98,7 +102,7 @@ module ManifestContextFixture
       provenance: [{ 'path' => 'fixture/root.c', 'sha256' => 'a' * 64,
                      'license' => 'BSD-2-Clause', 'evidence' => 'fixture',
                      'status' => 'permanent', 'notice' => "original\xffnotice".b }],
-      device_kinds: device_kinds }
+      device_kinds: device_kinds, gatt_services: gatt_services(codec) }
   end
 
   # The development manifest's text with two configured domains of the domain
@@ -275,21 +279,17 @@ module ManifestContextFixture
                                                                          inputs: sources.inputs)))
   end
 
-  # A test-only interface whose one parameter is an identifier set of at most three, for
-  # the packer's and the boot view's identifier sets (docs/design-abi.md, "Services, facets
-  # and their parameter schemas") while no checked-in interface declares one. It names
-  # net_grant and a key that checker consumes but no clause of it reads, since
-  # check_net_ports reads the net interface's facets alone, so the set's own rules alone
-  # decide whether a facet of it packs.
-  NAMES_INTERFACE = "service names 95\n  served_as message\n" \
-                    "  parameter buffers 1 identifier set 3 bytes 63 checked_by net_grant\n"
+  # Names of GATT services for a context's gatt_services, nine of them: one more than a
+  # ble grant's set holds (abi/services/ble.txt), in strict byte order, nus before nusb,
+  # its extension, and nusb before nv.
+  GATT_NAMES = %w[nus nusb nv nw nx ny nz oa ob].freeze
 
-  # A service nm of NAMES_INTERFACE, served by beta, and alpha's facet of it stating
-  # names, in the given order, as its set.
-  def names_grant(names)
-    "service nm\n  server @domain.beta\n  interface names\nfacet nm\n  grantee @domain.alpha\n  service @service.nm\n" \
+  # A service of the ble interface named service and served by server, and grantee's
+  # facet nm of it naming services, in the given order.
+  def ble_grant(services, grantee: '@domain.alpha', server: '@domain.beta', service: 'ble')
+    "service #{service}\n  server #{server}\n  interface ble\nfacet nm\n  grantee #{grantee}\n  service @service.#{service}\n" \
       "  operations none\n  max_request 1\n  in_flight 1\n  reductions 1\n  period_ns 1\n  max_heap_size 1\n" +
-      names.map { |name| "  parameter buffers \"#{name}\"\n" }.join
+      services.map { |name| "  parameter services \"#{name}\"\n" }.join
   end
 
   # A planner that plans every configured domain, introduction and session, for

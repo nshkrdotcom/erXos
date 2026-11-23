@@ -1592,30 +1592,57 @@ class ManifestDomainsTest < Minitest::Test
 
   def codec_with(declaration) = ManifestContextFixture.codec_with(declaration)
 
-  # An identifier set (ManifestContextFixture::NAMES_INTERFACE) packs one row an element,
-  # its names lexicographic over unsigned bytes, a name before every longer name it
-  # begins: nus, nusb, nv in that order, whatever order its source lines state them in.
-  # A name twice and a fourth name are refused.
+  # A context whose abi/gatt declares ManifestContextFixture::GATT_NAMES.
+  def gatt_context = Erx::Manifest::Context.new(**ManifestContextFixture.arguments(@codec).merge(platform: @platform,
+                                                                                                gatt_services: ManifestContextFixture::GATT_NAMES))
+
+  def ble_grant(services, **options) = ManifestContextFixture.ble_grant(services, **options)
+
+  # An identifier set, a ble grant's services, packs one row an element, its names
+  # lexicographic over unsigned bytes, a name before every longer name it begins: nus,
+  # nusb, nv in that order, whatever order its source lines state them in. A name twice
+  # and a ninth name are refused.
   def test_an_identifier_set_packs_in_byte_order
-    codec = codec_with(ManifestContextFixture::NAMES_INTERFACE)
-    context = Erx::Manifest::Context.new(**ManifestContextFixture.arguments(codec).merge(platform: @platform))
-    admitted = lambda do |names|
-      Erx::Manifest.admit(source: @source + ManifestContextFixture.names_grant(names), codec: codec, context: context,
-                          planner: @planner)
-    end
+    context = gatt_context
     ordered = %w[nus nusb nv]
-    kind = codec.member('mf_parameter_kind', 'identifier')
+    kind = @codec.member('mf_parameter_kind', 'identifier')
     ordered.permutation.each do |names|
-      view = codec.open('manifest', admitted.call(names).bytes)
+      view = @codec.open('manifest', admit(@source + ble_grant(names), context: context).bytes)
       assert_equal ordered.map { |name| [1, kind, name] },
                    rows(view, 'facet_parameters').map { |row| [row.fetch('key'), row.fetch('kind'), view.string(row.fetch('bytes'))] },
                    names.join(' ')
     end
-    { %w[nus nus] => /states "nus" twice/, %w[a b c d] => /states over 3 values/ }.each do |names, message|
-      error = assert_raises(Erx::Manifest::Invalid, names.join(' ')) { admitted.call(names) }
+    { %w[nus nus] => /states "nus" twice/, ManifestContextFixture::GATT_NAMES => /states over 8 values/ }.each do |names, message|
+      error = assert_raises(Erx::Manifest::Invalid, names.join(' ')) { admit(@source + ble_grant(names), context: context) }
       assert_equal 'facet.parameter', error.field, error.message
       assert_match message, error.message
     end
+  end
+
+  # ble_grant (docs/design-bluetooth.md, "Declarations: `abi/gatt`"): a grant of the ble
+  # service, served by a configured domain, to another configured domain, naming services
+  # abi/gatt declares, packs. Each seeded violation differs from it in one thing and is
+  # refused: the service of the ble interface named otherwise, a service named ble of
+  # another interface, the service served by the system domain, the grant to the system
+  # domain (B8), and a name abi/gatt does not declare, against the tree's declarations
+  # and against the context's.
+  def test_a_ble_grant_names_declared_services_of_the_ble_service
+    admit(@source + ble_grant(%w[nus]))
+    {
+      ['service.name', ble_grant(%w[nus], service: 'gatt')] => /service gatt is named ble exactly when it is of the ble interface/,
+      ['service.name', service('ble', '@domain.beta')] => /service ble is named ble exactly when it is of the ble interface/,
+      ['service.server', ble_grant(%w[nus], server: 'system')] => /service ble is served by no configured domain/,
+      ['facet.grantee', ble_grant(%w[nus], grantee: 'system')] => /ble grant nm is granted to the system domain/,
+      ['facet.parameter', ble_grant(%w[nus nusb])] => /ble grant nm names "nusb", which abi\/gatt does not declare/
+    }.each do |(field, grant), message|
+      refused(Erx::Manifest::Invalid, field, @source + grant, message: message)
+    end
+    error = assert_raises(Erx::Manifest::Invalid) do
+      admit(@source + ble_grant(%w[nus]), context: Erx::Manifest::Context.new(**ManifestContextFixture.arguments(@codec)
+                                                                                 .merge(platform: @platform, gatt_services: %w[nusb])))
+    end
+    assert_equal 'facet.parameter', error.field, error.message
+    assert_match(/names "nus", which abi\/gatt does not declare/, error.message)
   end
 
   # Seed: a service of another interface whose parameters name line_grant. Its facet is

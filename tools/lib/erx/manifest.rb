@@ -52,17 +52,20 @@ module Erx
     # compatible, role_word, peripheral and clocked (DeviceKinds.context_rows). Its
     # development_key is the public half of the builder's development package key, or
     # nil: never a manifest row, so no board source can name it, and the check accepts it
-    # only in a development build (docs/design-packaging.md, "The SDK").
+    # only in a development build (docs/design-packaging.md, "The SDK"). Its gatt_services
+    # are the names of the services abi/gatt declares (GattDecl.services), which a ble
+    # grant's services are drawn from (check_ble_grants).
     class Context
       attr_reader :build_kind, :platform, :catalog, :root_entry, :artifacts,
-                  :provenance, :device_kinds, :development_key
+                  :provenance, :device_kinds, :gatt_services, :development_key
 
       def initialize(build_kind:, platform:, catalog:, root_entry:, artifacts:,
-                     provenance:, device_kinds:, development_key: nil)
+                     provenance:, device_kinds:, gatt_services:, development_key: nil)
         build_kind = BuildKind.fetch(build_kind)
         unless platform.is_a?(Hash) && catalog.is_a?(Array) && artifacts.is_a?(Hash) &&
                provenance.is_a?(Array) && root_entry.is_a?(Integer) && root_entry.between?(0, catalog.size - 1) &&
                device_kinds.is_a?(Array) && !device_kinds.empty? && device_kinds.all? { |kind| device_kind?(kind) } &&
+               gatt_services.is_a?(Array) && gatt_services.all?(String) &&
                artifacts.values.all? { |artifact| started_recorded?(artifact) }
           raise Invalid.new('incomplete checked context', field: 'context.input')
         end
@@ -90,6 +93,7 @@ module Erx
         @artifacts = Snapshot.copy(artifacts)
         @provenance = Snapshot.copy(notices)
         @device_kinds = Snapshot.copy(device_kinds)
+        @gatt_services = Snapshot.copy(gatt_services)
         @development_key = development_key&.b&.freeze
         validate_catalog_shape
         freeze
@@ -2214,6 +2218,7 @@ module Erx
         check_inspect_grants(rows, tables)
         check_code_grants(rows, tables)
         check_line_grants(rows, packed.map(&:first), tables)
+        check_ble_grants(rows, packed.map(&:first), tables)
         check_input_grants(rows, tables)
         operations = records('facet').zip(sources).map { |record, row| facet_operations(record, row, service_rows) } +
                      derived.map { [] }
@@ -2258,7 +2263,8 @@ module Erx
       # "Services, facets and their parameter schemas"): windows_grant is property 18,
       # check_display_grants, which reads pixels, session and front, and range-checks windows and
       # clipboard as their declarations bound them. line_grant is property 8's line clause,
-      # check_line_grants, which reads device, rate and flow and range-checks rate. net_grant is
+      # check_line_grants, which reads device, rate and flow and range-checks rate. ble_grant is
+      # check_ble_grants, which reads services. net_grant is
       # property 15's parameter clause, check_net_ports, which reads a net facet's ports and
       # listen; its sockets and buffers their declarations alone bound, and the grant
       # enforces all four at run time (abi/services/net.txt). files_grant takes a files
@@ -2270,6 +2276,7 @@ module Erx
       # interface.
       GRANT_CHECKERS = { 'windows_grant' => %w[windows pixels clipboard session front].freeze,
                          'line_grant' => %w[device rate flow].freeze,
+                         'ble_grant' => %w[services].freeze,
                          'net_grant' => %w[sockets buffers ports listen].freeze,
                          'files_grant' => %w[rights tree].freeze }.freeze
 
@@ -2438,6 +2445,39 @@ module Erx
         invalid('two line grants name one device', 'facet.parameter') unless named_devices.uniq.size == named_devices.size
         invalid('a manifest holds at most one line grant', 'facet.service') if grants.size > 1
         check_serial_devices(tables.fetch('devices'), named_devices)
+      end
+
+      # ble_grant, the clause for the ble interface (docs/design-bluetooth.md, "Declarations:
+      # `abi/gatt`" and "The `ble` facet"). A service is named ble exactly when it is of the
+      # ble interface, as the line service is named line, so the name the Bluetooth domain's
+      # mint provides and the interface the check reasons from pick the same service. Every
+      # service whose checker is ble_grant is served by a configured domain, the Bluetooth
+      # domain, and no grant of one goes to the system domain, whose handler would take a
+      # phone's bytes into the trusted base (B8). facets and values are parallel arrays, each
+      # facet row beside its resolved parameters, and each grant's services are services
+      # abi/gatt declares (Context#gatt_services), so every served set is a subset of the
+      # declarations.
+      def check_ble_grants(facets, values, tables)
+        checked = ->(service) { grant_checker(service.fetch('interface')) == 'ble_grant' }
+        system = @codec.constant('mf_none')
+        interface = fetch_interface('ble')
+        misnamed = tables.fetch('services').find do |row|
+          (row.fetch('interface') == interface) != (row.fetch('name') == 'ble')
+        end
+        invalid("service #{misnamed.fetch('name')} is named ble exactly when it is of the ble interface", 'service.name') if misnamed
+        unserved = tables.fetch('services').find { |row| checked.call(row) && row.fetch('server') == system }
+        invalid("service #{unserved.fetch('name')} is served by no configured domain", 'service.server') if unserved
+        declared = @context.gatt_services
+        facets.zip(values).each do |row, given|
+          next unless checked.call(tables.fetch('services').fetch(row.fetch('service')))
+
+          named = "ble grant #{row.fetch('name')}"
+          invalid("#{named} is granted to the system domain, which takes no phone's bytes", 'facet.grantee') if
+            row.fetch('grantee_kind') == grantee_kind('system')
+          undeclared = given.fetch('services', []).reject { |name| declared.include?(name) }
+          invalid("#{named} names #{undeclared.map(&:inspect).join(', ')}, which abi/gatt does not declare", 'facet.parameter') unless
+            undeclared.empty?
+        end
       end
 
       # A line grant's device by its role: a UART's grant states rate, which its

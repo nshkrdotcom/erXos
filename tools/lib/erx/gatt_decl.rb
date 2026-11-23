@@ -83,15 +83,31 @@ module Erx
     def generation(root:)
       root = File.realpath(root)
       sources = ABI::Sources.read(root: root)
-      vocabulary = vocabulary(ABI::Model.validate(sources))
+      declarations = texts(root)
+      services = parse_all(declarations, ABI::Model.validate(sources))
+      reads = sources.inputs.merge(declarations).transform_values { |bytes| Digest::SHA256.hexdigest(bytes) }
+      GenerationPlan.new(files: { OUTPUT => erlang(services).freeze }, reads: reads, globs: { DECLARATIONS => declarations.keys })
+    end
+
+    # The services the declarations under root declare, each read and checked whole
+    # against schema, the ABI's model, in the order of their files' paths: the names a
+    # ble grant's services are drawn from (Manifest::Context#gatt_services).
+    def services(root:, schema:) = parse_all(texts(root), schema)
+
+    # Every declaration's text, by its path relative to root, in path order.
+    def texts(root)
       paths = Dir.glob(DECLARATIONS, base: root).sort
       raise DeclarationError, "no GATT service declaration matches #{DECLARATIONS}" if paths.empty?
 
-      texts = paths.to_h { |path| [path, BoundedFile.read(File.join(root, path), maximum: MAX_DECLARATION_BYTES)] }
-      services = texts.map { |path, text| parse(path: path, text: text, vocabulary: vocabulary) }
-      reads = sources.inputs.merge(texts).transform_values { |bytes| Digest::SHA256.hexdigest(bytes) }
-      GenerationPlan.new(files: { OUTPUT => erlang(services).freeze }, reads: reads, globs: { DECLARATIONS => paths })
+      paths.to_h { |path| [path, BoundedFile.read(File.join(root, path), maximum: MAX_DECLARATION_BYTES)] }
     end
+    private_class_method :texts
+
+    def parse_all(texts, schema)
+      vocabulary = vocabulary(schema)
+      texts.map { |path, text| parse(path: path, text: text, vocabulary: vocabulary) }
+    end
+    private_class_method :parse_all
 
     def vocabulary(schema)
       type = schema.types[RESERVED_ENUM]

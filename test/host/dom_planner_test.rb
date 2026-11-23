@@ -52,35 +52,19 @@ class DomPlannerTest < Minitest::Test
     # test/fixtures/dom_view_driver.c over the library, printing the view's catalogue and services.
     def view_driver = @view_driver_path ||= view_driver_from(File.join(ROOT, 'liberx/system/dom_boot_view.c'), name: 'dom-view')
 
-    # The view driver with boot_view in dom_boot_view.c's place, for a seeded fault, and
-    # with includes, directories searched before the build's generated headers, for an
-    # erx/abi.h of a test-only interface (names_driver).
-    def view_driver_from(boot_view, name:, includes: [])
+    # The view driver with boot_view in dom_boot_view.c's place, for a seeded fault.
+    def view_driver_from(boot_view, name:)
       File.join(build_directory, name).tap do |output|
         sources = [*%w[liberx/system/dom_core.c liberx/system/dom_life.c].map { |path| File.join(ROOT, path) }, boot_view,
                    *%w[liberx/erx_lane.c liberx/backend/core/boot_manifest.c tools/host/input.c
                        test/fixtures/dom_view_driver.c].map { |path| File.join(ROOT, path) }]
         build_runner.run([ENV.fetch('ERX_CLANG', 'clang'), '-std=c17', '-D_DARWIN_C_SOURCE', '-Wall', '-Wextra', '-Werror',
-                          '-O1', *includes.flat_map { |directory| ['-I', directory] },
-                          *Erx::Generated.include_flags(root: ROOT), '-I', File.join(ROOT, 'include'),
+                          '-O1', *Erx::Generated.include_flags(root: ROOT), '-I', File.join(ROOT, 'include'),
                           '-I', ROOT, '-I', File.join(ROOT, 'tools/host'), *sources,
                           Erx::Generated.path('liberx/generated/abi_reader.c', root: ROOT), '-o', output],
                          name: "#{name}-build", deadline: 120)
       end
     end
-
-    # The view driver over boot_view built against the erx/abi.h of the tree's ABI with
-    # ManifestContextFixture::NAMES_INTERFACE, whose codec packs the manifests it reads.
-    def names_driver(boot_view, name:)
-      includes = File.join(build_directory, 'names-include')
-      unless File.exist?(File.join(includes, 'erx/abi.h'))
-        FileUtils.mkdir_p(File.join(includes, 'erx'))
-        File.write(File.join(includes, 'erx/abi.h'), Erx::ABI::CEmitter.header(names_codec.schema))
-      end
-      view_driver_from(boot_view, name: name, includes: [includes])
-    end
-
-    def names_codec = @names_codec ||= ManifestContextFixture.codec_with(ManifestContextFixture::NAMES_INTERFACE)
 
     private
 
@@ -1162,7 +1146,7 @@ class DomPlannerTest < Minitest::Test
       ['(order == 0 && before->bytes_len < value->bytes_len)', '(order == 0 && before->bytes_len <= value->bytes_len)']
   }.freeze
 
-  # An identifier set's packed rows (ManifestContextFixture::NAMES_INTERFACE), which the
+  # An identifier set's packed rows, a ble grant's services, which the
   # view takes only in strictly ascending byte order, a name before every longer name it
   # begins (docs/design-abi.md, "Services, facets and their parameter schemas"): it takes
   # nus, nusb, nv as the packer writes them, and refuses each other order of those rows
@@ -1171,14 +1155,13 @@ class DomPlannerTest < Minitest::Test
     manifests = names_manifests
     refusal = 'refused manifest: a facet parameter set is unsorted or repeats a value'
     expected = manifests.to_h { |name, _| [name, name == 'nus nusb nv' ? 'taken' : refusal] }
-    assert_equal expected, names_verdicts(self.class.names_driver(File.join(ROOT, 'liberx/system/dom_boot_view.c'),
-                                                                  name: 'dom-view-names'), manifests)
+    assert_equal expected, names_verdicts(self.class.view_driver, manifests)
     source = File.read(File.join(ROOT, 'liberx/system/dom_boot_view.c'))
     NAMES_MUTANTS.each_with_index do |(name, (anchor, replacement)), index|
       assert_equal 1, source.scan(anchor).size, "the seed #{name} no longer applies"
       seeded = File.join(@directory, "dom_boot_view_names_#{index}.c")
       File.write(seeded, source.sub(anchor, replacement))
-      driver = self.class.names_driver(seeded, name: "dom-view-names-#{index}")
+      driver = self.class.view_driver_from(seeded, name: "dom-view-names-#{index}")
       refute_equal expected, names_verdicts(driver, manifests), "seeded fault not caught: #{name}"
     end
   end
@@ -1187,14 +1170,14 @@ class DomPlannerTest < Minitest::Test
   # each forgery of it: the three rows of nm's parameter span in each other order, and nus
   # in place of nusb.
   def names_manifests
-    codec = self.class.names_codec
-    context = Erx::Manifest::Context.new(**ManifestContextFixture.arguments(codec).merge(platform: Erx::Platform.load(root: ROOT, name: 'qemu-virt').record))
-    packed = Erx::Manifest.admit(source: with_domains('alpha', 'beta') + ManifestContextFixture.names_grant(%w[nus nusb nv]),
-                                 codec: codec, context: context, planner: ManifestContextFixture.accepting_planner).bytes
-    view = codec.open('manifest', packed)
+    context = Erx::Manifest::Context.new(**ManifestContextFixture.arguments(@codec).merge(platform: Erx::Platform.load(root: ROOT, name: 'qemu-virt').record,
+                                                                                            gatt_services: ManifestContextFixture::GATT_NAMES))
+    packed = Erx::Manifest.admit(source: with_domains('alpha', 'beta') + ManifestContextFixture.ble_grant(%w[nus nusb nv]),
+                                 codec: @codec, context: context, planner: ManifestContextFixture.accepting_planner).bytes
+    view = @codec.open('manifest', packed)
     facet = view.count('facets').times.map { |at| view.fetch('facets', at) }.find { |row| view.string(row.fetch('name')) == 'nm' }
     span = facet.fetch('parameters')
-    size = codec.layout_size('erx_mf_parameter')
+    size = @codec.layout_size('erx_mf_parameter')
     assert_equal 3, span.fetch('count')
     first = span.fetch('offset')
     rows = %w[nus nusb nv].each_with_index.to_h { |name, at| [name, packed.byteslice(first + (at * size), size)] }

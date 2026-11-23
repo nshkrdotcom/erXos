@@ -1537,8 +1537,10 @@ readable characteristic may end with `value` and its initial value in
 hexadecimal, so a constant needs no handler.
 
 `tools/gen_gatt.rb` reads every file and generates `erx_gatt_decl`, one
-term per service, the list of names the manifest check holds a row
-to, and the names of those that say `advertise`. A UUID has one
+term per service, and the names of those that say `advertise`; the
+manifest check takes the declared names, which it holds a row to,
+through its checked context, read by the same reader, as it takes the
+device kinds. A UUID has one
 spelling: one of the Base UUID with a 16-bit value is written in 16
 bits, since Find By Type Value compares a service declaration's value
 octet by octet (ATT 3.4.3.3) and a phone looks for the 2-octet form. It
@@ -1565,16 +1567,18 @@ refuses a name twice or more than 8 names, and the boot view takes the
 packed set only in that order
 ([design-abi.md](design-abi.md#services-facets-and-their-parameter-schemas)).
 `ble_grant`, the parameter's checker, refuses a service of the `ble`
-interface not named `ble`, as the line service's is named `line`
-([design-system.md](design-system.md#the-manifest), property 8), or served
-by no configured domain; a `ble` grant to the system domain, whose
-handler would take a phone's bytes (B8); a service no file declares, a
-service two rows name, two served services of one UUID, and advertising
-data that do not fit. Every served set is thus a subset of `abi/gatt`'s
-services with none served twice, so the declarations bound what a
-machine serves and no count of its own is needed: the host tests build
-the table of every declared service ([The attribute
-table](#the-attribute-table)).
+interface not named `ble`, or named `ble` and of another interface, as
+the line service's is named `line`
+([design-system.md](design-system.md#the-manifest), property 8), so the
+name the mint provides and the interface the check reasons from pick one
+service; a service of the `ble` interface served by no configured
+domain; a `ble` grant to the system domain, whose handler would take a
+phone's bytes (B8); a service no file declares, a service two rows name,
+two served services of one UUID, and advertising data that do not fit.
+Every served set is thus a subset of `abi/gatt`'s services with none
+served twice, so the declarations bound what a machine serves and no
+count of its own is needed: the host tests build the table of every
+declared service ([The attribute table](#the-attribute-table)).
 
 ### The attribute table
 

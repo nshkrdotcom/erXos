@@ -195,9 +195,11 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
 * [High] bluetooth, the `ble` facet's side in other domains (docs/design-bluetooth.md "The `ble` facet",
   "Declarations: `abi/gatt`"; `erlang/apps/erx_bt/src/erx_gatt_srv.erl`'s `facet/4`): the registry takes a
   facet's operations through `facet/4`, with the grant's services and the caller, but no app reaches it.
-  Missing: `abi/services/ble.txt`, whose `services` parameter needs a manifest checker (`ble_grant` in
-  `tools/lib/erx/manifest.rb`) refusing a service no file declares, one two rows name, two served services of
-  one UUID, more than `gatt_services_max`, and advertising data that do not fit; the facet process the
+  Missing: `ble_grant`'s refusals (`tools/lib/erx/manifest.rb`, `check_ble_grants`) of a service two rows
+  name, two served services of one UUID, and advertising data that do not fit, and a decision on a grant to a
+  session template, which `ble_grant` takes and every session made from it would hold, so two sessions could
+  `attach` one service with no rule for the second (refuse it, as `line_grant` does, or say what a second
+  `attach` does); the facet process the
   registry makes when the domain service introduces a grantee, with its mint and an admission module that
   alone takes `{erx_origin, D, Msg}` off and bounds each operation, as `erx_net_admit` does, with its fuzz
   target; the client `erx_gatt`, which takes the events' envelope off, and the `erx_gatt_service` behaviour;
