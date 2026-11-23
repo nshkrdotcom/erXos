@@ -344,10 +344,13 @@ facet usb_input
   period_ns 1000000000
   max_heap_size 262144
 # The Bluetooth domain's rows (docs/design-bluetooth.md, "The Bluetooth domain"): a service
-# domain whose release, bt, only loads erx_bt and crypto, and whose -eval starts both once
-# init holds the ready answer's facets, the line grant among them. They are the rows of
-# QEMU virt's Bluetooth suite (tools/lib/erx/bt_domain.rb, whose comment explains the
-# runtime limits, the share and the limits) with four differences:
+# domain whose release's boot script, bt, starts crypto and erx_bt, so the mint of ble
+# exists before init's ready report, and whose -eval (erx_bt_top:start_stack/0) starts the
+# rest of the stack once init holds the ready answer's facets, the line grant among them.
+# The service ble, which the domain serves, has no grant here, so no domain holds ble on
+# this board: its row makes the domain service accept the mint the domain names. They are
+# the rows of QEMU virt's Bluetooth suite (tools/lib/erx/bt_domain.rb, whose comment
+# explains the runtime limits, the share and the limits) with four differences:
 #
 # * runtime: the BeamAsm image, as the design names, where the suite runs the
 #   interpreter; its 32 MiB and its boot time are measured on BeamAsm on neither board;
@@ -410,7 +413,10 @@ domain bt
   release @artifact.bt
   restarts 5
   restart_period_s 600
-  args "-- -root / -bindir /bin -progname erl -home / -nouser -nocookie -no_epmd -proto_dist erx -eval {ok,_}=application:ensure_all_started(erx_bt,permanent)"
+  args "-- -root / -bindir /bin -progname erl -home / -nouser -nocookie -no_epmd -proto_dist erx -eval ok=erx_bt_top:start_stack()"
+service ble
+  server @domain.bt
+  interface ble
 facet line
   grantee @domain.bt
   service @service.line
