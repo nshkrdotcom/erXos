@@ -5,9 +5,9 @@
 require 'minitest/autorun'
 require_relative '../fixtures/xhci_core_cases'
 
-# Runs test/erlang/erx_xhci_core_tests.erl (the cases test/host/erx_xhci_core_test.rb passes
-# unseeded) once per seeded fault, in a file of its own so these runs have their own
-# deadline. Each seeded fault, applied to a copy of the module, must fail the case named
+# Runs the case named for each seeded fault of test/erlang/erx_xhci_core_tests.erl (the cases
+# test/host/erx_xhci_core_test.rb passes unseeded) against the seeded module, in a file of its
+# own so these runs have their own deadline. Each seeded fault, applied to a copy of the module, must fail the case named
 # for it: Reset Endpoint issued on a stopped queue; a stopped EP0 dropped and
 # added; the translator's buffer left uncleared after a halt; a reset whose Stop Endpoint
 # still waits keeping it when the endpoint halts, so the stop goes to a halted queue; a
@@ -205,13 +205,39 @@ class ErxXhciCoreSeedsTest < Minitest::Test
              catching_case: CONFIGURE_EXPLORED)
   ].freeze
 
+  # Seeds run WORKERS at a time, each against only the case named for it.
+  WORKERS = 4
+
   def test_each_seeded_fault_fails_its_case
     source = File.binread(File.join(ErlangBuild::ROOT, XhciCoreCases::CORE))
     SEEDS.each do |seed|
       assert_equal 1, source.scan(seed.anchor).size, "seed anchor for #{seed.fault} is not unique"
-      output, status = XhciCoreCases.run(replaced: { XhciCoreCases::CORE => source.sub(seed.anchor) { seed.replacement } })
-      refute status.success?, "#{seed.fault}: the cases passed"
+    end
+    runs = in_parallel(SEEDS) do |seed|
+      XhciCoreCases.run(replaced: { XhciCoreCases::CORE => source.sub(seed.anchor) { seed.replacement } },
+                        cases: [seed.catching_case])
+    end
+    SEEDS.zip(runs).each do |seed, (output, status)|
+      refute status.success?, "#{seed.fault}: the case passed"
       assert_match(/#{Regexp.escape(seed.catching_case)}[^\n]*\*failed\*/, output, seed.fault)
     end
+  end
+
+  private
+
+  # The block's value for each of items, in order, WORKERS at a time.
+  def in_parallel(items)
+    pending = Queue.new
+    items.each_index { |index| pending << index }
+    pending.close
+    results = Array.new(items.size)
+    Array.new(WORKERS) do
+      Thread.new do
+        while (index = pending.pop)
+          results[index] = yield items[index]
+        end
+      end
+    end.each(&:join)
+    results
   end
 end

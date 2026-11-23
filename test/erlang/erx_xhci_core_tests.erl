@@ -74,8 +74,9 @@ devices() ->
 the_pipe_machine_is_explored_to_a_fixed_point_test_() ->
     %% Each case gets its own limit: a group's {timeout, ...} leaves every test
     %% in it at EUnit's 5 s default.
-    [{timeout, 600, ?_assertMatch({ok, _}, explore(Device, Features))}
-     || Device <- devices(), Features <- [#{}, #{detach => true, tick => true}]].
+    {inparallel,
+     [{timeout, 600, ?_assertMatch({ok, _}, explore(Device, Features))}
+      || Device <- devices(), Features <- [#{}, #{detach => true, tick => true}]]}.
 
 %% The rows of the table, each as the commands and requests it posts, every one answered
 %% with success. A halted bulk endpoint behind a single translator clears the
