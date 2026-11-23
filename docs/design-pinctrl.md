@@ -1114,7 +1114,8 @@ one it read, on pins the model's console does not use, and reads it
 back: a function field of GPFSEL, a pull field of
 GPIO_PUP_PDN_CNTRL, a bit of each edge enable, and GPSET and then GPCLR
 on a pin it has made an output, each read at GPLEV. Its result is a
-research record that names the QEMU version. For a field the model does
+research record that names the QEMU version
+([research-qemu-raspi4b-pins.md](research-qemu-raspi4b-pins.md)). For a field the model does
 not keep, one of two things is decided from that record before the
 suite's cases are written:
 

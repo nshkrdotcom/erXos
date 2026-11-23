@@ -2478,6 +2478,7 @@ Decided, and recorded where each applies, beyond the
   [BL31 on QEMU's raspi4b](research-rpi4-bl31-qemu.md),
   [the first Raspberry Pi 4 board pass](research-rpi4-board-pass.md),
   [the Raspberry Pi 4 header probe](research-rpi4-header-probe.md),
+  [what QEMU's raspi4b keeps of the pin controller](research-qemu-raspi4b-pins.md),
   [the BCM2711's SD controller](research-sdhci-bcm2711.md),
   [QEMU's raspi4b SD controller with a card](research-sdhci-qemu-model.md),
   [the BCM2711's Ethernet controller, GENET v5](research-genet-bcm2711.md),
