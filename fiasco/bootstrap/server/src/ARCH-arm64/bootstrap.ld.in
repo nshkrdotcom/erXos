@@ -1,4 +1,5 @@
-/* Modified by erXos: it boots from erXos's boot image (docs/design-fiasco.md, "Boot handoff"). */
+/* Modified by erXos: it boots from erXos's boot image (docs/design-fiasco.md, "Boot handoff"),
+   and its device table comes first in .data (docs/design-fiasco.md, "Toolchain"). */
 /*
  * Copyright (C) 2008-2009 Technische Universität Dresden.
  * Author(s): Adam Lackorzynski <adam@os.inf.tu-dresden.de>
@@ -49,12 +50,12 @@ SECTIONS
   . = ALIGN(4096);
   .data :
   {
-    *(.data EXCLUDE_DEVS .data.* .gnu.linkonce.d.*)
+    DEVS
+    *(.data .data.* .gnu.linkonce.d.*)
     *(.anno)
 
     CTORS
     PLATFORMS
-    DEVS
   } : common
 
   /* exception frames for C++ */

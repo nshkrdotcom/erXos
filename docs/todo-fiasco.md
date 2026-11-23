@@ -473,6 +473,12 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
 
 ## Bugs by subsystem
 
+* [Low] Fiasco kernel, `Uart::startup` in `fiasco/kernel/src/drivers/uart-libuart.cpp` (`dyn_uart`):
+  when the kernel options' `uart.compatible_id` names no driver in the kernel's device table, or
+  is empty because `bootstrap` found no console UART, `init_uart_instance` leaves `_uart` null and
+  `_uart->startup(reg)` dereferences it: a data abort at address 0 before the kernel banner, with
+  no diagnostic. Returning false for a null `_uart`, so the kernel runs without a console, with a
+  boot test that hands the kernel an unknown compatible, would fix it.
 * [Low] Fiasco bootstrap, `fiasco/kernel/src/kern/arm/64/bootstrap-arm-64.cpp` and
   `kern/arm/bootstrap.cpp`: the AArch64 `bootstrap` must read no relocated word before `relocate()`
   has run. `_start` takes its link address from the absolute symbol `_start_link_addr`, not from its

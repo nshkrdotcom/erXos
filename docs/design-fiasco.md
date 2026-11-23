@@ -3839,7 +3839,7 @@ from `ERX_CLANG` and `ld.lld` from `ERX_LLD`, the two variables every other erXo
 of that prefix runs. The toolchain reaches the inherited make systems through `Makeconf.local`
 files, never the make command line: the kernel build directory's (`CC`, `CXX`, `CPP=clang-cpp`,
 `LD=ld.lld` and the `llvm-` tools) and the assembled L4Re source's (`CLANG` as clang's directory,
-`LD = ld.lld -m $(LD_EMULATION)` and the `llvm-` tools). The fork carries seven small edits for it:
+`LD = ld.lld -m $(LD_EMULATION)` and the `llvm-` tools). The fork carries eight small edits for it:
 
 1. The kernel's `Makeconf` drops `ASFLAGS-clang += -no-integrated-as`, so clang assembles `.S`
    files with its integrated assembler.
@@ -3864,6 +3864,15 @@ files, never the make command line: the kernel build directory's (`CC`, `CXX`, `
 7. `koptions.cpp`'s initializer of the kernel options gives the two fields erXos adds to them
    (`erx_pad`, `erx_handoff`), which clang otherwise warns are missing, so the kernel builds
    without a warning.
+8. `bootstrap`'s linker scripts (`ARCH-arm64/bootstrap.ld.in`, `ARCH-arm/bootstrap.ld.in` and the
+   AArch64 EFI script) put the UART device table (`DEVS` of `ldscript.inc`, the
+   `.data.l4redevice` pointers between `__L4RE_DEVICE_BEGIN` and `__L4RE_DEVICE_END`) first in
+   `.data`, as the kernel's `kernel.arm.ld` does, so the first rule a section matches puts every
+   entry in the table by its section name, under GNU ld and `ld.lld` alike. They do not keep the
+   entries out of the generic `.data.*` rule with `EXCLUDE_FILE(*libdrivers_uart.a)`: in an
+   `ld.lld` link that rule takes the archive's `.data.l4redevice` sections, as its link map shows,
+   and leaves the table empty, and the generic platform (`arm_gen`, the Raspberry Pi 4's) finds
+   its console UART only in that table.
 
 **Patches.** These are the changes the release's Fiasco build makes to what Fiasco's kernel does,
 each small and contained in the fork. An entry names its test where it has one, and says so where
