@@ -500,7 +500,7 @@ handle_call({introduce, A, B}, From, State) when is_integer(A), is_integer(B) ->
     end;
 handle_call({settled, Asked}, From, #{settling := Settling} = State) ->
     case settling_query(Asked) of
-        {wait, Query} -> {noreply, answer_in_place(State#{settling := Settling ++ [{Query, From}]})};
+        {ask, Query} -> {noreply, answer_in_place(State#{settling := Settling ++ [{Query, From}]})};
         {answer, Reply} -> {reply, Reply, State}
     end;
 handle_call({register_app, Package}, _From, #{apps := Apps} = State) ->
@@ -1780,9 +1780,10 @@ send_app(Id, Core) ->
 %% Each settlement query asked of the service, in arrival order, answered once its
 %% answer is no longer wait; the rest keep waiting, each for its own query alone.
 answer_settling(Starting, #{settling := Settling, mints := Mints} = State) ->
-    Answers = [{Wait, erx_domain_mints:settled(Query, Starting, Mints)} || {Query, _From} = Wait <- Settling],
-    _ = [gen_server:reply(From, Answer) || {{_Query, From}, Answer} <- Answers, Answer =/= wait],
-    State#{settling := [Wait || {Wait, wait} <- Answers]}.
+    Answers = [{Asker, erx_domain_mints:settled(Query, Starting, Mints)} || {Query, _From} = Asker <- Settling],
+    {Waiting, Settled} = lists:partition(fun({_Asker, Answer}) -> Answer =:= wait end, Answers),
+    lists:foreach(fun({{_Query, From}, Answer}) -> gen_server:reply(From, Answer) end, Settled),
+    State#{settling := [Asker || {Asker, _Wait} <- Waiting]}.
 
 %% A settlement query as the service keeps it, erx_domain_mints:query(), or the answer
 %% given at once (docs/design-system.md, "Waiting for a grant"). The start table names a
@@ -1791,15 +1792,15 @@ answer_settling(Starting, #{settling := Settling, mints := Mints} = State) ->
 %% wait is answered at once. The atom is never made here. A query outside the closed
 %% set is answered badarg.
 settling_query(namespace) ->
-    {wait, namespace};
+    {ask, namespace};
 settling_query({server, Name}) when is_binary(Name) ->
     try binary_to_existing_atom(Name) of
-        Service -> {wait, {server, Service}}
+        Service -> {ask, {server, Service}}
     catch
         error:badarg -> {answer, ok}
     end;
 settling_query({grant, Name, Id} = Query) when is_atom(Name), is_integer(Id), Id > 0 ->
-    {wait, Query};
+    {ask, Query};
 settling_query(_Asked) ->
     {answer, {error, badarg}}.
 

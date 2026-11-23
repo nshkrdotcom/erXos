@@ -93,7 +93,7 @@ image_packages_wait_for_the_namespace_test() ->
     Holder = spawn_link(fun() ->
                                 register(erx_pkg_namespace, self()),
                                 Test ! registered,
-                                receive {'$gen_call', From, system_namespace} ->
+                                receive {'$gen_call', From, {settled, namespace}} ->
                                         receive release ->
                                                 persistent_term:put({erx, facets},
                                                                     {1, #{system => system_grant(Dashboard)}}),

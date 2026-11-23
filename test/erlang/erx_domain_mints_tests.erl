@@ -226,7 +226,7 @@ system_grantee_skips_the_introduction_test() ->
 %% not starting, and a name no row serves at once; and a wait for one incarnation's
 %% grant is answered with that incarnation's facet, never with a predecessor's.
 settled_answers_each_query_as_its_decision_test() ->
-    Settled = fun(Query, Starting, State) -> erx_domain_mints:settled(Query, Starting, State) end,
+    Settled = fun erx_domain_mints:settled/3,
     Idle = erx_domain_mints:new((config([system]))#{files => [data]}),
     ?assertEqual(wait, Settled(namespace, [?S], Idle)),
     ?assertEqual(ok, Settled(namespace, [], Idle)),

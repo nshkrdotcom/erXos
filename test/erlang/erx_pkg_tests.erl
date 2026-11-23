@@ -270,7 +270,7 @@ the_listing_waits_for_the_namespace_test() ->
     Holder = spawn_link(fun() ->
                                 register(erx_pkg_namespace, self()),
                                 Test ! registered,
-                                receive {'$gen_call', From, system_namespace} ->
+                                receive {'$gen_call', From, {settled, namespace}} ->
                                         receive release -> gen:reply(From, ok) end
                                 end
                         end),

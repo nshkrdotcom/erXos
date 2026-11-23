@@ -217,17 +217,17 @@ class ErxDomainTest < Minitest::Test
     # The settlement wait (docs/design-system.md, "Waiting for a grant"): settled/3 behind
     # the one list. A grant query matched by its service alone answers a wait for one
     # incarnation with a predecessor's facet; a list answered whole at any evaluation
-    # answers the grant's asker before its installation; and an end's step evaluated
+    # when any query settles answers the grant's asker before its installation; and an end's step evaluated
     # after the ended row's successor starts leaves a server's asker waiting through the
     # successor's boot.
     Fault.new(name: 'a settled grant query matched by its service alone', file: MINTS,
               from: '#{Key := #{state := {installed, {Id, _}, Pid}}} ->',
               to: '#{Key := #{state := {installed, _Pair, Pid}}} ->',
               tests: 'erx_domain_mints_tests', caught_by: 'settled_answers_each_query_as_its_decision_test'),
-    Fault.new(name: 'every settlement asker answered at any evaluation', file: SERVICE,
-              from: "Answer =/= wait],\n    State\#{settling := [Wait || {Wait, wait} <- Answers]}.",
-              to: "true],\n    State\#{settling := []}.",
-              tests: 'erx_domain_mints_srv_tests', caught_by: 'settling'),
+    Fault.new(name: 'every settlement asker answered when any query settles', file: SERVICE,
+              from: 'lists:partition(fun({_Asker, Answer}) -> Answer =:= wait end, Answers)',
+              to: 'lists:partition(fun(_) -> lists:all(fun({_, A}) -> A =:= wait end, Answers) end, Answers)',
+              tests: 'erx_domain_mints_srv_tests', caught_by: 'three_askers'),
     Fault.new(name: "an end's step evaluated after its successor starts", file: SERVICE,
               from: "Told = unprovide(Origin, Id, perform(Actions, State\#{core := Ended, links := Unlinked})),\n" \
                     "            _ = retire(Lib, Id),\n" \

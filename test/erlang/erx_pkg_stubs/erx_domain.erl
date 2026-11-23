@@ -12,4 +12,4 @@ same.
 -export([system_namespace/0]).
 
 system_namespace() ->
-    gen_server:send_request(erx_pkg_namespace, system_namespace).
+    gen_server:send_request(erx_pkg_namespace, {settled, namespace}).

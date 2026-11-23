@@ -63,7 +63,7 @@ server_settled_test_() ->
 %% 1, id 5), which here serves echo, of no files interface, to the system domain.
 settling_test_() ->
     {setup, fun() -> display_setup([{1, echo, 1}], [{system, echo, 1, #{}}]) end, fun cleanup/1,
-     fun(_) -> {timeout, 20, fun settling/0} end}.
+     fun(_) -> {timeout, 20, fun three_askers/0} end}.
 
 %% One incarnation's grant (docs/design-system.md, "A session takes the console"):
 %% erx_domain:await_grant/2 is answered once the system domain's grant of echo has
@@ -875,7 +875,7 @@ display_timed_out() ->
 %% late's grant at its installation, once the agent has written the system domain's
 %% registry, which then holds the facet the answer names. A query outside the closed
 %% set is answered badarg, as is a server named by its atom rather than by its text.
-settling() ->
+three_askers() ->
     Grant = erx_domain:await_grant(echo, 5),
     Server = erx_domain:server_settled(<<"echo">>),
     ?assertEqual({reply, ok}, gen_server:receive_response(erx_domain:system_namespace(), 2000)),

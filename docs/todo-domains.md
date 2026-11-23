@@ -485,6 +485,19 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
 
 ## Security residuals
 
+* [Low] settlement wait, a grant query for an incarnation that never comes
+  (`erlang/apps/erx_domain/src/erx_domain_mints.erl`, `system_grant/3` and `heard/2`): a
+  `{grant, Name, Id}` query whose `Id` is past the server row's newest incarnation, which
+  has ended for good, or is no incarnation of that row at all, answers `wait` until the
+  row is heard at a higher id, which may never happen; the device service asks once for
+  each report, keyed by the envelope's domain, so a PCIe domain that keeps reporting
+  while the grant is idle grows the domain service's `settling` list without bound,
+  against the design's bound ([design-system.md](design-system.md#waiting-for-a-grant),
+  "each answer comes within the mint core's deadline and the server row's boot
+  timeout"). The entries of dead callers stay too, since the list sets no monitor.
+  Answer `{error, ended}` for an id past a row ended with no restart, and refuse an id
+  the core never issued for that row.
+
 * [Low] manifest check, who may hold a raw input, gpu or network device (`tools/lib/erx/manifest.rb`,
   [design-system.md](design-system.md) property 8): `check_input_grants` holds the input facet to a display
   domain, since its holder reads every key pressed, but no rule limits which domain holds a device of role

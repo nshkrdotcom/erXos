@@ -1264,7 +1264,7 @@ in place before anyone can connect to it.
   message from another domain reaches the service only in its
   `{erx_origin, D, Msg}` envelope, which is no call it takes), is
   answered `ok` once no starting configured row serves the display
-  (`erx_domain_mints:server_settled/3`). Its server is
+  (`erx_domain_mints:settled/3`, the `{server, Name}` query). Its server is
   then ready, or stopped for its boot timeout, ended, or refused its
   start; a name no configured row serves has nothing to wait for and is
   answered at once. The service checks the rule after each step of the
