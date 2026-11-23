@@ -31,6 +31,19 @@ typedef struct erx_pack_view erx_pack_view_t;
 const char	*erx_fiasco_program_tree(erx_dt_t *tree, const erx_manifest_view_t *manifest, erx_fiasco_seeds_t *seeds);
 
 /*
+ * What the root found of a board device it drives itself before any domain starts
+ * (erx_fiasco_program_watchdog, erx_fiasco_program_mailbox).
+ */
+typedef enum erx_fiasco_found {
+	/* The manifest gives the system domain none, as on QEMU virt. */
+	ERX_FIASCO_FOUND_ABSENT = 1,
+	/* Its row is confirmed by the tree and its registers are mapped. */
+	ERX_FIASCO_FOUND_READY,
+	/* The tree does not confirm its row, or its page cannot be mapped: the board has none. */
+	ERX_FIASCO_FOUND_UNCONFIRMED
+} erx_fiasco_found_t;
+
+/*
  * The board's hardware watchdog (docs/design-platforms.md, "The watchdog"): the unit of
  * ERX_PM_WDT_COMPATIBLE that manifest gives the system domain (erx_boot_held_row), mapped
  * into *wdt when tree, the one erx_fiasco_program_tree accepted, confirms its row
@@ -40,17 +53,7 @@ const char	*erx_fiasco_program_tree(erx_dt_t *tree, const erx_manifest_view_t *m
  * program has no board watchdog.
  */
 const char	*erx_fiasco_program_watchdog(const erx_dt_t *tree, const erx_manifest_view_t *manifest,
-		    erx_fiasco_pm_wdt_t *wdt, erx_fiasco_board_wdt_t *found);
-
-/* What the root found of the firmware's mailbox (erx_fiasco_program_mailbox). */
-typedef enum erx_fiasco_board_mbox {
-	/* The manifest gives the system domain none, as on QEMU virt. */
-	ERX_FIASCO_BOARD_MBOX_ABSENT = 1,
-	/* Its row is confirmed by the tree and its registers are mapped. */
-	ERX_FIASCO_BOARD_MBOX_READY,
-	/* The tree does not confirm its row, or its page cannot be mapped: the board has none. */
-	ERX_FIASCO_BOARD_MBOX_UNCONFIRMED
-} erx_fiasco_board_mbox_t;
+		    erx_fiasco_pm_wdt_t *wdt, erx_fiasco_found_t *found);
 
 /*
  * The firmware's mailbox (docs/design-fiasco.md, "The call table", erx_firmware_request):
@@ -61,7 +64,7 @@ typedef enum erx_fiasco_board_mbox {
  * root built without a program has no mailbox.
  */
 const char	*erx_fiasco_program_mailbox(const erx_dt_t *tree, const erx_manifest_view_t *manifest,
-		    erx_fiasco_board_mbox_t *found);
+		    erx_fiasco_found_t *found);
 
 /*
  * The on-board pins (docs/design-header-io.md, "On-board pins"): the manifest's

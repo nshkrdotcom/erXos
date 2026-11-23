@@ -27,16 +27,6 @@ typedef struct erx_fiasco_pm_wdt {
 	bool		armed;
 } erx_fiasco_pm_wdt_t;
 
-/* What the root found of the board's hardware watchdog (erx_fiasco_program_watchdog). */
-typedef enum erx_fiasco_board_wdt {
-	/* The manifest gives the system domain none. */
-	ERX_FIASCO_BOARD_WDT_ABSENT = 1,
-	/* Its row is confirmed by the tree and its registers are mapped. */
-	ERX_FIASCO_BOARD_WDT_READY,
-	/* The tree does not confirm its row, or its page cannot be mapped: the board has none. */
-	ERX_FIASCO_BOARD_WDT_UNCONFIRMED
-} erx_fiasco_board_wdt_t;
-
 /*
  * Maps the page of window, the platform row's window that the tree has confirmed
  * (erx_fiasco_program_watchdog, through erx_dt_registers), and reads both registers once

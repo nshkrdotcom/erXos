@@ -76,8 +76,8 @@ static uint64_t root_image_bytes(void);
 static bool root_memory_fits(uint64_t, uint64_t, uint64_t);
 static void root_report(const erx_boot_handoff_view_t *, uint32_t);
 static void root_report_manifest(const erx_manifest_view_t *, uint64_t);
-static void root_report_watchdog(const erx_watchdog_config_t *, erx_watchdog_mode_t, erx_fiasco_board_wdt_t);
-static void root_report_mailbox(erx_fiasco_board_mbox_t);
+static void root_report_watchdog(const erx_watchdog_config_t *, erx_watchdog_mode_t, erx_fiasco_found_t);
+static void root_report_mailbox(erx_fiasco_found_t);
 static void root_report_pins(erx_fiasco_board_pins_t, uint32_t);
 
 void
@@ -134,8 +134,8 @@ root_boot(erx_boot_handoff_view_t *handoff, erx_manifest_view_t *manifest, erx_b
 	    erx_watchdog_config_default();
 	const erx_watchdog_mode_t mode = boot_args->det ? ERX_WATCHDOG_MODE_DETERMINISTIC : ERX_WATCHDOG_MODE_NORMAL;
 	erx_fiasco_pm_wdt_t board;
-	erx_fiasco_board_wdt_t board_status;
-	erx_fiasco_board_mbox_t mailbox;
+	erx_fiasco_found_t board_status;
+	erx_fiasco_found_t mailbox;
 	erx_fiasco_board_pins_t pins;
 
 	reason = erx_fiasco_program_watchdog(&root_tree, manifest, &board, &board_status);
@@ -264,7 +264,7 @@ root_report_manifest(const erx_manifest_view_t *manifest, uint64_t free_pages)
  * the board has none.
  */
 static void
-root_report_watchdog(const erx_watchdog_config_t *config, erx_watchdog_mode_t mode, erx_fiasco_board_wdt_t board)
+root_report_watchdog(const erx_watchdog_config_t *config, erx_watchdog_mode_t mode, erx_fiasco_found_t board)
 {
 	char line[ERX_ROOT_LINE_MAX];
 	size_t used = 0;
@@ -281,13 +281,13 @@ root_report_watchdog(const erx_watchdog_config_t *config, erx_watchdog_mode_t mo
 	}
 	root_append(line, &used, "\n");
 	erx_fiasco_console_write(line, used);
-	if (board == ERX_FIASCO_BOARD_WDT_ABSENT)
+	if (board == ERX_FIASCO_FOUND_ABSENT)
 		return;
 	used = 0;
 	root_append(line, &used, "erx: root task: board watchdog ");
 	if (mode == ERX_WATCHDOG_MODE_DETERMINISTIC)
 		root_append(line, &used, "off");
-	else if (board == ERX_FIASCO_BOARD_WDT_READY)
+	else if (board == ERX_FIASCO_FOUND_READY)
 		root_append_decimal(line, &used, ERX_PM_WDT_TIMEOUT_S);
 	else
 		root_append(line, &used, "none: the tree does not confirm its record");
@@ -301,15 +301,15 @@ root_report_watchdog(const erx_watchdog_config_t *config, erx_watchdog_mode_t mo
  * cannot be mapped, after which the board has none.
  */
 static void
-root_report_mailbox(erx_fiasco_board_mbox_t mailbox)
+root_report_mailbox(erx_fiasco_found_t mailbox)
 {
 	char line[ERX_ROOT_LINE_MAX];
 	size_t used = 0;
 
-	if (mailbox == ERX_FIASCO_BOARD_MBOX_ABSENT)
+	if (mailbox == ERX_FIASCO_FOUND_ABSENT)
 		return;
 	root_append(line, &used, "erx: root task: firmware mailbox ");
-	root_append(line, &used, mailbox == ERX_FIASCO_BOARD_MBOX_READY ? "mapped" :
+	root_append(line, &used, mailbox == ERX_FIASCO_FOUND_READY ? "mapped" :
 	    "none: its record is not confirmed or not mapped");
 	root_append(line, &used, "\n");
 	erx_fiasco_console_write(line, used);
