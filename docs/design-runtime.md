@@ -685,10 +685,12 @@ rather than waiting for an end the console sends only once. The damage ends only
 explicit discard, or an edit that removes text, empties the whole edited buffer, every
 line of a multi-line edit together, or when the read ends; a key that leaves an empty
 buffer empty, a history move and a search keep it. `group` keeps it in each input
-request's state, created undamaged with the request, saved and restored with it when
+request's state, and a loss damages every unfinished request, the current one
+and each one set aside, since the group's one ask may be answered to a request
+other than the one the lost bytes were meant for; it is created undamaged with the request, saved and restored with it when
 `group` sets the request aside for a nested read and resumes it, and gone with its
 answer, and passes it into every `edlin` call, so no line state `group` rebuilds can lose
-it and a nested read has its own. In dumb mode `group` drops a line that lost input
+it, and the end of one request clears only its own. In dumb mode `group` drops a line that lost input
 through its newline and reads on, and in raw mode hands the reader the character NUL, as
 a program's byte read gives a loss. So no shell that edits with `edlin`, the Erlang shell
 or `erx_shell`, runs a line that lost bytes; the user empties the buffer to go on. Stock
@@ -2761,14 +2763,14 @@ the hosted entry writes `-erx_record console stdio`, which names `erx_stdio`
 ([design-fiasco.md](design-fiasco.md#the-console)). The console refuses a peripheral it
 has no driver for, and the boot fails with the reason, so no record word becomes an atom.
 
-**Which input bytes mean something.** `erx_console` takes one byte out of the
-stream: a typed `Ctrl-G` opens the console's menu, where `erx_console_keys` tells
+**Which input bytes mean something.** On a person's terminal `erx_console` takes
+one byte out of the stream: a typed `Ctrl-G` opens the console's menu, where `erx_console_keys` tells
 a typed `Ctrl-G` from the BEL that ends a terminal's string reply
 ([design-live.md](design-live.md#the-console)). The rest goes into the tty that
 holds the input of the system console's groups ([design-live.md](design-live.md#lost-input)),
 whose `ISIG`, on a person's terminal, makes `Ctrl-C` an `interrupt` and `Ctrl-Z` a `suspend` of the current
 group and `Ctrl-\` a `quit` that does nothing at the prompt, as for a session's
-console below; on a pipe every byte is data; the groups' asks are answered with UTF-8, with a character cut
+console below; on a pipe there is no menu and every byte, BEL included, is data; the groups' asks are answered with UTF-8, with a character cut
 across two reads held until its end arrives and a byte that belongs to no
 character read as latin-1, as `prim_tty`'s reader does. A console of the session
 role takes no byte out, since the master keeps `Ctrl-G`: its tty's `ISIG`

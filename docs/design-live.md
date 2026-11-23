@@ -735,10 +735,12 @@ pseudo-terminal.
 
 The system shell's tty lives in `erx_console` and is simpler. Programs run only
 under a session's domain (V8), so no program opens it and nothing can call
-`tcsetattr` on it: it keeps the prompt's `termios` above, less `IXON` and `IMAXBEL`, for as
-long as it lives. `erx_console` runs it for input alone, as the bounded store
-its groups read on demand ([Lost input](#lost-input)), and copies output from
-the group's `prim_tty` to the driver unchanged. `erx:console_size/2` checks the
+`tcsetattr` on it: its settings follow the driver's `Terminal` for as long as
+it lives, the prompt's `termios` above less `IXON` and `IMAXBEL` on a
+person's terminal, and every flag clear on a pipe, which also has no
+`Ctrl-G` menu ([Lost input](#lost-input)). `erx_console` runs it for input
+alone, as the bounded store its groups read on demand, and copies output
+from the group's `prim_tty` to the driver unchanged. `erx:console_size/2` checks the
 size as `erx_tty:size/3` does, so a zero column count never reaches `prim_tty`.
 
 **Between domains.** A tty and a master in the system domain exchange seven
@@ -1294,9 +1296,10 @@ chosen by the driver's `Terminal`:
   Erlang shell's running evaluation however much is typed ahead; what the
   tty's bound drops is a loss.
 * **A pipe** (`Terminal` false, `erx_stdio` reading a pipe or a file): every
-  flag clear, so the bytes reach the group as the pipe gave them, CR, LF
-  and CRLF unchanged, a byte 3 is a byte, and a character read gets the
-  byte the pipe held. The console answers an input message only once its
+  flag clear, and no `Ctrl-G` menu, since no person is at the line, so
+  `erx_console_keys` does not run and the bytes reach the group as the
+  pipe gave them: CR, LF and CRLF unchanged, a byte 3 and a BEL are
+  bytes, and a character read gets the byte the pipe held. The console answers an input message only once its
   tty has room for another drain, so a pipe is held back, never cut, and
   nothing is a loss.
 
@@ -1320,9 +1323,10 @@ console takes the event `lost`, from its relay or from its own tty, as it
 takes a read's `lost`, for the group the event names: it answers that
 group's outstanding ask with it, or holds it for the group's next ask, so
 the read is damaged before any later key reaches it. The signal that
-follows then acts as before: `interrupt` ends the read, and with it the
-damage and what the console held for the group; `quit` and `suspend`
-leave the read going, damaged. A `lost` that arrives while the group reads
+follows then acts as before: `interrupt` ends the current read, and with
+it that read's damage and the bytes the console held for the group, but
+not a loss the console holds for the group's next ask, since a read set
+aside may resume; `quit` and `suspend` leave the read going, damaged. A `lost` that arrives while the group reads
 nothing, as during an Erlang shell's evaluation, damages its next read,
 which costs the user one emptied buffer and never runs a damaged line.
 While the menu has the line a loss rings the bell, as any byte that is no
@@ -1390,17 +1394,30 @@ FreeBSD reads `ab` and a newline; it takes no byte of room; and a byte the
 tty drops for room, or a gap in the master's numbers, reads as a NUL where
 FreeBSD drops silently. Each keeps a damaged line damaged.
 
-**The group and `edlin`.** The damage belongs to the read: each of the
-group's input requests carries its own, created undamaged with the
-request, saved with it when `group` sets the request aside to serve
-another read and restored with it when it resumes, and gone with the
-request at its answer. `group` passes the request's damage into every
-call of `edlin`'s editing and takes it back from the result,
+**The group and `edlin`.** Each of the group's input requests carries a
+damage of its own, created undamaged with the request, saved with it
+when `group` sets the request aside to serve another read and restored
+with it when it resumes, and gone with the request at its answer.
+`group` passes the current request's damage into every call of `edlin`'s
+editing and takes it back from the result,
 `edlin:edit_line(Input, Cont, Damage)`, so a line state `group` rebuilds
 during a read (a history move, a search, a format, an external editor)
-cannot lose it, and a nested read, an Erlang shell's `io:get_line/1` or
-`io:get_password/0` from another process while a prompt waits, has its
-own. Each of the group's modes then does one thing:
+cannot lose it.
+
+A loss belongs to no one request. The group's one ask outlives a nested
+read, an Erlang shell's `io:get_line/1` or `io:get_password/0` from
+another process while a prompt waits, so whichever request is current
+takes the answer, and the bytes the loss stands for may have been meant
+for a request set aside. So a loss damages every unfinished request of
+the group, the current one and every one set aside, and the end of one
+request clears only its own damage. With a prompt holding
+`file:delete("`, a dropped frame holding `scratch/`, then
+`io:get_password/0` from another process and a `Ctrl-C`, the loss
+damages the password read and the prompt alike; the interrupt ends the
+password read, and the prompt resumes damaged, so `important").` and
+Enter run nothing. A character `edlin`'s bounds refuse arrived for the
+current request, so it damages that request alone. Each of the group's
+modes then does one thing:
 
 * **Edited** (`edlin`): a loss damages the read, drops any escape sequence
   under way and rings the bell, and so does an inserted character that
@@ -1475,8 +1492,10 @@ after it, however the input was cut into deliveries.
   every line from finishing on its tty; a master can also send any bytes
   it likes. Neither is a crossing of authority: only the tty's own master
   reaches the tty, and the driver is the line's.
-* The console's or a driver's restart loses what was in flight, as it does
-  any input; the new groups start undamaged reads.
+* No read outlives the path that fed it: the end of the system console's
+  driver ends the runtime, and a master's end hangs its tty up, which
+  ends the tty's shells, so a loss in flight cannot be forgotten by a
+  read that goes on.
 
 **Concepts before and after.** Before: the marker byte
 (`erlang/apps/erx_uart/src/erx_uart_marker.hrl`), which every consumer of
@@ -1502,7 +1521,8 @@ obligations are these, each with one owner:
   operation serves both reads (`erx_tty`);
 * every place that drops input makes a loss there: the drivers' placement
   rule, the tty's bound and `edlin`'s bounds;
-* each input request carries its damage through suspension and every
+* a loss damages every unfinished request of a group, and each request
+  carries its damage through suspension and every
   `edlin` call (`group`), and `edlin`'s one finishing function refuses a
   damaged read;
 * both consoles read on demand through one reader, and every driver has one
@@ -1533,6 +1553,7 @@ fail, so the case proves the code under it ran.
 | hosted mode on a terminal: an Erlang shell evaluating `timer:sleep(infinity)`, 8 KiB typed ahead, then `Ctrl-C` | the evaluation is interrupted | the console answering a terminal's input only when its tty has room, so `Ctrl-C` waits upstream |
 | the same, `erx_stdio` waiting for `erx_console_taken` while the shell writes 64 KiB | all the output is written | the driver's wait for the answer not serving output |
 | the system console, a pipe giving `a` CR `b` LF `c` CR LF, read by `io:get_line/1` and by `io:get_chars/2` of one character | the bytes reach the group unchanged; the character read gets CR | the pipe given the terminal's `ICRNL` |
+| the same, a pipe giving `a` BEL `b` LF, read by `io:get_line/1` and by `io:get_chars/2` of one character after `a` | the line is `a`, BEL, `b`; the character read gets BEL; no menu opens | menu recognition run on a pipe |
 | the system console on a terminal, CR, LF and CR LF each after a word | CR and LF each end the line; CR LF ends it and then an empty line | `ICRNL` cleared for a terminal |
 | `erx_mini_uart_tests` and `erx_pl011_tests`, the console stalled: no `erx_console_taken` while 200 bytes arrive | one message outstanding; the store holds one drain's bytes and one loss for the rest, sent in order after the answer | the driver sending a message per drain without waiting |
 | `erx_console_keys_tests`: a loss inside an OSC string, then `Ctrl-G` | the menu opens | the parser's state kept across the loss |
@@ -1543,7 +1564,7 @@ fail, so the case proves the code under it ran.
 | `erx_tty_tests`, raw: `ab`, a loss, `cd` with `VMIN` 5 | ready at the fifth unit; `read/3` of 5 gives `ab`, NUL, `cd`; `read_input/2` gives `a`, `b`, `lost`, `c`, `d` | a read that does not shift the remaining losses |
 | `erx_tty_tests`, raw: a loss alone with `VMIN` 1, with a `poll`, and with `VMIN` 2 and `VTIME` 1 | the read and the poll are ready; the timer starts | readiness counting bytes only |
 | `erx_console_master_tests`, a session: `rm ` read into the editor, frame 1 (`-i `) dropped, frame 2 `Ctrl-\`, frame 3 `target` and Enter | no line is returned; the bell rings | the flush dropping the gap's loss without `flushed_loss` |
-| the same with `Ctrl-Z` in frame 2, and with `Ctrl-C` | `Ctrl-Z`: no line is returned; `Ctrl-C`: the read ends, and the next read is undamaged | `interrupt` keeping the held loss for the next read |
+| the same with `Ctrl-Z` in frame 2, and with `Ctrl-C` | `Ctrl-Z`: no line is returned; `Ctrl-C`: the read ends, and the next read is undamaged | the ended read's damage passed on to the next read |
 | `erx_tty_tests`, raw: 4 KiB waiting, then three bytes | one loss after the 4 KiB, kept though no byte of room is left | the drop not marked |
 | `erx_tty_tests`, cooked: `cd`, a loss, `/`, then `VERASE`, then `VKILL`; a loss then `VEOF`; `ICANON` cleared over a line with a loss | the loss stays after the erase and is gone after the kill; the second line reads as one NUL; the loss moves to the readable input in its place | an erase that removes the loss |
 | `erx_tty_modes_tests` exploration and `erx_tty_fuzz` | `lost` is in the event alphabet; every reachable state keeps losses within the held bytes, one at most between two bytes | losses not dropped by a signal's flush |
@@ -1554,7 +1575,10 @@ fail, so the case proves the code under it ran.
 | the same, a multi-line edit: a loss in its second line, that line emptied, Enter | no line finishes until the first line is emptied too | the current line's emptiness taken for the buffer's |
 | the same: a loss, a history move, Enter | no line finishes | the history move rebuilding the line state without the damage |
 | the same, nested edited reads: read A damaged, read B from another process, B's line, then A resumes and Enter | B's line is returned; A finishes no line | the damage kept per process, which B's start clears |
-| the same, nested password read: read A undamaged, `io:get_password/0` B with a loss, then B's next line, then A's Enter | B returns its next line; A's line is returned | B's damage reaching A |
+| the same, nested password read: read A undamaged, `io:get_password/0` B with a loss, then B's next line, then A's Enter | B returns its next line; A finishes no line | a loss damaging only the current request |
+| the same, prompt A holding `file:delete("`, frame 1 (`scratch/`) dropped, `io:get_password/0` B from another process, frame 2 `Ctrl-C`, frame 3 `important").` and Enter | B ends interrupted; A resumes damaged and finishes no line | the end of B clearing A's damage |
+| the same sequence with `Ctrl-\` in frame 2, B then reading a clean line | B drops its damaged line and returns the clean one; A resumes damaged and finishes no line | a loss damaging only the current request |
+| the same sequence with `Ctrl-Z` in frame 2 | as with `Ctrl-\` | as with `Ctrl-\` |
 | the same: a short command with a grapheme cluster of 33 codepoints, Enter | no line finishes | the refused character dropped with the bell alone |
 | the same: a line at 65,536 codepoints, one more character, Enter; and a yank the bound refuses, Enter | the first finishes no line; the second finishes the line unchanged | a refused yank damaging the read |
 | the same: a loss at the end of input | the line is dropped and the read ends | the line returned |

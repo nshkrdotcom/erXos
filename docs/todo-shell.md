@@ -789,7 +789,7 @@ to the corpus and follow rc
      pipe's settings as `Terminal` says, deleting `input/2` and the push; the console answers a terminal's input
      at once and a pipe's once there is room; a loss, and the relay's `lost` event, damage the group's read, and a
      loss drops a cut character and resets `erx_console_keys`;
-  5. `group` and `edlin`: the damage in each input request's state, `edlin:edit_line/3`, `lost` as an input,
+  5. `group` and `edlin`: the damage in each input request's state, a loss damaging every unfinished request, `edlin:edit_line/3`, `lost` as an input,
      refused bounds as losses, refusal through `finish/4` until the buffer is emptied, dumb and raw modes; delete
      the hold, the NUL scan, `edlin_key`'s NUL rule and `group`'s history rule; `test/host/edlin_marker_test.rb`
      becomes `edlin_lost_test.rb`.
