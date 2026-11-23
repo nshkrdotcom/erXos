@@ -604,13 +604,22 @@ module Erx
   # line of its own, and the bytes before it, the head, go back in front of the
   # unread bytes to join what is written after the log line. Checkpoints then see
   # the program's lines as if no log line had been written, and each log line
-  # whole from its start, however many land and wherever.
+  # whole from its start, however many land and wherever. A line that carries
+  # Fiasco's warning that a call overwrote an unanswered caller's reply fails the
+  # boot (REPLY_OVERWRITTEN).
   class Transcript
     MAX_LINE_BYTES = 65_536
     # A log line as the console writes it, at the end of a line: a kernel record,
     # "#SEQ SECONDS.MICROSECONDS LEVEL TEXT" (kernel/core/log.c), or a domain's,
     # "SECONDS.MICROSECONDS LEVEL domain ID principal P NAME: TEXT" (erx_syslog_core).
     LOG_LINE_END = /(?:\#[0-9]+ [0-9]+\.[0-9]{6} [a-z]+ |[0-9]+\.[0-9]{6} [a-z]+ domain [0-9]+ principal )[^\n]*\n\z/n
+    # Fiasco warns this way (fiasco/kernel/src/kern/receiver.cpp, set_reply_cap) when a
+    # thread receives a call while its reply slot still holds an earlier caller. The
+    # root's service does so only once its table of faults is full
+    # (liberx/backend/fiasco/reply_slots.h), and the warning goes straight to the UART
+    # from a newline, so it splits whatever line it lands in where no checkpoint can
+    # rejoin it.
+    REPLY_OVERWRITTEN = /Application bug: reply capability overwritten!/n
     REQUIRED_KEYS = %i[name pattern seconds].freeze
     OPTIONAL_KEYS = %i[verify verify_seconds type].freeze
     attr_reader :observed
@@ -714,6 +723,7 @@ module Erx
       while (newline = @pending.index("\n"))
         raise Error, 'serial line exceeds transcript bound' if newline > MAX_LINE_BYTES
         line = @pending.slice!(0, newline + 1)
+        raise Error, "the kernel warned that a call overwrote an unanswered caller's reply" if REPLY_OVERWRITTEN.match?(line)
         next if done?
         line = log_line_alone(line)
         point = @checkpoints.fetch(@observed.size)

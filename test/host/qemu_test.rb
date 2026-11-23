@@ -390,6 +390,15 @@ class QemuTest < Minitest::Test
     assert transcript.consume(@serial, elapsed: 0.1)
   end
 
+  # Fiasco's warning, written from a newline into the middle of a guest's line, fails the
+  # boot even while no checkpoint waits for that line.
+  def test_a_reply_overwritten_warning_fails_the_boot
+    transcript = Erx::Transcript.new(checkpoints: checkpoints)
+    File.write(@serial, "fir\n\e[31mKERNEL\e[m: Warning: 0xffff0000: Application bug: reply capability overwritten!\nst\n")
+    error = assert_raises(Erx::Error) { transcript.consume(@serial, elapsed: 0.1) }
+    assert_match(/unanswered caller/, error.message)
+  end
+
   # A checkpoint's verify may take long (the display suite reads the screen in it); the
   # next checkpoint's seconds count from when the verify returned, not from its match.
   def test_a_verify_does_not_spend_the_next_checkpoint_seconds
