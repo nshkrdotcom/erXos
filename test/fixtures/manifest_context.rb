@@ -267,6 +267,31 @@ module ManifestContextFixture
       (rate ? "  parameter rate #{rate}\n" : '') + (flow ? "  parameter flow \"#{flow}\"\n" : '')
   end
 
+  # The codec of the tree's ABI with one more interface, declared by DECLARATION.
+  def codec_with(declaration)
+    sources = Erx::ABI::Sources.read(root: File.expand_path('../..', __dir__))
+    extra = Erx::ABI::Syntax.parse(declaration, path: 'abi/services/extra.txt')
+    Erx::ABI::Codec.new(Erx::ABI::Model.validate(Erx::ABI::SourceSet.new(declarations: sources.declarations + extra,
+                                                                         inputs: sources.inputs)))
+  end
+
+  # A test-only interface whose one parameter is an identifier set of at most three, for
+  # the packer's and the boot view's identifier sets (docs/design-abi.md, "Services, facets
+  # and their parameter schemas") while no checked-in interface declares one. It names
+  # net_grant and a key that checker consumes but no clause of it reads, since
+  # check_net_ports reads the net interface's facets alone, so the set's own rules alone
+  # decide whether a facet of it packs.
+  NAMES_INTERFACE = "service names 95\n  served_as message\n" \
+                    "  parameter buffers 1 identifier set 3 bytes 63 checked_by net_grant\n"
+
+  # A service nm of NAMES_INTERFACE, served by beta, and alpha's facet of it stating
+  # names, in the given order, as its set.
+  def names_grant(names)
+    "service nm\n  server @domain.beta\n  interface names\nfacet nm\n  grantee @domain.alpha\n  service @service.nm\n" \
+      "  operations none\n  max_request 1\n  in_flight 1\n  reductions 1\n  period_ns 1\n  max_heap_size 1\n" +
+      names.map { |name| "  parameter buffers \"#{name}\"\n" }.join
+  end
+
   # A planner that plans every configured domain, introduction and session, for
   # checks that test the rest.
   def accepting_planner = ->(view) { { 'domains' => view.fetch('order').map { 0 }, 'introductions' => view.fetch('introductions').map { 0 },

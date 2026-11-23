@@ -152,7 +152,7 @@ module Erx
       # maximum, or a member kind's least and greatest value, with its members' names
       # in value order, so value v is named members[v - minimum], and the most rows a
       # facet states of it: one, or a set's MAX_COUNT, its elements in strictly
-      # ascending order; a set is of u64 alone (the ABI reader refuses another).
+      # ascending order; a set is of u64 or identifier (the ABI reader refuses another).
       def service_parameter_table(schema)
         limits = schema.types.fetch(FACET_LAYOUT).fields.map(&:name)
         rows = schema.services.sort_by { |service| service.fetch(:number) }.flat_map do |service|

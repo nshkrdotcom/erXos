@@ -1590,12 +1590,32 @@ class ManifestDomainsTest < Minitest::Test
                                             base: with_session(self.class.session)), /no configured domain/)
   end
 
-  # The codec of the tree's ABI with one more interface, declared by DECLARATION.
-  def codec_with(declaration)
-    sources = Erx::ABI::Sources.read(root: File.expand_path('../..', __dir__))
-    extra = Erx::ABI::Syntax.parse(declaration, path: 'abi/services/extra.txt')
-    Erx::ABI::Codec.new(Erx::ABI::Model.validate(Erx::ABI::SourceSet.new(declarations: sources.declarations + extra,
-                                                                         inputs: sources.inputs)))
+  def codec_with(declaration) = ManifestContextFixture.codec_with(declaration)
+
+  # An identifier set (ManifestContextFixture::NAMES_INTERFACE) packs one row an element,
+  # its names lexicographic over unsigned bytes, a name before every longer name it
+  # begins: nus, nusb, nv in that order, whatever order its source lines state them in.
+  # A name twice and a fourth name are refused.
+  def test_an_identifier_set_packs_in_byte_order
+    codec = codec_with(ManifestContextFixture::NAMES_INTERFACE)
+    context = Erx::Manifest::Context.new(**ManifestContextFixture.arguments(codec).merge(platform: @platform))
+    admitted = lambda do |names|
+      Erx::Manifest.admit(source: @source + ManifestContextFixture.names_grant(names), codec: codec, context: context,
+                          planner: @planner)
+    end
+    ordered = %w[nus nusb nv]
+    kind = codec.member('mf_parameter_kind', 'identifier')
+    ordered.permutation.each do |names|
+      view = codec.open('manifest', admitted.call(names).bytes)
+      assert_equal ordered.map { |name| [1, kind, name] },
+                   rows(view, 'facet_parameters').map { |row| [row.fetch('key'), row.fetch('kind'), view.string(row.fetch('bytes'))] },
+                   names.join(' ')
+    end
+    { %w[nus nus] => /states "nus" twice/, %w[a b c d] => /states over 3 values/ }.each do |names, message|
+      error = assert_raises(Erx::Manifest::Invalid, names.join(' ')) { admitted.call(names) }
+      assert_equal 'facet.parameter', error.field, error.message
+      assert_match message, error.message
+    end
   end
 
   # Seed: a service of another interface whose parameters name line_grant. Its facet is

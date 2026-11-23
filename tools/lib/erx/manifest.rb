@@ -2292,19 +2292,25 @@ module Erx
       end
 
       # Resolved parameter values, by key, and their packed facet_parameters rows in key
-      # order, a set's one row an element, in ascending order of its elements.
+      # order, a set's one row an element, in strictly ascending order of its elements: a
+      # u64 by its scalar, an identifier by its bytes, which String#<=> compares as unsigned
+      # bytes, a name before every longer name it begins. A source row's set states no element
+      # twice (resolve_parameters) and a derived row's values are the build's own, so no two
+      # rows tie and the order is total.
       def pack_parameters(values, declared)
         rows = values.flat_map do |key, value|
           parameter = declared.fetch(key)
           parameter.fetch(:cardinality) == 'set' ? value.map { |item| parameter_row(parameter, item) } : [parameter_row(parameter, value)]
         end
-        [values.freeze, rows.sort_by { |item| item.values_at('key', 'scalar') }]
+        [values.freeze, rows.sort_by { |item| item.values_at('key', 'scalar', 'bytes') }]
       end
 
       # A facet record's parameter lines, KEY VALUE, as a map from key to value, a device
       # reference resolved against devices, the placed device rows. A set's lines, one an
-      # element, give it the array of their values in ascending order: at most its
-      # MAX_COUNT of them, and none twice. Every other key is stated at most once.
+      # element, come in any order and give it the array of their values sorted into the
+      # order its packed rows take (pack_parameters): at most its MAX_COUNT of them, and
+      # none twice (docs/design-abi.md, "Services, facets and their parameter schemas").
+      # Every other key is stated at most once.
       def resolve_parameters(record, declared, devices)
         values = record.parameters.each_with_object({}) do |(key_token, value_token), result|
           key = key_token.value
@@ -2313,7 +2319,7 @@ module Erx
           value = parameter_value(key, parameter, value_token, record.line, devices)
           if parameter.fetch(:cardinality) == 'set'
             set = result.fetch(key, [])
-            invalid("facet parameter #{key} states #{value} twice", 'facet.parameter') if set.include?(value)
+            invalid("facet parameter #{key} states #{value.inspect} twice", 'facet.parameter') if set.include?(value)
             invalid("facet parameter #{key} states over #{parameter.fetch(:maximum_count)} values", 'facet.parameter') if
               set.size == parameter.fetch(:maximum_count)
             result[key] = (set + [value]).sort.freeze
@@ -2333,8 +2339,8 @@ module Erx
       # members, which is the value, or for a device reference the index in devices of the
       # row the quoted name names (named_device), which its grant checker judges
       # (docs/design-abi.md, "Services, facets and their parameter schemas"); a set's
-      # element is one value of its kind, which is u64 (the ABI reader refuses a set of
-      # another). The domain and principal references are refused while no service
+      # element is one value of its kind, which is u64 or identifier (the ABI reader
+      # refuses a set of another). The domain and principal references are refused while no service
       # declares one, so nothing here guesses their spelling.
       def parameter_value(key, parameter, token, line, devices)
         kind = parameter.fetch(:kind)

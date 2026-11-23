@@ -106,6 +106,7 @@ static const char *boot_facet_operations(const erx_manifest_view_t *, uint32_t f
 		    const erx_dom_service_t *, const erx_service_operation_t **);
 static const char *boot_parameter(const erx_mf_parameter_t *, const erx_service_parameter_t *,
 		    const uint8_t *, erx_dom_parameter_t *);
+static bool boot_set_follows(const erx_dom_parameter_t *, const erx_dom_parameter_t *);
 static const char *boot_facet_parameters(const erx_manifest_view_t *, uint32_t first, uint32_t count,
 		    uint32_t interface, erx_dom_parameter_t *);
 static const char *boot_facet_grantee(const erx_dom_view_t *, const erx_mf_facet_t *,
@@ -1305,12 +1306,34 @@ boot_facet_operations(const erx_manifest_view_t *manifest, uint32_t first, uint3
 }
 
 /*
+ * Whether value strictly follows before, the element of its set before it,
+ * in the order a set is packed in (docs/design-abi.md, "Services, facets
+ * and their parameter schemas"): a u64 by its value, an identifier
+ * lexicographically over unsigned bytes, a name before every longer name it
+ * begins. So no element follows itself. A set is of those two kinds alone
+ * (abi_contracts.rb), and boot_parameter has checked that each element is
+ * of its declaration's kind.
+ */
+static bool
+boot_set_follows(const erx_dom_parameter_t *before, const erx_dom_parameter_t *value)
+{
+	uint32_t common;
+	int order;
+
+	if (value->declared->kind != ERX_MF_PARAMETER_IDENTIFIER)
+		return (value->scalar > before->scalar);
+	common = before->bytes_len < value->bytes_len ? before->bytes_len : value->bytes_len;
+	order = memcmp(before->bytes, value->bytes, common);
+	return (order < 0 || (order == 0 && before->bytes_len < value->bytes_len));
+}
+
+/*
  * Checks a facet's count parameter rows, from row first of the manifest's
  * parameter table, into parameters[0] to parameters[count - 1], against
  * what its service's interface declares (erx_service_parameters); the
  * reason it refuses them, or NULL. The rows follow the declarations'
  * number order, at most most rows a declaration, a set's elements in
- * strictly ascending order of their values, as the packer writes them:
+ * strictly ascending order (boot_set_follows), as the packer writes them:
  * one walk over the declarations, with a cursor on the first row not yet
  * matched, checks each row of a declaration's key against it
  * (boot_parameter) and against the row before it, refuses a required
@@ -1337,8 +1360,7 @@ boot_facet_parameters(const erx_manifest_view_t *manifest, uint32_t first, uint3
 				break;
 			if ((reason = boot_parameter(&row, &declared[at], strings, &parameters[matched])) != NULL)
 				return (reason);
-			/* A set's elements; boot_parameter has checked each is a u64. */
-			if (of > 0 && row.scalar <= parameters[matched - 1].scalar)
+			if (of > 0 && !boot_set_follows(&parameters[matched - 1], &parameters[matched]))
 				return ("manifest: a facet parameter set is unsorted or repeats a value");
 		}
 		if (of == 0 && declared[at].required)

@@ -120,10 +120,29 @@ operations_admitted(const erx_manifest_view_t *view, const erx_dom_view_t *dom, 
 }
 
 /*
+ * Whether value follows before, the element of its set before it, in the
+ * order a set is packed in (docs/design-abi.md, "Services, facets and their
+ * parameter schemas"): a u64 of a greater value, an identifier
+ * lexicographically after over unsigned bytes, a name before every longer
+ * name it begins. Compared byte by byte here, independently of the view's
+ * memcmp in boot_set_follows.
+ */
+static bool
+set_follows(const erx_dom_parameter_t *before, const erx_dom_parameter_t *value)
+{
+	if (value->declared->kind != ERX_MF_PARAMETER_IDENTIFIER)
+		return (value->scalar > before->scalar);
+	for (uint32_t at = 0; at < before->bytes_len && at < value->bytes_len; at++)
+		if (before->bytes[at] != value->bytes[at])
+			return (before->bytes[at] < value->bytes[at]);
+	return (before->bytes_len < value->bytes_len);
+}
+
+/*
  * Whether the view carries facet row facet_row's parameters as facet's, each
  * of them: one per row, so none is dropped; each a declaration of the
  * service's interface, in ascending number order, a number repeated only
- * by a set's next element, of a greater value, and at most its most
+ * by a set's next element, which follows it (set_follows), and at most its most
  * times in a row, so nothing else is stated twice; of a kind the boot
  * carries and within its declared bound,
  * a device reference a row of the view's devices; and with every
@@ -148,8 +167,8 @@ parameters_admitted(const erx_dom_view_t *dom, const erx_dom_facet_t *facet, con
 		if (!declares(declared, ndeclared, parameter))
 			return (false);
 		if (index > 0 && parameter->number == facet->parameters[index - 1].declared->number) {
-			/* The next element of a set, its values strictly ascending. */
-			if (++run >= parameter->most || value->scalar <= facet->parameters[index - 1].scalar)
+			/* The next element of a set, strictly after the one before it. */
+			if (++run >= parameter->most || !set_follows(&facet->parameters[index - 1], value))
 				return (false);
 		} else if (index > 0 && parameter->number < facet->parameters[index - 1].declared->number) {
 			return (false);

@@ -619,9 +619,10 @@ module Erx
               Syntax.identifier(key, line: line)
               count = cardinality == 'set' ? Model.positive(bound.shift, line, maximum: 65536) : 1
               line.fail!('unknown parameter cardinality') unless %w[one optional set].include?(cardinality)
-              # A set's elements are packed in ascending order, which only an unsigned scalar has as
-              # its packed value, so a set is of u64 alone until a consumer needs another kind.
-              line.fail!('a parameter set is of u64') if cardinality == 'set' && kind != 'u64'
+              # A set's elements are packed in strictly ascending order, which the packer and the
+              # boot view each know for two kinds: a u64 by its value, an identifier by its bytes
+              # (docs/design-abi.md, "Services, facets and their parameter schemas").
+              line.fail!('a parameter set is of u64 or identifier') if cardinality == 'set' && !%w[u64 identifier].include?(kind)
               # MAX_COUNT 1 would be optional spelled another way; a set's most is above 1, which
               # tells a set from a single value wherever only the most is at hand (erx_service_parameters).
               line.fail!('a parameter set holds at least two values') if cardinality == 'set' && count < 2

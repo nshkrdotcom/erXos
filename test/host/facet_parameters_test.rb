@@ -123,7 +123,8 @@ class FacetParametersTest < Minitest::Test
     'the view takes a set past its most' =>
       [VIEW, 'of < declared[at].most && matched < count', 'matched < count', FORGED_CASE],
     'the view takes a set unsorted' =>
-      [VIEW, 'if (of > 0 && row.scalar <= parameters[matched - 1].scalar)', 'if (false)', FORGED_CASE],
+      [VIEW, 'if (of > 0 && !boot_set_follows(&parameters[matched - 1], &parameters[matched]))', 'if ((void)boot_set_follows, false)',
+       FORGED_CASE],
     'the terms give a set its first element alone' =>
       [TERMS, '*taken < count && parameters', '*taken < 1 && parameters', NET_CASE]
   }.freeze

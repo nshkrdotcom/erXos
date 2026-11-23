@@ -1842,9 +1842,11 @@ HELPER`.
   and the checked helper that consumes it. A set is packed one row per
   element in strictly ascending order: numeric for `u64`, and for
   `identifier` lexicographic over unsigned bytes, a name before every
-  longer name it begins. So no element appears twice, and the packer
-  and the boot view each refuse a set out of order, with an element
-  twice or past its MAX_COUNT. The `ble` interface's `parameter
+  longer name it begins. So no element appears twice: the packer sorts
+  a set's lines, given in any order, into that order and refuses an
+  element twice or past its MAX_COUNT, and the boot view refuses a
+  packed set out of order, with an element twice or past its MAX_COUNT.
+  The `ble` interface's `parameter
   services 1 identifier set 8 bytes 63 checked_by ble_grant`
   ([design-bluetooth.md](design-bluetooth.md#the-ble-facet)) is one.
   A member value is spelled as
