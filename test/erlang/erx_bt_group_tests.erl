@@ -102,6 +102,20 @@ a_failing_reset_ends_the_group_test() ->
         erx_bt_line_model:stop(Model)
     end).
 
+%% Ending the group leaves none of its registered processes behind: the helper returns
+%% only once the supervisor, the link supervisor, the line's reader and writer and the
+%% controller process are gone, so the next start never finds one registered. Checked
+%% straight after each of many starts, with a link connected so the link supervisor has a
+%% child to end.
+group_teardown_leaves_nothing_registered_test() ->
+    Names = [erx_bt_host_sup, erx_bt_link_sup, erx_bt_line_rx, erx_bt_line_tx, erx_bt_hci],
+    with_store(fun() ->
+        [begin
+             with_controller_group(#{}, fun(Model) -> connect(Model, 16#40) end),
+             ?assertEqual([], [Name || Name <- Names, whereis(Name) =/= undefined])
+         end || _ <- lists:seq(1, 50)]
+    end).
+
 %% The identity address: 10,000 drawn from the generator all have the static form.
 static_addresses_test() ->
     [begin
@@ -140,9 +154,26 @@ with_controller_group(Options, Case) ->
         await(fun is_ready/0),
         Case(Model)
     after
-        exit(Group, kill),
+        end_group(Group),
         erx_bt_line_model:stop(Model)
     end.
+
+%% Kills the group's supervisor and returns once it and every process under it have
+%% exited: killing it ends its children only as each receives the signal, and the link
+%% supervisor ends its own children before it exits, so a next start races the names.
+end_group(Group) ->
+    Monitors = [monitor(process, Pid) || Pid <- [Group | group_processes(Group)]],
+    exit(Group, kill),
+    [receive {'DOWN', Monitor, process, _, _} -> ok after ?WAIT_MS -> error(group_not_ended) end
+     || Monitor <- Monitors],
+    ok.
+
+%% The group's children (a child the group is restarting has no pid), and the links
+%% under the link supervisor.
+group_processes(Group) ->
+    Children = [Pid || {_, Pid, _, _} <- supervisor:which_children(Group), is_pid(Pid)],
+    Links = [Pid || {_, Pid, _, _} <- supervisor:which_children(erx_bt_link_sup), is_pid(Pid)],
+    Children ++ Links.
 
 %% The store, and a stand-in for the registry, which answers each link's `join` with the
 %% GAP and GATT services alone and takes what the links send it.
