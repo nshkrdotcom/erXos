@@ -40,14 +40,16 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
 * [Medium] benchmarks, `sched` ([design-bench.md](design-bench.md#2-sched-how-a-cpu-is-shared)): `native_task`
   program modes for the recording spinners, `share-equal`, `share-tasks` and `band-work`; lands with the quantum
   case's seed run.
-* [Medium] benchmarks, `nullcall` ([design-bench.md](design-bench.md#3-nullcall-what-asking-for-nothing-costs)):
-  the root round trips through the decoder's refusal, same and cross space, and the kernel's cheapest call chosen
-  from Fiasco's source; then FD32's ten runs a build on the Raspberry Pi 4.
+* [Medium] benchmarks, `nullcall` ([design-bench.md](design-bench.md#3-nullcall-the-decoder-refusal-round-trip)):
+  the decoder-refusal round trips, same and cross space, checked by the service's received count, and the kernel's
+  cheapest call chosen from Fiasco's source; then FD32's ten runs a build on the Raspberry Pi 4, judged by its own
+  predicate.
 * [Medium] benchmarks, `vm` ([design-bench.md](design-bench.md#4-vm-what-memory-costs)): the reserve, commit,
   touch, protect, decommit, release, map and child operations from the root and from a test task.
 * [Medium] benchmarks, `xdomain` ([design-bench.md](design-bench.md#5-xdomain-one-message-one-domain-to-another)):
   `bench/erx_xdomain_bench.erl`, a test image from the `system_domain` suite's with the echo facet granted to the
-  client's domain, `local-rtt`, `xdomain-pingpong` busy and parked, and `xdomain-throughput`; G5's lane variants.
+  client's domain, `local-rtt` and `xdomain-pingpong`. `xdomain-throughput` and `xdomain-stall` wait for their own
+  design with G5's runs.
 * [Medium] benchmarks, the Raspberry Pi 4 and the other systems
   ([design-bench.md](design-bench.md#other-systems-on-the-same-raspberry-pi-4)): a raspi4b build of the native
   bench image; `tools/erx bench import` for console logs and the analyser's captures; `bench/peer/erx_peer_bench.c`;

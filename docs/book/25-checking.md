@@ -761,22 +761,28 @@ alternately on one host in one session, so that the host's own drift
 falls on both. Anything else is inconclusive, and inconclusive is not
 a pass.
 
-Thresholds inform; they do not fail a commit. Exactly three limits do:
-no lost wake, anywhere; and on the Raspberry Pi 4, the console's
-interrupt handled within 0.7 ms with no byte lost, and the SD
-controller's within 1 ms. The landing gate runs five benchmarks in
-about a minute, as one more QEMU suite: `wake`, how late a waiting
-thread runs; `sched`, how a processor is shared; `nullcall`, what a
-request for nothing costs; `vm`, what memory costs; and `xdomain`, a
-message from one domain to another.
+Thresholds inform; they do not fail a commit. Exactly three limits do,
+each once three recorded runs have calibrated it: no lost wake, anywhere;
+and on the Raspberry Pi 4, the console's interrupt handled within 0.7 ms
+with no byte lost, and the SD controller's within 1 ms, both timed from
+the kernel's entry, which until the kernel stamps that entry leaves them
+partial rather than passed. The landing gate runs a fixed set of cells
+from five benchmarks as one more QEMU suite, with a target of about a
+minute: `wake`, how late a waiting thread runs; `sched`, how a processor
+is shared; `nullcall`, the round trip of a request the root service
+refuses at its decoder; `vm`, what memory costs; and `xdomain`, a small
+message from one domain to another. A passing suite says the benchmarks
+ran and answered correctly; whether a change made the system slower is
+the comparison's question, and an inconclusive comparison leaves it open.
 
 The same Raspberry Pi 4 also boots stock L4Re, FreeBSD and Linux, with
-the same firmware settings, and each runs the counterpart of every
-operation. L4Re runs its own IPC benchmark, whose published numbers
-for this board erXos must first reproduce before it trusts the
+the same firmware settings, and each runs the counterpart of an
+operation where one exists; the side-by-side table says where none does.
+L4Re runs its own IPC benchmark, and its published numbers for this
+board are a diagnostic of the setup, not a condition for the
 comparison. FreeBSD and Linux run one small C program of erXos's own,
-compiled on the board. Linux is the best case on the board; FreeBSD is
-the behaviour erXos matches.
+compiled on the board. Linux serves as the best-case comparison on the
+board, and FreeBSD as the behaviour erXos matches.
 
 ## 25.10 What the checks cannot say
 
@@ -839,8 +845,8 @@ deterministic boot writes the same transcript twice. QEMU suites
 report every cell's status and never invent a pass. Fast checks guard
 every commit; slow ones run on what has landed. In the design,
 benchmarks leave records outside the tree, compare only like with
-like, and fail a commit only for a lost wake or, on the board, a late
-console or SD interrupt.
+like, and of all their limits, once calibrated, only three fail a
+commit: a lost wake and, on the board, a late console or SD interrupt.
 
 ## Where to read next
 

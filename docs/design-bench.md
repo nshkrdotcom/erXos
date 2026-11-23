@@ -27,7 +27,8 @@ Decisions every reader needs:
   the architecture's system counter, which `erx_clock_ns`, ERTS's monotonic
   time and the trace ring's stamps all read; on the host it is the host's
   monotonic clock; at the Raspberry Pi 4's pins it is the logic analyser's
-  sample clock. No interval is computed from two clocks.
+  sample clock. No interval is computed from two clocks, and one across
+  CPUs is reported only with the bound calibration proved for it.
 * **Thresholds are advisory, three excepted.** A comparison says `same`,
   `slower`, `faster` or `inconclusive`; inconclusive is never a pass. Once
   calibrated by three recorded runs, exactly three limits fail a gate: on
@@ -35,21 +36,26 @@ Decisions every reader needs:
   with no receive overrun, and every receipt of the SD controller's line
   within 1 ms; everywhere, no lost wake. A benchmark that sees its operation
   return a wrong answer fails as any test does; that is not a threshold.
+  FD32's decision keeps the predicate [design-fiasco.md](design-fiasco.md#the-releases-fiasco-build)
+  states for it, not this document's comparison.
 * **Results live in the history repository, never in the tree.** The one
   record writer puts a run under
   `~/erxos-history/bench/<environment>/<run>/` and refuses a destination
-  inside the erXos tree.
+  inside any worktree of the erXos repository or in a repository that is not
+  separate from it.
 * **The landing gate measures; it does not judge speed.** A `bench` QEMU
-  suite runs the five benchmarks' short forms in about a minute, in boots
+  suite runs a fixed landing matrix of the five benchmarks in three boots
   the gate can reuse, and reports each against the newest recorded
-  baseline. Only the three limits, wrong answers and a benchmark that did
-  not run fail it.
+  baseline. A cell fails for a hard limit, a wrong answer or a benchmark
+  that did not run in full; a passing suite says the benchmarks ran, not
+  that a change brought its before and after numbers.
 * **Other systems run on the same board.** Stock L4Re, FreeBSD and Linux
   boot on the same Raspberry Pi 4, with the same firmware settings, and run
   the counterpart of each operation: L4Re's own IPC benchmark, and for
   FreeBSD and Linux one portable C program, `bench/peer/erx_peer_bench.c`,
-  compiled on the board by the system's own compiler. Linux is the best
-  case on the board; FreeBSD is the behaviour erXos matches.
+  compiled on the board by the system's own compiler. Linux serves as the
+  best-case comparison on the board, FreeBSD as the behaviour erXos
+  matches; an operation with no counterpart says so.
 
 ## Context
 
@@ -85,7 +91,7 @@ Three facts from the tree set the scope.
 
 | Consumer | What it needs from this design |
 | --- | --- |
-| FD32, the branch-predictor patch ([design-fiasco.md](design-fiasco.md#the-releases-fiasco-build)) | `nullcall`'s root round trip on the Raspberry Pi 4, two release builds, ten runs each, judged by the spread of medians |
+| FD32, the branch-predictor patch ([design-fiasco.md](design-fiasco.md#the-releases-fiasco-build)) | `nullcall`'s decoder-refusal round trip on the Raspberry Pi 4, two release builds, ten runs each, judged by FD32's own predicate ([FD32's decision](#fd32s-decision)) |
 | The Raspberry Pi 4's interrupt measurement ([design-fiasco.md, Verification](design-fiasco.md#verification)) | the console and SD receipts per load cell, recorded and judged against 0.7 ms and 1 ms |
 | Gates G3, G5, G8, G9, GK3, GP and G6 ([plan.md](plan.md#decision-gates)) | the same benchmarks on QEMU under HVF, Fiasco's numbers as the baseline erXos's kernel is later held to |
 | The scheduler's E-S1 to E-S10 and the domains' E-D1 to E-D4 ([design-scheduler.md](design-scheduler.md#performance), [design-domains.md](design-domains.md#performance)) | named workloads with distributions, not batch means |
@@ -95,9 +101,9 @@ Three facts from the tree set the scope.
 ### The published numbers erXos is set against
 
 These are the numbers a fair comparison can use, read on 2026-11-23 from
-the sources in [References](#references). Each is a check on our own setup
-before it is a target: erXos runs the same benchmark on its own board
-(L4Re's), or the row stays context.
+the sources in [References](#references). None is a target in itself:
+erXos runs L4Re's benchmark on its own board and compares with that run,
+and every other row stays context.
 
 | System | Hardware | Operation | Number | Fair against erXos because |
 | --- | --- | --- | --- | --- |
@@ -110,8 +116,10 @@ before it is a target: erXos runs the same benchmark on its own board
 | Linux with PREEMPT_RT, 64-bit | Raspberry Pi 4 | worst wake lateness under a kernel build | about 230 to 270 us | context only: single runs read by hand, maxima only, a load erXos would have to imitate |
 
 L4Re's page does not say whether "a single IPC" is one way or a round
-trip, or the clock it ran at; both are why erXos reproduces it on its own
-board rather than divides by it. No published Arm number exists for
+trip, or the clock it ran at; both are why erXos runs it on its own board
+rather than divides by it, and why a difference is attributed to the
+root service only once the run's IPC direction, payload, statistic and
+configuration are known from the benchmark's source. No published Arm number exists for
 cross-core IPC, page faults, mapping, thread or process creation, pipes or
 the 99th percentile of a Pi 4 wake; erXos measures those on FreeBSD and
 Linux itself.
@@ -209,9 +217,11 @@ in `tools/erx` goes, and the existing runners become the `run` of their
 declarations. A name a design document gives and no file declares is
 refused as unknown, as it is today.
 
-A guest reports each operation as one line on its console, `BENCH`
-followed by one JSON object of at most 64 KiB, in counter ticks: the
-benchmark, the operation, the load cell, the CPU placement, the clock and
+A **cell** is one operation under one set of conditions: its load cell,
+CPU placement, workload parameters (a size, a thread count, a priority),
+clock and batch size. A guest reports each cell as one line on its
+console, `BENCH` followed by one JSON object of at most 64 KiB, in clock
+ticks: the benchmark, the operation, the cell's conditions, the clock and
 its frequency, the status, the sample count, the batch size, the
 histogram, the exact maximum and minimum, the sixteen largest samples with
 their sequence numbers, and the counts of lost, early and missed events.
@@ -245,7 +255,7 @@ and the record names the clock:
 | `counter` | `erx_fiasco_counter`, the one read of the architecture's system counter in an erXos program; `erx_clock_ns`, ERTS's monotonic time and the trace ring's stamps all derive from it | every interval inside a guest |
 | `host` | the host's monotonic clock | what only the host sees: QEMU's start to a boot checkpoint, a web round trip |
 | `analyser` | the logic analyser's sample clock | an edge on one pin of the Raspberry Pi 4 to an edge on another |
-| `instructions` | `counter` in deterministic mode, where QEMU's clock counts executed instructions (`-icount shift=0`, `tools/lib/erx/qemu.rb`) | instruction work, with no noise |
+| `virtual` | `counter` in deterministic mode, which QEMU drives from instruction counting (`-icount shift=0,sleep=off`, `tools/lib/erx/qemu.rb`) | deterministic virtual time: the same at every run of the same inputs, but not a count of instructions, since with `sleep=off` QEMU's documentation says virtual time jumps to the next timer deadline while the CPU sleeps (unverified against the pinned QEMU) |
 
 A guest's samples are in ticks; nanoseconds are derived when the record is
 read, from the frequency the run recorded. Cycles are a unit, not a clock:
@@ -260,11 +270,17 @@ in under a second, and records:
   [research-baselines.md](research-baselines.md#exception-and-address-space-switch-costs));
 * the smallest increment two reads observe, and the median cost of a read,
   from 10,000 back-to-back pairs;
-* for each pair of CPUs a cross-CPU operation uses, the bound on their
-  counters' offset: two threads, one on each CPU, pass a token through
-  shared memory 1,000 times with no kernel call, each stamping on receipt;
-  with zero offset every stamp lies between the two around it, and the
-  bound is the largest violation seen, or one tick if none;
+* for each pair of CPUs a cross-CPU operation uses, an interval that
+  holds their counters' offset. Thread A, on one CPU, stamps `a` and
+  passes a token through shared memory, with no kernel call; thread B, on
+  the other, stamps `b` on receipt and passes it back; A stamps `c` on its
+  return. Causality gives `b - c <= offset <= b - a`, each end widened by
+  the smallest increment. Over 1,000 rounds the offset lies in the
+  intersection: from the largest `b - c` to the smallest `b - a`. The
+  interval is never narrower than the fastest round trip, so a 50-tick
+  offset hidden inside 100-tick transfers widens it rather than passing
+  as zero; an empty intersection means the stamps contradict each other
+  and the pair is refused;
 * the rounding of a timed wait (`erx_fiasco_time_wait_us` rounds a
   deadline up to the microsecond, `liberx/backend/fiasco/time_table.c`),
   so lateness under a microsecond is recorded as unresolvable;
@@ -273,11 +289,11 @@ in under a second, and records:
   is set; that the board allows the read is unverified), and otherwise
   `unknown`.
 
-A one-way interval across CPUs is reported with its offset bound beside
-it. An operation timed across CPUs whose bound exceeds a tenth of the
-operation's median reports `unsupported: counters across CPUs not
-consistent enough`, and the round trip, timed on one CPU, stays. A round
-trip is never halved into a one-way number.
+A one-way interval across CPUs is corrected by the interval's middle and
+reported with its half-width as its uncertainty. A cross-CPU cell whose
+half-width exceeds a tenth of its median reports `unsupported: counters
+across CPUs not bounded closely enough`. A round trip is never halved
+into a one-way number.
 
 **Short operations.** An operation whose warm-up median is under 100
 ticks is timed in batches: the smallest power of two of operations that
@@ -291,27 +307,39 @@ beside it.
 A profile fixes how an operation is sampled and what its summary may
 claim. Its two sizes are the landing form, run at the landing gate, and
 the full form, run at the gates that name the benchmark and on demand.
-The sizes are starting values, to be revised by the first calibration
-runs.
+A run is one boot of each image the benchmark needs. The sizes are
+starting values, to be revised by the first calibration runs.
 
 | Profile | Sampling | Landing form | Full form | Summary |
 | --- | --- | --- | --- | --- |
-| **fast** | warm-up, then each operation timed alone | 1,000 warm-up, 10,000 samples, one run | 1,000 warm-up, 100,000 samples, five runs | histogram, percentiles the count allows, minimum, maximum |
-| **expensive** | 10 warm-up operations, or none for a cold start, then each timed | 10 and 100, one run | 10 and 1,000, five runs | median and maximum, the raw samples, percentiles the count allows |
-| **periodic** | absolute deadlines every period P; each period's lateness is its return less its deadline | P = 1 ms for 5 s | P = 1 ms for 300 s | the lateness histogram; early returns, missed periods and lost wakes counted |
-| **sustained** | after a 2 s warm-up, windows of fixed length, each counting work done | three 1 s windows | five 10 s windows | each window's rate, and their minimum, median and maximum |
+| **fast** | warm-up, then each operation timed alone | 1,000 warm-up, 10,000 samples, one run | 1,000 warm-up, 100,000 samples, three runs | histogram, percentiles the count allows, minimum, maximum |
+| **expensive** | 10 warm-up operations, or none for a cold start, then each timed | 10 and 100, one run | 10 and 1,000, three runs | median and maximum, the raw samples, percentiles the count allows |
+| **periodic** | absolute deadlines on a fixed schedule of period P and a phase sweep (below); each period's lateness is its return less its deadline | P = 1 ms for 2 s | P = 1 ms for 60 s, three runs; 300 s at the gates that name it | the lateness histogram per phase; early returns, missed periods and lost wakes counted |
+| **sustained** | after a 2 s warm-up, windows of fixed length, each counting work done | three 1 s windows | five 10 s windows, three runs | each window's rate, and their minimum, median and maximum |
 
 Two rules hold in every profile, so no benchmark declares them:
 
 * **A percentile is reported only when at least ten samples lie above
-  it**: the median needs 20 samples, the 99th percentile 1,000, the
-  99.9th 10,000. Below that the record says `unsupported: too few
-  samples` for it.
-* **A periodic deadline never moves.** Deadline k is the first deadline
-  plus k periods, whatever happened before it, so a stall shows as missed
+  it.** Of n samples in order, percentile p is the sample of rank
+  `ceil(p * n)`, reported as its bucket's upper bound, and it is reported
+  when `n - ceil(p * n) >= 10`: the median needs 20 samples, the 99th
+  percentile 1,000, the 99.9th 10,000, and one sample fewer reports
+  `unsupported: too few samples` for it.
+* **A periodic deadline never moves.** Deadline k is fixed before the
+  run starts, whatever happened before it, so a stall shows as missed
   periods and lateness and is not absorbed into the schedule, as
   cyclictest's absolute mode does. A return before its deadline is
   counted as early, which is a wrong answer.
+* **The phase sweep.** A timer that fires only on a periodic tick makes
+  a deadline's lateness depend on where the deadline falls between two
+  ticks, and deadlines a whole period apart would all fall at one phase,
+  set by when the run happened to start. Deadline k is therefore the first
+  deadline, plus k periods, plus `(7k mod 16) / 16` of a period, which
+  visits sixteen phases in turn. Lateness is reported per phase: each
+  phase's minimum is the timer's rounding at that phase, and each
+  sample's excess over its phase's minimum is the scheduling delay, the
+  two reported apart. Whether Fiasco's timed waits end only at ticks is
+  unverified until the sweep shows it.
 
 ### Environments
 
@@ -322,7 +350,7 @@ written by hand, and carries no host name:
 | --- | --- | --- | --- |
 | QEMU `virt` under HVF | `qemu-hvf-<model>-<n>cpu`, `<model>` the host's hardware model | the development numbers and the landing gate | itself; side by side with `host` |
 | QEMU `virt` under TCG | `qemu-tcg-<model>-<n>cpu` | functional runs on hosts without HVF | itself only |
-| deterministic mode | `qemu-det` | instruction work of one CPU, the same on every host | itself only |
+| deterministic mode | `qemu-det` | deterministic virtual time of one CPU, the same at every run of the same inputs | itself only |
 | the Raspberry Pi 4 | `pi4-4gb-<system>`, `<system>` one of `erxos`, `l4re`, `freebsd`, `linux` | the native numbers and the three limits | itself; side by side with the other systems on the board |
 | the host | `host-<model>` | stock OTP natively | side by side with `qemu-hvf` |
 
@@ -342,7 +370,9 @@ was:
 
 ```
 run.json                     the manifest
-<benchmark>/<operation>.json the histogram, largest samples, raw samples if few
+<benchmark>/<operation>.json every cell of the operation, each keyed by its
+                             conditions, with its histogram, largest samples
+                             and raw samples if few
 boot-<n>.serial.log          each boot's console
 boot-<n>.qemu.log            each boot's QEMU output
 compare.json                 a comparison made against this run, if any
@@ -356,10 +386,10 @@ compare.json                 a comparison made against this run, if any
 | subject | source revision and whether the tree was dirty, image SHA-256, every workload source's SHA-256, compiler version, the complete compile and link flags, the system manifest, runtime flavour and scheduler flags, the Fiasco configuration |
 | run | date, the tool's revision, what started it (`landing`, `milestone`, `gate G5`, `manual`), the host's load before and after, a board's temperature and throttle state at the start and end where readable, `reused_from` for a reused boot |
 | clock | the calibration above |
-| operations | per operation: benchmark, operation, load cell, placement, profile and its sizes, status and reason, sample count, batch size, the summary the profile allows, lost, early and missed counts, and the path of its histogram file |
+| cells | per cell: benchmark, operation, the cell's conditions (load cell, placement, workload parameters, clock, batch size), profile and its sizes, status and reason, sample count, the summary the profile allows, lost, early and missed counts, and its operation file |
 | baseline | for a run that was compared: the baseline run's path |
 
-An operation's status is one of:
+A cell's status is one of:
 
 | Status | Meaning | Summary |
 | --- | --- | --- |
@@ -372,14 +402,20 @@ An operation's status is one of:
 | `not_run` | expected and never reported | none |
 
 A file is at most 1 MiB, a log at most 64 MiB, and a run directory is
-created exclusively, never over another. Records are never edited; a
+created exclusively, never over another. Every file name is derived from
+the validated declarations (benchmark and operation names), never from
+a guest's line. Records are never edited; a
 number changes by a new run. A record of an older format is refused with
 a diagnostic, never read.
 
 **Where records are written.** `Erx::BenchRecord.write` is the only
-writer. It resolves the destination, refuses one inside the erXos tree it
-runs from (by real path), and refuses to write when the history root does
-not exist, rather than falling back anywhere. Scratch work (images being
+writer. It resolves the history root by real path, symbolic links
+included, and refuses it unless it is the top of a git work tree whose
+common git directory is not the erXos repository's, and unless it lies
+outside every worktree `git worktree list` gives for the erXos
+repository. A missing root is refused, never replaced by a fallback.
+The separate repository is identified by these derived facts; no
+marker file declares it. Scratch work (images being
 built, the boot directories QEMU writes into) stays under `build/` and is
 deleted; what is kept is copied into the record. The tool commits nothing
 and deletes nothing in the history repository: a run is kept by
@@ -389,32 +425,35 @@ committing it there by hand, and an uncommitted run is scratch.
 
 `BenchCompare` is a pure function of records. It compares one statistic
 (the median, 99th and 99.9th percentiles, the maximum, or a sustained
-rate) of one operation between a **baseline**, at least three runs, and a
+rate) of one cell between a **baseline**, at least three runs, and a
 **candidate**.
 
-* **Comparable.** The two sides must have equal environments, operations,
-  load cells, placements and profiles. Anything else is refused with what
+* **Comparable.** The two sides must have equal environments and equal
+  cells: the same operation, load cell, placement, workload parameters,
+  clock, batch size and profile sizes. Anything else is refused with what
   differs. The one exception is the side-by-side table, which sets
   `qemu-hvf` beside `host` for G3 and one board's systems beside each
   other, and gives no verdict.
 * **The noise band.** The band of a statistic is the range of its values
-  across the baseline's runs, widened by one histogram bucket. It is the
-  rule FD32 already states for its decision, "within the spread of the
-  unpatched build's medians across its runs", applied to every
-  statistic, so FD32 is a use of this rule and not a second one.
+  across the baseline's runs, widened by one histogram bucket.
 * **The verdict.** `same` when every candidate run lies within the band;
   `slower` when at least two of three candidate runs lie above it and the
   candidates' median exceeds the baseline's by more than the advisory
   threshold; `faster` the mirror; `inconclusive` otherwise. A sustained
   rate's direction is reversed. Deterministic mode's band has no width,
-  so any difference there is a real change of instruction work.
+  so any difference there is a real change of the measured virtual time,
+  though not necessarily of instructions executed.
 * **Inconclusive is not a pass.** A comparison is inconclusive when the
-  baseline has fewer than three runs, when either side's operation is not
+  baseline has fewer than three runs, when either side's cell is not
   `measured`, when either host's load average exceeded half its CPUs (a
   starting value, revised with the thresholds), or when the verdict above
-  is mixed. A change that CLAUDE.md requires
-  numbers for has not supplied them while its comparison is
-  inconclusive.
+  is mixed. A change that CLAUDE.md requires numbers for has not
+  supplied them while its comparison is inconclusive, whatever the suite
+  that ran it reported.
+* **A replayed boot is not a new run.** A log the gate's store replays
+  ([The gates](#the-gates)) is evidence of the run that recorded it. It
+  never counts as a calibration run, an independent baseline run or a
+  side of a paired run.
 * **Maxima and misses stand apart.** A maximum, a missed period or a lost
   wake is reported in every comparison even when every percentile is
   `same`.
@@ -440,6 +479,29 @@ showed, recorded with the runs. They never fail a gate.
 | QEMU under HVF | 10% | 20% | 30% |
 | deterministic mode | any change | not reported | not reported |
 
+### FD32's decision
+
+The comparison above is advisory and does not decide FD32. Whether the
+Fiasco fork carries its branch-predictor patch is decided by the predicate
+[design-fiasco.md](design-fiasco.md#the-releases-fiasco-build) states,
+unchanged: `nullcall.root-cross-space` timed on the Raspberry Pi 4, on a
+release build with the patch and one without, each run at least ten
+times, and the patch carried when the patched build's median round trip
+lies within the spread of the unpatched build's medians across its runs.
+The tool computes that predicate as a function of its own, beside the
+advisory comparison and never through it:
+
+* each run's median is the run's own, from its histogram;
+* the spread is the smallest to the largest of the unpatched runs'
+  medians, with no widening;
+* the patched build's median is the median of its runs' medians, each
+  run's reported beside it (the reading of "the patched build's median"
+  that [open decision 7](#open-decisions) asks to confirm);
+* where the patched median lies within one histogram bucket of either end
+  of the spread, the answer is `inconclusive: within the histogram's
+  resolution of the spread's edge`, and more runs, or raw samples, settle
+  it; the tool never rounds such a case to an answer.
+
 ### The three limits
 
 Exactly three limits fail a gate, each becoming hard once three runs of it
@@ -462,35 +524,66 @@ rather than pass.
 
 ## The gates
 
-| Tier | What runs | Time | What fails it |
-| --- | --- | --- | --- |
-| **Landing**, with the QEMU suites a change touches | `tools/erx check-qemu --suite bench`: the five benchmarks' landing forms in three boots, the native bench image under HVF and in deterministic mode and the development image under HVF | about a minute, measured by the suite and recorded; the landing forms shrink if it grows past that | a lost wake, a wrong answer, a benchmark that did not run (`timed_out`, `not_run`) |
-| **Milestone** | `make check-qemu` runs the `bench` suite fresh, as every suite | the same | the same |
-| **Plan gates and on demand** | `tools/erx bench NAME --profile full`, `--paired`, and the Raspberry Pi 4's runs by hand | minutes to hours | the board limits, for the milestones that ship on the board |
+| Tier | What runs | What fails it |
+| --- | --- | --- |
+| **Landing**, with the QEMU suites a change touches | `tools/erx check-qemu --suite bench`: the landing matrix below | a suite cell that is not `passed` (table below) |
+| **Milestone** | `make check-qemu` runs the `bench` suite fresh, as every suite; whether it also runs the full matrix is [open decision 5](#open-decisions) | the same |
+| **Plan gates and on demand** | `tools/erx bench NAME --profile full`, `--paired`, FD32's runs, and the Raspberry Pi 4's runs by hand | the board limits, for the milestones that ship on the board |
 
-That the native guests boot in deterministic mode as the production
-image does is unverified; the deterministic cells join the suite when
-the native bench image does.
+**The landing matrix.** Three boots, each running its cells one after
+another and never two at once, so that sharing a boot changes no cell's
+background:
 
-The `bench` suite is an ordinary QEMU suite
-(`tools/lib/erx/qemu_suites/bench.rb`): its cells are its benchmarks, each
-`passed`, `failed`, `timed_out`, `partial` or `not_run` by the rules of
+| Boot | Cells |
+| --- | --- |
+| the native bench image, QEMU `virt` under HVF, four CPUs | `nullcall`: `root-same-space` and `root-cross-space` on the service's CPU, and `kernel`; `vm`: `reserve`, `commit`, `touch`, `protect`, `decommit` and `release` of one page, from a test task; `wake`: `wake-same-cpu`, `wake-cross-cpu` and `trigger-take` on one CPU, and `park-deadline` on one CPU, idle, for 2 s; `sched`: `share-equal` with four spinners, three 1 s windows |
+| the same image in deterministic mode | `nullcall`'s two root cells and `vm`'s one-page `commit` and `protect`, 1,000 samples each |
+| the `xdomain` bench image, under HVF | `xdomain`: `local-rtt` and `xdomain-pingpong`; `wake`: `erlang-timer` at `normal`, idle, for 2 s |
+
+Every fast cell takes the landing form's 10,000 samples. The timed work
+is about 10 s; the rest of the suite's time is three boots and their
+calibration, which the suite measures and records. Its target is about a
+minute. If its recorded time passes that, the deterministic boot moves
+to the milestone gate. Every other cell, load and placement is in the
+full matrix only.
+
+That the native guests boot in deterministic mode as the production image
+does is unverified; until the native bench image does, the deterministic
+boot is not part of the matrix, rather than a cell expected and not run.
+
+**Cells and suite cells.** The `bench` suite is an ordinary QEMU suite
+(`tools/lib/erx/qemu_suites/bench.rb`). Its suite cells, in the sense of
 [design-build.md, What the gates run](design-build.md#what-the-gates-run),
-and it declares no offload, so its cells never move to a TCG host. It
-runs a change's suite when the change touches what CLAUDE.md's "Latency is
-UX" lists, which is how such a change brings its numbers. Its report
-prints each operation's summary and its comparison with the newest
-committed run of the same environment whose source revision is an
-ancestor of the candidate's, with no dirty tree; without one, the
-comparison is `inconclusive: no baseline`, which does not fail the suite.
+are its benchmarks in each boot, and each takes the worst status of the
+benchmark's cells there:
+
+| A benchmark cell's status | Suite cell |
+| --- | --- |
+| `measured` | `passed` |
+| `unsupported`, where the declaration expects it in that environment (a cross-CPU cell in deterministic mode) | `passed`, the cell listed as unsupported |
+| `unsupported` anywhere else, `partial`, `rejected` | `partial`, which leaves the suite incomplete and fails the gate |
+| `timed_out` | `timed_out` |
+| `not_run` | `not_run` |
+| `failed`: a hard limit broken or a wrong answer | `failed` |
+
+It declares no offload, so its cells never move to a TCG host. It runs
+as a change's suite when the change touches what CLAUDE.md's "Latency is
+UX" lists. A passing suite says that every benchmark ran and gave right
+answers; it is not the before and after numbers that rule asks for.
+Those are its comparison, which the report prints for every cell against
+the newest committed run of the same environment whose source revision
+is an ancestor of the candidate's, with no dirty tree. A comparison that
+is `inconclusive`, `no baseline` included, does not fail the suite, and
+does not supply the numbers either: the change then needs a paired run.
 
 The suite's boots go through the gate's store of passing boots
 ([design-build.md, Reusing passing boots](design-build.md#reusing-passing-boots)),
 whose key holds the image, QEMU's arguments, QEMU itself and the tools'
-code. An unchanged image costs nothing: the stored log is judged again and
-its numbers are the measurement of those inputs on that host, so the
-report names the run that measured them and the writer adds no record. A
-store belongs to one host, so a reused measurement is always this host's.
+code. An unchanged image costs nothing: the stored log is judged again,
+its numbers stand as the measurement of the run that recorded them, the
+report names that run, and the writer adds no record. A replayed log is
+historical evidence only ([Comparison](#comparison)). A store belongs to
+one host, so a replayed measurement is always this host's.
 
 Two runs on one host disturb each other. The gate runs its suites one
 after another, and the record keeps the host's load; another worktree's
@@ -510,7 +603,7 @@ not corrected.
 | System | Version | How it boots | What it runs |
 | --- | --- | --- | --- |
 | erXos | the subject | netboot (`tools/erx netboot`) | the bench images |
-| L4Re | a pinned L4Re snapshot of the Fiasco revision erXos's fork came from, built by its own build system, without virtualization support as erXos's fork is | netboot, as erXos's Fiasco does | L4Re's own IPC benchmark (`github.com/l4re/ipcbench`), fetched pinned; first in L4Re's published configuration, which must reproduce the page's 505, 702 and 305 cycles within a tenth before any comparison is trusted, then in the configuration erXos's fork uses |
+| L4Re | a pinned L4Re snapshot of the Fiasco revision erXos's fork came from, built by its own build system, without virtualization support as erXos's fork is | netboot, as erXos's Fiasco does | L4Re's own IPC benchmark (`github.com/l4re/ipcbench`), fetched pinned; in the configuration erXos's fork uses, which is the comparison, and in L4Re's published configuration as a diagnostic: a result more than a tenth from the page's 505, 702 and 305 cycles is reported beside the comparison and looked into, and does not by itself void it |
 | FreeBSD | 15.1-RELEASE's image for the Raspberry Pi, the release erXos's commands are compared with in the oracle guest ([design.md](design.md#testing-and-the-oracle)); that it boots this board is unverified | its own SD card | `erx_peer_bench` |
 | Linux | Raspberry Pi OS Lite, 64-bit, pinned, with the vendor's stock kernel; its real-time kernel as a second row for `wake` only, if the image offers one (unverified) | its own SD card | `erx_peer_bench` |
 
@@ -542,13 +635,13 @@ systems run, and the side-by-side table prints that line with the numbers:
 | erXos operation | L4Re | FreeBSD and Linux | What differs |
 | --- | --- | --- | --- |
 | `nullcall.kernel` | the null system call | `getppid` | a POSIX call does a little work |
-| `nullcall.root-cross-space` | IPC between two tasks | an 8-byte round trip over a pipe between two processes | erXos's number adds the root service's receive, decode and reply to Fiasco's IPC |
-| `vm.commit`, `vm.touch`, `vm.protect`, `vm.decommit`, `vm.map` | none | `mmap` of anonymous memory, the first write to each page, `mprotect`, `madvise` freeing pages, `mmap` of a shared memory object | erXos's calls are requests to the root service on Fiasco |
+| `nullcall.root-cross-space` | IPC between two tasks | an 8-byte round trip over a pipe between two processes | erXos's number is a decoder-refusal round trip: Fiasco's IPC plus the root service's receive, decode and refusal; how far it differs from L4Re's IPC is read only once ipcbench's direction, payload and statistic are known |
+| `vm.commit`, `vm.touch`, `vm.protect`, `vm.decommit`, `vm.map` | none | `mmap` of anonymous memory, the first write to each page, `mprotect`, `madvise` freeing pages, `mmap` of a shared memory object | erXos's calls are requests to the root service on Fiasco, and its commit may map pages at once where POSIX allocates at the first touch; the table therefore also sets allocation plus first touch of a whole range beside each other, the one endpoint both share |
 | `wake.park-deadline` | none | `clock_nanosleep` with an absolute deadline, period 1 ms | the systems' timer resolution |
 | `wake.wake-cross-cpu` | none | a thread blocked on a condition variable woken from another CPU | the wait primitive |
 | `wake.gpio-edge` | none | a process blocked on a GPIO line's event, writing a second line (FreeBSD's `gpioc` events, Linux's GPIO character device; FreeBSD's support on this board is unverified) | all four on the analyser's clock |
 | `sched.share-equal` | none | the same spinners, pinned, at the default priority | the scheduler |
-| `xdomain.rtt`, `xdomain.throughput` | none | a 64-byte round trip and a 512 KiB stream over a UNIX-domain socket | a socket is not a connection between domains |
+| `xdomain.local-rtt`, `xdomain.xdomain-pingpong` | none | a 64-byte round trip over a UNIX-domain socket | a socket is not a connection between domains |
 
 seL4's published numbers stay context: seL4 is not among the systems
 approved to boot on the board.
@@ -558,42 +651,59 @@ approved to boot on the board.
 The probe that found the late interrupt timed a path from inside it. Its
 complement times the same kind of path from outside, on the analyser's
 clock, and so sees what no stamp can: the hardware's delay before the
-kernel runs, and an edge the system missed.
+kernel runs, and an edge the system answered late or not at all.
 
 The analyser, a Glasgow, drives one spare header GPIO into the board, the
 *stimulus*, and watches a second, the *response*; the console's GPIO 14
-and 15 and the JTAG pins 22 to 27 are not used. A responder on the board
-waits for the stimulus's edge and sets the response. The interval from a
-stimulus edge to its response edge is one sample of `wake.gpio-edge`, on
-the analyser's clock, for every system alike. Two responders run on
-erXos: a native holder task, as `native_irq`'s holder is, which times the
-kernel and the native path, and a `high` Erlang process attached to the
-GPIO bank's line through `erx_irq_line`, which times the path the console
-driver's process takes. Both need the GPIO unit's page and line 145, which
-the development manifest places in the system domain
+and 15 and the JTAG pins 22 to 27 are not used. The protocol is fixed so
+that every response edge belongs to one stimulus:
+
+* the stimulus is a rising edge, followed by a falling edge 100 us later,
+  and the next rising edge comes at a random interval of 2 to 20 ms, so
+  it is never in step with the 1 ms tick;
+* the responder acts on each rising edge it handles by inverting the
+  response pin once, so its k-th response edge answers the k-th
+  stimulus;
+* a stimulus whose response edge has not come before the next rising
+  edge ends the cell: what came before stands, the cell is `partial`
+  with the stimulus's number and a lower bound on its latency (the gap
+  to the next stimulus), and the next cell starts from a fresh count,
+  with the responder's count reset by its restart. No later edge is
+  matched to it.
+
+The interval from a stimulus's rising edge to its response edge is one
+sample of `wake.gpio-edge`, on the analyser's clock, for every system
+alike; the record keeps the analyser's sample rate, since each edge is
+known to within one sample period. Two responders run on erXos, each in
+its own boot and alone on the line and the GPIO page while it runs: a
+native holder task, as `native_irq`'s holder is, which times the kernel
+and the native path, and a `high` Erlang process attached to the GPIO
+bank's line through `erx_irq_line`, which times the path the console
+driver's process takes. Both need the GPIO unit's page and line 145,
+which the development manifest places in the system domain
 ([design-header-io.md](design-header-io.md#placement-units-and-domains));
 whether the system domain's runtime can reach that page through the
-device NIF is unverified, and if it cannot, the Erlang responder waits for
-the GPIO driver. The stimulus comes at random intervals of 2 to 20 ms, so
-it is never in step with the 1 ms tick, and each of the Fiasco design's
-six load cells runs with it. A stimulus edge with no response edge
-before the next stimulus is a lost event.
+device NIF is unverified, and if it cannot, the Erlang responder waits
+for the GPIO driver. Each of the Fiasco design's six load cells runs
+with each responder. The bench images are marked as test images and
+checked by the manifest's own authority checks; the probe needs no
+privilege of its own.
 
 ## The first five benchmarks
 
 IPC, the scheduler and memory come first. The order follows the failures
-each catches, most damaging first. Every one runs in the
-landing form at the landing gate, and in the full form at the gates that
-name it.
+each catches, most damaging first. Each has cells in the landing matrix
+([The gates](#the-gates)), and its full form runs at the gates that name
+it.
 
 ### 1. `wake`: how late a waiting thread runs
 
 | Operation | Exact act | Correct result | Profile |
 | --- | --- | --- | --- |
-| `park-deadline` | an executor of the root's group parks with deadline k, the first plus k periods, and stamps its return | `ERX_ETIMEDOUT`, not before its deadline | periodic, on the root service's CPU and on another |
+| `park-deadline` | an executor of the root's group parks with deadline k of the phase sweep ([Profiles](#profiles)) and stamps its return | `ERX_ETIMEDOUT`, not before its deadline | periodic, on the root service's CPU and on another |
 | `wake-same-cpu`, `wake-cross-cpu` | thread B parks with a deadline 1 s away; thread A, on B's CPU or another, sees B parked (`native_irq`'s handshake), stamps, calls `erx_executor_wake` for B's slot, and blocks; B stamps its return | B's park returns `ERX_OK`; a return of `ERX_ETIMEDOUT` is a lost wake | fast |
 | `trigger-take` | a thread stamps and fires a doorbell bound to the root's group with `erx_irq_trigger`; the parked executor's take returns its label and it stamps | the label the bind gave, once per fire | fast, same CPU and across CPUs |
-| `erlang-timer` | in the development image, a process at `normal` and one at `high` each take a timer with an absolute deadline every millisecond (`erlang:start_timer/4` with `{abs, true}`) and stamp its message's receipt | one message per deadline, none before it | periodic |
+| `erlang-timer` | in an image with ERTS (the `xdomain` bench image at the landing gate), a process at `normal` and one at `high` each take a timer with an absolute deadline every millisecond (`erlang:start_timer/4` with `{abs, true}`) and stamp its message's receipt; ERTS's absolute deadlines are whole milliseconds, so this cell takes no phase sweep and its lateness includes ERTS's own rounding | one message per deadline, none before it | periodic |
 | `gpio-edge` | the analyser's stimulus edge to the responder's response edge | a response for every stimulus | periodic, the Raspberry Pi 4 only |
 
 Load cells: idle; a spinner of a test task in the app band on the waiting
@@ -601,8 +711,9 @@ thread's CPU; on the board, the six cells of
 [design-fiasco.md, Verification](design-fiasco.md#verification).
 
 **What it catches.** A lost wake, the one limit that holds everywhere; a
-wake that waits behind other work at its level, the late interrupt; a
-timed wait that ends only at the next tick; and a doorbell path that grows
+wake that waits behind other work at its level, the late interrupt;
+whether a timed wait ends only at a tick, which the phase sweep shows;
+and a doorbell path that grows
 a request to the root, which `trigger-take` shows as a jump of one root
 round trip. `trigger-take` under HVF, on one CPU and across CPUs, settles
 the watch list's item on a doorbell from ring to wake.
@@ -612,8 +723,8 @@ whose root reuses `native_irq`'s park handshake and holder, and launches
 `native_task`'s program (`test/guest/native_task/program.c`) in new modes
 for its spinners and callers; the guest C library of
 `test/guest/bench/` (calibration, histogram, the `BENCH` line); an
-Erlang module `bench/erx_wake_bench.erl` typed into the development
-image's shell as `g3` types its beam; the responders and the analyser's
+Erlang module `bench/erx_wake_bench.erl` typed into the image's shell
+as `g3` types its beam; the responders and the analyser's
 importer for `gpio-edge`; and a build of the native bench image for the
 Raspberry Pi 4, since the native guests are built for QEMU `virt`'s
 platform (`Platform.development`).
@@ -642,31 +753,32 @@ longer protects the work above it.
 **What it needs.** `native_task` program modes for the recording spinner;
 the native bench guest of `wake`.
 
-### 3. `nullcall`: what asking for nothing costs
+### 3. `nullcall`: the decoder-refusal round trip
 
 | Operation | Exact act | Correct result | Profile |
 | --- | --- | --- | --- |
-| `root-same-space` | a thread of the root stamps, sends the root service a request its decoder refuses (a call whose request has more than one word, sent with only the caller's word), and stamps the reply | `ERX_EINVAL` from the decoder | fast, on the service's CPU and on another |
-| `root-cross-space` | the same from a thread of a test task | the same | fast, the same placements |
+| `root-same-space` | a thread of the root stamps, sends the root service a request its decoder refuses (a call whose request has more than one word, sent with only the caller's word), and stamps the reply | `ERX_EINVAL`, and the service's count of messages received (`erx_fiasco_test_received`, the test accessor beside `erx_fiasco_test_pool_free`) risen by exactly the requests made, which tells the decoder's refusal from a failed IPC that the stub also reports as `ERX_EINVAL` | fast, on the service's CPU and on another |
+| `root-cross-space` | the same from a thread of a test task; the root reads the count before the task starts and after it ends | the same | fast, the same placements |
 | `kernel` | the cheapest call Fiasco answers alone, chosen from Fiasco's source when the guest is written and named in the record (a candidate is the invocation of an empty capability slot) | the error Fiasco gives that call | fast |
 
 The request needs no new call in the root service. The decoder refuses a
 request whose word count matches no layout before any body runs
 (`erx_fiasco_wire_decode`, `liberx/backend/fiasco/service_wire.c`), and
 answers it through the same receive and reply as every request
-(`service_message`, `liberx/backend/fiasco/service.c`): the fixed cost of
-the root service, measured on the path every call takes, with nothing
-added for a benchmark to keep secure. On erXos's kernel, `kernel` is its
+(`service_message`, `liberx/backend/fiasco/service.c`). The cell is a
+decoder-refusal round trip: the IPC, the receive, the decode and the
+reply that every request pays, without the dispatch to a body, which an
+accepted request adds. Nothing is added for a benchmark to keep secure. On erXos's kernel, `kernel` is its
 null call, the one the speculation mitigations are priced by
 ([design-arch-aarch64.md](design-arch-aarch64.md#speculation-mitigations)),
 and the root operations go, since there is no root service.
 
-**What it catches.** Growth of the decoder or the dispatch, a mitigation
-added to every entry, and Fiasco's IPC slowing under a configuration
-change. On the board it is FD32's decision: two release builds with and
-without the patch, ten full runs each, judged `same` or not by the
-comparison's median band. Beside L4Re's IPC between two tasks on the same
-board, it shows what the root service adds to Fiasco.
+**What it catches.** Growth of the receive, decode and reply path, a
+mitigation added to every entry, and Fiasco's IPC slowing under a
+configuration change. On the board it is the measurement of
+[FD32's decision](#fd32s-decision). Beside L4Re's IPC between two tasks
+on the same board, it shows what the root service's refusal path adds to
+Fiasco's IPC.
 
 **What it needs.** A `native_task` program mode that makes the request in
 a loop; the native bench guest.
@@ -674,14 +786,21 @@ a loop; the native bench guest.
 ### 4. `vm`: what memory costs
 
 Each operation is timed from the root and from a test task, on Fiasco
-both requests to the root service:
+both requests to the root service. A status of `ERX_OK` alone could pass
+a call that did nothing, so after each cell's timed loop the guest makes,
+once and untimed, the check `native_memory`'s suite makes for that call
+(`test/guest/native_memory/guest.c`): a committed page reads zero, a
+written page reads back after a protect to read-only and back, a
+decommitted and recommitted page reads zero, and the free page count is
+what it was once the range is released. A failed check makes the cell
+`failed`.
 
 | Operation | Exact act | Correct result | Profile |
 | --- | --- | --- | --- |
 | `reserve`, `release` | `erx_vm_reserve` of 1 page and of 512 pages; then `erx_vm_release` of it | `ERX_OK`; the free page count unchanged after the release | fast for 1 page, expensive for 512 |
-| `commit`, `decommit` | `erx_vm_commit` of 1, 64 and 512 reserved pages; then `erx_vm_decommit` | `ERX_OK`; the pages read zero after the commit, checked outside the timing | the same |
+| `commit`, `decommit` | `erx_vm_commit` of 1, 64 and 512 reserved pages; then `erx_vm_decommit` | `ERX_OK`, and the checks above | the same |
 | `touch` | the first write to each page of a 64-page commit, one sample per page | the write completes; the record says whether the commit had mapped the pages already | fast |
-| `protect` | `erx_space_protect` of 1 and 64 committed pages to read-only and back | `ERX_OK` | fast |
+| `protect` | `erx_space_protect` of 1 and 64 committed pages to read-only and back | `ERX_OK`, and the checks above | fast |
 | `map` | `erx_mem_create` of 64 pages, `erx_vm_map` of it at reserved addresses of the caller's own space, then `erx_vm_release` of the range and `erx_cap_close` of the object, each timed | `ERX_OK` throughout | expensive |
 | `mem-child` | `erx_mem_child` of a 64-page object | `ERX_OK`; the record says it is an eager copy on Fiasco | expensive |
 
@@ -696,30 +815,37 @@ task budget large enough for 512 pages; the native bench guest.
 
 ### 5. `xdomain`: one message, one domain to another
 
-This is E-D1 of [design-domains.md](design-domains.md#performance), under
-its two names:
+This is the round-trip half of E-D1 of
+[design-domains.md](design-domains.md#performance), under its name
+`xdomain-pingpong`, beside the same exchange inside one domain:
 
 | Operation | Exact act | Correct result | Profile |
 | --- | --- | --- | --- |
-| `local-rtt` | two processes of one domain: `{echo, B}`, B a 64-byte binary, answered `{echo, B}` | the reply equals the request | fast |
-| `xdomain-pingpong` (`busy`, `parked`) | the same across a connection, to `erx_echo_test`'s facet in another domain, which answers `{echo, Term}` with `{echo, Term}`; busy keeps a spinning process in each runtime so no executor parks, parked lets both park between messages | the same | fast |
-| `xdomain-throughput` | 512 KiB binaries sent through the facet, each sixteenth acknowledged, at the image's default lane size | every acknowledgement arrives, in order | sustained |
+| `local-rtt` | two processes of one domain: the client stamps, sends `{echo, B}`, B a 64-byte binary, and stamps the reply `{echo, B}` | the reply equals the request | fast |
+| `xdomain-pingpong` | the same, across a connection, as a request on `erx_echo_test`'s facet in another domain, whose `admit/3` answers `{echo, Term}` with `{echo, Term}`; one request outstanding at a time | the reply equals the request | fast |
 
-The record keeps each frame's encoded size. Its budgets are the domains
-design's: 1 us for a busy round trip under HVF, 2 GB/s for 512 KiB
-binaries. Lane sizes of 16 KiB and 1 MiB are G5's runs of the full form,
-from manifest variants.
+The fixture sets the limits: the `system_domain` suite's facet rows allow
+requests of at most 512 bytes and four in flight
+(`tools/lib/erx/system_domain_regrant.rb`, `FACET_LIMITS`), and the echo
+service answers every request with one reply. A 64-byte binary encodes
+well within 512 bytes, and the record keeps each request's encoded size.
+Whether the two runtimes' executors park between round trips is not
+observed, so the cell is one round trip as the runtimes schedule it,
+with no claim to be the busy case or the parked one; it is set beside
+the domains design's 1 us target for busy runtimes, which it does not
+establish.
 
-**What it catches.** A funnel or lane change that adds a copy or a pass,
-a wake added to the busy path, and head-of-line blocking that a large
-frame causes a small one.
+**What it catches.** A funnel, lane or facet change that adds a copy, a
+pass or a wake to a small request across domains, against the same
+exchange inside one domain.
 
 **What it needs.** An Erlang module `bench/erx_xdomain_bench.erl`; a test
 image built from the `system_domain` suite's, which boots `erx_echo_test`
-in one domain and grants its facet to a peer and to the system principal's
-session (`tools/lib/erx/system_domain_regrant.rb`); the client runs in a
-domain the facet is granted to, which this image must give it. No new
-facet: the echo service is the test-only one that exists.
+in one domain and grants its facet to a peer and to the system
+principal's session (`tools/lib/erx/system_domain_regrant.rb`); the
+client runs in a domain the facet is granted to, which this image must
+give it. No new facet: the echo service is the test-only one that
+exists.
 
 ### Next
 
@@ -727,8 +853,12 @@ facet: the echo service is the test-only one that exists.
 `spawn_monitor` to `DOWN`, a program's spawn to its `main`, a domain's
 creation to its ready report, and its stop to the last death and the
 pool's pages back, stamped by the trace ring's `space_start` and
-`space_end` records and the requester's clock. File and pipe I/O come
-with their owning gates.
+`space_end` records and the requester's clock. E-D1's
+`xdomain-throughput` and E-D4's `xdomain-stall` need what the echo
+fixture lacks: frames far over 512 bytes, a sink that acknowledges
+batches, a bound on the data outstanding, and for head-of-line blocking
+small and large frames sent together. They are designed with G5's runs.
+File and pipe I/O come with their owning gates.
 
 ## Fixing the existing tools
 
@@ -755,11 +885,11 @@ with their owning gates.
 ## Concurrency and failure
 
 A guest that hangs is ended at its benchmark's deadline, its QEMU killed
-with every child; each operation that reported keeps its status and each
-that did not is `timed_out`. The record is written however the run ended,
-so a failure leaves evidence. A guest's line that fails validation makes
-its operation `rejected` and the run goes on. A failed boot in a paired
-run makes that pair's verdict `inconclusive`, never a pass.
+with every child; each cell that reported keeps its status and each that
+did not is `timed_out`. The record is written however the run ended, so a
+failure leaves evidence. A guest's line that fails validation makes its
+cell `rejected` and the run goes on. A failed boot in a paired run makes
+that pair's verdict `inconclusive`, never a pass.
 
 Two runs never share a run directory: the writer creates it exclusively,
 and a second writer for the same name fails. The reader of the history
@@ -767,10 +897,10 @@ repository takes no lock and needs none: it reads only committed runs as
 baselines, and a run directory is complete once its `run.json` is written,
 last, by rename.
 
-A cross-CPU operation is timed only after its calibration bounded the
-counters' offset; with no bound, it reports `unsupported` and its round
-trip stays. In deterministic mode every operation runs on one CPU, so the
-cross-CPU operations are `unsupported` there.
+A cross-CPU cell is timed only after calibration found a non-empty offset
+interval for its CPUs narrow enough for it; otherwise the cell reports
+`unsupported`. In deterministic mode every operation runs on one CPU, so
+the cross-CPU cells are expected `unsupported` there.
 
 ## Refusals and error results
 
@@ -778,51 +908,60 @@ cross-CPU operations are `unsupported` there.
 | --- | --- |
 | `tools/erx bench NAME` for a name no file declares | refused: `unknown benchmark NAME` |
 | an environment the benchmark does not declare | refused, naming the environments it declares |
-| a destination inside the erXos tree, or a history root that does not exist | refused before anything runs |
-| a comparison of records whose environments, operations, load cells, placements or profiles differ | refused, naming the first difference |
+| a history root that does not exist, is not the top of a git work tree, shares the erXos repository's common git directory, or lies inside any of its worktrees | refused before anything runs, naming which |
+| a comparison of records whose environments or cells differ (operation, load cell, placement, workload parameters, clock, batch size, profile sizes) | refused, naming the first difference |
 | a comparison of TCG or deterministic records with any other kind | refused: `TCG numbers are not compared with HVF or native numbers` |
+| a replayed boot offered as a calibration, baseline or paired run | refused: `a replayed log is not a new run` |
 | a record that does not parse, or of an older format | refused with the file and the reason |
 | a baseline with fewer than three runs, or none | the comparison is `inconclusive`, not an error |
 | `--paired` without two images | refused |
-| an operation whose call answers `ERX_ENOTSUP` | the operation is `unsupported`, reported by the backend |
+| a call that answers `ERX_ENOTSUP` | the cell is `unsupported`, reported by the backend |
 
 ## Verification
 
-The tools' cores are pure and tested on the host; each test below pairs a
-passing case with the seeded fault that proves the code under test ran.
+Two kinds of check prove the design's claims, and they are kept apart.
+
+**Correctness tests** are deterministic. The tools' cores are pure Ruby,
+and the guest library's schedule and classification of periodic deadlines
+are a pure C function of the stamps it is given, built for the host as
+the guests' other cores are. Each test pairs a passing case with a seeded
+fault that must fail it:
 
 | Test | Passing case | Seeded failure that must fail it |
 | --- | --- | --- |
-| the writer's destination | a record under a temporary history root is written; one under the tree is refused | the real-path check removed: the write under `build/` succeeds and the test fails |
-| comparability | a TCG record against a native one is refused, and `g3`'s TCG report holds no ratio | the kind check dropped: the report shows a ratio |
-| the percentile rule | 999 samples give a 99th percentile and no 99.9th | the bound written as "more than nine": the 99.9th appears |
+| the writer's destination | a record under a temporary separate repository is written; one inside a second worktree of the erXos repository, one through a symbolic link into the tree, and one in a plain directory that is no git work tree are each refused | the worktree check dropped: the write into the second worktree succeeds |
+| comparability | a TCG record against a native one is refused, `g3`'s TCG report holds no ratio, and two cells differing only in batch size are refused | the kind check dropped: the report shows a ratio; the batch size left out of the cell: the comparison is made |
+| the percentile rule | 1,000 samples give a 99th percentile and 999 do not; 10,000 give a 99.9th and 9,999 do not; 20 give a median and 19 do not | the count test written `>= 9`: 999 samples report a 99th percentile |
 | the verdict | three baseline runs and three candidates: within the band is `same`, two of three above it by more than the threshold `slower`, one of three `inconclusive` | one of three accepted as `slower` |
-| the noise band and FD32 | ten runs a side with candidate medians inside the spread are `same` | the band taken from the baseline's minimum alone |
+| FD32's predicate | ten runs a side: a patched median inside the unpatched medians' spread carries the patch, one above it does not, one within a bucket of the edge is `inconclusive`, and a single patched run outside the spread with the median inside still carries it | the generic verdict used instead: the single outlying run rejects the patch |
+| a replayed log | a replayed boot's numbers appear in the report and are refused as a baseline run | the replay mark ignored: a replayed log counts as a third baseline run |
 | the histogram (C and Erlang, on the host) | samples spread over twenty octaves each land in a bucket whose bounds contain them and whose width is at most 1/64 of its lower bound | an off-by-one in the sub-bucket index: a sample lands outside its bucket |
 | the `BENCH` line reader | a fuzz target over the line validator, with the guests' own lines as seeds, runs its budget clean | a removed bound on the histogram's length: the fuzzer finds the overrun |
-| a periodic deadline | a guest loop with a 5 ms stall injected at period 100 reports at least four missed periods and a maximum lateness of at least 5 ms | the next deadline taken from the return: the stall shows as one late period |
-| a lost wake | the `wake` handshake under its normal path reports `measured` and no loss | the wake sent to another slot: B's park times out and the cell is `failed` |
-| an early return | `park-deadline` reports no early return | the deadline passed to the park 1 ms early: every period counts as early and the cell is `failed` |
+| the cross-CPU offset | host stamps with a true offset of 50 ticks and 100-tick transfers give an interval that contains 50 and is at least 200 wide, so a cell with a 1,000-tick median is refused | the ordering test of the stamps used instead of the causal interval: a bound of one tick is reported |
+| a periodic deadline | the classifier, given the stamps of a 5 ms stall at period 100, reports at least four missed periods and a maximum lateness of at least 5 ms, and given a return 10 us before its deadline, one early return | the next deadline taken from the return: the stall shows as one late period; the early test written `<=` the deadline: an on-time return counts as early |
+| the phase sweep | deadlines over 160 periods visit each of the sixteen phases ten times, and a fake timer that fires only on ticks gives each phase a different minimum lateness, reported apart from the excess | the phase term dropped: every deadline has one phase |
+| a lost wake | in the guest, the `wake` handshake reports `measured` and no loss | the wake sent to another slot: B's park times out after 1 s and the cell is `failed` |
 | `otp-switch` | two yielders on one scheduler observe nearly every yield as a switch | the yield removed: no switch observed, the measurement `failed` |
-| `nullcall` | the decoder's refusal answers `ERX_EINVAL` | a request with the call's full word count: it reaches a body, the status differs and the operation is `failed` |
-| the cross-CPU clock | a host test feeding stamps with a 50-tick offset reports `unsupported` for one-way operations | the bound check skipped: a one-way number is reported |
+| `nullcall` | the refusal answers `ERX_EINVAL` and the service's received count rises by exactly the requests made | the request sent to the `kernel` cell's empty slot instead of the service: the stub still answers `ERX_EINVAL`, the count does not move, and the cell is `failed` |
+| `vm` | each cell's untimed check passes | `erx_space_protect` made to answer `ERX_OK` without calling the service: the written page's check after the protect fails |
+| the GPIO probe's matching | the importer, given a capture whose third stimulus has no response before the fourth, ends the cell after the second sample, `partial`, and matches nothing until 100 ms of quiet | the next response matched to the third stimulus: the cell holds a sample for it |
 
-Each benchmark also proves on its environment that it sees what it
-exists for. These run once when the benchmark lands and again whenever its
-guest changes, and each must change the benchmark's verdict:
+**Sensitivity runs** check, on a real environment, that a benchmark
+moves when the cost it watches moves. They are experiments, not proofs:
+each seed reports that it ran (a count of its own executions, printed in
+the guest's log and kept in the record), a run whose seed did not report
+proves nothing, and a seed that ran and left the verdict `same` sends the
+benchmark back to its design rather than letting it land.
 
-| Benchmark | Seeded failure | What must change |
+| Benchmark | Seed, which reports its executions | Expected change |
 | --- | --- | --- |
-| `wake` | the doorbell trigger stub made to send a root request, the Fiasco design's own seed for its direct doorbell case | `trigger-take`'s median rises by about one `nullcall.root` round trip |
-| `wake` | a 1 ms spin added to `erx_fiasco_time_wait_us`'s caller | `park-deadline`'s median lateness rises past 1 ms |
+| `wake` | the doorbell trigger stub made to send a root request, the Fiasco design's own seed for its direct doorbell case | `trigger-take`'s median rises by about one `nullcall` round trip |
+| `wake` | the deadline handed to `erx_park` made 1 ms later than the one the cell records | `park-deadline`'s lateness rises by about 1 ms at every phase |
 | `sched` | the root giving a thread its task row's slice, the quantum case's seed | `share-equal`'s longest gap grows about tenfold |
-| `nullcall` | a 1 us spin in the decoder's refusal | the median rises by about 1 us |
+| `nullcall` | a 1 us busy wait in the decoder's refusal | the median rises by about 1 us |
 | `vm` | the commit body zeroing each page twice | `commit` of 512 pages slower |
-| `xdomain` | a 16 KiB lane in the manifest | `xdomain-throughput` lower |
+| `xdomain` | a 10 us busy wait in the echo facet's `admit/3` | `xdomain-pingpong`'s median rises by about 10 us and `local-rtt`'s does not |
 | the board limits | the four seeds of [design-fiasco.md, Verification](design-fiasco.md#verification) | the console or SD receipts pass their limit in the cell that seed names |
-
-A seed that leaves its verdict `same` means the benchmark did not measure
-what it claims, and it does not land.
 
 ## Alternatives considered
 
@@ -830,55 +969,79 @@ what it claims, and it does not land.
   record, and the one the board's 115,200-baud console cannot carry. The
   histograms carry their own bounds, so the host still holds no formula.
 * **A test-only null request in the root service.** It would add a call
-  to secure and to keep out of release builds, for a dispatch that costs
-  one switch case more than the refusal the decoder already gives.
+  to secure and to keep out of release builds, to time a dispatch that a
+  refused request skips; the refusal round trip covers the path every
+  request pays, and the `vm` cells cover accepted requests.
 * **Hard thresholds on every number.** On a shared Mac they would fail on
   the host's noise, and teach everyone to rerun until green. Three limits
   carry a promise; the rest inform.
 * **Compare each run with the previous one.** Without a band from several
   runs a difference cannot be told from noise; without pairing, a change
   cannot be told from the host's drift.
+* **One comparison rule for FD32 too.** It would quietly change a decision
+  already accepted with its own predicate; FD32 keeps that predicate.
 * **A benchmark framework apart from the suites.** The QEMU gate already
   has cells, statuses, deadlines, reuse and discovery from files; the
   `bench` suite uses them and adds only the record.
 * **cyclictest, lmbench and stress-ng on FreeBSD and Linux.** They are
   GPL and measure their own operations; one small program of erXos's own,
-  on all three systems, compares like with like and needs no clean room.
+  on both systems, compares like with like and needs no clean room.
 
 ## Open decisions
 
 1. **How Fiasco's interrupt entry is stamped for the two board limits.**
    The limits are defined from Fiasco's interrupt entry, and only the
    diagnostic branch stamps it. Either a development-only Fiasco patch,
-   listed in [design-fiasco.md](design-fiasco.md), writes the counter at
-   entry for each line into a page the root reads and turns into a trace
-   ring record, or the limits start at the first user-mode stamp and the
-   analyser's `gpio-edge` bounds the kernel's part separately.
-   **Recommendation:** the patch, kept out of release builds: it keeps
-   the definition already accepted, gives one timeline from entry to the
-   driver on one clock, and goes with Fiasco when erXos's kernel, whose
-   rings record interrupts, replaces it.
-2. **The analyser's stimulus.** If no stock Glasgow applet drives random
-   edges on one pin while capturing two, the probe needs a small applet,
-   which is Python, out of the tree. **Recommendation:** check the stock
-   applets on the board's Glasgow first; ask for Python only if none
-   fits.
+   listed in [design-fiasco.md](design-fiasco.md), stamps each entry, or
+   the limits start at the first user-mode stamp and the analyser's
+   `gpio-edge` bounds the kernel's part separately, which changes the
+   accepted definition. **Recommendation:** the patch, under this
+   contract: its storage is kernel-owned and of fixed size, one slot per
+   line holding the last entry's counter value and a count of the line's
+   entries, which the root compares with its own count of the line's
+   deliveries, so each stamp is matched to its delivery and a count that
+   has moved on by more than one shows the stamp was overwritten; only
+   the root can map it, read-only; a stamp overwritten
+   before the root read it, or missing, makes that receipt `partial`,
+   never a guessed time; and the patch's code and mapping sit behind a
+   configuration option that only the development Fiasco build sets and
+   that the release configuration's exact allowlist
+   ([design-fiasco.md](design-fiasco.md#the-releases-fiasco-build))
+   does not admit. It keeps the accepted
+   definition, gives one timeline from entry to the driver on one clock,
+   and goes with Fiasco when erXos's kernel, whose rings record
+   interrupts, replaces it.
+2. **The analyser's stimulus.** If no stock Glasgow applet drives the
+   stimulus's pulses on one pin while capturing two, the probe needs a
+   small applet, which is Python, out of the tree. **Recommendation:**
+   check the stock applets on the board's Glasgow first; ask for Python
+   only if none fits.
 3. **The two pins.** **Recommendation:** GPIO 20 as the stimulus and
    GPIO 21 as the response, header pins 38 and 40, both plain GPIO in the
-   header map and next to each other.
-4. **Which benchmark is fifth.** `vm` or `lifecycle`: memory is one of
-   the three costs these benchmarks exist to show, while `lifecycle`'s
-   consumers, E-D3 and gate GP, come later in the plan.
-   **Recommendation:** `vm` fifth, `lifecycle` next.
-5. **The full forms at the milestone gate.** CLAUDE.md's milestone gate
-   runs the `bench` suite's landing forms through `make check-qemu`. The
-   full forms of the five under HVF and in deterministic mode would take
-   an estimated 20 to 30 minutes more. **Recommendation:** add
-   `tools/erx bench --profile full` to the milestone gate, so every
-   milestone leaves a baseline with tails.
-6. **Linux's best case.** **Recommendation:** the vendor's stock kernel
-   for every row, and its real-time kernel as a second row for `wake`
-   only, since the published Pi 4 latencies are of a real-time kernel.
+   header map and next to each other, each held by one responder alone
+   during a run and recorded with its final configuration.
+4. **`vm` or `lifecycle` among the first five.** This document puts `vm`
+   fourth and `lifecycle` after the five: memory is one of the three costs
+   these benchmarks exist to show, while `lifecycle`'s consumers, E-D3 and
+   gate GP, come later in the plan. **Recommendation:** keep `vm`.
+5. **The full matrix at the milestone gate.** The full forms, three runs
+   of: `park-deadline` at two placements and two loads, `erlang-timer` at
+   two priorities and two loads, each 60 s; `sched`'s three sustained
+   cells; and every fast and expensive cell at 100,000 and 1,000 samples,
+   come to an estimated 11 minutes of timed work a run, about 35 minutes
+   in all under HVF before boots. **Recommendation:** run the full matrix
+   once by hand, record its time, and only then propose adding it to
+   CLAUDE.md's milestone gate list, with the measured duration.
+6. **Linux's configuration.** **Recommendation:** the vendor's stock
+   kernel for every row, and a separately identified real-time kernel as
+   a second row for `wake` only, since the published Pi 4 latencies are
+   of a real-time kernel.
+7. **How FD32's ten runs combine.** [design-fiasco.md](design-fiasco.md#the-releases-fiasco-build)
+   compares "the patched build's median round trip" with the spread of the
+   unpatched runs' medians, without saying how the patched runs combine.
+   **Recommendation:** the median of the patched runs' medians, each run's
+   reported beside it, as [FD32's decision](#fd32s-decision) computes it;
+   a different reading changes only that one function.
 
 ## References
 
