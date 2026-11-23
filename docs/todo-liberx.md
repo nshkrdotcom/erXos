@@ -219,6 +219,9 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   (`mount_options/3`, `rights()`), `erx.erl` (`facet()`), `erx_file_remote.erl` and `erx_verity.erl`, about a
   dozen copies that refuse a member the ABI gains while the generated list accepts it. Emit
   `?ERX_IS_<ENUM>(X)` and a type per atom enum and convert the copies.
+* [Low] `tools/lib/erx/abi_emit_erlang.rb`: the two generated readers carry a second decoder of fixed
+  `wire_le` layouts (`decode`, `decode_field`) beside `erx_abi_layout`. At the next change to the reader
+  generator, emit them over `erx_abi_layout` and delete the second decoder.
 * [Low] `abi/protocols/9p.txt`: `error edquot 122` follows 9P2000.L and musl; check the POSIX layer's mapping if it
   follows FreeBSD's numbering (69).
 

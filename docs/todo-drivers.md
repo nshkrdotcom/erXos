@@ -810,7 +810,8 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   generator checks each row's bounds, derives `vc_request_max` and the buffer's size from the rows and emits the
   core's table, so no caller builds a declaration and the hand-kept assert goes; add `fw_reading`, `fw_power_line`, `fw_throttle` with
   its span and `board_sensor_period`; add the kind `sensors` at `[sensors]`, the units `mdegC`, `uV` and `Hz`, and
-  `@fw_throttle`.
+  `@fw_throttle`. The device-kind table that Ruby parses from `include/erx/device_kinds.h` folds with the same ABI
+  form, as typed columns on ABI enum members, when these requests land.
 * [Low] boot records, `-erx_record given` ([design-fiasco.md](design-fiasco.md#device-records)): the record's
   field list is kept by hand in its C writer (`erx_boot_given_words`), its room (`ERX_BOOT_GIVEN_WORDS_MAX`), its
   Erlang reader (`erx_device_record:spec/2`, whose error clauses match a positional tuple), the native guest's

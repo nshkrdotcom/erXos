@@ -302,10 +302,11 @@ against more than its width: the bounds are its reader's, such as
 
 ### Layouts in Erlang
 
-Erlang reads and writes every fixed `wire_le` layout through one
-generated module, `erx_abi_layout`, in the shape of `erx_abi_packed`:
-one clause of a binary pattern of exactly the layout's size per layout,
-and one of the encoder. Each layout is also a `-type` of its map, field
+A record that Erlang holds as a map, one of a fixed `wire_le` layout,
+comes from one generated module, `erx_abi_layout`, in the shape of
+`erx_abi_packed`: one clause of a binary pattern of exactly the layout's
+size per layout, and one of the encoder. A module that only matches
+bytes may match against the generated macros instead. Each layout is also a `-type` of its map, field
 for field under its declared names, nothing renamed or dropped, so a
 module that holds a record names its type rather than declaring the
 fields again. An integer field is an integer, even one whose values have
