@@ -16,6 +16,10 @@
 -include("generated/erx_abi.hrl").
 
 -define(NOFID, 16#ffffffff).
+%% How long a case waits for a reply, an end or a state it expects before it fails. Only a
+%% failing case waits it out, so it is long enough for a host loaded many times over; the
+%% runner scales EUnit's per-case timeout above it, so such a case fails on its own error.
+-define(WAIT_MS, 10000).
 -define(O_RDONLY, 0).
 %% The fid of number N's open file is ?FID0 + N.
 -define(FID0, 10).
@@ -97,7 +101,7 @@ places() ->
 call(Grant, Request) ->
     Alias = alias([reply]),
     Grant ! {erx_9p, Alias, self(), Request},
-    receive {erx_9p, Alias, Reply} -> Reply after 1000 -> erlang:error({no_reply, Request}) end.
+    receive {erx_9p, Alias, Reply} -> Reply after ?WAIT_MS -> erlang:error({no_reply, Request}) end.
 
 %% Reads number N's file until it has given Count records, at most 256 a read, decoding
 %% them as the display's reader does.
@@ -139,7 +143,7 @@ keyboard(P) ->
     F.
 
 ended(#{pid := Pid}) ->
-    receive {'DOWN', _, process, Pid, Reason} -> Reason after 1000 -> erlang:error({not_ended, Pid}) end.
+    receive {'DOWN', _, process, Pid, Reason} -> Reason after ?WAIT_MS -> erlang:error({not_ended, Pid}) end.
 
 %% A boot keyboard report: modifier bits, the reserved byte and up to six key usages.
 keys(Modifiers, Usages) ->
@@ -150,20 +154,31 @@ report(#{device := Device}, Report) -> Device ! {report, Report}, ok.
 
 detach(#{device := Device}) -> Device ! detach, ok.
 
+%% The model device's answer, waited for as long as the device lives: it answers every
+%% question once it has taken the messages before it, however long a loaded host takes.
 ask(#{device := Device}, What) ->
+    Monitor = monitor(process, Device),
     Device ! {What, self()},
-    receive {Device, What, Answer} -> Answer after 1000 -> erlang:error({no_answer, What}) end.
+    receive
+        {Device, What, Answer} -> demonitor(Monitor, [flush]), Answer;
+        {'DOWN', Monitor, process, Device, Reason} -> erlang:error({device_ended, What, Reason})
+    end.
 
 wait_posted(F, Count) ->
     wait(fun() -> length(maps:get(posted, ask(F, state))) =:= Count end).
 
-wait(Done) -> wait(Done, 100).
+wait(Done) -> wait(Done, ?WAIT_MS).
 
-wait(Done, 0) -> ?assert(Done());
-wait(Done, Tries) ->
+%% Polls Done until it holds, and fails once Ms have passed without.
+wait(Done, Ms) -> wait_until(Done, erlang:monotonic_time(millisecond) + Ms).
+
+wait_until(Done, Deadline) ->
     case Done() of
         true -> ok;
-        false -> timer:sleep(10), wait(Done, Tries - 1)
+        false ->
+            ?assert(erlang:monotonic_time(millisecond) < Deadline),
+            timer:sleep(10),
+            wait_until(Done, Deadline)
     end.
 
 %% The model device -----------------------------------------------------------------
@@ -324,7 +339,7 @@ a_report_storm_waits_for_the_reader() ->
     Pairs = ?ERX_P9_IO_MAX div ?RECORD,
     [report(F, R) || _ <- lists:seq(1, Pairs), R <- [keys(0, [4]), keys(0, [])]],
     wait(fun() -> #{posted := Posted, waiting := Waiting} = ask(F, state),
-                  Posted =:= [] andalso length(Waiting) =:= Pairs - 4 end, 3000),
+                  Posted =:= [] andalso length(Waiting) =:= Pairs - 4 end, 30000),
     Records = records(P, 0, 2 * Pairs),
     ?assertEqual(lists:append(lists:duplicate(Pairs, [{key, down, ?KEY_A}, {key, up, ?KEY_A}])), Records),
     wait_posted(F, 4),
