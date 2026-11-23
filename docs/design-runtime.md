@@ -668,10 +668,12 @@ with bit 6 set, caret notation (NUL as `^@`, Ctrl-A as `^A`, US as `^_`; DEL sta
 over it moves over or erases both. Stock sets bit 5 instead and shows NUL as `^ ` and Ctrl-A as
 `^!`, and counts two characters, so deleting the character leaves its `^`: upstream bugs.
 `test/host/prim_tty_caret_test.rb` and `test/integration/runtime_console_test.rb` pin it.
-80\. `edlin` takes a loss of input as it takes the end of input, as an input of its own,
-`edlin:edit_line(lost, Cont)`, which `group` passes for the driver's `{Drv, lost}` or an
-ask answered `{read, Ref, lost}` ([design-live.md](design-live.md#lost-input)): it drops
-any escape sequence under way, rings the bell and damages the read. A NUL is an ordinary
+80\. `edlin`'s editing calls take the read's damage and return it,
+`edlin:edit_line(Input, Cont, Damage)`, and `edlin` takes a loss of input as it takes the
+end of input, as an input of its own, `lost`, which `group` passes for an ask answered
+`{read, Ref, lost}` ([design-live.md](design-live.md#lost-input)): it drops any escape
+sequence under way, rings the bell and damages the read. An inserted character that edit
+73's bounds refuse damages the read too, since it is input lost. A NUL is an ordinary
 byte: `edlin_key` reads it as stock does, a key bound to nothing, and after a CSI digit
 it ends the sequence and is read again, by edit 73's rule, where stock crashes. 81\. Every
 line `edlin` finishes leaves it through one function, whether on Enter, at the end of
@@ -679,16 +681,19 @@ input, or on an accepted history search, which `group` hands back to `edlin` to 
 rather than finishing it itself. While the read is damaged no line is finished: the bell
 rings and editing goes on, and at the end of input the line is dropped and `edlin` hands
 the end of input on, which `group` gives the reader in place of a line, so the read ends
-rather than waiting for an end the console sends only once. The damage lasts until a key
-in the normal keymap leaves the line empty, or the read ends; a history move or search
-keeps it. `edlin` keeps it beside its kill buffer, in the group's process, so every line
-state `group` builds during the read keeps it, and `group` clears it in its one clause
-that starts a read. In dumb mode `group` drops a line that lost input through its newline
-and reads on, and in raw mode hands the reader the character NUL, as FreeBSD's tty gives
-the overrun's NUL to a raw reader. So no shell that edits with `edlin`, the Erlang shell
-or `erx_shell`, runs a line that lost bytes; the user empties the line to go on. Stock
-has no loss event. `test/host/edlin_lost_test.rb` pins both, through
-`edlin` and through a group.
+rather than waiting for an end the console sends only once. The damage ends only when an
+explicit discard, or an edit that removes text, empties the whole edited buffer, every
+line of a multi-line edit together, or when the read ends; a key that leaves an empty
+buffer empty, a history move and a search keep it. `group` keeps it in each input
+request's state, created undamaged with the request, saved and restored with it when
+`group` sets the request aside for a nested read and resumes it, and gone with its
+answer, and passes it into every `edlin` call, so no line state `group` rebuilds can lose
+it and a nested read has its own. In dumb mode `group` drops a line that lost input
+through its newline and reads on, and in raw mode hands the reader the character NUL, as
+a program's byte read gives a loss. So no shell that edits with `edlin`, the Erlang shell
+or `erx_shell`, runs a line that lost bytes; the user empties the buffer to go on. Stock
+has no loss event. `test/host/edlin_lost_test.rb` pins both, through `edlin` and through a
+group, nested reads among them.
 39\. `standard_error` calls no `prim_tty`: its encoding is `unicode`, and it
 writes with `erlang:display_string(stderr, Bytes)`, which waits as any
 process's write does. 42. While another process holds `erx_tty_owner`,
@@ -753,17 +758,19 @@ what it holds for one line is bounded however much is typed:
 * A line holds at most 65,536 codepoints, all its lines together, and a
   grapheme cluster at most 32, which bounds the cost of merging a combining
   character into its cluster. An operation whose result would hold more is
-  answered as `beep` is, leaving the line as it was, so a character typed
-  past the bound is dropped with a bell, as FreeBSD's `ttydisc_rint` drops a
-  byte that finds the input queue full and rings the bell under `IMAXBEL`
-  (`sys/kern/tty_ttydisc.c:1220-1236`), and erXos's tty does for a cooked
-  line ([design-live.md](design-live.md#the-tty)). The count is kept beside
+  answered as `beep` is, leaving the line as it was. A received character
+  the bound refuses is dropped with a bell, as FreeBSD's `ttydisc_rint` drops
+  a byte that finds the input queue full and rings the bell under `IMAXBEL`
+  (`sys/kern/tty_ttydisc.c:1220-1236`), and is input lost, so it damages the
+  read as a loss does (edit 80, [design-live.md](design-live.md#lost-input));
+  any other operation the bound refuses, a yank, a history recall or a
+  format, changes neither the line nor the damage. The count is kept beside
   the line, so an insert costs the same however long the line is, and both
   bounds are checked around the one function that applies every operation,
   so no operation is listed. A heap limit on the group would bound it too,
-  but would end the session's console, and every shell on it, at a paste. The
-  bound is above rc's 4 KiB line, so a line the editor cut never runs as rc's
-  ([design-shell.md](design-shell.md#failure-handling-diagnostics-and-debuggability)).
+  but would end the session's console, and every shell on it, at a paste. A
+  line the editor cut is damaged, so it never runs, whatever rc's own 4 KiB
+  bound ([design-shell.md](design-shell.md#failure-handling-diagnostics-and-debuggability)).
 
 So `edlin` gives a key the same action in every mode whether its characters
 arrive in one call or one per call, as libedit's `read_getcmd` reads on while
@@ -2713,14 +2720,17 @@ speak these messages:
 | --- | --- | --- |
 | `{erx_console_output, From, Bytes}` | to the driver | write these bytes, whole and in order; `From` is opaque to the driver |
 | `{erx_console_written, From}` | to `erx_console` | those bytes are written or the line is gone; every output message gets this answer |
+| `erx_console_taken` | to the driver | `erx_console` has taken the last input message and has room for another drain; `erx_stdio` waits for it before it sends more, and a UART's driver drops it ([design-live.md](design-live.md#lost-input)) |
 | `{erx_console_input, Bytes}` | to `erx_console` | bytes as read, in order, cut anywhere |
 | `{erx_console_size, Rows, Columns}` | to `erx_console` | the line's size is known or has changed, rows first as in `struct winsize`; `erx_console` ignores a side outside 1 to 65,535 (`console_side_max`) |
 | `erx_console_eof` | to `erx_console` | input has ended, after every byte read before it |
 | `erx_console_lost` | to `erx_console` | input was lost here, after the bytes read before the loss and before those read after it; only a console UART's driver sends it ([design-live.md](design-live.md#lost-input)) |
 
-They send input as it arrives, since nothing else reads their line, and
-`erx_console` passes it to its current group, which holds what it has not
-asked for, as stock's group holds a driver's data. A session's terminal
+They send input as it arrives, since nothing else reads their line, at most
+one drain's worth at a time ([design-live.md](design-live.md#lost-input)), and
+`erx_console` takes it into a tty of its own, input alone, which its groups
+read on demand as a session's console reads its relay, so what waits for a
+group is bounded by that tty and what the bound drops is a loss. A session's terminal
 relay is the line driver of a console of the session role for output and
 size alone: that console reads its input from the tty through an open of
 the relay, as every reader of the tty does, one byte at a time and only
@@ -2733,7 +2743,7 @@ relay sends it no `erx_console_input`. The relay sends it
 outstanding, and the console ends every shell on the line at it. It names its current group
 to the relay at its start and at each change, with `{console_group,
 Group}`, so that the relay's events name the group they were made for.
-The system console ignores its groups' asks
+The system console answers its groups' asks from its own tty in the same way
 ([design-shell.md](design-shell.md#the-terminal-relays-protocol)).
 
 `-user erx_console` holds against `-noshell` and `-noinput`, which `erx_console`
@@ -2751,21 +2761,22 @@ the hosted entry writes `-erx_record console stdio`, which names `erx_stdio`
 ([design-fiasco.md](design-fiasco.md#the-console)). The console refuses a peripheral it
 has no driver for, and the boot fails with the reason, so no record word becomes an atom.
 
-**Which input bytes mean something.** `erx_console` takes three bytes out of the
-stream, which no UTF-8 sequence contains: `Ctrl-C` becomes `exit(Group, interrupt)`,
-`Ctrl-Z` goes to a command shell's group as `suspend`, and a typed `Ctrl-G` opens the
-console's menu, where `erx_console_keys` tells a typed `Ctrl-G` from the BEL that
-ends a terminal's string reply ([design-live.md](design-live.md#the-console)).
-The rest goes to the shell's group as UTF-8, with a character cut across two reads
-held until its end arrives and a byte that belongs to no character read as latin-1,
-as `prim_tty`'s reader does. `erx_console:input/2` is that decision, a pure function
-with a fuzz target. `Ctrl-\` is an ordinary byte on this path, as on any raw
-terminal. A console of the session role takes no byte out: its tty's `ISIG`
+**Which input bytes mean something.** `erx_console` takes one byte out of the
+stream: a typed `Ctrl-G` opens the console's menu, where `erx_console_keys` tells
+a typed `Ctrl-G` from the BEL that ends a terminal's string reply
+([design-live.md](design-live.md#the-console)). The rest goes into the tty that
+holds the input of the system console's groups ([design-live.md](design-live.md#lost-input)),
+whose `ISIG` makes `Ctrl-C` an `interrupt` and `Ctrl-Z` a `suspend` of the current
+group and `Ctrl-\` a `quit` that does nothing at the prompt, as for a session's
+console below; the groups' asks are answered with UTF-8, with a character cut
+across two reads held until its end arrives and a byte that belongs to no
+character read as latin-1, as `prim_tty`'s reader does. A console of the session
+role takes no byte out, since the master keeps `Ctrl-G`: its tty's `ISIG`
 makes `Ctrl-C` and `Ctrl-Z` the line discipline's signals, which the relay
 sends it as `{erx_tty_event, Group, interrupt}` and `{erx_tty_event,
 Group, suspend}`, `Group` being the group it had named when the key was
-typed. It acts on those as on the two bytes here, but for `Group` rather
-than its current group, and drops one whose group has ended. The bytes
+typed. It acts on those as the system console acts on its own tty's, but for
+`Group` rather than its current group, and drops one whose group has ended. The bytes
 of a cut character it holds belong to the group they were read for,
 across that group's asks; every signal for that group drops them,
 since the signal flushed the input typed with them, and so do the

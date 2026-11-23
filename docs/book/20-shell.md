@@ -15,8 +15,10 @@
 > stopping a native program with `Ctrl-Z`, the `Ctrl-T` status line,
 > `within`, `rc` as a program for `system` and `popen`, toybox, the
 > `secure` attribute and password logins at the console, the SSH domain
-> itself with its host key in the vault, and evi, the screen editor run
-> as `vi`.
+> itself with its host key in the vault, evi, the screen editor run
+> as `vi`, and the input-loss event that refuses a line which lost input
+> (built: a NUL the console UARTs put in their input, which the editor
+> refuses to run).
 
 **Background needed.** [Chapter 3](03-erlang.md), sections 3.2 and
 3.3: processes, messages and links. [Chapter 6](06-construction.md),
@@ -466,15 +468,16 @@ speaks exactly seven messages to the tty
 ([design-live.md, The tty](../design-live.md#the-tty)). The tty
 announces itself with `{tty_open, Tty}`, sends output as
 `{tty_output, N, Bytes}` of at most 4 KiB, and hears back
-`{tty_taken, N}`. The master sends `{tty_input, Bytes}`, `tty_lost`
-where its line lost input, `{tty_size, Rows, Columns}` and
+`{tty_taken, N}`. The master sends `{tty_input, N, Bytes}` and, where its
+line lost input, `{tty_lost, N}`, numbered in one sequence so that a
+message lost on the way is a loss too, `{tty_size, Rows, Columns}` and
 `tty_hangup`. The master
 interprets none of the bytes, so the console, a terminal window and an
 SSH channel serve ttys with no editing or signal code of their own.
 
 Follow one `Ctrl-C`. The user at an SSH client presses it while
 `sort` runs. The client sends byte 0x03, the channel process sends
-`{tty_input, <<3>>}`, and the relay passes it to `erx_tty:input/3`.
+`{tty_input, N, <<3>>}`, and the relay passes it to `erx_tty:input/3`.
 With `ISIG` set, the core returns a signal for the foreground group,
 discards the input and output the tty holds, and leaves any bytes
 after the key untaken. The relay tells the shell through its console
@@ -522,12 +525,15 @@ line editor between the keys typed before and after it
 editor then finishes no line of that read, ringing the bell at Enter,
 until the user empties the line, so a command that lost bytes never
 runs; a program reading the terminal gets a NUL where the input was
-lost, as on FreeBSD. The event is designed and not built: the drivers
+lost, the byte FreeBSD gives there. Every other place that drops input
+makes a loss too: a message the system domain drops on its way to a
+session, a byte the tty has no room for, and a character the editor's
+bounds refuse. The event is designed and not built: the drivers
 put a NUL byte in the input, which the editor refuses to run.
 
 The system domain has its own command shell, the **system shell**, with
-the system domain's authority, on the console's terminal, which runs no
-line discipline. In the design a release build asks for a login at the
+the system domain's authority, on the console's terminal, whose line
+discipline only holds its input until the shell's editor asks for it. In the design a release build asks for a login at the
 console. Only a login at a line the manifest marks `secure` opens the
 system shell, as UNIX's `/etc/ttys` marks the terminals where root may
 log in. Being secure is a property of the line, so no route into a

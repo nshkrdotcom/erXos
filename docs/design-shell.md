@@ -1978,9 +1978,9 @@ holds the session's authority anyway (SH1).
   character at a time, or two when a byte that belongs to no character
   is answered with the character after it, and that first character is
   a history or search key only under a `shell_keymap` that binds a
-  character from U+0080 to U+00FF to one. The system console's driver
-  sends input as it arrives, so there `Up` and Enter arriving together
-  lose the Enter, as on stock OTP.
+  character from U+0080 to U+00FF to one. The system console reads its
+  own tty on demand the same way ([design-live.md](design-live.md#lost-input)),
+  so it has nothing to drop either.
 
 Each property follows:
 

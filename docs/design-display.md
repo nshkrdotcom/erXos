@@ -3105,11 +3105,11 @@ The terminal's work is the master's side of those messages:
   `erx_vt`, draws the rows that changed, flushes, and answers
   `{tty_taken, N}`, so a terminal that draws slowly holds its tty
   stopped and its writers wait, as at a serial line. A `{reply, Bytes}`
-  effect goes back as `{tty_input, Bytes}`, and a `{title, Text}`
+  effect goes back as `{tty_input, N, Bytes}`, and a `{title, Text}`
   effect is written to the window's `label`, which whoever draws it
   escapes (G5).
 * **Keys.** Each `kbd` record goes through `erx_vt:key/2` and the bytes
-  to the tty as `{tty_input, Bytes}`. `Ctrl-G` is a key like any other:
+  to the tty as `{tty_input, N, Bytes}`. `Ctrl-G` is a key like any other:
   a terminal is no console line and has no console menu. The terminal
   keeps two bindings of its own: Shift with Page Up and Page Down moves
   its view through the scrollback, and Ctrl-Shift-N, which it would

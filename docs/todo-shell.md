@@ -770,26 +770,26 @@ to the corpus and follow rc
   without end, and the scan for the lost-input mark each time a line is finished (edit 81) costs the length of
   the line until the loss event below replaces it. Build the rest of edit 73 with its tests, beside
   `test/host/edlin_marker_test.rb`.
-* [Medium] shell and console, the input-loss event ([design-live.md](design-live.md#lost-input), edits 80
-  and 81 of [design-runtime.md](design-runtime.md)): replace the NUL that console UART drivers put in their input
-  where bytes were lost with an event of its own, carried beside the end of input at each hop. Steps, each with
-  its tests from the design's verification table: `erx_mini_uart` and `erx_pl011` send `erx_console_lost` in
-  order with their `erx_console_input` (delete `erx_uart_marker.hrl`); `erx_console` drops a cut character, resets
-  `erx_console_keys`, rings the menu's bell, delivers `{self(), lost}` to its groups and, through
-  `erx_tty_master`, sends a session's tty `tty_lost`, which `abi/services/console.txt` declares as its seventh
-  operation and `erx_tty_link` checks; `erx_tty:lost/2` and `read_input/2` keep loss positions beside the held
-  bytes (with `lost` in `erx_tty_modes_tests` and `erx_tty_fuzz`), and `read/3` gives each as NUL;
-  the relay serves `{tty_read_input, Open, N}` and the session's console reads with it; `group` takes
-  `{Drv, lost}` and `{read, Ref, lost}` in its edited, dumb and raw modes; `edlin` takes `lost` as an input,
-  keeps the damage beside its kill buffer, refuses through `finish/4` until the line is empty, and drops the
-  hold, the NUL scan, `edlin_key`'s NUL rule and `group`'s history rule for marked lines;
-  `test/host/edlin_marker_test.rb` becomes `edlin_lost_test.rb`. The design's two open decisions (what ends the
-  damage; whether the tty's own drops are losses) are settled before `edlin` and `erx_tty` change.
-* [Low] console, the mini UART's loss position (`erlang/apps/erx_uart/src/erx_mini_uart.erl` `received/2`): a
-  loss can be placed one byte late when the overrun falls between a drain's read of LSR and its read of the
-  byte, so a newline there ends the line before the loss reaches the editor. The input-loss event carries
-  whatever position the driver gives and does not fix this; mark one byte earlier on a drain's later reads, or
-  keep it as a residual.
+* [High] shell and console, the input-loss event ([design-live.md](design-live.md#lost-input), edits 73, 80
+  and 81 of [design-runtime.md](design-runtime.md)): a line that lost input can still run today. The mini UART
+  can place its NUL one byte late, after a newline that arrived after the loss (`erx_mini_uart.erl`
+  `received/2`); a `tty_input` the system domain's peer drops, a byte the tty drops for room and a character
+  `edlin`'s bounds drop are lost silently; and the system console pushes input into a group that may not read,
+  with no bound. Build the design's event in steps, each with its rows of the design's verification table:
+  1. drivers: `erx_mini_uart` places a loss after `8 - P` bytes and `erx_pl011` before the `OE` byte, both
+     send `erx_console_lost` in order with `erx_console_input` and delete `erx_uart_marker.hrl`; `erx_pl011`'s
+     drain stops at 64 words; both drop `erx_console_taken`, and `erx_stdio` waits for it;
+  2. `erx_tty`: held input as units, `lost/1`, a loss where `input/3` drops for room, settlement over units, one
+     consuming step for `read/3` and `read_input/2`, with `lost` in `erx_tty_modes_tests` and `erx_tty_fuzz`;
+  3. the console interface: `{tty_input, N, Bytes}` and `{tty_lost, N}` in `abi/services/console.txt`, numbered by
+     every master (`erx_tty_master`, `erx_term`, `erx_ssh_dev_channel`) and checked by `erx_tty_link`, a gap taken
+     as a loss; the relay serves `{tty_read_input, Open, N}`;
+  4. `erx_console`: both roles read on demand, the system role from its own `erx_tty`, deleting `input/2` and the
+     push; a loss drops a cut character and resets `erx_console_keys`;
+  5. `group` and `edlin`: the damage in each input request's state, `edlin:edit_line/3`, `lost` as an input,
+     refused bounds as losses, refusal through `finish/4` until the buffer is emptied, dumb and raw modes; delete
+     the hold, the NUL scan, `edlin_key`'s NUL rule and `group`'s history rule; `test/host/edlin_marker_test.rb`
+     becomes `edlin_lost_test.rb`.
 * [Low] shell, `prim_tty` `split_cols/6` counts a caret as two characters, so after a vertical move in a
   multi-line edit, deleting a control character shown in caret notation leaves its `^`.
 * [Medium] shell and console, the end of input on an unmarked line in `edlin`'s mode (`otp/lib/stdlib/src/edlin.erl`
@@ -872,6 +872,6 @@ to the corpus and follow rc
   ([design-ssh.md](design-ssh.md#sessions-ttys-and-shells),
   [design-live.md](design-live.md#paths)): a tty drops `tty_input`
   past its bound, so a paste over SSH larger than the bound into a program
-  that is not reading loses bytes, as at the console. An acknowledgement of
+  that is not reading loses bytes, which the tty marks as a loss, as at the console. An acknowledgement of
   input in the console interface would let the channel open the client's
   window only as the tty takes input.
