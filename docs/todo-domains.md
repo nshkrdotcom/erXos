@@ -603,39 +603,68 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
 * [Medium] grants, one wait per kind of fact ([design-system.md](design-system.md#waiting-for-a-grant);
   `otp/erts/preloaded/src/erx_facets.erl`, `erlang/apps/erx/src/erx_connections.erl`,
   `erlang/apps/erx_domain/src/erx_domain_srv.erl`, `erx_domain_mints.erl`, `erx_devices_pci.erl`,
-  `erx_devices_pci_core.erl`): build the design's three waits and delete what they replace. Each step lands
-  with its host tests and the design's seeded faults.
-  1. Registry wait. `erx_facets.erl:67-76`: the value carries a generation that `install/1` raises; add
-     `await/3` and `changed/1`. `erx_connections.erl`: both loops (`sides/3` at :184, `records/3` at :373)
-     answer `changed` and keep the pid-keyed map; `install/1` is a call the system domain's loop takes;
-     :382-390 writes `{erx, granted}` before the install. `erx_domain_srv.erl:1849-1852` installs through
-     `Agent:install/1` and acknowledges on its answer. `tools/lib/erx/chokepoint_rules/facets.rb:12`:
-     `FACETS_WRITERS` is `erx_connections` alone, and the rule's text says so.
+  `erx_devices_pci_core.erl`): build the design's three waits and delete what they replace. The steps land one
+  at a time or as one batch. Every commit builds, and leaves green the host tests it touches, with the
+  fixtures, oracles and stand-ins that build a changed representation changed in the same step; every
+  landing, of one step or of the batch, runs the landing gate once: `make check` and the QEMU suites the
+  step names. Each step's host cases are the design's verification rows for it, each with its seeded fault.
+  1. Registry wait. `erx_facets.erl:67-76`: the value carries a generation that every `install/1` raises,
+     an empty one included; add `generation/0`, `await/3` (a `Timeout` of milliseconds, `infinity` or
+     `{abs, Deadline}`) and `changed/1`. `erx_connections.erl`: both loops (`sides/3` at :184, `records/3` at
+     :373) answer `changed`, keeping each asker in a pid-keyed map with a monitor, answering every entry
+     and removing its monitor at each installation, and removing an entry at its `'DOWN'`; `install/1` is
+     exported, a call the system domain's loop takes only from its own runtime and the domain's loop
+     answers `badarg`; :382-390 writes `{erx, granted}` before the install. `erx_domain_srv.erl:1849-1852`
+     installs through `Agent:install/1` and acknowledges on its answer. Build checks:
+     `tools/lib/erx/chokepoint_rules/facets.rb:12` `FACETS_WRITERS` is `erx_connections` alone, and the
+     rule's text says so; a new rule there, `facet-install-callers`, refuses `erx_connections:install`
+     outside `erx_domain_srv.erl` in the forms `facet-registry-writers` matches, with a seeded violation,
+     both proved by `test/host/facet_registry_chokepoints_test.rb`. Fixtures that build the registry's
+     value build the new one: the modules of `test/erlang` that put `{erx, facets}` (`erx_connections_tests`,
+     `erx_domain_mints_srv_tests`, `erx_hostlink_tests`, `erx_net_grant_tests`, `erx_ns_tests` from :328,
+     `erx_pkg_system_tests`, `erx_prog_handler_tests`, `erx_ui_server_tests`), and the oracle of
+     `erx_connections_install_fuzz.erl:42`, which compares its model with the registry; the domain service's
+     stand-in agent, `test/erlang/erx_domain_fake_lib.erl:39`, exports `install/1`. Suites: `apps`, `usb`,
+     `net_device`.
   2. The two polls. `erlang/apps/erx_session/src/erx_ssh_dev.erl:90-93,121-158`: `start_when_granted/2`
-     becomes `await/3` on `net` and `data`, the import's `home` and `login_keys` likewise, within one
-     ten-minute deadline; the retry of `eagain` and `eio` stays. `erlang/apps/erx_display/src/erx_input_follower.erl`:
-     the `look` timer (:52-56 `look_ms`, :65-71, :89-91) becomes `changed/1`, and a tree's entry keeps the facet
-     last followed; a failed listing retries after a second.
+     becomes `await/3` on `net` and `data` within ten minutes of the boot, and the import's `home` and
+     `login_keys` likewise within ten minutes of the daemon's start, each one `{abs, Deadline}`; the retry
+     of `eagain` and `eio` stays, within the import's deadline. `erlang/apps/erx_display/src/erx_input_follower.erl`:
+     the `look` timer (:52-56 `look_ms`, :65-71, :89-91) goes; the environment gains `generation` and
+     `changed`, read in the design's order (generation, granted names, facets) with the request naming the
+     generation read first; a tree's entry keeps the facet last followed; a failed listing retries after a
+     second on the same grant with its monitor kept, and a retry for a grant that ended or was replaced
+     is dropped. `tools/lib/erx/usb_boot.rb` gains a cell whose manifest allows the USB domain one restart
+     (:43 sets 0 for the others): after the first key it kills the domain's first incarnation, waits for
+     the display to follow the new input facet and types a second key that must arrive. Suites: `usb`,
+     `net_device`.
   3. Settlement wait. `erx_domain_srv.erl`: `system_waiting`, `display_waiting` and `grant_waiting`
      (:210-215, :239), their three `handle_call` clauses (:485-497) and `answer_system/2`,
      `answer_displays/2`, `answer_grants/1` (:1776-1796) become one `settling` list, one clause taking
-     `{settled, Query}` and `erx_domain_mints:settled/3`. `erlang/apps/erx_domain/src/erx_domain.erl:217-219`:
-     `display_settled/1` becomes `server_settled/1` (callers `erx_starter.erl:562`, the tests
-     `erx_starter_tests.erl:256`, `erx_domain_tests.erl:412`, `erx_domain_mints_srv_tests.erl:55,834-853`,
-     and `docs/todo-apps.md`'s two references).
+     `{settled, Query}` and `erx_domain_mints:settled/3` over the three decisions as they stand, evaluated
+     at each call of `answer_in_place/1`, an end's step before its successor starts (`ended/4`, :1645).
+     `erlang/apps/erx_domain/src/erx_domain.erl:217-219`: `display_settled/1` becomes `server_settled/1`
+     (callers `erx_starter.erl:562`, the tests `erx_starter_tests.erl:256`, `erx_domain_tests.erl:412`,
+     `erx_domain_mints_srv_tests.erl:55,834-853`, the source check `tools/lib/erx/chokepoint_rules/apps.rb`
+     and its test `test/host/apps_chokepoints_test.rb`, and `docs/todo-apps.md`'s two references).
+     Suites: `apps`, `usb`.
   4. The hold moves. Out of `erx_domain_srv.erl`: `PCI_HOLD_AFTER_READY` and its option (:148-151, :172,
      :243), `pci_hold` (:220-221), `pci_hold/2` through `pci_held/1` (:317-398), the cast and timer clauses
      (:638-639, :666-667), the calls at :680, :1103, :1658 and :1756, and the moduledoc's paragraph (:26-31).
-     `handle_continue(boot)` (:308-315) asks `erx_devices:held_at_boot/1` and holds the rows it names;
-     `erx_domain:pci_report_answered/0` (`erx_domain.erl:248-250`) becomes `release_held/0`; the forward at
-     :647 becomes `erx_devices:domain_ended(Id, Origin)`. Into the device service: `erx_devices_pci_core:held/2`
-     and the release (report answered, a PCIe row's end, 30 s after `server_settled(<<"pcie">>)`), with
-     `erx_devices_pci.erl:259` casting `release_held/0` as the core's action. The `erx_facet:serve/2` lines
-     for `pci` and `pci_bus` (:191-192) stay.
-  Tests while developing: `erx_connections_tests`, `erx_domain_mints_tests`, `erx_domain_mints_srv_tests`,
-  `erx_devices_pci_core_tests`, `erx_devices_pci_tests`, `erx_input_follower_tests`, `erx_ssh_dev_tests`,
-  `erx_starter_tests`, `erx_domain_tests`. Before landing, once: `make check` and the `pcie`, `usb` and `ssh`
-  QEMU suites.
+     `handle_continue(boot)` (:308-315) asks `erx_devices:held_at_boot/1`, which the domain service's tests
+     stand in for, and holds the rows it names; `erx_domain:pci_report_answered/0` (`erx_domain.erl:248-250`)
+     becomes `release_held/0`; the forward at :647 becomes `erx_devices:domain_ended(Id, Origin)`, the origin
+     read from the core before `ended/4`. Into the device service: `erx_devices_pci_core:held/2` and the
+     release (`answered` written, read too as the PCIe process starts; a PCIe row's forwarded end; 30 s after
+     `server_settled(<<"pcie">>)`, asked as `held_at_boot` is answered and at each start of the process),
+     with `erx_devices_pci.erl:259` casting `release_held/0` as the core's action. The `erx_facet:serve/2`
+     lines for `pci` and `pci_bus` (:191-192) stay. `test/host/dom_core_test.rb` gains the case that a
+     function a report confirmed `ready` is given before any report is answered. Suites: `pcie`, `usb`.
+  Tests while developing, the step's own: `erx_connections_tests`, `facet_registry_chokepoints_test`
+  (step 1); `erx_input_follower_tests`, `erx_ssh_dev_tests` (step 2); `erx_domain_mints_tests`,
+  `erx_domain_mints_srv_tests`, `erx_starter_tests`, `erx_domain_tests`, `apps_chokepoints_test` (step 3);
+  `erx_devices_pci_core_tests`, `erx_devices_pci_tests`, `erx_domain_mints_srv_tests`, `dom_core_test`
+  (step 4).
 * [Medium] code server, the rest of its inputs (`erlang/apps/erx/src/erx_code_agent.erl`,
   `erxos_env/2`; `erlang/apps/erx_code/src/erx_code_target.erl`): the code server reads
   its boot information's `supervised` flag and its runtime's limits, but no reader of the

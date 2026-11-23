@@ -3084,11 +3084,11 @@ writes the facts it reads, and answered after each write of those
 facts.** No waiter looks again on a timer, no answer depends on when it
 looked, and each kind of fact has one place where its waiters live.
 
-| Wait | Facts it reads | Held and answered by | Bounded by |
+| Wait | Facts it reads | Held and answered by | A waiter waits at most |
 | --- | --- | --- | --- |
-| registry wait | the domain's facet registry | the domain's connection agent, the registry's one writer | the waiter's deadline |
+| registry wait | the domain's facet registry and the ready answer's granted names | the domain's connection agent, the one writer of both | its own deadline |
 | settlement wait | the mint core's grants and the starting rows | the domain service | the mint core's deadline and the server row's boot timeout |
-| rows held at boot | the device catalogue and the PCIe report | the device service decides; the domain service holds the rows | the device service's release |
+| rows held at boot | the catalogue's `answered`, the PCIe rows' ends and the `pcie` server's settlement | the device service decides; the domain service holds the rows | the PCIe row's boot timeout and 30 s more, or its end |
 
 The three are kept apart because their facts differ. A facet in the
 registry says the grant was installed; it does not say that a grant
@@ -3107,44 +3107,75 @@ which `erx_facets:generation/0` reads.
 * `erx_facets:await(Name, Seen, Timeout)` answers `{ok, Facet}` once the
   registry holds under `Name` a facet whose pid is not `Seen`: `none` for
   a first wait, or the pid of a facet the caller followed and whose
-  server has ended. It answers `timeout` when `Timeout`, milliseconds or
-  `infinity`, passes first. It runs in the caller: it reads the value,
-  answers at once when it holds such a facet, and otherwise asks for the
-  next generation and reads again.
+  server has ended. It answers `timeout` when `Timeout` passes first:
+  milliseconds, `infinity` or `{abs, Deadline}`, as
+  `gen_server:receive_response/2` takes it, one deadline over all its
+  reads. It runs in the caller: it reads the generation and then the
+  facets, answers at once when the registry holds such a facet, and
+  otherwise asks for the generation after the one it read and reads
+  again.
 * `erx_facets:changed(Generation)` returns a request id, which the
   domain's connection agent answers `ok` once the registry's generation
-  is past `Generation`, at once when it already is. A process that must
-  go on taking its own messages, as a `gen_server` does, takes the answer
-  with `gen_server:check_response/2` and reads the registry again.
+  is past `Generation`, at once when it already is, and also when the
+  same process asks again, which answers its older request. So `ok`
+  says to read again, not that the registry changed. A process that
+  must go on taking its own messages, as a `gen_server` does, takes the
+  answer with `gen_server:check_response/2` and reads again.
 
-No installation is missed: a waiter reads the generation before it
-reads the facets and names it in its request, and the agent compares it
-with the registry's when the request arrives, so an installation after
-that read answers the request at once; at worst the waiter reads again
-and finds what it already saw. The agent keeps each unanswered
-request in a map from the asking pid to its reply address, answers every
-one after each installation and empties the map, and answers a pid's
-older request at once when the same pid asks again. So the map holds at
-most one entry for each process of the domain that has asked since the
-last installation, and an entry of a process that has ended goes at the
-next installation, its answer dropped with the process. The deadline is
-the waiter's own: `gen_server:receive_response/2` drops the request's
-alias when its timeout passes, so a late answer never reaches the
-waiter.
+No installation is missed. Everything a waiter decides on that the
+agent writes, the facets and the ready answer's granted names, which
+`erx:granted/0,1` read, changes only in an installation, and every
+installation raises the generation. The ready answer is one
+installation: the agent writes its granted names and then its facets,
+and raises the generation even when it installs no facet. So a waiter
+reads in one order: the generation, then the granted names if it uses
+them, then the facets, and names in its request the generation it read
+first. The agent compares that with the registry's when the request
+arrives, so an installation after the waiter's first read answers the
+request at once; at worst the waiter reads again and finds what it
+already saw. Both orders are needed. The agent writes the names before
+the installation raises the generation, so a generation past the
+waiter's means the names are in place; the waiter reads the generation
+first, so names it read from before the ready answer come with a
+generation from before it, which the installation then answers. A
+waiter that read the names first could pair names from before the ready
+answer with a generation from after it, and wait for an installation
+that never comes.
+
+The agent keeps each unanswered request in a map from the asking pid to
+its reply address and a monitor of that pid. After each installation it
+answers every entry, removes its monitor and empties the map; a pid's
+second request answers its first at once; and an entry goes at its
+process's `'DOWN'`. So the map holds at most one entry for each living
+process of the domain that has asked since the last installation. A
+waiter whose deadline passed keeps its entry until the next
+installation, its next request or its end, one entry still;
+`gen_server:receive_response/2` drops the request's alias when its
+timeout passes (`otp/lib/stdlib/src/gen.erl:415`), so the late answer
+never reaches it.
 
 The agent writes every installation, the system domain's included
 ([The registry](#facets-a-configured-domain-serves)), so every
 installation is followed by its answers with no second party to tell.
-It writes the ready answer's granted names, which `erx:granted/0,1`
-read, before it installs that answer's facets, so a waiter woken by that
-installation reads both. The agent makes no call to the domain service,
+In the system domain the domain service installs with
+`erx_connections:install/1`, which the system domain's agent takes only
+as a call from its own runtime: a message from another domain arrives
+in its `{erx_origin, D, Msg}` envelope, which is no call the agent takes
+(`erx_connections.erl:123`), and a domain's agent answers `install`
+`badarg`, as any call it does not take, since a domain's installations
+come from the system domain over its connection. The build check
+`facet-install-callers` refuses a call of `erx_connections:install/1`
+outside the domain service, as `facet-registry-writers` refuses one of
+`erx_facets:install/1` outside the agent, each with a seeded violation,
+so no other code of the system domain installs a facet whose rights the
+manifest did not give. The agent makes no call to the domain service,
 which calls it to install, so neither waits on the other.
 
 A restart changes nothing the waiter relies on. The agent is never
-restarted: its end ends the runtime, so no waiter outlives it. A waiter
-that restarts asks again, and its predecessor's request ends with its
-alias. A server's restart installs its successor's facet under the same
-name, a new generation, so a waiter that names the ended facet as `Seen`
+restarted: its end ends the runtime (`erx_dist.erl:146`), so no waiter
+outlives it. A waiter that restarts asks again, and its predecessor's
+entry goes at the predecessor's `'DOWN'`. A server's restart installs
+its successor's facet under the same name, a new generation, so a waiter that names the ended facet as `Seen`
 is answered with the successor's. `{ok, Facet}` says what the registry
 holds, not that the server lives, since a facet stays in the registry
 after its server ends (`erx:cap/1`); a waiter that monitors the facet
@@ -3154,10 +3185,15 @@ hears of that end and waits again with it as `Seen`.
 service one of three queries, a closed set, each with its own call. The
 service keeps every asker in one list with its query, and answers each
 once `erx_domain_mints:settled/3`, a pure function of the query, the
-grants and the starting rows, no longer returns `wait`. It evaluates the
-list at the points where those facts change: after each step of the mint
-core, each stop for a boot timeout, and the release of the rows held at
-boot.
+grants and the starting rows, no longer returns `wait`. Its three
+clauses are `erx_domain_mints:in_place/3`, `server_settled/3` and
+`system_grant/3` as they stand, behind one dispatcher, not new rules.
+It evaluates the list at the points where those facts change: after each step of the mint core,
+each stop for a boot timeout, and the release of the rows held at boot
+whatever each held row's start then does. An end's step is evaluated
+before the ended domain's successor starts (`erx_domain_srv:ended/4`), so
+a waiter on the ended incarnation is answered by its end and never
+waits on through the next one.
 
 | Query | Asked with | Answer |
 | --- | --- | --- |
@@ -3166,11 +3202,13 @@ boot.
 | `{grant, Name, Id}` | `erx_domain:await_grant/2` | `{ok, Facet}`, `{error, failed}`, `{error, ended}` or `{error, unprovided}`, as [One incarnation's grant](#a-session-takes-the-console) states |
 
 A starting row is one whose domain runs without having reported ready,
-or a row held at boot. Each request is sent, not waited on
-(`gen_server:send_request/2`), so the asker goes on taking its own
+or a row held at boot, which stays starting until the release starts
+it, whether that start succeeds or is refused. Each request is sent,
+not waited on (`gen_server:send_request/2`), so the asker goes on taking its own
 messages. The askers are the start table, the package service and the
 device service, each asking once for each query it waits on (the start
-table once for each display, the device service once for each report),
+table once for each display, the device service once for each report
+and once for the `pcie` server at each start of its PCIe process),
 and each answer comes within the mint core's deadline and the server
 row's boot timeout, so the list stays bounded. A session's start is answered by the namespace
 rule for that session as part of the start itself, not as a query.
@@ -3197,21 +3235,45 @@ requests and its release a cast), so the call cannot deadlock.
 
 The device service releases at the first of three events:
 
-* its answer to a PCIe report;
+* the library's catalogue recording an answered report: a bridge's
+  `answered` naming an incarnation, which the PCIe process writes
+  before it sends a report's answer
+  ([design-pcie.md](design-pcie.md#records)) and reads as it
+  starts;
 * the end of a domain whose origin is a PCIe row, which the domain
   service forwards with every end, before it starts the next
   incarnation (`erx_devices:domain_ended(Id, Origin)`), so a PCIe row
   that ends before it reports cannot hold the rows for as long as its
   restarts last;
-* 30 s after `erx_domain:server_settled(<<"pcie">>)` answers, which it
-  asks as it answers `held_at_boot`. The PCIe row is then ready, stopped
-  for its boot timeout, ended with no restart, or refused its start, and
-  30 s covers a walk after a ready report.
+* 30 s after `erx_domain:server_settled(<<"pcie">>)` answers, which the
+  PCIe process asks as it answers `held_at_boot`, and a restarted one as
+  it starts. The PCIe row is then ready, stopped for its boot timeout,
+  ended with no restart, or refused its start, and 30 s covers a walk
+  after a ready report.
 
-A restarted PCIe process releases at once, since it cannot tell whether
-its predecessor did. A row started before the report is answered,
-whether by that release or the third event, gets nothing of its `pci`
-devices ([design-pcie.md](design-pcie.md#the-catalogue-and-gives)).
+So one rule serves the boot and every restart of the PCIe process,
+which keeps no record of whether it released: a restarted process
+releases at once when its predecessor answered a report, and otherwise
+waits for the other two as at boot. A release already made is made
+again harmlessly, since a release with nothing held changes nothing. A
+PCIe row that will never report, because its start was refused, it was
+stopped for its boot timeout, or it was ready at its start with no
+report to make, releases only through the third event, 30 s after it
+settled: one release rule for every path, at a bounded delay paid only
+when the boot has already gone wrong.
+
+A row the second or third event starts before a report is answered is
+given what the catalogue confirms at its start, as every give is
+([design-pcie.md](design-pcie.md#the-catalogue-and-gives)): nothing of
+its `pci` devices when no report has been taken, and each function the
+latest report confirmed `ready` when a report was taken but not
+answered, as when its incarnation ended before the system domain held
+its `pcie` facet. The give's own checks, a layout the latest report
+confirmed and found `ready` on a bridge not marked `firmware_lost`, are
+what make a give safe; the answer adds none. Its holder's requests then
+meet `between` and `down`, as those of a holder that outlives a PCIe
+incarnation do ([Devices](#devices), "The device service's PCIe
+process"), until an incarnation's report is answered.
 
 The `pci` and `pci_bus` services stay named in front of the domain
 service (`erx_facet:serve/2`), since a facet ends with the process it
@@ -3229,6 +3291,8 @@ decision.
 | `changed/1` | `{error, badarg}` | the generation is no non-negative integer, as for any call the agent does not take |
 | settlement queries | as the query table | a query outside the closed set is answered `{error, badarg}` |
 | `erx_devices:held_at_boot/1` | a call that fails | the domain service holds nothing and logs the reason |
+| `erx_connections:install/1` | `{error, badarg}` | asked of a domain's agent, whose installations come from the system domain only |
+| `changed/1`, `install/1`, a settlement query, `release_held/0` | not acted on | sent from another domain: it arrives in its `{erx_origin, D, Msg}` envelope, which neither the agent nor the domain service takes as a call or a cast; the agent counts it in `dropped/0` |
 
 **Verification.** Each case runs on the host; each seeded fault must
 fail its case.
@@ -3238,20 +3302,36 @@ fail its case.
 | `erx_connections_tests`, both agent loops | a `changed` request for the current generation is answered after the next installation, in a domain and in the system domain | the agent's answer after an installation dropped: the request is never answered within the test's deadline |
 | same | an installation between the waiter's read and its request answers the request at once | the agent holds every request whatever its generation: the request waits for a second installation |
 | same | a second request from one pid answers the first at once | the older entry overwritten unanswered: the first request is never answered |
+| same | the agent monitors a waiting asker (`erlang:process_info(Agent, monitors)`) and no longer once it has answered it; an asker's end is taken, not counted in `dropped/0` | the asker not monitored: the agent's monitors lack it while it waits |
+| same | `install/1` from the system domain's runtime installs and is answered; the same request enveloped as from another domain, and `install/1` asked of a domain's agent, install nothing | the system agent's clause matching the enveloped form: the peer's facet is installed |
 | `erx_facets` cases in the same suite | `await(Name, Old, T)` is not answered while the registry holds `Old`, and is answered with the successor's facet | the facet compared by presence alone: `await` answers with `Old` |
-| same | `{erx, granted}` holds the ready answer's names when its installation wakes a waiter | the names written after the installation: the woken waiter reads none |
+| same | `await(Name, none, 50)` answers `timeout`, and an installation after it leaves nothing in the caller's mailbox | the reply taken with a plain `receive` after a timer instead of `gen_server:receive_response/2`: the late `ok` lands in the mailbox |
+| same | `{erx, granted}` holds the ready answer's names when its installation wakes a waiter | the names written after the installation: the woken waiter reads none and waits on |
+| same | a ready answer that installs no facet still raises the generation | the generation raised only by a non-empty installation: a waiter on the names alone is never woken |
+| `facet_registry_chokepoints_test` | `facet-install-callers` passes the tree | its seeded call of `erx_connections:install/1` outside the domain service passes: the rule catches nothing |
 | `erx_domain_mints_tests` | `settled/3` answers each query as `in_place/3`, `server_settled/3` and `system_grant/3` decide | the `{grant, Name, Id}` query matched by name alone: a predecessor's facet answers it |
 | `erx_domain_mints_srv_tests` | three askers, one of each query, are each answered at the step that settles their own query; the system domain's installation is acknowledged only after the agent's answer | every asker answered when any query settles: the `{grant, ...}` asker is answered before its incarnation's installation |
+| same | a `{server, Name}` asker is answered at its row's end, before the row's restart starts | the list evaluated after the successor starts: the asker waits through the successor's boot |
+| same | a held row counts as starting: a session waiting on a `files` grant it serves is answered only after `release_held`, and a held row whose start is then refused settles at that release | held rows left out of the starting rows: the session is answered before its server starts |
+| same | `server_settled(<<"pcie">>)` is answered at the PCIe row's refused start and at its stop for its boot timeout | a refused row counted as starting: the asker is never answered and the hold never released |
 | `erx_devices_pci_core_tests` | `held/2` holds the rows with a `pci` device, never the PCIe row, none without one | the PCIe row held: the case fails, as a boot would wait for a report that cannot come |
-| same | release at the report's answer, at a PCIe row's forwarded end, and 30 s after the `pcie` server settled, each once | the release dropped at the forwarded end: a PCIe row that ends before reporting holds the rows until the timer |
-| `erx_domain_mints_srv_tests` | a held row counts as starting: a session waiting on a `files` grant it serves is answered only after `release_held` | held rows left out of the starting rows: the session is answered before its server starts |
+| same | release once `answered` is written, at a PCIe row's forwarded end, and 30 s after the `pcie` server settled, each once | the release dropped at the forwarded end: a PCIe row that ends before reporting holds the rows until the timer |
+| `erx_devices_pci_tests` | a restarted PCIe process releases at its start when the library's `answered` names an incarnation, and otherwise not until one of the three events, with the restart before the intake, between the intake and the answer, and after the answer | the restart releasing at once: with no report taken, the held rows start and are given nothing |
+| `dom_core_test` | a function a report confirmed `ready` is given before any report is answered, and a function no report confirmed is not | the give requiring `answered`: the confirmed function is not given, against what design-pcie states |
 | `erx_input_follower_tests` | a tree is followed at the installation of its facet, and again at its server's re-grant, whether the old facet's `'DOWN'` comes before or after the new installation | the follower's `Seen` dropped: the dead facet is followed again at every installation of another name |
-| `erx_ssh_dev_tests` | the daemon starts once `net` and `data` are both installed, in either order, with no timer | the wait for `data` dropped: the daemon starts with `net` alone and cannot keep its host key |
+| same | the ready answer and the input facet installed between the follower's read of the generation and of the names, and again between the names and the facets: the tree is followed | the names read before the generation: the follower waits for an installation that never comes |
+| same | a failed listing is tried again on the same grant with its monitor kept; a retry that comes after the grant's end is discarded | the retry kept after the end: a lister runs on the dead grant beside the successor's |
+| `erx_ssh_dev_tests` | the daemon starts once `net` and `data` are both installed, in either order, with no timer; the import then has its own ten minutes from the daemon's start | the wait for `data` dropped: the daemon starts with `net` alone and cannot keep its host key |
 
-The `pcie` QEMU suite boots with held rows, the `usb` suite types on a
-keyboard behind `qemu-xhci`, a held row, after a `restart` of its
-controller, which re-grants the display's input tree, and the `ssh`
-suite logs in at boot: together they cover each wait on the target.
+On the target, the `pcie` QEMU suite boots with held rows; the `usb`
+suite types on a keyboard behind `qemu-xhci`, a held row, and gains a
+cell whose manifest allows the USB domain one restart, which kills the
+domain's first incarnation once the first key has arrived, checks that
+the display follows the new incarnation's input facet, and types a
+second key that must arrive; the `apps` suite starts an app's session
+through the namespace and start table's settlement; and the
+`net_device` suite's reboot cell logs in over ssh past the daemon's
+start at boot. Together they cover each wait on the target.
 
 ### Authority
 
@@ -4074,11 +4154,13 @@ its bridges ([design-pcie.md](design-pcie.md#concurrency)).
 starts only once the device service has answered the boot's first
 report, and the rows without one start in boot order meanwhile. The
 device service decides which rows are held and when they are released:
-at its answer to a report, at a PCIe row's end, or 30 s after the PCIe
-row has settled. The domain service only holds the rows it names,
-counts them as starting and starts them on its word ([Waiting for a
-grant](#waiting-for-a-grant), "The rows held at boot"). A row started
-before a report is answered gets nothing of its `pci` devices
+once the catalogue records an answered report, at a PCIe row's end, or
+30 s after the PCIe row has settled. The domain service only holds the
+rows it names, counts them as starting and starts them on its word
+([Waiting for a grant](#waiting-for-a-grant), "The rows held at
+boot"). A row started before a report is answered is given what the
+catalogue confirms, as every give is: nothing of its `pci` devices
+before any report has been taken
 ([design-pcie.md](design-pcie.md#the-catalogue-and-gives)).
 
 **Units.** Devices that cannot be given apart, because they share a

@@ -1940,10 +1940,14 @@ of its input numbers
 
 The display follows its input grants with one supervised process,
 `erx_input_follower`, which `erx_fb_sup` starts after the virtio-input
-drivers. It reads the domain's grants of the `input` interface and its
-registry as it starts and again after each installation, which it waits
-for with `erx_facets:changed/1`
-([design-system.md](design-system.md#waiting-for-a-grant)); the names
+drivers. As it starts, and again whenever the connection agent answers its
+request, it reads, in this order, the registry's generation
+(`erx_facets:generation/0`), the domain's grants of the `input`
+interface (`erx:granted/1`) and the installed facets, and then asks
+with `erx_facets:changed/1` for the generation after the one it read
+first ([design-system.md](design-system.md#waiting-for-a-grant)): read
+in any other order, a ready answer that lands between two reads could
+leave it waiting for an installation that never comes. The names
 arrive with the ready answer, after the display's applications start,
 so a first read that finds none is normal. It keeps, for each name, the
 facet it last followed. For each name whose installed facet is another
@@ -1953,7 +1957,11 @@ process, lists the tree, attached by `input_tree`, the name every input
 service serves its tree under, in a process of its own, so a slow server holds
 up no other tree, and starts one reader for each file on that same
 grant. A listing that fails is tried again a second later on the same
-grant: a retry of the server's answer, not a look for grants. When the grant ends it stops that tree's readers and waits for
+grant, its monitor kept: a retry of the server's answer, not a look for
+grants, since an installation does not announce that a server already
+installed has become able to answer. A retry that comes after the
+grant's end, or once another facet of the name is followed, is
+discarded. When the grant ends it stops that tree's readers and waits for
 each to end before anything else, so no reader of the old grant runs
 beside a replacement, and keeps the ended facet as the one it last
 followed, so the installation of the server's new grant starts the

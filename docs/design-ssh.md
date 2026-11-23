@@ -605,11 +605,15 @@ another name and renamed into place, so the home copy is absent or
 whole. The import waits for the session's `home` and `login_keys`
 facets with `erx_facets:await/3`
 ([design-system.md](design-system.md#waiting-for-a-grant)), as the
-daemon's start waits for `net` and `data`, all within ten minutes of
-the boot. `eagain`, which the tree answers while the storage domain's
-reader runs, and `eio`, which holds until the storage domain restarts,
-write nothing and are tried again every half second within the same
-ten minutes. An answer of no
+daemon's start waits for `net` and `data`. Each stage has ten minutes
+of its own, one absolute deadline over its waits: the daemon's start
+from the boot, the import from the daemon's start, so a daemon that
+starts late still leaves the import its whole ten minutes. `eagain`,
+which the tree answers while the storage domain's reader runs, and
+`eio`, which holds until the storage domain restarts, write nothing and
+are tried again every half second within the import's ten minutes,
+since an installed facet does not announce that its server has become
+able to answer. An answer of no
 key, of no whole number of blobs within 16, or of blobs that are no
 Ed25519 key writes no file, so no empty home copy shuts the medium's
 keys out. A home copy that is there, whatever it holds, is never read
@@ -1158,7 +1162,8 @@ identifier.
    system principal ends its arguments with `-eval
    ok=erx_ssh_dev:boot(2222)`, which starts the daemon in a process of
    its own once the session holds its `net` and `data` facets, which
-   their domains install after the session is ready, registers the
+   their domains install after the session is ready, waiting for them
+   with `erx_facets:await/3` within ten minutes, registers the
    daemon as `erx_ssh_dev` and logs whether it listens. A session
    channel's callback, `erx_ssh_dev_channel`, is the master of a tty of
    root's session for a channel that asked for one, speaking the tty's

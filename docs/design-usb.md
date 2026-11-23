@@ -771,7 +771,7 @@ needs to open its function: it reads the domain's function records once,
 reader refuses fails the eval and so the domain's boot. The top
 supervisor has intensity 0, so the end of the places or the mint ends
 the domain and the domain service's restart is the recovery ([Failure
-handling](#failure-handling)); a domain started after a failed hold, or
+handling](#failure-handling)); a domain started before any PCIe report is taken, or
 on a machine with no controller attached, holds no record and runs no
 controller, and its input tree serves eight numbers no function
 occupies. Its row `usb_input`

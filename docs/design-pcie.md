@@ -1800,16 +1800,27 @@ starts them when the device service casts `erx_domain:release_held/0`
 held at boot"). The PCIe row is the row holding a host bridge some
 `pci` device's place names; it is never held, and a machine with no
 PCIe row holds nothing (`erx_devices_pci_core:held/2`). The device
-service releases at the first of three: its answer to a report; a PCIe
-row's end, which the domain service forwards with the domain's origin,
-whatever its restart, so a row that crashes before reporting cannot
-hold the rows for as long as its restarts last; and 30 s after
-`erx_domain:server_settled(<<"pcie">>)` answers, when the PCIe row is
-ready, stopped for its boot timeout, ended with no restart, or refused
-its start. A restarted PCIe process releases at once. A held row counts
+service releases at the first of three: a bridge's `answered` naming
+an incarnation, which it writes before it sends a report's answer
+([Records](#records)); a PCIe row's end, which the domain service
+forwards with the domain's origin, whatever its restart, so a row that
+crashes before reporting cannot hold the rows for as long as its
+restarts last; and 30 s after `erx_domain:server_settled(<<"pcie">>)`
+answers, when the PCIe row is ready, stopped for its boot timeout,
+ended with no restart, or refused its start. A restarted PCIe process
+reads `answered` as it starts and asks `server_settled` again, so the
+same rule releases after its restart: at once when its predecessor
+answered a report, and otherwise at the other two. A held row counts
 as starting while it waits, so a grant it serves is waited for, not
-settled as failed. A row started before a report is answered gets
-nothing of its `pci` devices.
+settled as failed. A row the second or third starts before a report is
+answered is given what the catalogue confirms, as every give is
+([The catalogue and gives](#the-catalogue-and-gives)): nothing of its
+`pci` devices when no report has been taken, and each function the
+latest report confirmed `ready` when a report was taken but its answer
+never came, as when the incarnation ended before the system domain held
+its `pcie` facet. Its holder's requests wait in `between`, and are
+refused in `down`, until an incarnation's report is answered
+([Concurrency](#concurrency)).
 
 **A holder's end.** The device service learns of every domain's end
 from the domain library, whose `{domain_ended, Id, End, Record}` the
