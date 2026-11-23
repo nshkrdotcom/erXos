@@ -60,10 +60,10 @@
  *
  * numbers in hexadecimal for ranges and decimal elsewhere.
  *
- * With firmware, it prints instead each device row's firmware request rows as the view
- * resolves them (erx_dom_firmware_row), index by index, then, for a device with rows, the
- * status of the index past them; then the status for a device past the catalogue and for
- * ERX_MF_NONE, the machine's; then whether each host bridge's catalogue is
+ * With firmware, it prints instead what each device row's firmware requests resolve to,
+ * its bridge notification (erx_dom_bridge_row) and phases 0, 1 and 2 of its power line
+ * (erx_dom_power_row), each a row or a status; then both statuses for a device past the
+ * catalogue and for ERX_MF_NONE, the machine's; then whether each host bridge's catalogue is
  * firmware_lost after its request answered ERX_EBUSY, then ERX_ETIMEDOUT
  * (erx_dom_lib_pci_firmware); last it hands ERX_ETIMEDOUT for a row past the catalogue,
  * which has no catalogue to mark:
@@ -400,9 +400,6 @@ print_bridges(erx_dom_lib_t *lib)
 		print_answered(lib, at);
 }
 
-/* More rows than any device of the test manifests has. */
-#define FIRMWARE_ROWS_SHOWN	8u
-
 static void
 print_firmware(erx_dom_lib_t *lib)
 {
@@ -410,21 +407,25 @@ print_firmware(erx_dom_lib_t *lib)
 	erx_status_t status = ERX_OK;
 	bool busy;
 
+	/* Every device's asks: its bridge notification, and phases 0 and 1 of fw_power_phase and one past it. */
 	for (uint32_t device = 0; device < lib->view.ndevices; device++) {
-		uint32_t index = 0;
-
-		/* Bounded, so a resolver that repeats a row fails the test rather than hanging it. */
-		while (index < FIRMWARE_ROWS_SHOWN &&
-		    (status = erx_dom_firmware_row(&lib->view, device, index, &row)) == ERX_OK) {
-			printf("firmware %" PRIu32 " %" PRIu32 " tag=0x%" PRIx32 " arguments=0x%" PRIx32 ",0x%" PRIx32 "\n",
-			    device, index, row.tag, row.arguments[0], row.arguments[1]);
-			index++;
+		if ((status = erx_dom_bridge_row(&lib->view, device, &row)) == ERX_OK)
+			printf("firmware %" PRIu32 " bridge tag=0x%" PRIx32 " arguments=0x%" PRIx32 ",0x%" PRIx32 "\n",
+			    device, row.tag, row.arguments[0], row.arguments[1]);
+		else
+			printf("firmware %" PRIu32 " bridge status=%d\n", device, (int)status);
+		for (uint32_t phase = 0; phase < 3; phase++) {
+			if ((status = erx_dom_power_row(&lib->view, device, phase, &row)) == ERX_OK)
+				printf("firmware %" PRIu32 " power %" PRIu32 " tag=0x%" PRIx32 " arguments=0x%" PRIx32 ",0x%" PRIx32 "\n",
+				    device, phase, row.tag, row.arguments[0], row.arguments[1]);
+			else
+				printf("firmware %" PRIu32 " power %" PRIu32 " status=%d\n", device, phase, (int)status);
 		}
-		if (index != 0)
-			printf("firmware %" PRIu32 " past status=%d\n", device, (int)status);
 	}
-	printf("firmware outside status=%d\n", (int)erx_dom_firmware_row(&lib->view, lib->view.ndevices, 0, &row));
-	printf("firmware machine status=%d\n", (int)erx_dom_firmware_row(&lib->view, ERX_MF_NONE, 0, &row));
+	printf("firmware outside status=%d,%d\n", (int)erx_dom_bridge_row(&lib->view, lib->view.ndevices, &row),
+	    (int)erx_dom_power_row(&lib->view, lib->view.ndevices, 0, &row));
+	printf("firmware machine status=%d,%d\n", (int)erx_dom_bridge_row(&lib->view, ERX_MF_NONE, &row),
+	    (int)erx_dom_power_row(&lib->view, ERX_MF_NONE, 0, &row));
 	for (uint32_t at = 0; at < lib->view.npci_bridges; at++) {
 		erx_dom_lib_pci_firmware(lib, lib->pci_bridges[at].facts.index, ERX_EBUSY);
 		busy = lib->pci_bridges[at].firmware_lost;

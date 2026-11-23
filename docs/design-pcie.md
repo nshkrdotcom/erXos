@@ -635,7 +635,7 @@ register values are the facts record's:
   `firmware` effect, when the enumerator starts the VL805, before that
   function is reported, so the enumerator keeps one `pci_bus` call in
   flight. The device service makes the narrow kernel call through the
-  domain library, `erx_domain_lib:pci_firmware(Bridge)`, over
+  domain library, `erx_domain_lib:firmware(Bridge, bridge)`, over
   `erx_dom_pci_firmware` in C, with the resource the bridge's device
   record holds for its give; no capability for it reaches the PCIe
   domain, and the caller is the same in both phases
@@ -1320,7 +1320,7 @@ never trusts it otherwise. `firmware(Bridge)` names a bridge the PCIe domain hol
 a bridge row of the library's catalogue, and any other row is refused with
 `{error, not_held}` before a request is queued; for a held one the
 device service makes `erx_firmware_request` through
-`erx_domain_lib:pci_firmware(Bridge)`, with the resource the bridge's
+`erx_domain_lib:firmware(Bridge, bridge)`, with the resource the bridge's
 device record holds for its give, which marks the bridge `firmware_lost`
 at `ERX_ETIMEDOUT` ([Records](#records)), and answers `ok` for `ERX_OK`
 and `{error, Status}` naming any other status, as
@@ -1911,7 +1911,7 @@ waits for.
 | a function no longer reads as `decoding` at `master` | the planner | `{error, reset}`; the enumerator turns it off; the driver starts again with `open` |
 | transactions still pending at a function-level reset | the enumerator's 1000 ms wait | no reset; the function stays off; `{error, busy}` |
 | the VL805's firmware stays absent after the notification | `ready` | it is reported `not_ready`; a later start resets the bridge and asks again |
-| the notification times out | `erx_domain_lib:pci_firmware/1` | the bridge's entry is marked `firmware_lost` in the same call; every later report of the bridge is taken as `not_ready`, so the VL805 is not given until the next boot, even when a late answer loads its firmware and a later start keeps the bridge; a later bring-up's notification answers `ERX_ETIMEDOUT` at once ([design-usb.md](design-usb.md#the-vl805s-firmware)) |
+| the notification times out | `erx_domain_lib:firmware/2` | the bridge's entry is marked `firmware_lost` in the same call; every later report of the bridge is taken as `not_ready`, so the VL805 is not given until the next boot, even when a late answer loads its firmware and a later start keeps the bridge; a later bring-up's notification answers `ERX_ETIMEDOUT` at once ([design-usb.md](design-usb.md#the-vl805s-firmware)) |
 | a holder ends while the PCIe domain is down | the domain library's `domain_ended`, which the domain service forwards | the library's setting says `off`; the next start applies it |
 | the device service's PCIe process crashes | its supervisor | it restarts, reads every setting, holder and `answered` from the library; it begins in `synced` only with an answered incarnation that still holds its bridges ([Concurrency](#concurrency)), and then sends `off` for every function the library holds at `off`, so a function whose holder ended while it restarted is set `off` |
 | a placing walk's record fails intake | the library | the bridge takes no layouts and places again at its next walk; nothing on it is given; a log line names the record and the field |

@@ -614,8 +614,9 @@ class DomPlannerTest < Minitest::Test
                     "  max_request 1024\n  in_flight 1\n  reductions 100000\n  period_ns 1000000000\n  max_heap_size 8192\n"
 
   # The packed manifest of the Pi 4's closed bridge and the VL805 at its one place, line 175,
-  # held by alpha, with the bridge's firmware request for the VL805, on the qemu-virt platform
-  # record (docs/design-usb.md, "The Phase 1 part", "The VL805's firmware").
+  # held by alpha, with the bridge's firmware request for the VL805, and a power line on the
+  # console's UART, on the qemu-virt platform record (docs/design-usb.md, "The Phase 1 part",
+  # "The VL805's firmware"; docs/design-bluetooth.md, "The power line").
   def vl805_manifest
     platform = JSON.parse(JSON.generate(@context.platform))
     row = { 'path' => '', 'bridge' => '', 'bus' => 0, 'device' => 0, 'function' => 0, 'clock' => 0, 'base' => 0, 'size' => 0,
@@ -629,7 +630,8 @@ class DomPlannerTest < Minitest::Test
     platform.fetch('units').reject! { |unit| unit.fetch('key') == 'pcie' }
     platform.fetch('units').push({ 'key' => 'pcie', 'devices' => [bridge] }, { 'key' => 'vl805', 'devices' => [function] })
     platform['firmware_requests'] = [{ 'name' => 'vl805_notify', 'device' => bridge.fetch('path'), 'tag' => 'notify_xhci_reset',
-                                       'arguments' => [0x0010_0000] }]
+                                       'arguments' => [0x0010_0000] },
+                                     { 'device' => '/pl011@9000000', 'power_line' => 'bt_power', 'off_ms' => 300, 'on_ms' => 500 }]
     @context = Erx::Manifest::Context.new(**ManifestContextFixture.arguments(@codec).merge(platform: platform))
     source = with_domains('alpha', 'pcie') + "unit pcie\n  placement \"pcie\"\n  holder @domain.pcie\n" \
                                              "unit vl805\n  placement \"vl805\"\n  holder @domain.alpha\n" + VL805_PCI_FACET
@@ -725,21 +727,33 @@ class DomPlannerTest < Minitest::Test
     assert(lines.any? { |line| line.match?(entry) }, lines.inspect)
   end
 
-  # The bridge's firmware request rows (docs/design-fiasco.md, "The firmware request"): the
-  # view keeps the manifest's records, and row 0 of the bridge's entry is the VL805's
-  # notification, its tag and argument the platform record's; the row past it, a device past
-  # the catalogue and the machine's rows resolve to nothing before any request is made. A
-  # request that timed out marks the bridge firmware_lost; one that met another request in
-  # flight does not.
-  def test_a_bridge_s_firmware_request_resolves_from_the_manifest
+  # The firmware requests' allow-list (docs/design-fiasco.md, "The firmware request";
+  # docs/design-bluetooth.md, "The power line"): the bridge's notification resolves for the
+  # bridge's row alone, the VL805's, its tag and argument the platform record's, and a power
+  # line's phases for the UART whose row carries the line's times alone, off and on its
+  # SET_GPIO_STATE rows at the phases' indices; every other ask, a power phase of the bridge
+  # and of a UART with no times, the bridge notification of the powered UART, and a phase
+  # outside fw_power_phase, is refused enotsup (-12), and a device past the catalogue and the
+  # machine's rows einval (-1), before any request is made. A request that timed out marks
+  # the bridge firmware_lost; one that met another request in flight does not.
+  def test_a_firmware_request_resolves_only_on_the_allow_list
     lines = view_lines(vl805_manifest, 'firmware', 'firmware')
-    rows = lines.grep(/\Afirmware \d+ \d+ /)
-    assert_equal 1, rows.size, lines.inspect
-    device = rows.first[/\Afirmware (\d+) 0 tag=0x30058 arguments=0x100000,0x0\z/, 1]
+    rows = lines.grep(/\Afirmware \d+ \w+ (\d+ )?tag=/)
+    device = rows.join("\n")[/^firmware (\d+) bridge /, 1]
+    uart = rows.join("\n")[/^firmware (\d+) power 0 /, 1]
     refute_nil device, lines.inspect
-    assert_includes lines, "firmware #{device} past status=-12"
-    assert_includes lines, 'firmware outside status=-1'
-    assert_includes lines, 'firmware machine status=-1'
+    refute_nil uart, lines.inspect
+    assert_equal ["firmware #{device} bridge tag=0x30058 arguments=0x100000,0x0",
+                  "firmware #{uart} power 0 tag=0x38041 arguments=0x80,0x0",
+                  "firmware #{uart} power 1 tag=0x38041 arguments=0x80,0x1"].sort, rows.sort
+    assert_equal (0..2).map { |phase| "firmware #{device} power #{phase} status=-12" }, lines.grep(/\Afirmware #{device} power /)
+    assert_equal ["firmware #{uart} bridge status=-12", "firmware #{uart} power 2 status=-12"],
+                 lines.grep(/\Afirmware #{uart} /) - rows
+    others = lines.grep(/\Afirmware (\d+) /) { |line| line[/\d+/] }.uniq - [device, uart]
+    refute_empty others
+    others.each { |other| assert_equal 4, lines.grep(/\Afirmware #{other} \w+ (\d+ )?status=-12\z/).size, other }
+    assert_includes lines, 'firmware outside status=-1,-1'
+    assert_includes lines, 'firmware machine status=-1,-1'
     assert_equal ["lost #{device} busy=0 timedout=1"], lines.grep(/\Alost /)
   end
 

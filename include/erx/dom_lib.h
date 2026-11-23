@@ -29,8 +29,9 @@ typedef struct erx_pack_view erx_pack_view_t;
  *
  * Every entry runs under the caller's one library lock, the fault thread's
  * erx_dom_lib_record included, so the view and the handles change only under
- * it. erx_dom_lib_take and erx_dom_lib_firmware_request alone take no lock:
- * the first waits at the gate, the second up to a firmware request's deadline.
+ * it. erx_dom_lib_take and the firmware entries, erx_dom_lib_bridge_firmware
+ * and erx_dom_lib_power, alone take no lock: the first waits at the gate, the
+ * others up to a firmware request's deadline.
  *
  * Handles: each object a creation makes has one handle in the root's table,
  * kept in the domain's erx_dom_handles_t with the budget it is charged to.
@@ -462,17 +463,21 @@ erx_status_t	erx_dom_lib_pci_mode(erx_dom_lib_t *, uint32_t index, uint32_t mode
 erx_status_t	erx_dom_lib_pci_answered(erx_dom_lib_t *, uint32_t domain) ERX_WARN_UNUSED_RESULT;
 
 /*
- * Makes the index-th firmware request row of device row device, through the backend
- * (docs/design-fiasco.md, "The firmware request"): the row as the view resolves it
- * (erx_dom_firmware_row), so ERX_ENOTSUP past the device's rows and ERX_EINVAL past the
- * catalogue reach no mailbox, then erx_firmware_request_row's status, with the answer's
- * first *length bytes in answer and zeroes to its end. The caller holds no lock: the
- * request runs in its thread up to its 1 s deadline, and the view's records it reads are
- * written only as the view is built. For a host bridge's row the caller then hands the status to
- * erx_dom_lib_pci_firmware under the lock.
+ * The firmware entries, the trust point of the device service's firmware requests
+ * (docs/design-fiasco.md, "The firmware request"; docs/design-system.md, "Firmware
+ * requests"): each makes, through the backend, the row its allow-list resolves from the
+ * view (erx_dom_bridge_row, erx_dom_power_row), so a row past the catalogue (ERX_EINVAL)
+ * and any ask the device does not offer (ERX_ENOTSUP) reach no mailbox, and otherwise
+ * answers erx_firmware_request_row's status; neither request answers more than its
+ * status. erx_dom_lib_bridge_firmware: host bridge row bridge's notification, whose
+ * status the caller then hands to erx_dom_lib_pci_firmware under the lock.
+ * erx_dom_lib_power: phase, of fw_power_phase, of device row device's power line
+ * (docs/design-bluetooth.md, "The power line"). The caller holds no lock: the request
+ * runs in its thread up to its 1 s deadline, and the view's records it reads are written
+ * only as the view is built.
  */
-erx_status_t	erx_dom_lib_firmware_request(const erx_dom_lib_t *, uint32_t device, uint32_t index,
-		    uint8_t answer[ERX_VC_WINDOW_MAX], uint32_t *length) ERX_WARN_UNUSED_RESULT;
+erx_status_t	erx_dom_lib_bridge_firmware(const erx_dom_lib_t *, uint32_t bridge) ERX_WARN_UNUSED_RESULT;
+erx_status_t	erx_dom_lib_power(const erx_dom_lib_t *, uint32_t device, uint32_t phase) ERX_WARN_UNUSED_RESULT;
 
 /*
  * The status a firmware request of host bridge row bridge answered, to its catalogue

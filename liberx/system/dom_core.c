@@ -1851,23 +1851,51 @@ erx_dom_pci_firmware(erx_dom_pci_bridge_t *bridge, erx_status_t status)
 		bridge->firmware_lost = true;
 }
 
-erx_status_t
-erx_dom_firmware_row(const erx_dom_view_t *view, uint32_t device, uint32_t index, erx_mf_firmware_request_t *row)
+/*
+ * The index-th of the view's records that names device row device, a row of the
+ * catalogue, if its tag is tag; ERX_ENOTSUP for a record of another tag or none.
+ */
+static erx_status_t
+firmware_row(const erx_dom_view_t *view, uint32_t device, uint32_t index, uint32_t tag,
+    erx_mf_firmware_request_t *row)
 {
 	uint32_t seen = 0;
 
-	if (device >= view->ndevices)
-		return (ERX_EINVAL);
 	for (uint32_t at = 0; at < view->nfirmware; at++) {
 		if (view->firmware[at].device != device)
 			continue;
 		if (seen == index) {
+			if (view->firmware[at].tag != tag)
+				return (ERX_ENOTSUP);
 			*row = view->firmware[at];
 			return (ERX_OK);
 		}
 		seen++;
 	}
 	return (ERX_ENOTSUP);
+}
+
+erx_status_t
+erx_dom_bridge_row(const erx_dom_view_t *view, uint32_t bridge, erx_mf_firmware_request_t *row)
+{
+	if (bridge >= view->ndevices)
+		return (ERX_EINVAL);
+	/* A row with a catalogue, so the status its request answers always has a bridge to mark. */
+	for (uint32_t at = 0; at < view->npci_bridges; at++) {
+		if (view->pci_bridges[at].facts.index == bridge)
+			return (firmware_row(view, bridge, 0, ERX_FW_TAG_NOTIFY_XHCI_RESET, row));
+	}
+	return (ERX_ENOTSUP);
+}
+
+erx_status_t
+erx_dom_power_row(const erx_dom_view_t *view, uint32_t device, uint32_t phase, erx_mf_firmware_request_t *row)
+{
+	if (device >= view->ndevices)
+		return (ERX_EINVAL);
+	if (!view->devices[device].power_line)
+		return (ERX_ENOTSUP);
+	return (firmware_row(view, device, phase, ERX_FW_TAG_SET_GPIO_STATE, row));
 }
 
 uint8_t

@@ -56,13 +56,13 @@ term of the PCIe domain's reaches a holder.
 docs/design-pcie.md, "Facets") names a bridge row; one the library does not hold for
 the PCIe domain is answered `{error, not_held}`. **`power`**, the line
 service's erx_devices:power/2 (docs/design-bluetooth.md, "The power line"),
-names a device row and its power line's phase; one naming a host bridge is
-answered `{error, einval}`. Every other request is queued, and the
-**firmware worker**, a process linked to this one, makes each in turn
-through erx_domain_lib:pci_firmware/1 for a bridge, or
-erx_domain_lib:device_notify/2 with the phase's row
-(erx_devices_pci_core:power_row/1) for a power line, each of which waits in the
-kernel, while this process goes on answering every other call. The
+names a device row and its power line's phase. Every other request is
+queued, and the **firmware worker** (erx_firmware_worker), a process
+linked to this one, makes each in turn through erx_domain_lib:firmware/2,
+which waits in the kernel, while this process goes on answering every
+other call. The library offers a bridge's notification only to a host
+bridge row and a power phase only to a device with a power line, and
+answers any other `{error, enotsup}`. The
 library's answer is the reply: `ok`, or `{error, Status}` naming the
 kernel call's status. After `etimedout` the library has marked the
 bridge `firmware_lost` before it answered, so its intake keeps none of
@@ -79,6 +79,8 @@ item on admission by measured share).
 
 -export([start_link/0, start_link/1, domain_ended/2]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2]).
+
+-include("generated/erx_abi.hrl").
 
 %% The deadline of a pcie call, past the longest reset (docs/design-pcie.md, "Concurrency").
 -define(PCIE_DEADLINE, 2000).
@@ -108,9 +110,8 @@ domain_ended(Server, Id) ->
 
 init(Opts) ->
     Lib = maps:get(lib, Opts, erx_domain_lib),
-    Service = self(),
     %% Linked, so the end of either ends the other, and their supervisor restarts both.
-    Worker = spawn_link(fun() -> firmware_worker(Service, Lib) end),
+    Worker = erx_firmware_worker:start_link(Lib),
     State = #{lib => Lib,
               await => maps:get(await, Opts, fun erx_domain:await_grant/2),
               phase => {between, start}, waiting => [], held => #{},
@@ -145,10 +146,10 @@ handle_call({pci_bus, _D, targets}, _From, #{lib := Lib} = State) ->
 handle_call({pci_bus, D, {report, Reported}}, From, State) ->
     {noreply, report_or_park({D, Reported, From}, State)};
 handle_call({pci_bus, _D, {firmware, Bridge}}, From, State) ->
-    {noreply, firmware({From, {bridge, Bridge}}, State)};
+    {noreply, firmware({From, {Bridge, bridge}}, State)};
 handle_call({power, Device, Phase}, From, State)
-  when is_integer(Device), Device >= 0, Device =< 16#ffffffff, (Phase =:= off orelse Phase =:= on) ->
-    {noreply, firmware({From, {power, Device, Phase}}, State)}.
+  when is_integer(Device), Device >= 0, Device =< 16#ffffffff, ?ERX_IS_FW_POWER_PHASE(Phase) ->
+    {noreply, firmware({From, {Device, {power, Phase}}}, State)}.
 
 handle_cast({domain_ended, Id}, #{phase := Phase, held := Held} = State) ->
     {Rows, Kept} = case maps:take(Id, Held) of
@@ -305,24 +306,8 @@ act({arm_down, Since}, State) ->
     _ = erlang:start_timer(?DOWN_AFTER, self(), {down, Since}),
     State;
 act({firmware, Request}, #{worker := Worker} = State) ->
-    Worker ! {firmware, Request},
+    ok = erx_firmware_worker:request(Worker, Request),
     State.
-
-%% The firmware worker (docs/design-system.md, "Firmware requests"): the one caller
-%% of the library's firmware entries, dirty I/O NIFs that wait in the kernel up to
-%% the request's 1 s deadline, so the process never waits there. It takes one
-%% request, sends its answer with the request, and takes the next.
-firmware_worker(Service, Lib) ->
-    receive
-        {firmware, {_From, Asked} = Request} ->
-            Service ! {firmware_answered, self(), Request, library_call(Lib, Asked)},
-            firmware_worker(Service, Lib)
-    end.
-
-%% The library entry each request names: a bridge's notification, or the row of a
-%% power line's phase among its device's notifications.
-library_call(Lib, {bridge, Bridge}) -> Lib:pci_firmware(Bridge);
-library_call(Lib, {power, Device, Phase}) -> Lib:device_notify(Device, erx_devices_pci_core:power_row(Phase)).
 
 %% The core sends pcie calls only synced, on the answered incarnation's facet.
 incarnation({synced, Id, _Facet}) -> Id.

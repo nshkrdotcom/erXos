@@ -116,7 +116,7 @@ erx_dom_lib_app_session erx_dom_lib_configured erx_dom_lib_connect erx_dom_lib_c
 erx_dom_lib_info erx_dom_lib_start erx_dom_lib_stop erx_dom_lib_system erx_dom_lib_take erx_gate_bind
 erx_dom_lib_code_drop erx_dom_lib_code_object erx_dom_lib_crash_copy erx_dom_dump_read erx_mem_create erx_cap_close
 erx_dom_lib_pci_report erx_dom_lib_pci_mode erx_dom_lib_pci_answered erx_dom_lib_pci_firmware
-erx_dom_lib_firmware_request erx_pcie_function_encode
+erx_dom_lib_bridge_firmware erx_dom_lib_power erx_pcie_function_encode
 erx_pcie_bridge_encode erx_pcie_setting_encode
 
 # erx_gate.c alone, the gate worker: the domain's fault gate, its bind and the wait on it.

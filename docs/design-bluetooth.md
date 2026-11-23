@@ -832,20 +832,24 @@ state.
   rows come only from a power row; and a power row is refused unless it
   names a power line `fw_power_line` declares and a placed UART device
   that no other row names, so the power line's two rows are that
-  device's only ones, off at index 0 and on at index 1. The get tag,
+  device's only ones, each phase's at its value in `fw_power_phase`
+  (`abi/formats/vc_property.txt`): off at index 0 and on at index 1. The get tag,
   `0x00030041`, is not declared: nothing reads the line's state back.
 * **Authority.** The line service asks the device service,
   `erx_devices:power(Device, off | on)`, a call inside the system
-  domain. The device service makes the kernel call through the domain
-  library, `erx_domain_lib:device_notify(Device, Index)`, a use of
-  `erx_domain_lib:firmware/2` for a device's row
+  domain. The device service's firmware worker (`erx_firmware_worker`)
+  makes the kernel call through the domain library,
+  `erx_domain_lib:firmware(Device, {power, Phase})`
   ([design-board-sensors.md](design-board-sensors.md#the-requests)), with the
   resource UART0's device record holds, carved with `ERX_CARVE_DEVICE`
-  from the entry the record names with notifications, as `pci_firmware/1`
-  makes it for a bridge ([design-pcie.md](design-pcie.md#facets)). So the
-  caller chooses neither the tag nor the value, only which listed
-  notification, no device outside the system domain asks for one, and no
-  domain but the system domain holds a resource that names the entry.
+  from the entry the record names with notifications, as
+  `firmware(Bridge, bridge)` makes it for a bridge
+  ([design-pcie.md](design-pcie.md#facets)). The library offers a power
+  phase only to a device whose manifest row carries a power line's
+  times, and a bridge's notification only to a host bridge row, so the
+  caller chooses neither the tag nor the value, only which phase; only
+  the system domain's device service calls the library, and no domain
+  but the system domain holds a resource that names the entry.
 * **Deadline and answer.** The call's: a poll of at most 1 s, the answer
   matched by its buffer, and an error status for a resource without
   notifications and for an index past its device's list

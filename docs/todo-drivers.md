@@ -102,7 +102,7 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   catalogue's `answered` first, and after a restart begins `synced` from it. The domain service serves `pci_bus`
   and `pci`, whose service rows the shared development manifest declares, and the manifest check holds the three
   interfaces' servers and grantees to design-pcie.md's "The manifest". `firmware` queues each request for a bridge
-  the library holds and hands it to the linked firmware worker, which calls `erx_domain_lib:pci_firmware/1` one at a
+  the library holds and hands it to the linked firmware worker (`erx_firmware_worker`), which calls `erx_domain_lib:firmware/2` one at a
   time (design-system.md, "Firmware requests"). Still to build: the worker's reductions returned with its answer, for
   the reply's cost that admission by measured share charges (the `erx_facet.erl` item); the identity check
   of a reported function against its row's compatible string ("The catalogue and gives"); and the `pcie` QEMU

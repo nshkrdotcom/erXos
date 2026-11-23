@@ -39,20 +39,19 @@ so does crash/1, which reads a domain's crash dump. info/2 answers any
 caller, since a group's or budget's report holds none of the domain's data,
 and so do pci_report/2, the PCIe catalogue's intake, pci_bridges/0, its
 read, pci_mode/2, the write of a PCIe function's mode, pci_answered/1,
-the write of the incarnation answered, pci_firmware/1, a bridge's
-firmware request, and device_notify/2, a notification of a device the
-system domain holds itself, whose caller is the device service.
+the write of the incarnation answered, and firmware/2, a bridge's
+notification or a power line's phase, whose caller is the device service.
 """.
 
 -export([register/0, create/1, start/1, stop/2, retire/1, crash/1, info/2, connect/6, disconnect/1,
          configured/0, configured/3, templates/0, apps/0, devices/0, session/5, app_session/6, code_object/2,
          code_drop/2, end_commit/1, pci_report/2, pci_bridges/0, pci_mode/2, pci_answered/1,
-         pci_firmware/1, device_notify/2]).
+         firmware/2]).
 -nifs([register_nif/0, create_nif/1, start_nif/1, stop_nif/2, retire_nif/1, crash_nif/1, info_nif/3, connect_nif/6,
        disconnect_nif/1, configured_nif/0, configured_create_nif/3, templates_nif/0, apps_nif/0, devices_nif/0,
        session_create_nif/5, app_session_create_nif/6, code_object_nif/2, code_drop_nif/2,
        end_commit_nif/1, pci_report_nif/2, pci_bridges_nif/0, pci_mode_nif/2, pci_answered_nif/1,
-       pci_firmware_nif/1, device_notify_nif/2]).
+       bridge_firmware_nif/1, power_nif/2]).
 -on_load(on_load/0).
 
 -include("generated/erx_abi.hrl").
@@ -402,33 +401,27 @@ pci_answered(D) ->
     pci_answered_nif(D).
 
 -doc """
-Makes the firmware request of host bridge row Bridge, its first row
-(docs/design-fiasco.md, "The firmware request"; docs/design-usb.md, "The
-VL805's firmware"), the device service's firmware worker its caller. The
-request runs in the calling process's dirty I/O scheduler, up to its 1 s
-deadline, outside the library's lock; {error, etimedout} marks the bridge
-firmware_lost for the boot, and every later request answers the same. ok,
-or {error, enotsup} for a row with no request or a root with no mailbox,
-{error, einval} for a row past the catalogue, and {error, ebusy} or
-{error, eproto} as the firmware answered.
+Makes a firmware request of device row Device (docs/design-system.md,
+"Firmware requests"; docs/design-fiasco.md, "The firmware request"), the
+device service's firmware worker its caller. Request is `bridge`, the
+notification of a host bridge row (docs/design-usb.md, "The VL805's
+firmware"), or `{power, Phase}`, a phase of fw_power_phase of the power line
+of a device whose manifest row carries the line's times
+(docs/design-bluetooth.md, "The power line"). The library offers each only
+to such a row, and sends the row the manifest lists for it, so the caller
+chooses neither the tag nor its words. The request runs in the calling
+process's dirty I/O scheduler, up to its 1 s deadline, outside the
+library's lock; a bridge's {error, etimedout} marks it firmware_lost for the
+boot, and every later request answers the same. ok, or {error, Name}:
+enotsup for a request the row does not offer or a root with no mailbox,
+einval for a row past the catalogue, ebusy, etimedout or eproto as the
+firmware answered.
 """.
--spec pci_firmware(non_neg_integer()) -> ok | error().
-pci_firmware(Bridge) ->
-    pci_firmware_nif(Bridge).
-
--doc """
-Makes notification Index of device row Device, a device the system domain
-holds itself (docs/design-bluetooth.md, "The power line"; docs/design-system.md,
-"Firmware requests"), the device service's firmware worker its caller: the
-row the manifest lists at that index for the device, so the caller chooses
-neither the tag nor its words. A host bridge's notification is pci_firmware/1's,
-which marks the bridge after a timeout. ok, or {error, Name}: enotsup for an
-index past the device's rows or a root with no mailbox, einval for a row past
-the catalogue, ebusy, etimedout or eproto as the request answered.
-""".
--spec device_notify(non_neg_integer(), non_neg_integer()) -> ok | error().
-device_notify(Device, Index) ->
-    device_notify_nif(Device, Index).
+-spec firmware(non_neg_integer(), bridge | {power, erx_abi_enums:fw_power_phase()}) -> ok | error().
+firmware(Device, bridge) ->
+    bridge_firmware_nif(Device);
+firmware(Device, {power, Phase}) ->
+    power_nif(Device, erx_abi_enums:value(fw_power_phase, Phase)).
 
 -doc """
 Manifest startup and restart: builds configured row Row under id Id and
@@ -565,10 +558,10 @@ pci_mode_nif(_Index, _Mode) ->
 pci_answered_nif(_D) ->
     erlang:nif_error(undef).
 
-pci_firmware_nif(_Bridge) ->
+bridge_firmware_nif(_Bridge) ->
     erlang:nif_error(undef).
 
-device_notify_nif(_Device, _Index) ->
+power_nif(_Device, _Phase) ->
     erlang:nif_error(undef).
 
 %% The library hands records as the bytes its generated encoders write, which

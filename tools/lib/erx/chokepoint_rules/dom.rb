@@ -12,7 +12,7 @@ module Erx
     # erx_dom_plan_partial.
     DOM_LIFE = 'liberx/system/dom_life.c'
     # The domain library's apply phase, which applies the plans the library's
-    # entries make and calls neither manifest entry, and its firmware entry.
+    # entries make and calls neither manifest entry, and its firmware entries.
     DOM_APPLY = 'liberx/system/dom_apply.c'
     # The library at boot and manifest startup: the one caller on the target of
     # erx_dom_plan_configured.
@@ -118,11 +118,11 @@ module Erx
         ),
         # A firmware request's tag and argument are the manifest's (docs/design-fiasco.md,
         # "The firmware request"): the backend's form takes its row as a value, so only the
-        # library's firmware entry, which resolves the row from the view, calls it. The others
+        # library's firmware entries, which resolve the row from the view's allow-list, call it. The others
         # name it to declare it, define it on the Fiasco root, and refuse it hosted.
         Chokepoints::Forbidden.new(
           name: 'dom-firmware-entry',
-          rule: "only the domain library's firmware entry (#{DOM_APPLY}) makes a firmware request with " \
+          rule: "only the domain library's firmware entries (#{DOM_APPLY}) make a firmware request with " \
                 'erx_firmware_request_row',
           design: 'docs/design-fiasco.md#the-firmware-request',
           scope: Chokepoints::Scope.new(own: true, extra: [GLUE, ERXOS_NIFS]),

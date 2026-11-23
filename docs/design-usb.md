@@ -1286,16 +1286,16 @@ VL805's:
   resource, so the call is the device service's: the bridge driver
   asks for it with `pci_bus:firmware/1`, a facet only the PCIe domain
   holds, and the device service makes the call through the domain
-  library, `erx_domain_lib:pci_firmware/1`, with the resource the
+  library, `erx_domain_lib:firmware(Bridge, bridge)`, with the resource the
   bridge's device record holds for its give, and answers with the
   result ([design-pcie.md](design-pcie.md#facets)). No new capability
   reaches the PCIe domain, and the call has the same caller in both
   phases. The call's other caller is the
   Bluetooth line's power cycle, two notifications of UART0's device on
   the Pi 4, which the device service makes from the same firmware worker
-  through `erx_domain_lib:device_notify(Device, Index)`, for a device
-  record the system domain holds itself; `pci_firmware/1` is that call
-  for a bridge at index 0, with the bridge's `firmware_lost` mark
+  through `erx_domain_lib:firmware(Device, {power, Phase})`, for a device
+  record the system domain holds itself; `firmware(Bridge, bridge)` is
+  that call for a bridge's first row, with the bridge's `firmware_lost` mark
   ([design-bluetooth.md](design-bluetooth.md#the-power-line)). Both
   are uses of `erx_domain_lib:firmware/2`, the one library call over
   the firmware's requests, which the board sensors' readings use too

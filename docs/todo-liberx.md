@@ -129,10 +129,10 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   [design-pcie.md](design-pcie.md#the-catalogue-and-gives)): the view holds a catalogue per bridge row, the
   root joins the tree's windows and `erx_domain_lib:pci_report/2` takes a report into it, as the device service's
   PCIe process (`erx_devices_pci`) does, but `/dev`'s `status` does not show a pci row's layout, state, mode and route or `firmware lost` (`devices/0` gives the place
-  and setting, `pci_bridges/0` the rest), and `erx_domain_lib:pci_firmware/1` makes the bridge's request and marks the bridge `firmware_lost` on
+  and setting, `pci_bridges/0` the rest), and `erx_domain_lib:firmware/2` makes the bridge's request and marks the bridge `firmware_lost` on
   `{error, etimedout}` before it answers. Also refuse in `erx_dt_bridge` a window whose
   PCI, CPU or size is not page-aligned, and check BAR spans across a machine's bridges, not only within one.
-  `pci_report/2`, `pci_bridges/0`, `pci_mode/2`, `pci_answered/1` and `pci_firmware/1` answer any system-domain caller, since their caller is the device
+  `pci_report/2`, `pci_bridges/0`, `pci_mode/2`, `pci_answered/1` and `firmware/2` answer any system-domain caller, since their caller is the device
   service and not the registered domain service; a process that reports before the PCIe domain lays the bridge's
   layouts for the boot, and one that writes a mode can lower a held function's setting or raise it for its holder
   beyond what the PCIe domain was asked. Hold them to
@@ -141,7 +141,7 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   chokepoints. The root's join
   (`tree_facts`) and the NIF's term handling run only on the target; the `pcie` QEMU suite (P12) covers them.
 * [Medium] domain library, domain service and device service, a bridge's function used during or after its
-  failed firmware request (`otp/erts/emulator/nifs/erxos/erx_domain_lib_nif.c` `pci_firmware_nif`,
+  failed firmware request (`otp/erts/emulator/nifs/erxos/erx_domain_lib_nif.c` `bridge_firmware_nif`,
   `erlang/apps/erx_domain/src/erx_domain_srv.erl`, `erx_devices_pci_core.erl` `request/3`,
   [design-fiasco.md](design-fiasco.md#the-firmware-request)): the NIF marks a bridge whose notification timed
   out `firmware_lost` only after the request returns, and the device service's PCIe process parks a report while

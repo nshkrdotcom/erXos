@@ -12,7 +12,7 @@
 
 -include_lib("eunit/include/eunit.hrl").
 
--export([devices/0, pci_bridges/0, pci_report/2, pci_mode/2, pci_answered/1, pci_firmware/1, device_notify/2]).
+-export([devices/0, pci_bridges/0, pci_report/2, pci_mode/2, pci_answered/1, firmware/2]).
 
 -define(PLACE, {3, 1, 0, 0}).
 -define(ROW, 5).
@@ -29,12 +29,14 @@ pci_mode(Index, Mode) -> written({mode, Index, Mode}).
 %% The write lags, so a reply sent before it reaches the test well before the write.
 pci_answered(D) -> timer:sleep(100), written({answered, D}).
 %% Runs in the firmware worker: names the process it runs in, then waits for the test's answer.
-pci_firmware(Bridge) ->
-    written({firmware, Bridge, self()}),
-    receive {firmware_answer, Answer} -> Answer end.
-%% As pci_firmware/1, for a device's notification Index.
-device_notify(Device, Index) ->
-    written({firmware, {Device, Index}, self()}),
+%% A bridge's notification is written as its row, a power phase as {Device, Phase}.
+firmware(Bridge, bridge) ->
+    firmware_called(Bridge);
+firmware(Device, {power, Phase}) ->
+    firmware_called({Device, Phase}).
+
+firmware_called(Asked) ->
+    written({firmware, Asked, self()}),
     receive {firmware_answer, Answer} -> Answer end.
 
 written(Write) ->
@@ -251,7 +253,7 @@ restarted(Answered, Holder, Rows) ->
          fun(_) -> ok end, [Holder]).
 
 %% Firmware requests (docs/design-system.md, "Firmware requests"): the process over
-%% one held bridge ?BRIDGE, whose stand-in pci_firmware/1 runs in the firmware worker
+%% one held bridge ?BRIDGE, whose stand-in firmware/2 runs in the firmware worker
 %% and waits there for the test's answer.
 firmware_started() ->
     over([row(off)], [#{bridge => #{index => ?BRIDGE}, firmware_lost => false, answered => none, layouts => []}],
@@ -317,36 +319,27 @@ the_worker_is_handed_the_next_request_only_after_the_last_answer_test() ->
     stopped(Pid).
 
 %% The line service's power request (docs/design-bluetooth.md, "The power line"): a
-%% device row and a phase, which the worker makes as that device's notification of the
-%% phase's row, off at 0 and on at 1, after the request ahead of it has been answered.
+%% device row and a phase, which the worker hands the library as that device's power
+%% request of the phase, after the request ahead of it has been answered.
 power_asked(Pid, Device, Phase) ->
     Test = self(),
     spawn(fun() -> Test ! {power, Phase, gen_server:call(Pid, {power, Device, Phase}, 5000)} end).
 
-a_power_request_makes_its_phase_s_row_of_the_device_in_the_worker_test() ->
+a_power_request_reaches_the_worker_with_its_phase_after_the_one_ahead_test() ->
     {Pid, _Facet} = firmware_started(),
     firmware_asked(Pid, ?BRIDGE),
     Worker = worker_called(?BRIDGE, 1000),
     power_asked(Pid, ?ROW, off),
-    ?assertEqual(none, worker_called({?ROW, 0}, 200)),
+    ?assertEqual(none, worker_called({?ROW, off}, 200)),
     Worker ! {firmware_answer, ok},
     ?assertEqual(ok, firmware_answer(?BRIDGE)),
-    ?assertEqual(Worker, worker_called({?ROW, 0}, 1000)),
+    ?assertEqual(Worker, worker_called({?ROW, off}, 1000)),
     Worker ! {firmware_answer, {error, etimedout}},
     receive {power, off, Off} -> ?assertEqual({error, etimedout}, Off) after 1000 -> ?assert(false) end,
     power_asked(Pid, ?ROW, on),
-    ?assertEqual(Worker, worker_called({?ROW, 1}, 1000)),
+    ?assertEqual(Worker, worker_called({?ROW, on}, 1000)),
     Worker ! {firmware_answer, ok},
     receive {power, on, On} -> ?assertEqual(ok, On) after 1000 -> ?assert(false) end,
-    stopped(Pid).
-
-%% A host bridge's notification is only a bridge request's, which marks the bridge
-%% after a timeout, so a power request naming its row is refused before the worker.
-a_power_request_naming_a_host_bridge_is_refused_test() ->
-    {Pid, _Facet} = firmware_started(),
-    power_asked(Pid, ?BRIDGE, off),
-    ?assertEqual(none, worker_called({?BRIDGE, 0}, 200)),
-    receive {power, off, Answer} -> ?assertEqual({error, einval}, Answer) after 1000 -> ?assert(false) end,
     stopped(Pid).
 
 %% The worker's end ends the process by their link, so their supervisor restarts both.

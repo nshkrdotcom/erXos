@@ -311,6 +311,10 @@ typedef struct erx_dom_device_entry {
 	uint32_t	clock;		/* its clock in hertz, as the manifest gives
 					 * it; 0 for a device whose driver
 					 * reads none */
+	bool		power_line;	/* its manifest row carries a power line's
+					 * times, so its rows are the line's phases
+					 * (docs/design-bluetooth.md, "The power
+					 * line") */
 	uint32_t	lines[ERX_DEVICE_IRQS_MAX];	/* each line, as the platform's
 						 * controller numbers it */
 	uint32_t	nranges;	/* at most ERX_DEVICE_RANGES_MAX */
@@ -756,14 +760,22 @@ typedef struct erx_dom_view {
 } erx_dom_view_t;
 
 /*
- * Resolves the index-th firmware request row of device row device
- * (docs/design-fiasco.md, "The firmware request"): the index-th of the
- * view's records that names device, into *row. ERX_ENOTSUP past the
- * device's rows, and for a device with none; ERX_EINVAL for a device past
- * the catalogue. It serves device rows only: a machine row, whose device
- * is ERX_MF_NONE, is past the catalogue. Pure.
+ * The firmware requests a device row may be asked for, an allow-list
+ * (docs/design-fiasco.md, "The firmware request"; docs/design-system.md,
+ * "Firmware requests"); each resolves its row from the view's records into
+ * *row. erx_dom_bridge_row: a host bridge's notification, the first of its
+ * rows and a NOTIFY_XHCI_RESET row, for a row with a catalogue in pci_bridges
+ * alone, so its status always has a bridge to mark. erx_dom_power_row: the row
+ * of phase, a value of fw_power_phase, at that index among device's rows and a
+ * SET_GPIO_STATE row, for a device whose manifest row carries a power line's
+ * times alone (docs/design-bluetooth.md, "The power line"). Each answers
+ * ERX_EINVAL for a row past the catalogue, a machine row (ERX_MF_NONE)
+ * included, and ERX_ENOTSUP for any other ask: a row of another kind, a
+ * phase with no row, or a row of another tag. Pure.
  */
-erx_status_t	erx_dom_firmware_row(const erx_dom_view_t *view, uint32_t device, uint32_t index,
+erx_status_t	erx_dom_bridge_row(const erx_dom_view_t *view, uint32_t bridge,
+		    erx_mf_firmware_request_t *row) ERX_WARN_UNUSED_RESULT;
+erx_status_t	erx_dom_power_row(const erx_dom_view_t *view, uint32_t device, uint32_t phase,
 		    erx_mf_firmware_request_t *row) ERX_WARN_UNUSED_RESULT;
 
 /*

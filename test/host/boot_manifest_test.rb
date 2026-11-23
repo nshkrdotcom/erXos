@@ -428,6 +428,20 @@ end
     assert_firmware_requests_refused(pi) { |rows| rows * 2 }
   end
 
+  # The device service asks for a power line's phase by the phase's value in the closed set
+  # fw_power_phase (erx_domain_lib:firmware/2), so each phase's row sits at that index among
+  # the device's rows, and sets the line's state of that phase (docs/design-bluetooth.md,
+  # "The power line").
+  def test_each_power_phase_s_row_is_at_the_phase_s_value
+    pi = Erx::Platform.load(root: ROOT, name: 'raspi4b').manifest_source(ROOT)
+    uart0 = firmware_rows(admitted(pi, platform: 'raspi4b')).select { |row| row[1] == '/soc/serial@7e201000' }
+    phases = @codec.schema.types.fetch('fw_power_phase').members
+    assert_equal %w[off on], phases.keys.sort
+    phases.each do |phase, value|
+      assert_equal ["bt_#{phase}", @codec.constant("vc_bt_power_#{phase}")], uart0.fetch(value).values_at(0, 4), phase
+    end
+  end
+
   # The power line's rows come only from a power row, so a record row naming SET_GPIO_STATE,
   # here pin 131, GLOBAL_RESET, is refused; so is a power row naming a power line fw_power_line
   # does not declare, a device that is not a UART of the roster or one another row names,

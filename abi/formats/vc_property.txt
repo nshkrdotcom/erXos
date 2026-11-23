@@ -89,9 +89,9 @@ limit vc_row_words u32 2
 
 # The power lines a platform record's power row may name, a closed set: each a pin of the
 # firmware's GPIO expander, set with SET_GPIO_STATE, with the pin's request word and its
-# off and on states. The manifest generator derives a device's two rows from its power
-# row, off at index 0 and on at index 1, named after the line (docs/design-bluetooth.md,
-# "The power line"). bt_power is the Raspberry Pi 4's Bluetooth controller's: expander pin
+# off and on states. The manifest generator derives a device's rows from its power row,
+# one per phase of fw_power_phase below at the phase's index, named after the line
+# (docs/design-bluetooth.md, "The power line"). bt_power is the Raspberry Pi 4's Bluetooth controller's: expander pin
 # 0, request pin 128, which the firmware's device tree names in the shutdown-gpios of
 # UART0's bluetooth child, gpio-line-names BT_ON, active high (probe B-P2 of
 # docs/research-bluetooth-pi4.md, "The power phases"); nothing reads the tree for it. A
@@ -102,3 +102,12 @@ enum fw_power_line u32
 limit vc_bt_power_pin u32 128
 limit vc_bt_power_off u32 0
 limit vc_bt_power_on u32 1
+
+# A power line's phases, a closed set: each phase's value is the index of its row among
+# the device's rows, which the manifest generator writes in value order, and the device
+# service asks for a phase by that index (erx_domain_lib:firmware/2); the domain library
+# accepts a phase only for a device whose manifest row carries a power line's times
+# (docs/design-bluetooth.md, "The power line", "Authority").
+enum fw_power_phase u32
+  value off 0
+  value on 1

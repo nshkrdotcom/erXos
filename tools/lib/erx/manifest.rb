@@ -1101,9 +1101,9 @@ module Erx
       # since that tag's rows come only from a power row. A power row names a UART device of
       # the roster, which no other row names, a power line of the closed set fw_power_line and
       # its off and on times in milliseconds, which the line service waits; it becomes the
-      # device's two rows, off at index 0 and on at index 1, each set_gpio_state with the
-      # line's pin and its off or on state, named after the line (bt_power gives bt_off and
-      # bt_on). Every row carries vc_row_words argument words, 0 past the tag's request. A
+      # device's rows, one per phase of the closed set fw_power_phase at the phase's value,
+      # each set_gpio_state with the line's pin and its state in that phase, named after the
+      # line (bt_power gives bt_off and bt_on). Every row carries vc_row_words argument words, 0 past the tag's request. A
       # row is packed when the manifest places its device, with that device's row, so its
       # index among its device's rows is the record's; a row of a device the manifest leaves
       # out is not packed, since no request can name it.
@@ -1180,7 +1180,12 @@ module Erx
         pin = @codec.constant("vc_#{line}_pin")
         invalid("the power line #{line} has pin word 0, which an untouched buffer would read as performed", FIRMWARE_FIELD) if pin.zero?
         stem = line.delete_suffix('_power')
-        %w[off on].map do |state|
+        # Each phase's row at its value, the index the device service asks for it by.
+        phases = @codec.schema.types.fetch('fw_power_phase').members.sort_by { |_phase, value| value }
+        unless phases.each_with_index.all? { |(_phase, value), index| value == index }
+          invalid("fw_power_phase's values are not 0 and up, so a phase's row cannot sit at its value", FIRMWARE_FIELD)
+        end
+        phases.map do |state, _value|
           { 'name' => "#{stem}_#{state}", 'device' => path, 'tag' => 'set_gpio_state',
             'arguments' => firmware_words('set_gpio_state', [pin, @codec.constant("vc_#{line}_#{state}")]) }
         end

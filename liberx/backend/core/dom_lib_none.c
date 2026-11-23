@@ -170,11 +170,16 @@ erx_dom_lib_pci_answered(erx_dom_lib_t *lib, uint32_t domain)
 }
 
 erx_status_t
-erx_dom_lib_firmware_request(const erx_dom_lib_t *lib, uint32_t device, uint32_t index,
-    uint8_t answer[ERX_VC_WINDOW_MAX], uint32_t *length)
+erx_dom_lib_bridge_firmware(const erx_dom_lib_t *lib, uint32_t bridge)
 {
-	(void)lib, (void)device, (void)index, (void)answer;
-	*length = 0;
+	(void)lib, (void)bridge;
+	return (ERX_ENOTSUP);
+}
+
+erx_status_t
+erx_dom_lib_power(const erx_dom_lib_t *lib, uint32_t device, uint32_t phase)
+{
+	(void)lib, (void)device, (void)phase;
 	return (ERX_ENOTSUP);
 }
 

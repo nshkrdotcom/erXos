@@ -35,7 +35,7 @@
  * domain's reports fill under the library's lock (erx_dom_lib_pci_report),
  * the view's one table written after the boot outside a domain's plan. The
  * firmware request records are kept as the manifest has them (boot_firmware),
- * for the firmware entry to resolve a device's row from. Each
+ * for the firmware entries to resolve a device's row from. Each
  * configured row and session template must leave room in its boot page's
  * strings for what the library adds to its own words (boot_strings_fit).
  * The service and facet rows are carried for the domain service
@@ -522,6 +522,7 @@ boot_devices(erx_dom_view_t *view, const erx_manifest_view_t *manifest, erx_dom_
 			entry->offset = device.base - entry->ranges[0].base;
 			entry->size = device.size;
 			entry->clock = device.clock;
+			entry->power_line = device.power_off_ms != 0;
 			/* Line 0 is no line: the node raises no interrupt (docs/design-abi.md). */
 			entry->nlines = device.line != 0 ? 1 : 0;
 			entry->lines[0] = device.line;

@@ -3197,15 +3197,16 @@ dirty NIF cannot run its receive loop, so the work is split as the
 stopgap's littlefs glue splits it
 ([design-stopgap.md](design-stopgap.md#littlefs-in-the-storage-domain)).
 The device service's process takes every request into a queue and
-never waits on the kernel. Its **firmware worker**, a process linked to
-it, alone calls the domain library's firmware entries, and is handed
-the next request only after the last one's answer. They are
+never waits on the kernel. Its **firmware worker** (`erx_firmware_worker`),
+a process linked to it, alone calls the domain library's firmware entries,
+and is handed the next request only after the last one's answer. They are
 `erx_domain_lib:firmware/2`, the one library call over the firmware's
-requests, which sends row `Index` of a device or of the machine and
-serves a reading as `firmware(machine, Index)`, and its two uses for
-notifications: `pci_firmware/1`, a bridge's notification at index 0
-with the resource the bridge's device record holds for its give, and
-`device_notify/2`, for a device record the system domain holds itself.
+requests, which sends the row the manifest lists for what it is asked:
+`firmware(Bridge, bridge)`, a host bridge's notification, its first
+row, with the resource the bridge's device record holds for its give;
+`firmware(Device, {power, Phase})`, a power line's phase, for a device
+whose manifest row carries the line's times; and a reading, `firmware(machine, Index)`. The library
+offers each only to such a row and refuses any other with `enotsup`.
 Those entries are dirty I/O NIFs, since the kernel call waits and an executor's would
 answer `ERX_EWOULDBLOCK`. So two requests never meet in the kernel,
 and the device service answers the watchdog's liveness call ([Boot](#boot)) and every
