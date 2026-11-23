@@ -39,9 +39,11 @@ writes them into the home copy only while there is none: a home copy that is
 there, whatever it holds, is never read for the import or replaced, so
 deleting it imports the medium's keys again at the next boot. With no home
 copy it reads `root` for at most MEDIUM_READ bytes, one past the blobs of
-ssh_authorized_keys_max (abi/formats/ssh.txt) keys; a read that fails
-(`eagain` while the storage domain's reader runs, `eio`, no grant yet)
-writes nothing and is tried again, and an answer of no key, of no whole
+ssh_authorized_keys_max (abi/formats/ssh.txt) keys, once the session holds
+its `home` and `login_keys` facets; a read that fails with `eagain`, while
+the storage domain's reader runs, or `eio` writes nothing and is tried again
+within ten minutes of the daemon's start, any other failure writes nothing
+and ends the import, and an answer of no key, of no whole
 number of blobs within that count, or of blobs that are no Ed25519 key,
 writes nothing at all, so no empty home copy shuts the medium's keys out. The keys
 are written one canonical line each, `ssh-ed25519` and the blob's base64,
@@ -73,7 +75,7 @@ narrowed by that: any code it runs may start OTP's daemon with keys of its choos
 -export([host_key/2, is_auth_key/3]).
 
 -ifdef(TEST).
--export([daemon/2, import/2]).
+-export([boot/2, daemon/2, import/2]).
 -endif.
 
 -define(HOST_DIR, "/data/ssh").
@@ -87,10 +89,12 @@ narrowed by that: any code it runs may start OTP's daemon with keys of its choos
 %% erx_ssh_dev_tests:the_banner_names_erxos checks the line against those limits.
 -define(ID_STRING, binary_to_list(<<?ERX_UNAME_SYSNAME_BYTES/binary, "_", ?ERX_UNAME_RELEASE_BYTES/binary>>)).
 -define(MEDIUM_READ, (?ERX_SSH_AUTHORIZED_KEYS_MAX * erx_boot_keys:blob_size() + 1)).
-%% How boot/1 waits for the session's facets, and the import for the medium: a look
-%% every GRANT_POLL_MS, at most GRANT_POLLS of them, ten minutes, after which it stops.
--define(GRANT_POLL_MS, 500).
--define(GRANT_POLLS, 1200).
+%% How long boot/1 waits for the session's net and data facets from the boot, and the
+%% import for its home and login_keys facets and the medium's answer from the daemon's
+%% start: ten minutes each, after which it stops. A medium that answers eagain or eio
+%% is read again every MEDIUM_RETRY_MS within the import's ten minutes.
+-define(GRANT_WAIT_MS, 600_000).
+-define(MEDIUM_RETRY_MS, 500).
 
 %% What the daemon is given: keys, the file of the development login key, and home,
 %% root's home copy, each of `authorized_keys` lines; host, the directory of the host
@@ -103,56 +107,82 @@ narrowed by that: any code it runs may start OTP's daemon with keys of its choos
 %% The reader of the `login_keys` tree's `root`, the medium's key blobs.
 -type medium() :: fun(() -> {ok, binary()} | {error, term()}).
 %% What one import did: wrote N keys, found a home copy and kept it, found no key on
-%% the medium, or wrote nothing and is to be tried again.
+%% the medium, or wrote nothing, for the reason it names.
 -type import() :: {imported, pos_integer()} | kept | no_keys | {retry, term()}.
+%% A deadline as erx_facets:await/3 takes it, in erlang:monotonic_time(millisecond).
+-type deadline() :: {abs, integer()}.
 
 -doc """
 Starts the daemon on Port at the session's boot (docs/design-ssh.md,
 "Stages"), in a process of its own, and returns at once. The daemon listens
 through the session's `net` facet and keeps its host key under `/data`,
 through its `data` facet, and their domains install both some time after the
-session is ready (erx:cap/1), so the process looks for the two every
-GRANT_POLL_MS and then calls start/1. A daemon that started is registered as
-`erx_ssh_dev`, by which a shell of the session finds it, and the process then
-imports root's keys from the medium once the session holds its `home` facet;
-each step logs one line.
+session is ready (erx:cap/1), so the process waits for the two through the
+registry wait (erx_facets:await/3) for at most GRANT_WAIT_MS from the boot,
+and then calls start/1. A daemon that started is registered as `erx_ssh_dev`,
+by which a shell of the session finds it, and the process then imports root's
+keys from the medium once the session holds its `home` and `login_keys`
+facets, within GRANT_WAIT_MS of the daemon's start; each step logs one line.
 """.
 -spec boot(inet:port_number()) -> ok.
 boot(Port) ->
-    _ = spawn(fun() -> booted(Port, start_when_granted(Port, ?GRANT_POLLS)) end),
+    boot(Port, fun start/1).
+
+-doc """
+boot/1 with Start in place of start/1, so a host test sees when the daemon would
+start. Exported only to the host tests (TEST).
+""".
+-spec boot(inet:port_number(), fun((inet:port_number()) -> {ok, pid()} | {error, term()})) -> ok.
+boot(Port, Start) ->
+    Deadline = deadline(),
+    _ = spawn(fun() -> booted(Port, start_when_granted(Port, Start, Deadline)) end),
     ok.
 
-start_when_granted(_Port, 0) ->
-    {error, {no_grant, "the session holds no net or no data facet"}};
-start_when_granted(Port, Polls) ->
-    case is_pid(erx:cap(net)) andalso is_pid(erx:cap(data)) of
-        true ->
-            start(Port);
-        false ->
-            timer:sleep(?GRANT_POLL_MS),
-            start_when_granted(Port, Polls - 1)
+start_when_granted(Port, Start, Deadline) ->
+    case granted([net, data], Deadline) of
+        ok -> Start(Port);
+        {error, _} = Missing -> Missing
     end.
 
 booted(Port, {ok, Daemon}) ->
     true = register(?MODULE, Daemon),
     logger:notice("erx_ssh_dev: the daemon listens on port ~b", [Port]),
-    imported(import_when_ready(?GRANT_POLLS));
+    imported(import_when_ready(deadline()));
 booted(Port, {error, Reason}) ->
     logger:notice("erx_ssh_dev: no daemon on port ~b: ~0p", [Port, Reason]).
 
-%% The home copy lies on the session's `home` facet, mounted at /root, so the import
-%% waits for that as for the medium's answer.
-import_when_ready(0) ->
-    {retry, "no answer within ten minutes"};
-import_when_ready(Polls) ->
-    Import = case is_pid(erx:cap(home)) of
-                 true -> import(?HOME_KEYS, fun medium_file/0);
-                 false -> {retry, no_home}
-             end,
-    case Import of
-        {retry, _} ->
-            timer:sleep(?GRANT_POLL_MS),
-            import_when_ready(Polls - 1);
+%% GRANT_WAIT_MS from now, as erx_facets:await/3 takes a deadline.
+deadline() ->
+    {abs, erlang:monotonic_time(millisecond) + ?GRANT_WAIT_MS}.
+
+%% ok once the registry holds a facet of each of Names, or the first name it holds none
+%% of when Deadline passes, or when the runtime is no node and no agent writes it.
+-spec granted([atom()], deadline()) -> ok | {error, {no_grant, atom()}}.
+granted([], _Deadline) ->
+    ok;
+granted([Name | Names], Deadline) ->
+    case erx_facets:await(Name, none, Deadline) of
+        {ok, _Facet} -> granted(Names, Deadline);
+        Missing when Missing =:= timeout; Missing =:= {error, noproc} -> {error, {no_grant, Name}}
+    end.
+
+%% The home copy lies on the session's `home` facet, mounted at /root, and the medium's
+%% keys on its `login_keys` facet, so the import waits for both, and then for the
+%% medium's answer.
+-spec import_when_ready(deadline()) -> import().
+import_when_ready(Deadline) ->
+    case granted([home, login_keys], Deadline) of
+        ok -> import_until(Deadline);
+        {error, Reason} -> {retry, Reason}
+    end.
+
+import_until({abs, At} = Deadline) ->
+    case import(?HOME_KEYS, fun medium_file/0) of
+        {retry, Reason} when Reason =:= eagain; Reason =:= eio ->
+            case erlang:monotonic_time(millisecond) + ?MEDIUM_RETRY_MS < At of
+                true -> timer:sleep(?MEDIUM_RETRY_MS), import_until(Deadline);
+                false -> {retry, {Reason, "no answer within ten minutes"}}
+            end;
         Done ->
             Done
     end.

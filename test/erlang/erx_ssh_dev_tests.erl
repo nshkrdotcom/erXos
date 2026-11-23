@@ -485,6 +485,55 @@ the_import_never_writes_an_empty_file_test() ->
                   || Bytes <- [<<>>, <<One/binary, 0>>, binary:copy(<<0>>, byte_size(One))]]),
     ?assertEqual({error, enoent}, file:read_file_info(Home)).
 
+%% boot/1 waits for the session's net and data facets through the registry wait
+%% (docs/design-system.md, "Waiting for a grant"): the daemon starts once both are
+%% installed, in either order, and not before, with no look on a timer. The registry
+%% is erx_facets' own, written by a model agent that answers each wait as the domain's
+%% connection agent does.
+the_daemon_starts_once_net_and_data_are_installed_test_() ->
+    [{atom_to_list(First) ++ " first",
+      fun() -> with_model_agent(fun(Agent) -> the_daemon_starts_once_installed(Agent, First, Second) end) end}
+     || {First, Second} <- [{net, data}, {data, net}]].
+
+the_daemon_starts_once_installed(Agent, First, Second) ->
+    Test = self(),
+    ok = erx_ssh_dev:boot(2222, fun(Port) -> Test ! {daemon_started, Port}, {error, test} end),
+    ?assertEqual(none, daemon_started(200)),
+    model_install(Agent, First),
+    ?assertEqual(none, daemon_started(200)),
+    model_install(Agent, Second),
+    ?assertEqual(2222, daemon_started(2000)).
+
+daemon_started(Ms) ->
+    receive {daemon_started, Port} -> Port after Ms -> none end.
+
+%% Case(Agent) with a model agent registered as erx_connections over an empty registry.
+with_model_agent(Case) ->
+    Clear = fun() -> [persistent_term:erase(Key) || Key <- [{erx, facets}, {erx, granted}]] end,
+    Clear(),
+    Agent = spawn(fun() -> model_agent([]) end),
+    true = register(erx_connections, Agent),
+    try Case(Agent) after exit(Agent, kill), Clear() end.
+
+%% Installs a facet of a process of its own under Name, through the agent.
+model_install(Agent, Name) ->
+    Agent ! {install, #{Name => spawn(fun() -> receive after infinity -> ok end end)}, self()},
+    receive {installed, Agent} -> ok end.
+
+model_agent(Waiting) ->
+    receive
+        {'$gen_call', From, {changed, Generation}} ->
+            case erx_facets:generation() > Generation of
+                true -> gen:reply(From, ok), model_agent(Waiting);
+                false -> model_agent([From | Waiting])
+            end;
+        {install, Facets, Test} ->
+            ok = erx_facets:install(Facets),
+            _ = [gen:reply(From, ok) || From <- Waiting],
+            Test ! {installed, self()},
+            model_agent([])
+    end.
+
 %% A home path of its own under the work directory, with Count blobs of fresh keys.
 import_case(Name, Count) ->
     Home = filename:join([os:getenv("ERX_SSH_DEV_WORK"), "import_" ++ Name, ".ssh", "authorized_keys"]),
