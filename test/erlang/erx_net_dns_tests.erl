@@ -314,13 +314,13 @@ host_names() ->
     Bad = [<<>>, <<".">>, <<"lan.">>, <<"a..b">>, <<".lan">>, <<"-lan">>, <<"lan-">>, <<"a_b">>,
            <<"a b">>, <<"esc\e[31m">>, <<"lan", 0>>, <<"caf", 16#c3, 16#a9>>, <<Label63/binary, "a">>, <<Name253/binary, "b">>,
            "lan", lan],
-    [?assert(erx_inet:host_name(Name)) || Name <- Good],
-    [?assertNot(erx_inet:host_name(Name)) || Name <- Bad],
-    ?assertEqual({ok, <<"corp.example">>}, erx_inet:domain(<<"corp.example.">>)),
-    ?assertEqual({ok, Name253}, erx_inet:domain(<<Name253/binary, ".">>)),
-    [?assertEqual(error, erx_inet:domain(Name)) || Name <- [<<".">>, <<"lan..">>, <<>>, "lan"]].
+    [?assert(erx_host_name:host_name(Name)) || Name <- Good],
+    [?assertNot(erx_host_name:host_name(Name)) || Name <- Bad],
+    ?assertEqual({ok, <<"corp.example">>}, erx_host_name:domain(<<"corp.example.">>)),
+    ?assertEqual({ok, Name253}, erx_host_name:domain(<<Name253/binary, ".">>)),
+    [?assertEqual(error, erx_host_name:domain(Name)) || Name <- [<<".">>, <<"lan..">>, <<>>, "lan"]].
 
-%% Each search domain is checked alone, by erx_inet:domain/1: one that fails is
+%% Each search domain is checked alone, by erx_host_name:domain/1: one that fails is
 %% dropped, and the name servers and the other domains are kept.
 config_drops_bad_domains() ->
     Ns = [{{10, 0, 2, 3}, 53}],

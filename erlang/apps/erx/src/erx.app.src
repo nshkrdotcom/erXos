@@ -23,7 +23,7 @@
 %% The console's first group runs erx_shell:console/0, so erx
 %% needs erx_shell at run time; erx_shell builds on erx, so that need is a runtime
 %% dependency, as kernel and stdlib name each other, not an application to start first.
-%% erx_ntp_exchange applies erx_net_client's host-name rule, erx_inet:host_name/1, a
+%% erx_ntp_exchange applies erx_net_client's host-name rule, erx_host_name:host_name/1, a
 %% pure function, so that is a runtime dependency too: nothing of erx_net_client need run.
 {application, erx,
  [{description, "erXos runtime services"},

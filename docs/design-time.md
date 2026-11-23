@@ -696,7 +696,7 @@ starts at the host's time; the Raspberry Pi 4 has none of its own.
 ### Server list
 
 The list is an ordered list of at most 8 entries, each a host name (the
-resolver's host-name rule, `erx_inet:host_name/1`: labels of letters,
+resolver's host-name rule, `erx_host_name:host_name/1`: labels of letters,
 digits and hyphens, 1 to 63 bytes each, neither starting nor ending with
 a hyphen as RFC 1123 has it, 253 in all, and no trailing dot) or a
 dotted-decimal IPv4 literal, which that rule takes too. The rule is

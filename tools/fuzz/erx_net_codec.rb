@@ -24,7 +24,7 @@ module ErxNetCodecFuzz
   PORTABLE_BYTES = File.join(APPLICATION, 'portable/erx_bytes.erl')
   ORACLE = File.join(ROOT, 'test/erlang/erx_net_pkt_oracle.erl')
   # The client application's host-name rule, which erx_dhcp4_wire's search list applies.
-  HOST_NAME = File.join(ROOT, 'erlang/apps/erx_net_client/src/erx_inet.erl')
+  HOST_NAME = File.join(ROOT, 'erlang/apps/erx_net_client/src/erx_host_name.erl')
   DEADLINE_SECONDS = '300'
 
   # The failures of a round that show it reached the faulty code: a raise, a refusal or

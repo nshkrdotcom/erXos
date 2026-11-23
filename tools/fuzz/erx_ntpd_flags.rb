@@ -6,7 +6,7 @@
 # Runs test/erlang/erx_ntpd_flags_fuzz.erl, the fuzz target of ntpd's start flags
 # reader, erx_ntp_core:servers/1, and the server-list rule it applies,
 # erx_ntp_exchange:servers/1, with the host-name rule that one applies,
-# erx_inet:host_name/1 (docs/design-time.md, "Verification and testing"),
+# erx_host_name:host_name/1 (docs/design-time.md, "Verification and testing"),
 # on stock's emulator (ERX_ERL and ERX_ERLC), and then once with each seeded fault,
 # which must fail the run with the property it breaks.
 
@@ -21,7 +21,7 @@ module ErxNtpdFlagsFuzz
   # and ntpctl share, and the host-name rule it applies, which the resolver's check and
   # the DHCP client share too.
   RULE = 'erlang/apps/erx/src/erx_ntp_exchange.erl'
-  HOST_NAME = 'erlang/apps/erx_net_client/src/erx_inet.erl'
+  HOST_NAME = 'erlang/apps/erx_net_client/src/erx_host_name.erl'
   TARGET = 'test/erlang/erx_ntpd_flags_fuzz.erl'
   Fault = Data.define(:name, :source, :from, :to, :failure)
   FAULTS = [

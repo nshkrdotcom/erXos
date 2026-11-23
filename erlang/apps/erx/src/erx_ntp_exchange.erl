@@ -8,7 +8,7 @@ Asking NTP servers for the time (docs/design-time.md, "Server list" and
 HOST` name, resolve and ask a server.
 
 servers/1 is the server-list rule both apply to the names they are given:
-one to 8 names, each a host name by the resolver's rule, erx_inet:host_name/1:
+one to 8 names, each a host name by the resolver's rule, erx_host_name:host_name/1:
 labels of 1 to 63 letters, digits and hyphens that neither start nor end
 with a hyphen, 253 bytes in all, and no trailing dot. A dotted-decimal IPv4
 literal is a host name by that rule, and no flag is one.
@@ -51,7 +51,7 @@ classify/4 is the pure decision over one datagram.
 -spec servers([binary()]) -> boolean().
 servers(Names) ->
     Names =/= [] andalso length(Names) =< ?MAX_SERVERS
-        andalso lists:all(fun erx_inet:host_name/1, Names).
+        andalso lists:all(fun erx_host_name:host_name/1, Names).
 
 -doc """
 The addresses server Name stands for: its own, for an IPv4 literal, or the

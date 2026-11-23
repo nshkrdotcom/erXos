@@ -5,7 +5,7 @@
 %% stack, pure cores translated from FreeBSD's netinet and netinet6 under the
 %% processes that own each interface, connection and socket. NOTICE-freebsd beside
 %% src/ records what each module derives from. The DHCP client's search list is checked
-%% by erx_net_client's host-name rule, erx_inet:domain/1, a pure function, so that is a
+%% by erx_net_client's host-name rule, erx_host_name:domain/1, a pure function, so that is a
 %% runtime dependency: nothing of erx_net_client need run in the network domain.
 {application, erx_net,
  [{description, "erXos TCP/IP stack"},

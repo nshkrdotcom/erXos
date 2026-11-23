@@ -126,7 +126,7 @@ that length needs and a router, and its prefix keeps only its first prefix-lengt
 (RFC 3442 section 4); the domain name, without one trailing NUL that some servers add, is
 one to six names separated by blanks in at most 256 bytes (`check_search`, after
 resolv.conf(5); stricter than `dhclient`, which lets one name that passes `res_hnok`
-through at any length), each name a search domain by erx_inet:domain/1, the host-name rule
+through at any length), each name a search domain by erx_host_name:domain/1, the host-name rule
 the resolver applies to the grant's answer (`res_hnok`'s labels, 253 bytes in all), with
 one trailing dot allowed and dropped. So no control character or other byte from a
 server reaches the resolver's configuration or a display.
@@ -337,7 +337,7 @@ without_final_nul(Bytes) ->
 search_list(Text) when byte_size(Text) =< ?SEARCH_BYTES_MAX ->
     case binary:split(Text, [<<" ">>, <<"\t">>], [global, trim_all]) of
         Names when Names =/= [], length(Names) =< ?SEARCH_NAMES_MAX ->
-            Checked = lists:map(fun erx_inet:domain/1, Names),
+            Checked = lists:map(fun erx_host_name:domain/1, Names),
             case lists:member(error, Checked) of
                 false -> {ok, [Bare || {ok, Bare} <- Checked]};
                 true -> error

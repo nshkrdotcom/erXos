@@ -31,6 +31,7 @@ module ErxNetAdmitFuzz
   ADMIT = 'erlang/apps/erx_net/src/erx_net_admit.erl'
   SOCK = 'erlang/apps/erx_net_client/src/erx_sock_admit.erl'
   INET = 'erlang/apps/erx_net_client/src/erx_inet.erl'
+  HOST_NAME = 'erlang/apps/erx_net_client/src/erx_host_name.erl'
 
   FAULTS = {
     'admit' => [
@@ -62,10 +63,11 @@ module ErxNetAdmitFuzz
   }.freeze
 
   # The sources each target compiles beside the fuzz module: the checks under test, and what
-  # they call (the sock target's resolver answers are checked by erx_inet).
+  # they call (the sock target's resolver answers are checked by erx_inet, with the
+  # host-name rule of erx_host_name).
   SOURCES = {
     'admit' => [ADMIT],
-    'sock' => [SOCK, INET]
+    'sock' => [SOCK, INET, HOST_NAME]
   }.freeze
 
   module_function

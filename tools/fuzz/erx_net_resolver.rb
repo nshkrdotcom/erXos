@@ -8,7 +8,8 @@
 # untrusted inputs (docs/design-network-stack.md, "Name resolution"), for one target,
 # against the sources as they are and against a copy with the target's seeded fault,
 # which must fail it:
-#   config  erx_inet:resolver_config/1, with its label bound of 63 bytes dropped;
+#   config  erx_inet:resolver_config/1, with the host-name rule's label bound of 63 bytes
+#           dropped (erx_host_name);
 #   dns     inet_dns:decode/1, whose too-short header raises instead of throwing;
 #   host    erx_cmd_host's lines, with the field escape left out.
 
@@ -27,7 +28,7 @@ module ErxNetResolverFuzz
   Fault = Data.define(:what, :source, :anchor, :replacement, :marker)
 
   FAULTS = {
-    'config' => Fault.new(what: 'a check without the label bound', source: 'erlang/apps/erx_net_client/src/erx_inet.erl',
+    'config' => Fault.new(what: 'a check without the label bound', source: 'erlang/apps/erx_net_client/src/erx_host_name.erl',
                           anchor: 'label(Label) when byte_size(Label) >= 1, byte_size(Label) =< 63 ->',
                           replacement: 'label(Label) when byte_size(Label) >= 1 ->', marker: 'config_accepted_bad'),
     'dns' => Fault.new(what: 'a decoder whose short header raises', source: 'otp/lib/kernel/src/inet_dns.erl',
@@ -40,7 +41,8 @@ module ErxNetResolverFuzz
 
   SOURCES = ['build/gen/erlang/apps/erx/src/erx_text_tables.erl', 'erlang/apps/erx/src/erx_text.erl',
              'erlang/apps/erx_shell/src/erx_cmd.erl', 'erlang/apps/erx_shell/src/erx_cmd_host.erl',
-             'erlang/apps/erx_net_client/src/erx_inet.erl', 'otp/lib/kernel/src/inet_dns.erl'].freeze
+             'erlang/apps/erx_net_client/src/erx_inet.erl', 'erlang/apps/erx_net_client/src/erx_host_name.erl',
+             'otp/lib/kernel/src/inet_dns.erl'].freeze
 
   module_function
 
@@ -50,7 +52,7 @@ module ErxNetResolverFuzz
     texts = SOURCES.to_h { |path| [path, File.binread(File.join(ROOT, path))] }
     output, status = fuzz(texts, target: target, seed: seed)
     abort(output) unless status.success? && output.match?(PASSED)
-    raise "no #{fault.anchor} in #{fault.source}" unless texts.fetch(fault.source).include?(fault.anchor)
+    raise "#{fault.source} lacks exactly one #{fault.anchor}" unless texts.fetch(fault.source).scan(fault.anchor).length == 1
 
     faulty = texts.merge(fault.source => texts.fetch(fault.source).sub(fault.anchor) { fault.replacement })
     output, = fuzz(faulty, target: target, seed: seed)

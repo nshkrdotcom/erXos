@@ -4465,8 +4465,11 @@ carries whole datagrams; the pure presentation steps `erx_gen_tcp_core`
 and `erx_gen_udp_core`, with `erx_net_packet`, the packet framing;
 `erx_sock_admit`, the check of every message the client side takes from
 the network domain; `erx_sock_out`, the socket process's one way to send
-to its socket ([The socket process](#the-socket-process)); and
-`erx_inet`, the one path to the grant and the resolver loader. It depends
+to its socket ([The socket process](#the-socket-process));
+`erx_inet`, the one path to the grant and the resolver loader; and
+`erx_host_name`, the one host-name rule, a pure module the DHCP client
+and the NTP server list apply too ([Name resolution](#name-resolution)).
+It depends
 on `kernel` and `stdlib` alone, and its calls into erXos go through
 `erxos/erx_net_client_erxos`
 ([Two places, four seams](#two-places-four-seams)).
@@ -5780,9 +5783,9 @@ watches at start and again after the grant ends, checks each answer as
 input from another domain, and loads it into `inet_db`: the name servers and search list
 replace inet_db's, `dns` joins the lookup methods after the hosts file,
 and the answer takes the place of resolv.conf, which a domain does not
-have. A search domain is checked by `erx_inet:domain/1`, which the DHCP
+have. A search domain is checked by `erx_host_name:domain/1`, which the DHCP
 client's search list applies too; the NTP server list applies the same
-host-name rule, `erx_inet:host_name/1`, without the trailing dot: labels of
+host-name rule, `erx_host_name:host_name/1`, without the trailing dot: labels of
 letters, digits and hyphens that begin and end with a letter or digit
 (`res_hnok`), each of 1 to 63 bytes, at most 253 bytes in all, one
 trailing dot allowed and dropped; stricter than `res_hnok`, which also
@@ -7145,7 +7148,7 @@ Each with a test proving it catches a violation:
   every random key passes the clock's seam;
 * the modules in `src/` of `erx_net` and `erx_net_client` call only
   `erts`, `kernel`, `stdlib`, their own application and `erx_bytes`, and
-  `erx_net`'s also `erx_net_client`'s host-name rule, `erx_inet:domain/1`,
+  `erx_net`'s also `erx_net_client`'s host-name rule, `erx_host_name:domain/1`,
   for the DHCP client's search list, so the rule has one copy; only
   `erxos/` (`erx_virtio_net`, `erx_genet` and its modules, `erx_net_erxos`,
   `erx_net_client_erxos`)
