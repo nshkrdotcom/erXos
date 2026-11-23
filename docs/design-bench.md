@@ -512,7 +512,7 @@ advisory comparison and never through it:
   medians, with no widening;
 * the patched build's median is the median of its runs' medians, each
   run's reported beside it (the reading of "the patched build's median"
-  that [open decision 7](#open-decisions) asks to confirm);
+  that [the decision on FD32's ten runs](#how-fd32s-ten-runs-combine) fixes);
 * where the patched median lies within one histogram bucket of either end
   of the spread, the answer is `inconclusive: within the histogram's
   resolution of the spread's edge`, and more runs, or raw samples, settle
@@ -533,8 +533,9 @@ others are:
 The two board limits keep the definition the Fiasco design gives them,
 from Fiasco's interrupt entry to the driver's process, each cell's longest
 receipt recorded. How that entry is stamped in a build that is not a
-diagnostic one is [an open decision](#open-decisions); until it is
-settled, a board record holds the receipt from the first user-mode stamp
+diagnostic one is the development-only Fiasco patch of
+[The interrupt entry's stamp](#the-interrupt-entrys-stamp). A board record
+from a build without it holds the receipt from the first user-mode stamp
 on the path, and the two limits read `partial: no kernel entry stamp`
 rather than pass.
 
@@ -543,7 +544,7 @@ rather than pass.
 | Tier | What runs | What fails it |
 | --- | --- | --- |
 | **Landing**, with the QEMU suites a change touches | `tools/erx check-qemu --suite bench`: the landing matrix below | a suite cell that is not `passed` (table below) |
-| **Milestone** | `make check-qemu` runs the `bench` suite fresh, as every suite; whether it also runs the full matrix is [open decision 5](#open-decisions) | the same |
+| **Milestone** | `make check-qemu` runs the `bench` suite fresh, as every suite; the full matrix runs by hand, and joins this gate only when CLAUDE.md's milestone gate list names it ([The full matrix](#the-full-matrix)) | the same |
 | **Plan gates and on demand** | `tools/erx bench NAME --profile full`, `--paired`, FD32's runs, and the Raspberry Pi 4's runs by hand | the board limits, for the milestones that ship on the board |
 
 **The landing matrix.** Three boots, each running its cells one after
@@ -1028,89 +1029,126 @@ benchmark back to its design rather than letting it land.
 * **cyclictest, lmbench and stress-ng on FreeBSD and Linux.** They are
   GPL and measure their own operations; one small program of erXos's own,
   on both systems, compares like with like and needs no clean room.
+* **Starting the board limits at the first user-mode stamp.** The
+  analyser's `gpio-edge` would bound the kernel's part separately. It
+  changes the accepted definition, which runs from Fiasco's interrupt
+  entry, so the stamp is taken there instead.
+* **A per-line slot for the interrupt entry's stamp.** It would need a
+  publication protocol and a rule pairing its count with deliveries; the
+  trace record needs neither.
+* **A new Glasgow applet first.** It is Python, out of the tree and
+  needing approval; a stock applet that fits needs none.
+* **`lifecycle` among the first five.** Its consumers, E-D3 and gate GP,
+  come later in the plan than the memory costs `vm` shows.
+* **The full matrix at the milestone gate before it is timed.** An
+  estimated 35 minutes added to a gate on a guess; the duration is
+  measured first.
+* **Only the stock kernel, or only a real-time kernel, for Linux.** The
+  first omits the configuration the published Pi 4 latencies are of; the
+  second compares erXos with a configuration no ordinary installation
+  runs, on every row.
+* **Pooling the patched runs' samples for FD32.** The accepted predicate
+  compares medians of runs with the spread of medians of runs; the same
+  kind of number on both sides is the one that is comparable.
 
-## Open decisions
+## Decisions
 
-1. **How Fiasco's interrupt entry is stamped for the two board limits.**
-   The limits are defined from Fiasco's interrupt entry, and only the
-   diagnostic branch stamps it. Either a development-only Fiasco patch,
-   listed in [design-fiasco.md](design-fiasco.md), stamps each entry, or
-   the limits start at the first user-mode stamp and the analyser's
-   `gpio-edge` bounds the kernel's part separately, which changes the
-   accepted definition. **Recommendation:** the patch, writing trace
-   records rather than a slot of its own, under this contract:
-   * **What it writes.** At each interrupt entry the kernel writes one
-     `irq_entry` record, naming the line, into a ring of `erx_trace_record`
-     records for its CPU, stamped with the counter the user-mode accessor
-     reads. The layout and the event enum are the ones every trace ring
-     uses (`abi/kernel.txt`), and erXos's kernel records interrupts in its
-     own rings ([design-kernel.md](design-kernel.md#trace-ring)), so the
-     patch adds a source, not a format.
-   * **Coherence.** Each ring has one writer, its CPU, with interrupts off
-     in the entry path, and the record is written by the protocol of
-     [Sequence-counted records](design-kernel.md#sequence-counted-records).
-     The root reads it with the trace ring's own reader
-     ([design-fiasco.md](design-fiasco.md#the-trace-ring)), which keeps a
-     record only when both loads of its count agree and counts every
-     other one as overwritten, so a reader never takes a stamp from one
-     entry and a line from another. Nothing new pairs a time with a count.
-   * **Association.** The two lines the limits time are level-triggered,
-     and Fiasco masks such a line at its firing until its holder
-     acknowledges it (the paragraph on what a line delivers in
-     [design-fiasco.md, Urgency](design-fiasco.md#urgency)), so exactly one entry of the line falls between
-     two consecutive receipts of it. Receipt k is paired with the line's
-     `irq_entry` records stamped after receipt k - 1 (for the first, after
-     the cell's start) and before receipt k. Exactly one makes a sample.
-     None, more than one, or any record of that CPU's ring counted as
-     overwritten in that window makes the receipt `partial`, never a
-     guessed time. A line found edge-triggered, whose entries can merge,
-     has every receipt `partial`; that both lines are level-triggered in
-     the board's device tree is unverified until the patch lands.
-   * **Authority and builds.** The rings are kernel-owned, of fixed size,
-     and mapped read-only into the root alone. The patch's code and
-     mapping sit behind a configuration option that only the development
-     Fiasco build sets and that the release configuration's exact
-     allowlist ([design-fiasco.md](design-fiasco.md#the-releases-fiasco-build))
-     does not admit.
+Each is a choice the design makes among alternatives; the rejected ones
+are in [Alternatives considered](#alternatives-considered).
 
-   Trace records win over a per-line slot because the format, the
-   coherence protocol and the reader already exist and are tested: a
-   slot would need a publication protocol and a rule pairing its count
-   with deliveries, and the record needs neither. It keeps the accepted
-   definition, gives one timeline from entry to the driver on one clock,
-   and goes with Fiasco when erXos's kernel, whose rings record
-   interrupts, replaces it.
-2. **The analyser's stimulus.** If no stock Glasgow applet drives the
-   stimulus's pulses on one pin while capturing two, the probe needs a
-   small applet, which is Python, out of the tree. **Recommendation:**
-   check the stock applets on the board's Glasgow first; ask for Python
-   only if none fits.
-3. **The two pins.** **Recommendation:** GPIO 20 as the stimulus and
-   GPIO 21 as the response, header pins 38 and 40, both plain GPIO in the
-   header map and next to each other, each held by one responder alone
-   during a run and recorded with its final configuration.
-4. **`vm` or `lifecycle` among the first five.** This document puts `vm`
-   fourth and `lifecycle` after the five: memory is one of the three costs
-   these benchmarks exist to show, while `lifecycle`'s consumers, E-D3 and
-   gate GP, come later in the plan. **Recommendation:** keep `vm`.
-5. **The full matrix at the milestone gate.** The full forms, three runs
-   of: `park-deadline` at two placements and two loads, `erlang-timer` at
-   two priorities and two loads, each 60 s; `sched`'s three sustained
-   cells; and every fast and expensive cell at 100,000 and 1,000 samples,
-   come to an estimated 11 minutes of timed work a run, about 35 minutes
-   in all under HVF before boots. **Recommendation:** run the full matrix
-   once by hand, record its time, and only then propose adding it to
-   CLAUDE.md's milestone gate list, with the measured duration.
-6. **Linux's configuration.** **Recommendation:** the vendor's stock
-   kernel for every row, and a separately identified real-time kernel as
-   a second row for `wake` only, since the published Pi 4 latencies are
-   of a real-time kernel.
-7. **How FD32's ten runs combine.** [design-fiasco.md](design-fiasco.md#the-releases-fiasco-build)
-   compares "the patched build's median round trip" with the spread of the
-   unpatched runs' medians, without saying how the patched runs combine.
-   **Recommendation:** the median of the patched runs' medians, each run's
-   reported beside it, as [FD32's decision](#fd32s-decision) computes it;
-   a different reading changes only that one function.
+### The interrupt entry's stamp
+
+The two board limits are defined from Fiasco's interrupt entry. A
+development-only Fiasco patch, listed in
+[design-fiasco.md](design-fiasco.md#the-releases-fiasco-build), stamps each
+entry, writing trace records rather than a slot of its own, under this
+contract:
+
+* **What it writes.** At each interrupt entry the kernel writes one
+  `irq_entry` record, naming the line, into a ring of `erx_trace_record`
+  records for its CPU, stamped with the counter the user-mode accessor
+  reads. The layout and the event enum are the ones every trace ring
+  uses (`abi/kernel.txt`), and erXos's kernel records interrupts in its
+  own rings ([design-kernel.md](design-kernel.md#trace-ring)), so the
+  patch adds a source, not a format.
+* **Coherence.** Each ring has one writer, its CPU, with interrupts off
+  in the entry path, and the record is written by the protocol of
+  [Sequence-counted records](design-kernel.md#sequence-counted-records).
+  The root reads it with the trace ring's own reader
+  ([design-fiasco.md](design-fiasco.md#the-trace-ring)), which keeps a
+  record only when both loads of its count agree and counts every
+  other one as overwritten, so a reader never takes a stamp from one
+  entry and a line from another. Nothing new pairs a time with a count.
+* **Association.** The two lines the limits time are level-triggered,
+  and Fiasco masks such a line at its firing until its holder
+  acknowledges it (the paragraph on what a line delivers in
+  [design-fiasco.md, Urgency](design-fiasco.md#urgency)), so exactly one entry of the line falls between
+  two consecutive receipts of it. Receipt k is paired with the line's
+  `irq_entry` records stamped after receipt k - 1 (for the first, after
+  the cell's start) and before receipt k. Exactly one makes a sample.
+  None, more than one, or any record of that CPU's ring counted as
+  overwritten in that window makes the receipt `partial`, never a
+  guessed time. A line found edge-triggered, whose entries can merge,
+  has every receipt `partial`; that both lines are level-triggered in
+  the board's device tree is unverified until the patch lands.
+* **Authority and builds.** The rings are kernel-owned, of fixed size,
+  and mapped read-only into the root alone. The patch's code and
+  mapping sit behind a configuration option that only the development
+  Fiasco build sets and that the release configuration's exact
+  allowlist ([design-fiasco.md](design-fiasco.md#the-releases-fiasco-build))
+  does not admit.
+
+Trace records carry the stamp because the format, the coherence protocol
+and the reader already exist and are tested. They keep the accepted
+definition, give one timeline from entry to the driver on one clock, and
+go with Fiasco when erXos's kernel, whose rings record interrupts,
+replaces it.
+
+### The analyser's stimulus
+
+The stimulus's pulses come from a stock Glasgow applet on the board's
+Glasgow, which drives them on one pin while capturing two. The stock
+applets are checked first; only if none fits does the probe need a small
+applet of its own, which is Python, stays out of the tree and needs
+approval before its first use.
+
+### The two pins
+
+GPIO 20 is the stimulus and GPIO 21 the response, header pins 38 and 40,
+both plain GPIO in the header map and next to each other. Each is held by
+one responder alone during a run and recorded with its final
+configuration.
+
+### The first five benchmarks
+
+`vm` is fourth and `lifecycle` follows the five: memory is one of the
+three costs these benchmarks exist to show, while `lifecycle`'s
+consumers, E-D3 and gate GP, come later in the plan.
+
+### The full matrix
+
+The full forms, three runs of: `park-deadline` at two placements and two
+loads, `erlang-timer` at two priorities and two loads, each 60 s;
+`sched`'s three sustained cells; and every fast and expensive cell at
+100,000 and 1,000 samples, come to an estimated 11 minutes of timed work
+a run, about 35 minutes in all under HVF before boots. The milestone
+gate does not run the matrix. It runs once by hand, its time is recorded,
+and it is proposed for CLAUDE.md's milestone gate list only with that
+measured duration.
+
+### Linux's configuration
+
+Every Linux row runs the vendor's stock kernel. A separately identified
+real-time kernel is a second row for `wake` only, since the published
+Pi 4 latencies are of a real-time kernel.
+
+### How FD32's ten runs combine
+
+[design-fiasco.md](design-fiasco.md#the-releases-fiasco-build) compares
+"the patched build's median round trip" with the spread of the unpatched
+runs' medians. The patched runs combine as the median of their medians,
+each run's reported beside it, as [FD32's decision](#fd32s-decision)
+computes it. A different reading changes only that one function.
 
 ## References
 

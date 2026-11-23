@@ -54,7 +54,9 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   ([design-bench.md](design-bench.md#other-systems-on-the-same-raspberry-pi-4)): a raspi4b build of the native
   bench image; `tools/erx bench import` for console logs and the analyser's captures; `bench/peer/erx_peer_bench.c`;
   the L4Re, FreeBSD and Linux images and L4Re's IPC benchmark pinned in the fetch step; the two GPIO responders.
-  Waits on design-bench.md's open decisions 1 to 3 (the entry stamp, the stimulus, the pins).
+  Includes the development-only Fiasco patch that stamps the interrupt entry
+  ([design-bench.md](design-bench.md#the-interrupt-entrys-stamp)), the check of the Glasgow's stock applets for the
+  stimulus ([design-bench.md](design-bench.md#the-analysers-stimulus)) and GPIO 20 and 21 as the two pins.
 
 ## Stopgap replacements
 

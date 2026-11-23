@@ -3965,6 +3965,13 @@ no test can drive the change:
   (`kernel_thread.cpp`, for `native_kernel_trap.rb`), and `ERX_TEST_SEMAPHORE_WAKE_HOLD_US` a hold
   of an up between its dequeue and its activation (`semaphore.cpp`, for
   `native_semaphore_race.rb`). No other kernel builds them; `make check-native-seeds` runs both.
+* **The interrupt entry's stamp, development builds only.** At each interrupt entry the kernel writes one
+  `irq_entry` record naming the line into its CPU's ring, so the Raspberry Pi 4's interrupt measurement times a
+  receipt from Fiasco's interrupt entry ([Verification](#verification)). The record's layout, its coherence
+  protocol, its pairing with receipts and its configuration option are
+  [design-bench.md's contract](design-bench.md#the-interrupt-entrys-stamp). Only a development configuration admits
+  the option: the release configuration's allowlist does not, so the release kernel carries neither the code nor the
+  mapping.
 
 Nothing else of erXos's kernel is built into Fiasco for the first release; the scheduler's stages
 come after it.
