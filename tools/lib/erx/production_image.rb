@@ -85,6 +85,8 @@ module Erx
     # (otp/erts/emulator/Makefile.in's OS_OBJS), so its attribution carries
     # littlefs's BSD-3-Clause notice as well as OTP's.
     EMULATOR_ARCHIVE = 'libbeam.a'
+    # Every other OTP archive's attribution: OTP's own license and status.
+    OTP_ATTRIBUTION = { license: 'Apache-2.0', notices: ['otp/LICENSE.txt'].freeze, status: DependencyStatus::PERMANENT }.freeze
 
     # One of the archives that the root or an added program links, attributed whole under the license
     # stated here, with notices the tree paths of the documents that license names.
@@ -2218,20 +2220,19 @@ module Erx
     def otp_archives(paths, flavour:)
       paths.map do |path|
         name = File.basename(path)
-        license, notices = if name == EMULATOR_ARCHIVE
-                             emulator_license(flavour)
-                           else
-                             ['Apache-2.0', ['otp/LICENSE.txt']]
-                           end
-        Archive.new(path: path, label: "otp #{flavour} #{name}", license: license, status: DependencyStatus::PERMANENT, notices: notices)
+        attribution = name == EMULATOR_ARCHIVE ? emulator_attribution(flavour) : OTP_ATTRIBUTION
+        Archive.new(path: path, label: "otp #{flavour} #{name}", **attribution)
       end
     end
 
-    # libbeam.a holds littlefs's objects, and in the BeamAsm flavour asmjit's too.
-    def emulator_license(flavour)
-      return ['Apache-2.0 AND BSD-3-Clause', ['otp/LICENSE.txt', 'littlefs/LICENSE.md']] unless flavour == 'jit'
+    # libbeam.a's license, notices and status. It holds littlefs's objects, and in the
+    # BeamAsm flavour asmjit's too; attributed as a whole, it takes littlefs's stopgap status.
+    def emulator_attribution(flavour)
+      notices = ['otp/LICENSE.txt', 'littlefs/LICENSE.md']
+      return { license: 'Apache-2.0 AND BSD-3-Clause', notices: notices, status: DependencyStatus::STOPGAP } unless flavour == 'jit'
 
-      ['Apache-2.0 AND BSD-3-Clause AND Zlib', ['otp/LICENSE.txt', 'littlefs/LICENSE.md', 'otp/erts/emulator/asmjit/LICENSE.md']]
+      { license: 'Apache-2.0 AND BSD-3-Clause AND Zlib', notices: [*notices, 'otp/erts/emulator/asmjit/LICENSE.md'],
+        status: DependencyStatus::STOPGAP }
     end
 
     def external_archive(archive)

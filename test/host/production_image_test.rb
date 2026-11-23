@@ -335,7 +335,8 @@ class ProductionImageTest < Minitest::Test
   end
 
   # libbeam.a holds littlefs's objects (lfs.o and lfs_util.o, in the emulator's OS_OBJS), so
-  # its attribution names littlefs's license beside OTP's; compiler-rt's builtins carry LLVM's
+  # its attribution names littlefs's license beside OTP's and, attributed whole, takes
+  # littlefs's status, stopgap, in both flavours; compiler-rt's builtins carry LLVM's
   # license, L4Re's user libraries carry the MIT text and Fiasco's status, release, and
   # nothing linked is GPL; every notice named is a tree file.
   def test_emulator_archive_carries_the_littlefs_notice
@@ -357,6 +358,8 @@ class ProductionImageTest < Minitest::Test
     assert_equal ['Apache-2.0', ['otp/LICENSE.txt']], crypto.fetch('crypto.a').then { |a| [a.license, a.notices] }
     assert_equal 'Apache-2.0 AND BSD-3-Clause', archives.fetch('libbeam.a').license
     assert_equal %w[otp/LICENSE.txt littlefs/LICENSE.md], archives.fetch('libbeam.a').notices
+    assert_equal %w[stopgap permanent], [archives.fetch('libbeam.a').status, archives.fetch('erl_main.o').status]
+    assert_equal 'stopgap', image.send(:otp_archives, ['/otp/libbeam.a'], flavour: 'jit').first.status
     assert_equal %w[otp/LICENSE.txt], archives.fetch('erl_main.o').notices
     assert_equal %w[otp/LICENSE.txt], archives.fetch('driver_tab.o').notices
     assert_equal %w[otp/LICENSE.txt], crypto.fetch('driver_tab_crypto.o').notices
