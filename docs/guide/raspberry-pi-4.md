@@ -26,7 +26,9 @@ to pin 10 (GPIO 15). Open it at 115200 baud, 8N1, no flow control, for
 example `screen -L /dev/cu.usbserial-XXXX 115200`; `-L` logs everything
 to `screenlog.0`. A second adapter on UART3, the host link, is optional:
 ground to pin 9, receive to pin 7 (GPIO 4), transmit to pin 29 (GPIO 5),
-also 115200 8N1.
+also 115200 8N1. A development card's `cmdline.txt` holds `erx.hostlink=1`,
+which turns the host link on; keep the file one line with no newline
+at its end.
 
 Typing into the serial console works, but pasting into it can drop
 characters: the line has no flow control and its receive buffer holds

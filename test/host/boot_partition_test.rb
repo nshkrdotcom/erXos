@@ -99,13 +99,34 @@ class BootPartitionTest < Minitest::Test
     assert_raises(Erx::Error) { Erx::BootPartition.pl011_clock(record(units: [])) }
   end
 
+  # The firmware reads the kernel command line from cmdline.txt and the board's boot takes it
+  # from /chosen/bootargs, so a development card's cmdline.txt carries the word that makes the
+  # root hand the host link's UART to the system domain (design-live.md, "The host link from
+  # a board"), the very word QEMU's plan adds. A release card has no cmdline.txt, so no host
+  # link; any other build kind is refused.
+  def test_only_a_development_card_asks_for_the_host_link
+    Dir.mktmpdir do |root|
+      development = plan(root)
+      release = plan(root, build_kind: 'release')
+      assert_equal Erx::QemuPlan::HOSTLINK_WORD, development.fetch('cmdline.txt').bytes
+      assert_equal development.keys - ['cmdline.txt'], release.keys
+      assert_raises(Erx::Error) { plan(root, build_kind: 'debug') }
+    end
+  end
+
+  # A platform whose record names no host link UART gets no word, even on a development card.
+  def test_a_platform_without_a_host_link_asks_for_none
+    platform = Struct.new(:record).new(PI.record.except('hostlink'))
+    assert_empty Erx::BootPartition.command_line_entry(platform, 'development')
+  end
+
   def test_writes_the_layout_beside_the_image_alone
     Dir.mktmpdir do |root|
       output = File.join(root, 'image')
       Dir.mkdir(output)
       File.write(File.join(output, 'image.boot'), 'kernel')
       written = write(root, output, plan(root))
-      names = %w[LICENCE.broadcom LICENSE.linux-dts LICENSE.tf-a bcm2711-rpi-4-b.dtb bcm2711-rpi-4-b.dts bl31.bin config.txt fixup4.dat
+      names = %w[LICENCE.broadcom LICENSE.linux-dts LICENSE.tf-a bcm2711-rpi-4-b.dtb bcm2711-rpi-4-b.dts bl31.bin cmdline.txt config.txt fixup4.dat
                  kernel8.img overlays/uart3.dtbo start4.elf]
       files = Dir.glob('**/*', base: output).reject { |name| File.directory?(File.join(output, name)) }.sort
       assert_equal [*names.map { |name| "boot/#{name}" }, 'image.boot', 'sdcard.img', 'sdcard.img.receipt.json', 'sdcard.img.xz'].sort,
@@ -417,7 +438,7 @@ end
 
   # A plan over stand-in files in root/in.
   # kernel_bytes makes the bootable file a sparse file of that length.
-  def plan(root, kernel_bytes: nil)
+  def plan(root, kernel_bytes: nil, build_kind: 'development')
     sources = File.join(root, 'in')
     FileUtils.mkdir_p(sources)
     stand_in = lambda do |name, text = name|
@@ -428,7 +449,7 @@ end
     firmware = %w[start4.elf fixup4.dat LICENCE.broadcom].to_h { |name| [name, stand_in.(name)] }
     bootable = stand_in.('kernel8', 'kernel')
     File.truncate(bootable, kernel_bytes) if kernel_bytes
-    Erx::BootPartition.plan(platform: PI, build_kind: 'development', bootable: bootable, bl31: stand_in.('bl31'),
+    Erx::BootPartition.plan(platform: PI, build_kind: build_kind, bootable: bootable, bl31: stand_in.('bl31'),
                             bl31_license: stand_in.('license'),
                             tree: tree, firmware: firmware)
   end

@@ -1330,7 +1330,8 @@ by its device-tree path, and the root does not look in the device tree for it, s
 that UART the record would point `erx_pl011` at empty address space, whose first read faults the
 system domain and with it the machine. Without the record no line group starts `erx_hostlink` and the boot
 is the same otherwise. `Erx::QemuPlan` adds the word exactly when it gives the guest the second
-`-serial` ([The production image](#the-production-image), "Device paths"); the website's emulator, whose machine has one UART, never
+`-serial` ([The production image](#the-production-image), "Device paths"), and the card writer puts it in `cmdline.txt`
+on a development card whose platform names a host link UART; the website's emulator, whose machine has one UART, never
 sends it. erXos's kernel needs no such word: it lists a UART only when the device tree has it.
 
 ## The Phase 1 manifest check
@@ -3087,7 +3088,9 @@ data, one `bootstrap` build, the random generator's read, and the kernel's other
   FAT holds, written by `tools/erx pack --medium --platform raspi4b` beside `sdcard.img`
   (`tools/lib/erx/boot_partition.rb`): the firmware and its license; `config.txt`, written from the platform record,
   which asks for one 32-bit framebuffer with no overscan border and, on a development card only, the firmware's boot
-  log on the console and the ARM's JTAG on GPIO 22 to 27; BL31 and its license; the bootable file as `kernel8.img`;
+  log on the console and the ARM's JTAG on GPIO 22 to 27; `cmdline.txt` on a development card only, holding
+  `erx.hostlink=1`, which the firmware hands to the boot as `/chosen/bootargs` so that the root hands the host link's
+  UART3 to the system domain ([The command line](#the-command-line)); BL31 and its license; the bootable file as `kernel8.img`;
   Linux's device tree for the board, compiled from its pinned source with its two serial aliases swapped, so that
   `serial0` names the console, with that source beside it; and the overlays `config.txt` names, whose sources erXos
   keeps in `hw/dts`, since mainline Linux has none (`tools/lib/erx/board_tree.rb`).

@@ -33,7 +33,8 @@ module Erx
   # sdcard.img.receipt.json is their build record
   # (docs/design-fiasco.md, "The Raspberry Pi 4"; docs/design-platforms.md, "Firmware").
   # The files are the firmware, unmodified, with its license; config.txt, written from
-  # the platform record; the board's device tree, with its one marked edit, its source
+  # the platform record; on a development card, cmdline.txt, the kernel command line with the
+  # host link's word; the board's device tree, with its one marked edit, its source
   # and Linux's GPL-2.0 text (BoardTree), and the overlays config.txt names; TF-A's BL31
   # as the armstub, with its license; and the production image's bootable file as
   # kernel8.img.
@@ -54,6 +55,8 @@ module Erx
     KERNEL = PiMedium::BOOT_FILE
     ARMSTUB = 'bl31.bin'
     CONFIG = 'config.txt'
+    # The kernel command line, by the firmware's default name (config.txt's `cmdline`).
+    CMDLINE = 'cmdline.txt'
     ARMSTUB_LICENSE = 'LICENSE.tf-a'
     # A file of the layout whose bytes are given, not read from a path.
     Text = Data.define(:bytes)
@@ -146,6 +149,21 @@ module Erx
       CONFIG
     end
 
+    # The layout's cmdline.txt entry for platform and build_kind, or no entry for a card with
+    # no command line. The firmware reads the file and the board's boot takes the line from
+    # /chosen/bootargs, where the root reads its erx. words (liberx/backend/fiasco/boot_args.c;
+    # the firmware's own words are ignored there). A development card whose platform has a host
+    # link UART asks for it, with the word QEMU's plan adds with its second serial line; a
+    # release card has no command line and so no host link (docs/design-live.md, "The host
+    # link from a board"). The word ends the file with no newline: the root's parser splits on
+    # spaces alone, so a newline the firmware kept in the line would make "erx.hostlink=1\n" a
+    # malformed word and refuse the boot.
+    def command_line_entry(platform, build_kind)
+      return {} unless BuildKind.development?(build_kind) && platform.record['hostlink']
+
+      { CMDLINE => Text.new(QemuPlan::HOSTLINK_WORD) }
+    end
+
     # total_mem, once the record's ram_bytes is what it leaves the ARM; a record measured
     # at another size is refused.
     def total_mem_mib(platform)
@@ -206,12 +224,13 @@ module Erx
     end
 
     # The layout as a map from each file's name in the partition to its source path,
-    # or to its Text for config.txt; firmware maps each firmware file's name to its path.
+    # or to its Text for config.txt and cmdline.txt; firmware maps each firmware file's name to its path.
     # Pure.
     def plan(platform:, build_kind:, bootable:, bl31:, bl31_license:, tree:, firmware:)
       board = BoardTree.board(platform)
       own = { KERNEL => bootable, ARMSTUB => bl31, ARMSTUB_LICENSE => bl31_license,
               CONFIG => Text.new(config_txt(platform, overlays: tree.overlays.keys, build_kind: build_kind)),
+              **command_line_entry(platform, build_kind),
               board.file => tree.board, BoardTree.source_file(board) => tree.source,
               BoardTree::LICENSE_FILE => tree.license,
               **tree.overlays.to_h { |name, path| ["overlays/#{name}.dtbo", path] } }

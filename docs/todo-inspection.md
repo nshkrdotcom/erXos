@@ -297,13 +297,17 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   too, `--ssh` (an `exec` of the session's `load` with the modules on its
   standard input), and a required `--system` or `--domain`. Not built.
 * [Medium] live, the Raspberry Pi 4's host link (`tools/lib/erx/boot_partition.rb`,
-  `BootPartition.plan`): the root hands the host link's UART only under
-  `erx.hostlink=1` (`liberx/backend/fiasco/boot_args.c`), and the card's boot
-  partition holds no command line, so a development card has no host link on
-  UART3 and the board route of design-live.md ("The host link from a board")
-  does not work. Find where the board's `/chosen/bootargs` comes from
-  (unverified: the firmware's `cmdline.txt`), write `erx.hostlink=1` there
-  for development cards only, and check it in the boot partition's test.
+  `command_line_entry`): QEMU's `raspi4b` model has no UART3, so no automated boot has run the
+  host link's record on the board, and the firmware's hand-over of `cmdline.txt` as
+  `/chosen/bootargs` to a `kernel8.img` started through BL31 is unverified. Boot a development
+  card with an adapter on UART3 and Bluetooth active (UART0's interrupt line is shared with
+  UART3's), check that it boots and that `tools/erx load` reaches the board, and add the step
+  to the Pi manual checklist.
+* [Low] live, the root's command line (`liberx/backend/fiasco/boot_args.c`, `next_word`;
+  `kernel/core/boot_place.c`, `erx_boot_args_cut`): words split on spaces alone, so a
+  `cmdline.txt` edited with a tool that ends the line with a newline or CRLF may refuse the
+  boot with a malformed `erx.` word if the firmware keeps that byte; treat space, tab, CR and
+  LF as separators in both.
 * [Low] live, host-link client (`tools/lib/erx/hostlink_client.rb`): it has no
   host tests of its own, only the production image's host link boot; drive it
   against `erx_hostlink_session` on stock OTP or a scripted IO (credit, hello
