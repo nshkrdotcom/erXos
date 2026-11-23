@@ -19,9 +19,9 @@ module Erx
   # numbers, with a RAM number that is not a whole number of MiB, with a root_withheld that
   # is not a positive number of bytes, or with a site_leaves_out that is not a list of
   # domain names, is refused when it is loaded, before any tool uses it. A board's header
-  # map, the record's header, is checked as the record loads too (HeaderMap); header is the
+  # map, the record's pins, is checked as the record loads too (HeaderMap); pins is the
   # checked map, nil for a board without one.
-  Platform = Data.define(:name, :record, :header)
+  Platform = Data.define(:name, :record, :pins)
   class Platform
     # The board the QEMU harnesses and `tools/erx` build for when no caller names another:
     # QEMU's virt machine, the development target.
@@ -59,6 +59,11 @@ module Erx
       (kmem + FIASCO_SUPERPAGE - 1) / FIASCO_SUPERPAGE * FIASCO_SUPERPAGE
     end
 
+    # Every key a record may hold; a key outside this list, a stale or a misspelled one, is
+    # refused, since the reader would otherwise go on without what the key was meant to say.
+    KEYS = %w[console cpuset fiasco_reserve firmware_requests hostlink msi_frame name pins ram_bytes ram_first
+              root_withheld site_leaves_out units].freeze
+
     # The record's fields in whole MiB, each checked at construction.
     MIB_FIELDS = { 'ram_first' => 0.., 'ram_bytes' => 1.., 'fiasco_reserve' => 1.. }.freeze
 
@@ -66,6 +71,8 @@ module Erx
       raise Error, "#{self.class.record_path(name)}: a platform record is a JSON object" unless record.is_a?(Hash)
       raise Error, "#{self.class.record_path(name)}: names #{record['name'].inspect}, not #{name}" unless record['name'] == name
       raise Error, "#{self.class.record_path(name)}: units must be a list" unless record['units'].is_a?(Array)
+      unknown = record.keys - KEYS
+      raise Error, "#{self.class.record_path(name)}: unknown key #{unknown.first.inspect}" unless unknown.empty?
 
       MIB_FIELDS.each do |field, mib|
         bytes = record.fetch(field) { raise Error, "#{self.class.record_path(name)}: no #{field}" }
@@ -84,12 +91,12 @@ module Erx
         (leaves_out.is_a?(Array) && !leaves_out.empty? && leaves_out.uniq.size == leaves_out.size &&
          leaves_out.all? { |domain| domain.is_a?(String) && domain.match?(/\A[a-z0-9][a-z0-9_-]{0,62}\z/) })
 
-      header = begin
+      pins = begin
         HeaderMap.read(record)
       rescue Error => e
-        raise Error, "#{self.class.record_path(name)}: header: #{e.message}"
+        raise Error, "#{self.class.record_path(name)}: pins: #{e.message}"
       end
-      super(name: name, record: record, header: header)
+      super(name: name, record: record, pins: pins)
     end
 
     # The records every board's development manifest takes.

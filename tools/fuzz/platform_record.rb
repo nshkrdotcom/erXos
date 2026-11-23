@@ -32,7 +32,7 @@ module Erx
     # A mutable copy of a plain JSON value, nested containers included.
     def deep_copy(value) = Marshal.load(Marshal.dump(value))
 
-    # A path into the record's header and devices: [key, ...] down to a leaf or a container.
+    # A path into the record's pins and devices: [key, ...] down to a leaf or a container.
     def paths(value, prefix = [])
       children = case value
                  when Hash then value.map { |key, child| [key, child] }
@@ -52,7 +52,7 @@ module Erx
 
     def mutate(record, random)
       result = deep_copy(record)
-      targets = paths(result.slice('header', 'units', 'console', 'hostlink')).reject(&:empty?)
+      targets = paths(result.slice('pins', 'units', 'console', 'hostlink')).reject(&:empty?)
       random.rand(1..3).times do
         path = targets.sample(random: random)
         parent = path[0...-1].reduce(result) { |node, key| child(node, key) }
@@ -77,15 +77,15 @@ module Erx
     end
 
     def exercise(record)
-      header = Platform.new(name: NAME, record: record).header
-      return if header.nil?
+      map = Platform.new(name: NAME, record: record).pins
+      return if map.nil?
 
-      rows = header.rows
+      rows = map.rows
       raise "a map of #{rows.size} rows" unless rows.map(&:gpio) == (0..27).to_a
-      raise "PINS #{header.gpio_mask} past GPIO 27" unless header.gpio_mask < (1 << 28)
-      raise 'a device row without an alternate' unless header.device_rows.all? { |row| (0..5).cover?(row.alternate) }
+      raise "PINS #{map.gpio_mask} past GPIO 27" unless map.gpio_mask < (1 << 28)
+      raise 'a device row without an alternate' unless map.device_rows.all? { |row| (0..5).cover?(row.alternate) }
       raise 'an on-board row on a header pin or with a pull' unless
-        header.onboard.all? { |row| row.gpio >= 28 && (0..5).cover?(row.alternate) && row.pull == :keep }
+        map.onboard.all? { |row| row.gpio >= 28 && (0..5).cover?(row.alternate) && row.pull == :keep }
     rescue Erx::Error
       nil
     end

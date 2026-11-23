@@ -52,9 +52,9 @@ module Erx
 
     # The macros the program takes (header_probe.c): the console's window from platform's
     # record; the GPIO and clock-manager windows' sizes from their SVD devices (devices,
-    # Hardware.devices); the console's receive pin from pins (a Pins::Table); and
+    # Hardware.devices); the console's receive pin from table (a Pins::Table); and
     # revision, the string that names the build. Pure.
-    def defines(platform, devices:, pins:, revision:)
+    def defines(platform, devices:, table:, revision:)
       console = console_device(platform)
       windows = WINDOWS.transform_values { |name| devices.find { |device| device.name == name }&.size }
       missing = windows.select { |_macro, size| size.nil? }.keys
@@ -62,7 +62,7 @@ module Erx
 
       { 'CONSOLE_BASE' => console.fetch('base'), 'CONSOLE_SIZE' => console.fetch('size'), **windows }
         .map { |name, value| format('-D%s=0x%xu', name, value) } +
-        ["-DCONSOLE_RX_PIN=#{console_rx_pin(pins)}", %(-DPROBE_REVISION="#{revision}")]
+        ["-DCONSOLE_RX_PIN=#{console_rx_pin(table)}", %(-DPROBE_REVISION="#{revision}")]
     end
 
     # The record's console device, which must be the mini UART, the console the firmware
@@ -78,8 +78,8 @@ module Erx
 
     # The one header pin, of bank 0, that carries the console's receive signal; an on-board
     # pin may carry it too (GPIO 33's ALT5), but the console is on the header.
-    def console_rx_pin(pins)
-      found = pins.pins.select { |pin| pins.header_pin?(pin.gpio) && pin.functions.include?(CONSOLE_RX) }
+    def console_rx_pin(table)
+      found = table.pins.select { |pin| table.header_pin?(pin.gpio) && pin.functions.include?(CONSOLE_RX) }
       raise Error, "header probe: #{found.size} header pins of the pin table carry #{CONSOLE_RX}, not one" unless found.size == 1
 
       found.first.gpio
@@ -116,7 +116,7 @@ module Erx
 
       Generated.ensure(root: root)
       output = File.join(directory, PROGRAM)
-      defines = defines(platform, devices: Hardware.devices(root: root), pins: Pins.read(root: root, soc: PIN_TABLE),
+      defines = defines(platform, devices: Hardware.devices(root: root), table: Pins.read(root: root, soc: PIN_TABLE),
                                   revision: revision || 'unknown')
       argvs = build_argvs(compiler: compiler, linker: linker, root: root, object: File.join(directory, 'header-probe.o'),
                           output: output, defines: defines, address: QemuPlan::MACHINES.fetch(PLATFORM).loads.image)

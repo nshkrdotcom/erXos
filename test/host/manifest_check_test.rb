@@ -1049,7 +1049,7 @@ class ManifestCheckTest < Minitest::Test
   def test_the_clause_follows_from_the_map
     record = pi_record
     uarts = record.values_at('console', 'hostlink')
-    record.fetch('header').fetch('rows').each do |row|
+    record.fetch('pins').fetch('rows').each do |row|
       row.replace('gpio' => row.fetch('gpio'), 'use' => 'gpio') if uarts.include?(row.fetch('use'))
     end
     admit(pi_source + pi_unit('gpio', '@domain.display'), pi_context(record))

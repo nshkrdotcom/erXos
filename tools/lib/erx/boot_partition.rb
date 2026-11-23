@@ -126,10 +126,10 @@ module Erx
     # * pin_lines: the header map's device rows and on-board rows. The firmware sets no pins
     #   from an overlay, so an overlay's device gets its pins from these lines alone.
     def config_txt(platform, overlays:, build_kind:)
-      header = platform.header
-      raise Error, "#{platform.record_path}: the boot partition needs a header map" if header.nil?
+      map = platform.pins
+      raise Error, "#{platform.record_path}: the boot partition needs the record's pins" if map.nil?
 
-      <<~CONFIG + core_lines(header) + development_lines(build_kind, header) + overlays.map { |name| "dtoverlay=#{name}\n" }.join + pin_lines(header)
+      <<~CONFIG + core_lines(map) + development_lines(build_kind, map) + overlays.map { |name| "dtoverlay=#{name}\n" }.join + pin_lines(map)
         # erXos boot partition for #{platform.name}, written by tools/lib/erx/boot_partition.rb.
         arm_64bit=1
         kernel=#{KERNEL}
@@ -161,16 +161,16 @@ module Erx
     # map's jtag rows (enable_jtag_gpio, which sets GPIO 22 to 27 to ALT4), for a probe
     # when the serial log cannot locate a hang. A release card keeps both off its header,
     # and its jtag rows give no line at all.
-    def development_lines(build_kind, header)
+    def development_lines(build_kind, map)
       return '' unless BuildKind.development?(build_kind)
 
-      "uart_2ndstage=1\n#{"enable_jtag_gpio=1\n" if header.jtag?}"
+      "uart_2ndstage=1\n#{"enable_jtag_gpio=1\n" if map.jtag?}"
     end
 
     # core_freq in MHz, the unit config.txt takes, and core_freq_fixed, for a map whose
     # devices divide the core clock (HeaderMap::Map#core_clock, whole MHz).
-    def core_lines(header)
-      clock = header.core_clock
+    def core_lines(map)
+      clock = map.core_clock
       return '' if clock.nil?
 
       "core_freq=#{clock / 1_000_000}\ncore_freq_fixed=1\n"
@@ -183,8 +183,8 @@ module Erx
     # One gpio=N=aK,pX line for each run of consecutive device or on-board rows of one
     # alternate and pull, written gpio=N-M=... for a run of more than one pin, and without
     # ,pX for on-board rows.
-    def pin_lines(header)
-      runs = (header.device_rows + header.onboard).slice_when do |left, right|
+    def pin_lines(map)
+      runs = (map.device_rows + map.onboard).slice_when do |left, right|
         right.gpio != left.gpio + 1 || [right.alternate, right.pull] != [left.alternate, left.pull]
       end
       runs.map do |run|

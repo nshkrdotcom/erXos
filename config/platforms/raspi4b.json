@@ -3,8 +3,8 @@
   "cpuset": 15,
   "console": "/soc/serial@7e215040",
   "hostlink": "/soc/serial@7e201600",
-  "header": {
-    "pins": "bcm2711",
+  "pins": {
+    "soc": "bcm2711",
     "controller": "/soc/gpio@7e200000",
     "rows": [
       {

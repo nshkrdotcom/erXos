@@ -7,9 +7,9 @@ require_relative 'error'
 require_relative 'pins'
 
 module Erx
-  # A platform record's header map, its "header" object (docs/design-header-io.md, "The
+  # A platform record's header map, its "pins" object (docs/design-header-io.md, "The
   # construction: one map of the header" and "On-board pins"), of four keys:
-  # * pins, the SoC's pin table (hw/pins/<pins>.txt);
+  # * soc, the SoC's pin table (hw/pins/<soc>.txt);
   # * controller, the path of the pin controller, the device whose registers set every
   #   bank-0 pin's function;
   # * rows, one for each of GPIO 0 to 27 in order, each a gpio number and a use, and for a
@@ -57,7 +57,7 @@ module Erx
       end
     end
 
-    KEYS = %w[controller onboard pins rows].freeze
+    KEYS = %w[controller onboard rows soc].freeze
     ROW_KEYS = %w[function gpio pull use].freeze
     ONBOARD_KEYS = %w[device function gpio].freeze
     PLAIN_USES = %w[gpio reserved].freeze
@@ -72,21 +72,21 @@ module Erx
     module_function
 
     # The map of record, a platform record whose units Platform has seen to be a list, or nil
-    # when it has no header.
+    # when it has no pins.
     def read(record)
-      return nil unless record.key?('header')
+      return nil unless record.key?('pins')
 
-      header = record.fetch('header')
-      raise Error, 'header must be an object of controller, onboard, pins and rows' unless header.is_a?(Hash) && header.keys.sort == KEYS
+      given = record.fetch('pins')
+      raise Error, 'must be an object of controller, onboard, rows and soc' unless given.is_a?(Hash) && given.keys.sort == KEYS
 
       devices = devices_by_path(record.fetch('units'))
-      controller = header.fetch('controller')
+      controller = given.fetch('controller')
       raise Error, "pin controller #{controller.inspect} is not a device path of the record" unless devices.key?(controller)
 
-      table = Pins.read(root: CODE_ROOT, soc: header.fetch('pins'))
+      table = Pins.read(root: CODE_ROOT, soc: given.fetch('soc'))
       driven = Driven.new(given: DeviceKinds.given(CODE_ROOT), uarts: [record['console'], record['hostlink']].compact)
-      rows = rows(header.fetch('rows'), table: table, devices: devices, driven: driven)
-      onboard = onboard_rows(header.fetch('onboard'), table: table, devices: devices)
+      rows = rows(given.fetch('rows'), table: table, devices: devices, driven: driven)
+      onboard = onboard_rows(given.fetch('onboard'), table: table, devices: devices)
       every = rows + onboard
       check_signals(every, table: table)
       pinned = devices.select { |path, device| driven.driven?(path, device) && controller?(path, table) }.keys

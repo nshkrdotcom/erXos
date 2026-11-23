@@ -2292,7 +2292,7 @@ by side; (f) needs (b) and (c).
   part 4.
 * **(e) The header: I2C, SPI and GPIO**, along
   [design-header-io.md](design-header-io.md). Its packages:
-  1. **The header map.** The platform record's `header`, its pin
+  1. **The header map.** The platform record's `pins`, its pin
      controller and rows, and `hw/pins/bcm2711.txt` from the
      datasheet's Table 94 with its controllers' signals; the record
      reader's checks of the map; `config.txt`'s `gpio=` lines,

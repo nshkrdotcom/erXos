@@ -42,9 +42,9 @@ class BootPartitionTest < Minitest::Test
 
   # A map without jtag rows asks for no JTAG, even on a development card.
   def test_a_map_without_jtag_rows_gives_no_jtag
-    header = PI.record.fetch('header')
-    rows = header.fetch('rows').map { |row| row['use'] == 'jtag' ? { 'gpio' => row.fetch('gpio'), 'use' => 'reserved' } : row }
-    platform = record(header: header.merge('rows' => rows))
+    given = PI.record.fetch('pins')
+    rows = given.fetch('rows').map { |row| row['use'] == 'jtag' ? { 'gpio' => row.fetch('gpio'), 'use' => 'reserved' } : row }
+    platform = record(pins: given.merge('rows' => rows))
     lines = Erx::BootPartition.config_txt(platform, overlays: [], build_kind: 'development').lines(chomp: true)
     assert_includes lines, 'uart_2ndstage=1'
     refute_includes lines, 'enable_jtag_gpio=1'
@@ -54,7 +54,7 @@ class BootPartitionTest < Minitest::Test
   # else, so no pin of a gpio, reserved or jtag row gets a line.
   def test_the_pin_lines_are_the_maps_device_and_onboard_rows
     pins = set_pins(settings('development'))
-    assert_equal (PI.header.device_rows + PI.header.onboard).map(&:gpio), pins
+    assert_equal (PI.pins.device_rows + PI.pins.onboard).map(&:gpio), pins
   end
 
   # The pins each gpio= line sets, in order; a line may name one pin or a range
@@ -87,9 +87,9 @@ class BootPartitionTest < Minitest::Test
     error = assert_raises(Erx::Error) { Erx::BootPartition.config_txt(record(units: units), overlays: [], build_kind: 'release') }
     assert_match(/one core clock in whole MHz/, error.message)
     error = assert_raises(Erx::Error) do
-      Erx::BootPartition.config_txt(Erx::Platform.new(name: 'raspi4b', record: PI.record.except('header')), overlays: [], build_kind: 'release')
+      Erx::BootPartition.config_txt(Erx::Platform.new(name: 'raspi4b', record: PI.record.except('pins')), overlays: [], build_kind: 'release')
     end
-    assert_match(/needs a header map/, error.message)
+    assert_match(/needs the record's pins/, error.message)
   end
 
   def test_the_pl011s_need_one_clock

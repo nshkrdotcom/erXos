@@ -1270,16 +1270,16 @@ module Erx
       # (check_uarts). It runs once every row is placed, so it sees each one that names the
       # holder.
       def check_pin_controller(rows, console, hostlink)
-        header = @context.platform['header']
-        return if header.nil?
+        pins = @context.platform['pins']
+        return if pins.nil?
 
         uarts = [console, hostlink].reject(&:empty?)
-        return unless header.fetch('rows').any? { |row| uarts.include?(row['use']) }
+        return unless pins.fetch('rows').any? { |row| uarts.include?(row['use']) }
 
-        controller = header.fetch('controller')
+        controller = pins.fetch('controller')
         device_tree = @codec.member('mf_selector', 'dt')
         row = platform_device(record_device(controller))
-        invalid("pin controller #{controller.inspect} is no device-tree row", 'context.platform.header') unless
+        invalid("pin controller #{controller.inspect} is no device-tree row", 'context.platform.pins') unless
           row.fetch('selector') == device_tree
         page = register_pages(row)
         controlling = lambda do |unit|
@@ -1343,7 +1343,7 @@ module Erx
       # The checked platform's device row at path, placed or not.
       def record_device(path)
         @context.platform.fetch('units').flat_map { |unit| unit.fetch('devices') }.find { |device| device['path'] == path } ||
-          invalid("pin controller #{path} is no device of the checked platform", 'context.platform.header')
+          invalid("pin controller #{path} is no device of the checked platform", 'context.platform.pins')
       end
 
       # The whole pages a normalized row's register window [base, base + size) lies in, as a

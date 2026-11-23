@@ -20,25 +20,25 @@ class HeaderMapTest < Minitest::Test
   UART0 = '/soc/serial@7e201000'
 
   def test_the_pi_map_is_accepted_with_its_derived_facts
-    header = PI.header
-    assert_equal '/soc/gpio@7e200000', header.controller
+    map = PI.pins
+    assert_equal '/soc/gpio@7e200000', map.controller
     # PINS: GPIO 6, 12, 13 and 16 to 21.
-    assert_equal [6, 12, 13, *16..21].sum { |gpio| 1 << gpio }, header.gpio_mask
-    assert_equal 500_000_000, header.core_clock
-    assert header.jtag?
+    assert_equal [6, 12, 13, *16..21].sum { |gpio| 1 << gpio }, map.gpio_mask
+    assert_equal 500_000_000, map.core_clock
+    assert map.jtag?
     assert_equal({ 2 => [I2C, 0, :none], 3 => [I2C, 0, :none], 4 => [PI.record.fetch('hostlink'), 4, :none],
                    5 => [PI.record.fetch('hostlink'), 4, :up], 7 => [SPI, 0, :none], 8 => [SPI, 0, :none],
                    9 => [SPI, 0, :none], 10 => [SPI, 0, :none], 11 => [SPI, 0, :none],
                    14 => [PI.record.fetch('console'), 5, :none], 15 => [PI.record.fetch('console'), 5, :none] },
-                 header.device_rows.to_h { |row| [row.gpio, [row.use, row.alternate, row.pull]] })
+                 map.device_rows.to_h { |row| [row.gpio, [row.use, row.alternate, row.pull]] })
     # UART0's pins to the Bluetooth controller, CTS0, RTS0, TXD0 and RXD0 in ALT3, with no pull.
     assert_equal({ 30 => [UART0, 'CTS0', 3, :keep], 31 => [UART0, 'RTS0', 3, :keep], 32 => [UART0, 'TXD0', 3, :keep],
                    33 => [UART0, 'RXD0', 3, :keep] },
-                 header.onboard.to_h { |row| [row.gpio, [row.use, row.function, row.alternate, row.pull]] })
+                 map.onboard.to_h { |row| [row.gpio, [row.use, row.function, row.alternate, row.pull]] })
   end
 
   def test_a_board_without_a_header_has_no_map
-    assert_nil Erx::Platform.development(ROOT).header
+    assert_nil Erx::Platform.development(ROOT).pins
   end
 
   # Each case changes the Pi's map in one way and names the diagnostic it must give.
@@ -83,7 +83,7 @@ class HeaderMapTest < Minitest::Test
                                            map['rows'][4] = { 'gpio' => 4, 'use' => 'gpio' }
                                            map['rows'][5] = { 'gpio' => 5, 'use' => 'gpio' }
                                          }, /the record's driven device "\/soc\/serial@7e201600" has no pins/],
-    'an unknown pin table' => [->(map) { map['pins'] = 'bcm2712' }, /bcm2712/],
+    'an unknown pin table' => [->(map) { map['soc'] = 'bcm2712' }, /bcm2712/],
     'on-board rows that are no list' => [->(map) { map['onboard'] = {} }, /onboard must be a list/],
     # GPIO 16 carries CTS0 in ALT3 too, so only the header-pin rule breaks.
     'an on-board row on a header pin' => [->(map) { map['onboard'][0]['gpio'] = 16 },
@@ -106,9 +106,9 @@ class HeaderMapTest < Minitest::Test
   def test_each_refusal_breaks_only_its_rule
     REFUSALS.each do |name, (change, message)|
       record = JSON.parse(JSON.generate(PI.record))
-      change.call(record.fetch('header'))
+      change.call(record.fetch('pins'))
       error = assert_raises(Erx::Error, name) { Erx::Platform.new(name: 'raspi4b', record: record) }
-      assert_match(/\Aconfig\/platforms\/raspi4b\.json: header: /, error.message, name)
+      assert_match(/\Aconfig\/platforms\/raspi4b\.json: pins: /, error.message, name)
       assert_match message, error.message, name
     end
   end
@@ -132,7 +132,7 @@ class HeaderMapTest < Minitest::Test
     devices = record.fetch('units').flat_map { |unit| unit.fetch('devices') }
     devices.find { |device| device['path'] == I2C }.merge!('role' => 'ordinary')
     devices.find { |device| device['path'] == bsc3 }.merge!('role' => 'i2c', 'clock' => 500_000_000)
-    rows = record.fetch('header').fetch('rows')
+    rows = record.fetch('pins').fetch('rows')
     rows[2] = { 'gpio' => 2, 'use' => bsc3, 'function' => 'SDA3', 'pull' => 'none' }
     rows[3] = { 'gpio' => 3, 'use' => bsc3, 'function' => 'SCL3', 'pull' => 'none' }
     rows[4] = { 'gpio' => 4, 'use' => bsc3, 'function' => 'SDA3', 'pull' => 'none' }
@@ -145,15 +145,20 @@ class HeaderMapTest < Minitest::Test
   def test_an_onboard_device_named_like_a_plain_use_is_refused
     record = JSON.parse(JSON.generate(PI.record))
     record.fetch('units').first.fetch('devices') << { 'path' => 'gpio', 'role' => 'ordinary' }
-    record.fetch('header')['onboard'] = [{ 'gpio' => 30, 'device' => 'gpio', 'function' => 'MII_A_CRS' }]
+    record.fetch('pins')['onboard'] = [{ 'gpio' => 30, 'device' => 'gpio', 'function' => 'MII_A_CRS' }]
     error = assert_raises(Erx::Error) { Erx::Platform.new(name: 'raspi4b', record: record) }
     assert_match(/device path gpio has no unit address/, error.message)
   end
 
-  def test_a_header_of_another_shape_is_refused
-    [[], { 'pins' => 'bcm2711' }, PI.record.fetch('header').merge('extra' => 1)].each do |header|
-      error = assert_raises(Erx::Error) { Erx::Platform.new(name: 'raspi4b', record: PI.record.merge('header' => header)) }
-      assert_match(/header must be an object/, error.message)
+  def test_the_old_name_of_the_pins_key_is_refused
+    error = assert_raises(Erx::Error) { Erx::Platform.new(name: 'raspi4b', record: PI.record.merge('header' => PI.record.fetch('pins'))) }
+    assert_match(/unknown key "header"/, error.message)
+  end
+
+  def test_pins_of_another_shape_are_refused
+    [[], { 'soc' => 'bcm2711' }, PI.record.fetch('pins').merge('extra' => 1)].each do |pins|
+      error = assert_raises(Erx::Error) { Erx::Platform.new(name: 'raspi4b', record: PI.record.merge('pins' => pins)) }
+      assert_match(/pins: must be an object/, error.message)
     end
   end
 end

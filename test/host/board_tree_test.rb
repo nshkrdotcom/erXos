@@ -34,11 +34,11 @@ class BoardTreeTest < Minitest::Test
   def test_a_console_other_than_serial0_is_refused
     assert_equal '/soc/serial@7e215040', Erx::BoardTree.console_board(PI).aliases.fetch('serial0')
     uart0 = '/soc/serial@7e201000'
-    rows = PI.record.fetch('header').fetch('rows').map do |row|
+    rows = PI.record.fetch('pins').fetch('rows').map do |row|
       function = { 14 => 'TXD0', 15 => 'RXD0' }[row.fetch('gpio')]
       function ? row.merge('use' => uart0, 'function' => function) : row
     end
-    pl011 = record(console: uart0, header: PI.record.fetch('header').merge('rows' => rows, 'onboard' => []))
+    pl011 = record(console: uart0, pins: PI.record.fetch('pins').merge('rows' => rows, 'onboard' => []))
     assert_raises(Erx::Error) { Erx::BoardTree.console_board(pl011) }
     runner = Erx::Runner.new(owner_root: ROOT, log_dir: File.join(ROOT, 'build/logs'))
     assert_raises(Erx::Error) { Erx::BoardTree.build(root: ROOT, runner: runner, platform: pl011, compiler: 'clang', revision: REVISION) }
@@ -204,7 +204,7 @@ class BoardTreeTest < Minitest::Test
       unit.merge('devices' => [yield(first), *rest])
     end
     # Without the header map, whose rows name devices by the paths these faults change.
-    Erx::Platform.new(name: 'raspi4b', record: PI.record.except('header').merge('units' => units))
+    Erx::Platform.new(name: 'raspi4b', record: PI.record.except('pins').merge('units' => units))
   end
 
   # The number a run of 32-bit cells holds, most significant first.

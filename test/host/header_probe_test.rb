@@ -21,7 +21,7 @@ class HeaderProbeTest < Minitest::Test
   # What HeaderProbe.console_device reads of a platform.
   RecordOnly = Data.define(:record, :record_path)
 
-  def defines(platform = PI, devices: DEVICES) = Erx::HeaderProbe.defines(platform, devices: devices, pins: PINS, revision: 'n1-abc')
+  def defines(platform = PI, devices: DEVICES) = Erx::HeaderProbe.defines(platform, devices: devices, table: PINS, revision: 'n1-abc')
 
   def test_passes_the_record_console_the_svd_windows_and_the_receive_pin
     console = PI.record.fetch('units').flat_map { |unit| unit.fetch('devices') }

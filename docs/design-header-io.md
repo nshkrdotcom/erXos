@@ -22,8 +22,8 @@ header pin 11).
 Decisions every reader needs:
 
 * **One pin map per board decides every pin's use.** The platform
-  record holds a **header map**: the device that sets pin functions, and
-  one row for each of GPIO 0 to 27 naming what the pin is for (a bus
+  record holds a **header map**, its `pins` object: the device that
+  sets pin functions, and one row for each of GPIO 0 to 27 naming what the pin is for (a bus
   device of the record, the console, the host link, JTAG, a reserved
   use, or plain GPIO) and, for a bus pin, its alternate function and
   pull. Everything that depends on pins is generated from that one
@@ -190,11 +190,12 @@ on GPLEV are not shown; the QEMU suite below settles them.
 
 ## The construction: one map of the header
 
-The design rests on one table. The platform record gains `header`: the
-SoC pin table it is checked against (`bcm2711`), the path of its **pin
-controller**, the device whose registers set the pins' functions (on
-the Pi 4 the GPIO controller), the [on-board pins](#on-board-pins)
-below, and one row for each of GPIO 0 to 27, each with a **use** and,
+The design rests on one table. The platform record holds `pins`, of four keys: `soc`, the
+SoC pin table it is checked against (`bcm2711`); `controller`, the path
+of its **pin controller**, the device whose registers set the pins'
+functions (on the Pi 4 the GPIO controller); `onboard`, the
+[on-board pins](#on-board-pins) below; and `rows`, one row for each of
+GPIO 0 to 27, each with a **use** and,
 for a pin a block other than GPIO drives, a **function** and a **pull**:
 
 | Use | Meaning | Function and pull |
@@ -317,7 +318,7 @@ ALT3 ([design-bluetooth.md](design-bluetooth.md#the-hardware)); the
 WiFi chip's SDIO lines on GPIO 34 to 39 are the same case. Rather than
 depend on what the firmware leaves in those pins, `config.txt` sets
 their function, and the header map takes them as its `onboard` list,
-beside `rows`:
+beside `rows` in the record's `pins`:
 
 | GPIO | Device | Function |
 | --- | --- | --- |
@@ -625,7 +626,7 @@ consequence of closing or ending instead of a call a client must make.
 
 | Service | Interface | Parameters | Mount point |
 | --- | --- | --- | --- |
-| `gpio` | `gpio` | `pins`, a set of GPIO numbers, optional, checked by `gpio_grant` to lie in the map's `gpio` rows; without it the grant shows every served pin | `/dev/gpio` |
+| `gpio` | `gpio` | `pins`, a set of GPIO numbers, optional, checked by `gpio_grant` to lie in the header map's `gpio` rows; without it the grant shows every served pin | `/dev/gpio` |
 | `i2c1` | `i2c` | none | `/dev/i2c1` |
 | `spi0` | `spi` | none | `/dev/spi0` |
 | `pwm0` | `pwm` | none | `/dev/pwm0` |
@@ -982,7 +983,7 @@ driver cannot know is `unknown`.
 At build time the record reader refuses a header map as listed above,
 and the manifest check refuses: a holder of the pin controller's unit
 other than no domain, the system domain or a domain holding only such
-units (property 8); a `gpio` row's `pins` outside the map's `gpio` rows;
+units (property 8); a `gpio` row's `pins` outside the header map's `gpio` rows;
 `rtc` rows of one server that disagree, or whose `bus` is not a driven
 `i2c` device of a unit the server holds.
 
