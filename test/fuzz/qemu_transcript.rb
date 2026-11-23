@@ -8,6 +8,10 @@ require 'tmpdir'
 require_relative '../../tools/lib/erx/qemu'
 
 options = { seconds: 2, seed: 1_234_567 }
+# Console log lines of both forms, put among the random bytes so the matcher splits
+# lines that end in one.
+LOG_LINES = ["#7 1.000000 debug space 2: erx: musl: done\r\n".b,
+             "2.000000 notice domain 4 principal 2 system: erx_domain: bt ended\r\n".b].freeze
 parser = OptionParser.new do |arguments|
   arguments.on('--seconds N', Integer) { |value| options[:seconds] = value }
   arguments.on('--seed N', Integer) { |value| options[:seed] = value }
@@ -28,6 +32,7 @@ begin
     serial = File.join(directory, 'serial.log')
     until Process.clock_gettime(Process::CLOCK_MONOTONIC) >= deadline
       payload = random.bytes(random.rand(131_073))
+      random.rand(64).times { payload.insert(random.rand(payload.bytesize + 1), LOG_LINES.sample(random: random)) }
       if random.rand(2).zero?
         payload = "erXos\n".b + payload
       end

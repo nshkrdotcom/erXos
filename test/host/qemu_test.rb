@@ -365,6 +365,31 @@ class QemuTest < Minitest::Test
     assert_match(/second/, error.message)
   end
 
+  # The console writes a log line whole, wherever it lands (docs/design-live.md, "Log lines
+  # and program output"): here two land between the shell's answer and its newline, as a
+  # crash-looping domain's records did in the raspi4b card cell, and the answer still
+  # matches its anchored checkpoint.
+  def test_log_lines_within_an_answer_are_set_aside
+    points = [{ name: 'answer', pattern: /\A\{ok,true\}\r*\n\z/n, seconds: 2 }.freeze]
+    transcript = Erx::Transcript.new(checkpoints: points)
+    File.write(@serial, "{ok,true}#30 22.880846 debug space 1: error: label: {gen_server,terminate}\r\n" \
+                        "28.519606 notice domain 4 principal 2 system: erx_domain: bt ended\r\n\r\n")
+    assert transcript.consume(@serial, elapsed: 0.1)
+  end
+
+  # A log line that lands after a prompt is a line of its own, as on the terminal, so a
+  # checkpoint anchored at a record's start matches it, the next record too while the
+  # prompt waits, and the prompt's own line once the program ends it.
+  def test_a_log_line_after_a_prompt_starts_its_own_line
+    points = [{ name: 'card', pattern: /\A#[0-9]+ [0-9.]+ debug space 4: erx_blk: SD card/n, seconds: 2 }.freeze,
+              { name: 'done', pattern: /\A#[0-9]+ [0-9.]+ debug space 2: erx: musl: done\r\n\z/n, seconds: 2 }.freeze,
+              { name: 'echo', pattern: /\A% 1\+1\.\r\n\z/n, seconds: 2 }.freeze]
+    transcript = Erx::Transcript.new(checkpoints: points)
+    File.write(@serial, "% #20 18.141728 debug space 4: erx_blk: SD card, standard capacity\r\n" \
+                        "#21 18.200000 debug space 2: erx: musl: done\r\n1+1.\r\n")
+    assert transcript.consume(@serial, elapsed: 0.1)
+  end
+
   # A checkpoint's verify may take long (the display suite reads the screen in it); the
   # next checkpoint's seconds count from when the verify returned, not from its match.
   def test_a_verify_does_not_spend_the_next_checkpoint_seconds

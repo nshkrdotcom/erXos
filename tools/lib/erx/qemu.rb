@@ -593,15 +593,24 @@ module Erx
   # The matcher consumes complete serial lines exactly once. It retains a
   # bounded unfinished line so serial splits cannot lose a checkpoint. A
   # checkpoint may also name a verifier, called with the matching line, which
-  # raises Erx::Error when that line's content must fail the boot; bytes the
-  # harness types into the guest's serial line once that line has come; and, as
-  # interleaved, a pattern for text that ends at a newline and is written among
-  # the bytes it waits for, such as a log line in the middle of a program's
-  # output, which is set aside while it waits.
+  # raises Erx::Error when that line's content must fail the boot, and bytes the
+  # harness types into the guest's serial line once that line has come.
+  #
+  # The console writes a log line whole wherever it lands, in the middle of a
+  # program's line too (docs/design-live.md, "Log lines and program output"). So
+  # the matcher reads a line that ends in a log line as two: the log line is a
+  # line of its own, and the bytes before it, the head, go back in front of the
+  # unread bytes to join what is written after the log line. Checkpoints then see
+  # the program's lines as if no log line had been written, and each log line
+  # whole from its start, however many land and wherever.
   class Transcript
     MAX_LINE_BYTES = 65_536
+    # A log line as the console writes it, at the end of a line: a kernel record,
+    # "#SEQ SECONDS.MICROSECONDS LEVEL TEXT" (kernel/core/log.c), or a domain's,
+    # "SECONDS.MICROSECONDS LEVEL domain ID principal P NAME: TEXT" (erx_syslog_core).
+    LOG_LINE_END = /(?:\#[0-9]+ [0-9]+\.[0-9]{6} [a-z]+ |[0-9]+\.[0-9]{6} [a-z]+ domain [0-9]+ principal )[^\n]*\n\z/n
     REQUIRED_KEYS = %i[name pattern seconds].freeze
-    OPTIONAL_KEYS = %i[verify type interleaved].freeze
+    OPTIONAL_KEYS = %i[verify type].freeze
     attr_reader :observed
 
     def initialize(checkpoints:)
@@ -614,10 +623,10 @@ module Erx
       raise Error, 'invalid transcript checkpoint' unless checkpoints.all? { |point| valid_checkpoint?(point) }
 
       @checkpoints = checkpoints.map(&:dup).each(&:freeze).freeze
-      # Each checkpoint's interleaved text as the end of a line, or nil.
-      @line_ends = @checkpoints.map { |point| point[:interleaved]&.then { |text| /#{text}\z/n } }.freeze
       @observed = []
       @pending = ''.b
+      # The bytes at the front of @pending that are a head already searched for a log line.
+      @head_bytes = 0
       @offset = 0
       @checkpoint_started = 0.0
       @typed = ''.b
@@ -672,15 +681,22 @@ module Erx
         point.fetch(:pattern).is_a?(Regexp) &&
         point.fetch(:seconds).is_a?(Integer) && point.fetch(:seconds).positive? &&
         point.fetch(:verify, -> {}).respond_to?(:call) &&
-        point.fetch(:type, '').is_a?(String) &&
-        point.fetch(:interleaved, //).is_a?(Regexp)
+        point.fetch(:type, '').is_a?(String)
     end
 
-    # The bytes of line before the interleaved text it ends in, while the checkpoint at index
-    # waits; nil when line ends in none.
-    def interleaved_head(index, line)
-      match = @line_ends.fetch(index)&.match(line)
-      match.pre_match if match && !match[0].empty?
+    # The log line that line ends in, with its head put back in front of @pending, or
+    # line itself when it ends in none. The search starts past the head line carries
+    # from an earlier split, which holds no log line, so a long head that many log
+    # lines interrupt is searched once.
+    def log_line_alone(line)
+      start = @head_bytes
+      @head_bytes = 0
+      log_line = LOG_LINE_END.match(line, start)
+      return line if log_line.nil? || log_line.pre_match.empty?
+
+      @pending.prepend(log_line.pre_match)
+      @head_bytes = log_line.pre_match.bytesize
+      log_line[0]
     end
 
     def check_deadline(elapsed:)
@@ -696,13 +712,8 @@ module Erx
         raise Error, 'serial line exceeds transcript bound' if newline > MAX_LINE_BYTES
         line = @pending.slice!(0, newline + 1)
         next if done?
+        line = log_line_alone(line)
         point = @checkpoints.fetch(@observed.size)
-        # Interleaved text is set aside, and the bytes before it start the next line again,
-        # so they join the bytes written after it.
-        if (head = interleaved_head(@observed.size, line))
-          @pending.prepend(head)
-          next
-        end
         next unless point.fetch(:pattern).match?(line)
 
         # The next point is due from when the verify returned, however long it read.

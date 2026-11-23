@@ -1099,13 +1099,9 @@ module Erx
       CONSOLE_PLAIN_WORD = 'erx.arg=plainword'
       # An output longer than any FIFO, so the driver writes it through the transmit check.
       CONSOLE_LONG_BYTES = 20_000
-      # A log line as the console writes it, whole up to its newline: a kernel record,
-      # "#SEQ SECONDS.MICROSECONDS LEVEL TEXT" (kernel/core/log.c), or a domain's,
-      # "SECONDS.MICROSECONDS LEVEL domain ID principal P NAME: TEXT" (erx_syslog_core).
-      CONSOLE_LOG_LINE = /(?:\#[0-9]+ [0-9]+\.[0-9]{6} [a-z]+ |[0-9]+\.[0-9]{6} [a-z]+ domain [0-9]+ principal )[^\n]*\n/n
       # The check that the shell's CONSOLE_LONG_BYTES x's all came. A log line can land among
-      # them (docs/design-live.md, "Log lines and program output"), so each is set aside.
-      LONG_OUTPUT = { name: 'long-output', pattern: /x{#{CONSOLE_LONG_BYTES}}/n, interleaved: CONSOLE_LOG_LINE }.freeze
+      # them (docs/design-live.md, "Log lines and program output"); the transcript sets it aside.
+      LONG_OUTPUT = { name: 'long-output', pattern: /x{#{CONSOLE_LONG_BYTES}}/n }.freeze
       # A tab and an escape sequence in a debug log record, typed as byte values.
       LOG_AFTER_HANDOFF = %(erx_log:debug(<<"after",9,"handoff",27,"[1m">>).\r)
       # The record LOG_AFTER_HANDOFF logs, as the console writes it: whole, ending in CR-LF,
