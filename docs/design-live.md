@@ -1195,6 +1195,22 @@ becomes the byte NUL at one place alone, where it leaves erXos's code for
 a reader of bytes, a program; every reader that collects lines refuses
 the line instead.
 
+**The invariant.** Every character a group takes after a loss lands in a
+damaged request, until the user discards a damaged request: empties its
+edited buffer, or ends it with `Ctrl-C`. A damaged request finishes no
+line, so no line that follows a loss runs until the user has acted. The
+rules below derive it for any interleaving of input, nested reads and
+signals. Every loss reaches the group in order before the bytes after it
+(the hops below, and a flush that drops a loss reports it ahead of its
+signal). When it arrives it damages every unfinished request. From then
+on the group takes a character only for its current request, which is
+either one that was unfinished at the loss, damaged since, or one
+started later, which starts damaged while any unfinished request is
+damaged. A request loses its damage only when its own buffer is emptied
+or it ends; while one damaged request is still unfinished, every new one
+starts damaged again. So the only ways out are the user's own discard of
+a damaged request, or the end of input, after which no character comes.
+
 | Hop | The end of input | A loss |
 | --- | --- | --- |
 | console UART driver to `erx_console` | `erx_console_eof` | `erx_console_lost`, after the bytes that certainly came before the loss |
@@ -1395,29 +1411,38 @@ tty drops for room, or a gap in the master's numbers, reads as a NUL where
 FreeBSD drops silently. Each keeps a damaged line damaged.
 
 **The group and `edlin`.** Each of the group's input requests carries a
-damage of its own, created undamaged with the request, saved with it
-when `group` sets the request aside to serve another read and restored
-with it when it resumes, and gone with the request at its answer.
-`group` passes the current request's damage into every call of `edlin`'s
-editing and takes it back from the result,
+damage of its own, saved with it when `group` sets the request aside to
+serve another read and restored with it when it resumes, and gone with
+the request at its answer. `group` passes the current request's damage
+into every call of `edlin`'s editing and takes it back from the result,
 `edlin:edit_line(Input, Cont, Damage)`, so a line state `group` rebuilds
 during a read (a history move, a search, a format, an external editor)
-cannot lose it.
+cannot lose it. The group's damage is not stored anywhere: it is the
+derived fact that some unfinished request of the group is damaged. Three
+rules use it, and every way a request changes is one of them:
 
-A loss belongs to no one request. The group's one ask outlives a nested
-read, an Erlang shell's `io:get_line/1` or `io:get_password/0` from
-another process while a prompt waits, so whichever request is current
-takes the answer, and the bytes the loss stands for may have been meant
-for a request set aside. So a loss damages every unfinished request of
-the group, the current one and every one set aside, and the end of one
-request clears only its own damage. With a prompt holding
+* **A loss damages every unfinished request**, the current one and every
+  one set aside, since the group's one ask outlives a nested read, an
+  Erlang shell's `io:get_line/1` or `io:get_password/0` from another
+  process, and whichever request is current takes the answer, so the
+  bytes the loss stands for may have been meant for any of them. A
+  character `edlin`'s bounds refuse arrived for the current request, so
+  it damages that request alone.
+* **A request starts with the group's damage**: damaged when any
+  unfinished request of the group is damaged, undamaged otherwise.
+* **A request's damage ends only with that request**: when the user
+  empties its own edited buffer, or when the request ends; the end of
+  one request clears nothing of another's.
+
+Two nestings show the rules at work, with no case of their own. A prompt holding
 `file:delete("`, a dropped frame holding `scratch/`, then
-`io:get_password/0` from another process and a `Ctrl-C`, the loss
-damages the password read and the prompt alike; the interrupt ends the
-password read, and the prompt resumes damaged, so `important").` and
-Enter run nothing. A character `edlin`'s bounds refuse arrived for the
-current request, so it damages that request alone. Each of the group's
-modes then does one thing:
+`io:get_password/0` from another process and a `Ctrl-C`: the loss
+damages both reads, the interrupt ends the password read, and the prompt
+resumes damaged. The other nesting, a helper's `io:get_line/1` damaged
+by a loss of `% ` from a pasted `% file:delete("important").`, and then
+the shell's next command read: that read starts damaged, because the
+helper's read is unfinished and damaged, so the paste's rest runs
+nothing. Each of the group's modes then does one thing:
 
 * **Edited** (`edlin`): a loss damages the read, drops any escape sequence
   under way and rings the bell, and so does an inserted character that
@@ -1436,24 +1461,25 @@ modes then does one thing:
   discard or by an edit that removes text and leaves nothing (`Ctrl-U` at
   the end of a one-line buffer, erasing its last character), or when the
   read ends, as `Ctrl-C` ends it at a prompt. A key that leaves an
-  already-empty buffer empty ends nothing, so a loss before the first
-  character damages the read until text typed after it is emptied again.
-  Moving through the history or searching it keeps the damage, since the
-  line it shows replaces what the user sees, not what the read lost. The
-  rest of a damaged paste joins the line, and each newline in it rings
-  the bell, but nothing runs until the user has emptied the buffer.
-* **Dumb** (no editing, cooked collection): the line being collected when
-  the loss arrives is dropped through its newline, with the bell, and the
-  read goes on with the next line; at the end of input the damaged line
-  is dropped and the read ends. The reader never gets a line that lost
-  input. Dumb mode has no hold over later lines, since only an editor sees
-  a user's keys; on a console UART it is reached only by reads with echo
-  off, such as `io:get_password/0`, because both UART drivers report a
-  terminal.
-* **Raw** (`terminal_mode` raw, characters as they arrive): there is no
-  line to refuse, so the reader gets the character NUL, as a program's
-  byte read does. `erx_console` puts no group in raw mode, so no reader
-  meets this case on the console today.
+  already-empty buffer empty ends nothing, so a read that starts damaged,
+  or a loss before the first character, keeps the damage until text typed
+  after it is emptied again. Moving through the history or searching it
+  keeps the damage, since the line it shows replaces what the user sees,
+  not what the read lost. The rest of a damaged paste joins the line, and
+  each newline in it rings the bell, but nothing runs until the user has
+  emptied the buffer.
+* **Dumb** (no editing, cooked collection): a damaged read returns no
+  line: each line it collects is dropped through its newline, with the
+  bell, until the read ends, by `Ctrl-C` or at the end of input. Dumb
+  mode has no buffer the user can empty, so `Ctrl-C` is its one discard.
+  On a console UART it is reached only by reads with echo off, such as
+  `io:get_password/0`, because both UART drivers report a terminal, and
+  a pipe, the other dumb reader, makes no loss.
+
+`erx_console` puts no group in raw mode (`terminal_mode` raw, characters
+as they arrive), so no raw-mode request exists on a console and this
+design gives it no rule; a console that offered raw mode would need one
+that keeps the invariant.
 
 **Ordering.** Each hop is one sender to one receiver: the driver to its
 console and a console to its group are Erlang messages between one pair
@@ -1521,8 +1547,9 @@ obligations are these, each with one owner:
   operation serves both reads (`erx_tty`);
 * every place that drops input makes a loss there: the drivers' placement
   rule, the tty's bound and `edlin`'s bounds;
-* a loss damages every unfinished request of a group, and each request
-  carries its damage through suspension and every
+* a loss damages every unfinished request of a group, a request starts
+  damaged while any unfinished one is, and each request carries its damage
+  through suspension and every
   `edlin` call (`group`), and `edlin`'s one finishing function refuses a
   damaged read;
 * both consoles read on demand through one reader, and every driver has one
@@ -1574,16 +1601,18 @@ fail, so the case proves the code under it ran.
 | the same: a loss before the first character, `Ctrl-U` on the empty buffer, text, Enter | no line finishes | a key that leaves an empty buffer empty clearing the damage |
 | the same, a multi-line edit: a loss in its second line, that line emptied, Enter | no line finishes until the first line is emptied too | the current line's emptiness taken for the buffer's |
 | the same: a loss, a history move, Enter | no line finishes | the history move rebuilding the line state without the damage |
-| the same, nested edited reads: read A damaged, read B from another process, B's line, then A resumes and Enter | B's line is returned; A finishes no line | the damage kept per process, which B's start clears |
-| the same, nested password read: read A undamaged, `io:get_password/0` B with a loss, then B's next line, then A's Enter | B returns its next line; A finishes no line | a loss damaging only the current request |
+| the same, nested edited reads: read A damaged, then read B from another process, B's line and Enter; B's buffer emptied, a new line and Enter; then A resumes and Enter | B starts damaged and finishes no line until its buffer is emptied, then returns the new line; A finishes no line | B starting undamaged |
+| the same, the reversed nesting: a helper's `io:get_line/1` A takes a loss of `% ` from a pasted `% file:delete("important").`, the evaluation ends and the shell's command read B starts, then `file:delete("important").` and Enter | B finishes no line | B starting undamaged while A is damaged |
+| the same, a refused character: B damaged by a grapheme cluster of 33 codepoints, then read C from another process, a line and Enter | C starts damaged and finishes no line | a request started while another is damaged by a refusal starting undamaged |
+| the same, nested password read: read A undamaged, `io:get_password/0` B with a loss, then B's next line, then `Ctrl-C`, then A's Enter | B returns no line and ends interrupted; A resumes damaged and finishes no line | a loss damaging only the current request |
 | the same, prompt A holding `file:delete("`, frame 1 (`scratch/`) dropped, `io:get_password/0` B from another process, frame 2 `Ctrl-C`, frame 3 `important").` and Enter | B ends interrupted; A resumes damaged and finishes no line | the end of B clearing A's damage |
-| the same sequence with `Ctrl-\` in frame 2, B then reading a clean line | B drops its damaged line and returns the clean one; A resumes damaged and finishes no line | a loss damaging only the current request |
+| the same sequence with `Ctrl-\` in frame 2, then a clean line for B | B returns no line; A stays damaged under it | a damaged dumb read returning the next line |
 | the same sequence with `Ctrl-Z` in frame 2 | as with `Ctrl-\` | as with `Ctrl-\` |
 | the same: a short command with a grapheme cluster of 33 codepoints, Enter | no line finishes | the refused character dropped with the bell alone |
 | the same: a line at 65,536 codepoints, one more character, Enter; and a yank the bound refuses, Enter | the first finishes no line; the second finishes the line unchanged | a refused yank damaging the read |
 | the same: a loss at the end of input | the line is dropped and the read ends | the line returned |
 | the same: a typed NUL, and NUL after `ESC [ 3` | the NUL is dropped and the line finishes; no crash | NUL read as a character |
-| the same, dumb mode: `pass`, a loss, `word` and a newline, then `next` and a newline | the read returns `next` | the damaged line returned |
+| the same, dumb mode: `pass`, a loss, `word` and a newline, then `next` and a newline, then `Ctrl-C` | no line is returned; the read ends interrupted, and the next read is undamaged | the damaged read returning `next` |
 | `erx_console_input_fuzz` | losses in its alphabet; no crash, and no line with a loss in it is returned | the console answering a loss as NUL |
 
 The QEMU console suite pastes over the UART at the line's rate and

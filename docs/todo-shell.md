@@ -790,7 +790,7 @@ to the corpus and follow rc
      at once and a pipe's once there is room; a loss, and the relay's `lost` event, damage the group's read, and a
      loss drops a cut character and resets `erx_console_keys`;
   5. `group` and `edlin`: the damage in each input request's state, a loss damaging every unfinished request, `edlin:edit_line/3`, `lost` as an input,
-     refused bounds as losses, refusal through `finish/4` until the buffer is emptied, dumb and raw modes; delete
+     refused bounds as losses, refusal through `finish/4` until the buffer is emptied, a request starting with the group's derived damage, dumb mode; delete
      the hold, the NUL scan, `edlin_key`'s NUL rule and `group`'s history rule; `test/host/edlin_marker_test.rb`
      becomes `edlin_lost_test.rb`.
 * [Low] shell, `prim_tty` `split_cols/6` counts a caret as two characters, so after a vertical move in a

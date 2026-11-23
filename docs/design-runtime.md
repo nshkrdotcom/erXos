@@ -687,12 +687,15 @@ line of a multi-line edit together, or when the read ends; a key that leaves an 
 buffer empty, a history move and a search keep it. `group` keeps it in each input
 request's state, and a loss damages every unfinished request, the current one
 and each one set aside, since the group's one ask may be answered to a request
-other than the one the lost bytes were meant for; it is created undamaged with the request, saved and restored with it when
+other than the one the lost bytes were meant for, and a request starts damaged while
+any unfinished request of the group is damaged, the group's damage being that derived
+fact and stored nowhere; the damage is saved and restored with its request when
 `group` sets the request aside for a nested read and resumes it, and gone with its
 answer, and passes it into every `edlin` call, so no line state `group` rebuilds can lose
-it, and the end of one request clears only its own. In dumb mode `group` drops a line that lost input
-through its newline and reads on, and in raw mode hands the reader the character NUL, as
-a program's byte read gives a loss. So no shell that edits with `edlin`, the Erlang shell
+it, and the end of one request clears only its own. In dumb mode a damaged read returns no line
+until `Ctrl-C` or the end of input ends it, and `erx_console` puts no group in raw mode. So
+every character a group takes after a loss lands in a damaged request until the user
+discards one, and no shell that edits with `edlin`, the Erlang shell
 or `erx_shell`, runs a line that lost bytes; the user empties the buffer to go on. Stock
 has no loss event. `test/host/edlin_lost_test.rb` pins both, through `edlin` and through a
 group, nested reads among them.
