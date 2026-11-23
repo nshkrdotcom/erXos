@@ -54,7 +54,6 @@
 -define(EVENTS, 8).
 -define(D1, 1).
 -define(D2, 2).
--define(RELEASE, <<7:256>>).
 -define(LIMIT, 1 bsl 20).
 -define(HASH_A, <<1:256>>).
 -define(HASH_B, <<2:256>>).
@@ -103,16 +102,14 @@ the_verdicts_refuse_in_order_before_anything_is_sent_test() ->
               end,
     Short = (request(?F1_MANIFEST))#{charge := no_memory},
     Refused({missing, [?HASH_A]}, Short#{missing := [?HASH_A]}, T1),
-    Small = confirmed(erx_code_target:new(#{lifeline => lifeline(0), overlay_limit => 65536,
-                                                supervised_flag => true})),
-    Refused(overlay_full, Short, Small),
+    Refused(overlay_full, Short#{overlay_limit := 65536}, T1),
     Refused(no_memory, Short, T1),
-    Free = erx_code_target:new(#{lifeline => lifeline(0), overlay_limit => none}),
+    Free = erx_code_target:new(#{lifeline => lifeline(0), supervised => false}),
     ?assertMatch({_, [{begin_load, Alias, _, _}, {send, _, {erx_code_load, Alias, _}}]},
                  erx_code_target:load(f1, Alias, Short, Free)).
 
 a_load_into_a_domain_no_specification_restarts_answers_ok_none_test() ->
-    T0 = erx_code_target:new(#{lifeline => lifeline(0), overlay_limit => none}),
+    T0 = erx_code_target:new(#{lifeline => lifeline(0), supervised => false}),
     Alias = make_ref(),
     {T1, _} = erx_code_target:load(f1, Alias, request(?F2_MANIFEST), T0),
     T2 = serves(T1, Alias, [{?HASH_B, 0, 10}]),
@@ -168,20 +165,6 @@ pieces_come_only_from_stored_blobs_test() ->
     ?assertMatch({_, [{end_load, Alias}, {reply, f1, {error, invalid}}]},
                  erx_code_target:received(?D1, {erx_code_get, Alias, ?HASH_B, 0}, T4)).
 
-%% An overlay loaded over another release is dropped at the next start, which then
-%% carries no module.
-an_overlay_over_another_release_is_dropped_at_the_start_test() ->
-    T1 = confirmed(supervised()),
-    Alias = make_ref(),
-    {T2, _} = erx_code_target:load(f1, Alias, request(?F2_MANIFEST), T1),
-    T3 = serves(T2, Alias, [{?HASH_B, 0, 10}]),
-    {T4, _} = erx_code_target:received(?D1, {erx_code_loaded, Alias, ok}, T3),
-    Start = make_ref(),
-    {T5, Actions} = erx_code_target:started(Start, (domain(?D2))#{release := <<8:256>>}, ?STORED, T4),
-    ?assertEqual([{log, {overlay_dropped, 1}}, {begin_load, Start, pid(?D2, domain), []},
-                  {send, pid(?D2, agent), {erx_code_load, Start, []}}], Actions),
-    ?assertEqual({2, []}, erx_code_target:overlay(T5)).
-
 %% A start load answered with a refusal that names no module of it, as invalid as any
 %% other stray answer, fails the start: its domain is closed, the overlay stays and the
 %% failure is logged.
@@ -196,18 +179,6 @@ a_failed_start_load_closes_the_domain_and_keeps_the_overlay_test() ->
     ?assertEqual([{unalias, f}, {reply, f1, {error, busy}}],
                  element(2, erx_code_target:load(f1, f, request(?F2_MANIFEST), T2))).
 
-%% Until a supervised specification's domains carry the supervised flag, their code
-%% servers would run a batch whether or not it is published, so a supervised target made
-%% without the flag is sent nothing: no load, and no start load.
-a_supervised_target_without_the_flag_is_sent_nothing_test() ->
-    T0 = erx_code_target:new(#{lifeline => lifeline(0), overlay_limit => ?LIMIT}),
-    Start = make_ref(),
-    ?assertEqual({T0, [{unalias, Start}]}, erx_code_target:started(Start, domain(?D1), ?STORED, T0)),
-    Alias = make_ref(),
-    ?assertEqual({T0, [{unalias, Alias}, {reply, f1, {error, enotsup}}]},
-                 erx_code_target:load(f1, Alias, request(?F1_MANIFEST), T0)),
-    ?assertEqual({T0, [{reply, r, {error, enotsup}}]}, erx_code_target:reset(r, ?D1, T0)).
-
 %% The load erx_code_target sends for the largest load, code_modules_max modules with
 %% 255-byte names and sizes past a small integer, fits the code protocol's load floors
 %% (docs/design-live.md, "Floors"), which tools/lib/erx/abi_code_bounds.rb computes from
@@ -219,11 +190,11 @@ the_largest_load_fits_the_load_floors_test() ->
     Entries = [{<<I:32, (binary:copy(<<$m>>, 251))/binary>>, <<I:256>>, 1 bsl 63}
                || I <- lists:seq(1, ?ERX_CODE_MODULES_MAX)],
     Stored = maps:from_list([{Hash, Size} || {_, Hash, Size} <- Entries]),
-    Target = erx_code_target:new(#{lifeline => lifeline(0), overlay_limit => length(Entries) bsl 63,
-                                   supervised_flag => true}),
+    Target = erx_code_target:new(#{lifeline => lifeline(0), supervised => true}),
     Alias = make_ref(),
     {_, Sent} = erx_code_target:load(f1, Alias, #{domain => domain(?D1), manifest => Entries, missing => [],
-                                                  stored => Stored, charge => ok},
+                                                  stored => Stored, charge => ok,
+                                                  overlay_limit => length(Entries) bsl 63},
                                      confirmed(Target)),
     ?assertMatch([_], [Message || {send, _, {erx_code_load, _, _} = Message} <- Sent], Sent),
     [Load] = [Message || {send, _, {erx_code_load, _, _} = Message} <- Sent],
@@ -232,7 +203,7 @@ the_largest_load_fits_the_load_floors_test() ->
     ?assert(erts_debug:flat_size(Load) =< ?ERX_CODE_LOAD_MESSAGE_HEAP_MIN).
 
 supervised() ->
-    erx_code_target:new(#{lifeline => lifeline(0), overlay_limit => ?LIMIT, supervised_flag => true}).
+    erx_code_target:new(#{lifeline => lifeline(0), supervised => true}).
 
 %% D1 started, with its empty start load confirmed.
 confirmed(T0) ->
@@ -254,10 +225,11 @@ serves(T0, Alias, Pieces) ->
                 end, T0, Pieces).
 
 request(Manifest) ->
-    #{domain => domain(?D1), manifest => Manifest, missing => [], stored => ?STORED, charge => ok}.
+    #{domain => domain(?D1), manifest => Manifest, missing => [], stored => ?STORED, charge => ok,
+      overlay_limit => ?LIMIT}.
 
 domain(Id) ->
-    #{id => Id, pid => pid(Id, domain), agent => pid(Id, agent), ready => true, release => ?RELEASE}.
+    #{id => Id, pid => pid(Id, domain), agent => pid(Id, agent), ready => true}.
 
 %% Fixed pids, so the explorer's states compare equal across runs of the same events.
 pid(Id, domain) -> list_to_pid("<0.10" ++ integer_to_list(Id) ++ ".0>");
@@ -361,8 +333,7 @@ witnessed(M) ->
         ++ [{served, H, O} || {H, O} <- pieces(), lists:member({H, O}, Served)].
 
 new_core(Incarnation) ->
-    erx_code_target:new(#{lifeline => lifeline(Incarnation), overlay_limit => ?LIMIT,
-                          supervised_flag => true}).
+    erx_code_target:new(#{lifeline => lifeline(Incarnation), supervised => true}).
 
 %% The steps the model allows from M: events, which cost one, and the connection's
 %% deliveries and drops, which cost nothing.
@@ -432,7 +403,7 @@ event(Request, M, Aliases) when Request =:= f1; Request =:= f2 ->
         #cs{ready = Ready} ->
             Manifest = case Request of f1 -> ?F1_MANIFEST; f2 -> ?F2_MANIFEST end,
             Resolved = #{domain => (domain(?D1))#{ready := Ready}, manifest => Manifest,
-                         missing => [], stored => ?STORED, charge => ok},
+                         missing => [], stored => ?STORED, charge => ok, overlay_limit => ?LIMIT},
             core(erx_code_target:load(Request, maps:get(Request, Aliases), Resolved, M#m.core), Asked);
         _ ->
             {Asked, [{reply, Request, {error, scope}}]}

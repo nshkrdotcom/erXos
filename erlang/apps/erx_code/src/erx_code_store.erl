@@ -43,8 +43,8 @@ frees blobs only for an upload that starts, which a one-piece blob that then fai
 has done.
 """.
 
--export([new/1, read_request/1, read_manifest/1, missing/2, put_piece/5, plan_load/2, commit/3, history/2,
-         summary/1]).
+-export([new/1, read_request/1, read_manifest/1, missing/2, sizes/2, put_piece/5, plan_load/2, commit/3,
+         history/2, summary/1]).
 -export_type([store/0, hash/0, name/0, manifest/0, request/0, plan/0, history/0, put_reply/0,
               put_error/0, manifest_error/0, time/0]).
 
@@ -204,6 +204,11 @@ missing(#{blobs := Blobs}, Hashes) ->
                             {[Hash | Acc], Seen#{Hash => true}}
                     end, {[], #{}}, Hashes),
     lists:reverse(Missing).
+
+-doc "The stored size of each blob of `Hashes` the store holds, by its hash.".
+-spec sizes(store(), [hash()]) -> #{hash() => pos_integer()}.
+sizes(#{blobs := Blobs}, Hashes) ->
+    maps:from_list([{Hash, byte_size(Blob)} || Hash <- Hashes, #{Hash := Blob} <- [Blobs]]).
 
 -doc """
 The store after one piece of the blob named `Hash`, of `Size` bytes, at `Offset`. A blob the

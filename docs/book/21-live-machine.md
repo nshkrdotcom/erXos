@@ -746,8 +746,8 @@ Four more parts make this safe and give it a memory:
   boot image or a new version of the app.
 
 Loading into another domain is designed and not built. The code
-server and the code service's per-target state machine are written,
-but no code facet is granted, so `tools/erx load --domain D` over SSH
+server, the code service's per-target state machine and its sending
+of start loads are written, but no code facet is granted, so `tools/erx load --domain D` over SSH
 is refused with `load: no code facet`, and over the host link socket
 it is refused by the tool, which opens the install facet alone. The
 domain service does not report a domain's start to the code

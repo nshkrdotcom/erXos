@@ -64,11 +64,6 @@ class ErxCodeTargetTest < Minitest::Test
              replacement: "read({erx_code_get, _, Hash, Offset}, #load{cursor = Cursor, stored = Stored}) ->\n" \
                           "    piece(Hash, maps:get(Hash, Stored), Offset, Cursor);\n",
              property: 'piece_once'),
-    Seed.new(fault: 'a supervised target without the supervised flag sent loads',
-             module_path: TARGET,
-             anchor: "admit(_, #target{overlay = #overlay{}, supervised_flag = false}) ->\n    {error, enotsup};\n",
-             replacement: '',
-             scenario: 'a_supervised_target_without_the_flag_is_sent_nothing_test'),
     Seed.new(fault: "the charge's verdict ignored",
              module_path: TARGET,
              anchor: "        Charge =:= no_memory -> {error, no_memory};\n",

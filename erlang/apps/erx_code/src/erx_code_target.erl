@@ -21,8 +21,9 @@ current, with its phase:
 
 At most one **load** in flight, tied to the one domain its request resolved to. And, for
 a supervised specification, its **published overlay**: the modules loaded into its domains
-from outside, over the release named by its hash, with the revision of its last
-publication. Revision 0 is the empty overlay a specification starts with.
+from outside, with the revision of its last publication. A target holds no release: its
+specification boots one release while erx_code holds it (docs/design-live.md, "Targets").
+Revision 0 is the empty overlay a specification starts with.
 
 **Events.**
 
@@ -32,16 +33,16 @@ publication. Revision 0 is the empty overlay a specification starts with.
   no load. Then come erx_code's two verdicts, pure functions of its store: the plan's
   `missing` blobs, which neither the store nor the release holds, and, for a supervised
   target, after the candidate overlay (the published overlay with the load's modules over
-  it, refused `overlay_full` past the specification's byte limit or `code_modules_max`
+  it, refused `overlay_full` past the specification's `overlay` limit, which the request
+  carries from the domain service's resolution, or `code_modules_max`
   modules), the charge, `no_memory` when the principal's hot store cannot keep the
   candidate's blobs. The first refusal in the order busy, missing, overlay_full,
   no_memory is the answer.
-* `started/4`, the domain service's word, `erx_code:started(Id, Target, Release,
-  DomainPid, Agent)`, that a domain of a supervised specification has a code server. A
-  repeated word for the current domain changes nothing. For another domain it ends a
-  load in flight to the last domain with `domain_ended`, drops an overlay over another
-  release (publishing the empty overlay with a new revision, so the revision always
-  names what is published), and sends the start load: the published overlay.
+* `started/4`, the domain service's word, `erx_code:started(Id, Target, DomainPid,
+  Agent)`, that a domain of a supervised specification has a code server. A repeated
+  word for the current domain changes nothing. For another domain it ends a load in
+  flight to the last domain with `domain_ended` and sends the start load: the published
+  overlay.
 * `reset/3`, the operator's way back to the release: the empty overlay published and the
   specification's live domain stopped by its id.
 * `received/3`, a message from a domain's code server to the in-flight load's alias, the
@@ -53,15 +54,6 @@ publication. Revision 0 is the empty overlay a specification starts with.
   load's deadline still bounds it.
 * `deadline/2` and `domain_down/2`, the load's 30 s timer (`code_load_wait`) and the
   domain pid's `'DOWN'`, end the load as `timeout` and `domain_ended`.
-
-**The `supervised` flag.** Only a code server whose boot information carries the
-`supervised` flag keeps only published code and waits for its start load; without it the
-code server treats its domain as one no specification restarts, and a batch sent to it
-runs whether or not it is published. So a supervised target is made with
-`supervised_flag` true only when its caller knows, from the domain library, that its
-domains carry the flag; any other supervised target is sent nothing and stops nothing:
-`load/4` and `reset/3` refuse `enotsup` and `started/4` sends no start load
-(docs/todo-domains.md, "code service, start loads to supervised domains").
 
 A load serves only the bytes erx_code holds: each event that sends a load is handed the
 stored size of each blob of it the store holds, and a piece is cut to that size, never
@@ -114,8 +106,7 @@ the domain service reports it ready.
 A domain as the domain service reports it: for a load, the resolution of its request;
 for `started/4`, the domain whose code server reported (`ready` is then irrelevant).
 """.
--type domain() :: #{id := domain_id(), pid := pid(), agent := pid() | none, ready := boolean(),
-                    release := hash()}.
+-type domain() :: #{id := domain_id(), pid := pid(), agent := pid() | none, ready := boolean()}.
 
 -type overlay() :: {revision(), manifest()}.
 
@@ -127,12 +118,10 @@ for `started/4`, the domain whose code server reported (`ready` is then irreleva
                 | {end_load, reference()}
                 | {unalias, reference()}
                 | {stop_domain, domain_id()}
-                | {log, {start_load_failed, revision(), term()} | {overlay_dropped, revision()}}.
+                | {log, {start_load_failed, revision(), term()}}.
 
-%% The published overlay: its revision, the hash of the release it was loaded over (none
-%% for an empty one) and its modules.
--record(overlay, {revision = 0 :: revision(), release = none :: hash() | none,
-                  modules = [] :: manifest()}).
+%% The published overlay: its revision and its modules.
+-record(overlay, {revision = 0 :: revision(), modules = [] :: manifest()}).
 
 %% Where a load's pieces stand: the blob being fetched with its size and the offset of its
 %% next piece (none before the first), and the manifest entries after it, any of which the
@@ -147,10 +136,7 @@ for `started/4`, the domain whose code server reported (`ready` is then irreleva
                kind :: {facet, from(), #overlay{} | none} | {start, revision()},
                manifest :: manifest(), stored :: stored(), cursor :: #cursor{}}).
 
-%% supervised_flag: whether a supervised target's domains carry the `supervised` flag in
-%% their boot information; a supervised target without it is sent nothing.
--record(target, {lifeline :: pid(), overlay_limit :: non_neg_integer() | none,
-                 supervised_flag = false :: boolean(),
+-record(target, {lifeline :: pid(),
                  overlay :: #overlay{} | none,
                  current = none :: none | {domain_id(), starting | {confirmed, revision() | unknown}
                                                        | closed},
@@ -159,31 +145,31 @@ for `started/4`, the domain whose code server reported (`ready` is then irreleva
 -opaque state() :: #target{}.
 
 -doc """
-A target's first state. `OverlayLimit` is the specification's `overlay` limit in bytes for
-a supervised target, or `none` for a domain no specification restarts, which has no
+A target's first state. `supervised` is true for a supervised specification's target,
+whose domains carry the `supervised` flag in their boot information and so start with
+its published overlay, and false for a domain no specification restarts, which has no
 overlay. `Lifeline` is erx_code's lifeline, the process a code server monitors once it
-keeps published code. `supervised_flag`, false unless given, says whether a supervised
-target's domains carry the `supervised` flag in their boot information.
+keeps published code.
 """.
--spec new(#{lifeline := pid(), overlay_limit := non_neg_integer() | none,
-            supervised_flag => boolean()}) -> state().
-new(#{lifeline := Lifeline, overlay_limit := none}) ->
-    #target{lifeline = Lifeline, overlay_limit = none, overlay = none};
-new(#{lifeline := Lifeline, overlay_limit := Limit} = Options) when is_integer(Limit), Limit >= 0 ->
-    #target{lifeline = Lifeline, overlay_limit = Limit, overlay = #overlay{},
-            supervised_flag = maps:get(supervised_flag, Options, false)}.
+-spec new(#{lifeline := pid(), supervised := boolean()}) -> state().
+new(#{lifeline := Lifeline, supervised := true}) ->
+    #target{lifeline = Lifeline, overlay = #overlay{}};
+new(#{lifeline := Lifeline, supervised := false}) ->
+    #target{lifeline = Lifeline, overlay = none}.
 
 -doc """
 A facet's load into `Domain`, with `Alias`, an alias erx_code made for it, and erx_code's
 two verdicts. The plan: `Missing`, the hashes of the manifest that neither the store nor
 the domain's release holds, and `Stored`, the stored size of each blob of the manifest
 the store holds. The charge: `no_memory` when the principal's hot store cannot keep the
-blobs of a supervised target's candidate overlay, else `ok`; a domain no specification
-restarts has no candidate, and its charge is not read.
+blobs of a supervised target's candidate overlay, else `ok`. `overlay_limit` is the
+specification's `overlay` limit in bytes, from the domain service's resolution. A domain
+no specification restarts has no candidate, and neither its charge nor its limit is read.
 """.
 -spec load(from(), reference(), #{domain := domain(), manifest := manifest(),
                                   missing := [hash()], stored := stored(),
-                                  charge := ok | no_memory}, state()) ->
+                                  charge := ok | no_memory,
+                                  overlay_limit := non_neg_integer()}, state()) ->
           {state(), [action()]}.
 load(From, Alias, #{domain := Domain, manifest := Manifest, stored := Stored} = Request, T) ->
     case admit(Request, T) of
@@ -200,19 +186,15 @@ load(From, Alias, #{domain := Domain, manifest := Manifest, stored := Stored} = 
     end.
 
 %% Every refusal of a facet's load, in the design's order (busy, missing, overlay_full,
-%% no_memory), or the candidate overlay a supervised target publishes on the load's ok,
-%% which records the release it is loaded over, so the next start drops it if its domain
-%% boots another.
-admit(_, #target{overlay = #overlay{}, supervised_flag = false}) ->
-    {error, enotsup};
+%% no_memory), or the candidate overlay a supervised target publishes on the load's ok.
 admit(_, #target{load = #load{}}) ->
     {error, busy};
 admit(#{domain := #{ready := false}}, _) ->
     {error, busy};
 admit(#{domain := #{agent := none}}, _) ->
     {error, busy};
-admit(#{domain := #{id := Id, release := Release}, manifest := Manifest, missing := Missing,
-        charge := Charge}, #target{current = Current, overlay = Overlay, overlay_limit = Limit} = T) ->
+admit(#{domain := #{id := Id}, manifest := Manifest, missing := Missing, charge := Charge,
+        overlay_limit := Limit}, #target{current = Current, overlay = Overlay} = T) ->
     Takes = case Current of
                 none -> true;
                 {Id, {confirmed, _}} -> true;
@@ -223,7 +205,7 @@ admit(#{domain := #{id := Id, release := Release}, manifest := Manifest, missing
         not Takes -> {error, busy};
         Missing =/= [] -> {error, {missing, Missing}};
         Modules =:= none -> {ok, none};
-        true -> charged(Modules, Limit, Charge, Overlay#overlay{release = Release, modules = Modules})
+        true -> charged(Modules, Limit, Charge, Overlay#overlay{modules = Modules})
     end.
 
 charged(Modules, Limit, Charge, Candidate) ->
@@ -255,30 +237,16 @@ and its start load, sent with `Alias`; `Stored` is the stored size of each blob 
 published overlay the store holds. A repeated word for the current domain changes
 nothing. Only a supervised target has domains that start: a domain no specification
 restarts has no overlay and no start load, and this function has no clause for it.
-`Domain`'s `release` is the `Release` of `erx_code:started/5`, the hash of the release the
-domain boots, which the domain service holds in the domain's record.
 """.
 -spec started(reference(), domain(), stored(), state()) -> {state(), [action()]}.
-started(Alias, _, _, #target{overlay = #overlay{}, supervised_flag = false} = T) ->
-    {T, [{unalias, Alias}]};
 started(Alias, #{id := Id}, _, #target{current = {Id, _}} = T) ->
     {T, [{unalias, Alias}]};
-started(Alias, #{id := Id, pid := Pid, agent := Agent, release := Release}, Stored,
-        #target{overlay = #overlay{}} = T0) ->
+started(Alias, #{id := Id, pid := Pid, agent := Agent}, Stored, #target{overlay = #overlay{}} = T0) ->
     {T1, Ended} = end_load({error, domain_ended}, T0),
-    {T2, Dropped} = over_release(Release, T1),
-    #overlay{revision = Revision, modules = Modules} = T2#target.overlay,
-    {T3, Sent} = send_load(Alias, Id, Pid, Agent, {start, Revision}, {Modules, Stored},
-                           T2#target{current = {Id, starting}}),
-    {T3, Ended ++ Dropped ++ Sent}.
-
-%% An overlay loaded over another release than the one the domain boots is dropped, so
-%% old modules never run over a new release.
-over_release(Release, #target{overlay = #overlay{release = Over, revision = Revision}} = T)
-  when Over =/= none, Over =/= Release ->
-    {T#target{overlay = #overlay{revision = Revision + 1}}, [{log, {overlay_dropped, Revision}}]};
-over_release(_, T) ->
-    {T, []}.
+    #overlay{revision = Revision, modules = Modules} = T1#target.overlay,
+    {T2, Sent} = send_load(Alias, Id, Pid, Agent, {start, Revision}, {Modules, Stored},
+                           T1#target{current = {Id, starting}}),
+    {T2, Ended ++ Sent}.
 
 send_load(Alias, Id, Pid, Agent, Kind, {Manifest, Stored}, T) ->
     Load = #load{alias = Alias, domain = Id, agent = Agent, kind = Kind, manifest = Manifest,
@@ -294,8 +262,6 @@ specification's live domain as the domain service resolved it, stopped by its id
 -spec reset(from(), domain_id() | none, state()) -> {state(), [action()]}.
 reset(From, _, #target{overlay = none} = T) ->
     {T, [{reply, From, {error, no_overlay}}]};
-reset(From, _, #target{supervised_flag = false} = T) ->
-    {T, [{reply, From, {error, enotsup}}]};
 reset(From, _, #target{load = #load{}} = T) ->
     {T, [{reply, From, {error, busy}}]};
 reset(From, Live, #target{overlay = #overlay{revision = Revision}} = T) ->

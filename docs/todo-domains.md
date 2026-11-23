@@ -669,9 +669,11 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   `erlang/apps/erx_domain/src/erx_domain_pid.erl`; `liberx/system/dom_core.c`,
   `erx_dom_plan_boot_flags`): the code server's supervised path, the boot information's
   `supervised` flag, its reader, `erx_dist:supervised/0` and the library's build answer
-  carrying the flag (`erx_dom_created_t`, `supervised` in `erx_domain_lib:created()`) are
+  carrying the flag (`erx_dom_created_t`, `supervised` in `erx_domain_lib:created()`) and
+  `erx_code`'s targets for start loads (`erx_code:started/4` and its effect layer) are
   built, but no domain is
-  supervised: nothing sends a start load, so the plan leaves the bit clear, which fails
+  supervised: the domain service never calls `erx_code:started/4`, so no start load is
+  sent, and the plan leaves the bit clear, which fails
   safe, since every code server then starts its domain at once on its release
   ([design-live.md](design-live.md#the-code-server), "Targets", "The effect layer").
   The design (design-live.md, "Targets"): a target is the domain service's name for it,
@@ -693,29 +695,16 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   incarnations under the export table's connection-end gap
   ([todo-runtime.md](todo-runtime.md), "Runtime, export table", (2)); both items apply to
   `erx_code` from package 2 on. Packages 2 to 4 remain (package 1 carried the flag in the
-  build answer), one reviewed commit each, in this order, since a domain supervised
+  build answer, and package 2's targets are built but for one test), one reviewed commit each, in this order, since a domain supervised
   before the last would wait for a start load that nothing sends:
-  2. **`erx_code`'s targets for start loads** (`erx_code.erl`, `erx_code_target.erl`): the
-     lifeline, the targets by name, each load's alias with its deadline, timer and
-     domain-pid monitor, routing `{erx_origin, D, Msg}` by alias with the deadline checked
-     before a message is handed on, `erx_code:started/4`, and the effects `begin_load`,
-     `send`, `end_load`, `unalias` and `log`. Every send to a domain goes through one
-     function that sends with `nosuspend` from a process whose `async_dist` is cleared, as
-     `erx_domain_pid:send_or_stop/5` does: the runtime does not build the system domain's
-     drop at `system_queue` (design-runtime.md edit 10; [todo-runtime.md](todo-runtime.md)),
-     so a plain send to a domain whose connection is busy suspends `erx_code`
-     (`otp/erts/emulator/beam/dist.c`, `erts_dsig_send`, the suspend on
-     `ERTS_DE_QFLG_BUSY`). `erx_code_target` loses the release (`#overlay.release`,
-     `over_release/2`, `domain()`'s `release`, the `overlay_dropped` record) and `supervised_flag` with its `enotsup` clauses: `new/1`
-     takes `supervised`, and the `overlay` limit moves into `load/4`'s request. `serve`,
-     `reply` and `stop_domain`, which only facet loads and resets return, come with those.
-     Tests, each with its seeds: design-live.md's "effect layer for start loads" and "A
-     busy connection" cases, extending `test/erlang/erx_code_tests.erl` beside its
-     installation, refusal and rollback cases and under its runner
-     (`test/host/erx_code_test.rb`); "The lifeline on a host node"; the fifth domain of
-     "`erx_code` killed", a supervised one with its start load in flight, with the rest
-     of that case; and `test/host/erx_code_target_test.rb` without the release case and
-     the `supervised_flag` seed.
+  2. **A busy connection** (`test/erlang/erx_code_tests.erl`): erx_code's targets for
+     start loads are built (`erx_code.erl`, `erx_code_target.erl`), with design-live.md's
+     "effect layer for start loads" and "The lifeline on a host node" cases and their
+     seeds, but not its "A busy connection" case, which needs a peer node whose
+     connection a helper has filled past ERTS's busy limit, with its seed, nor the
+     restarted `erx_code`'s one log record that every overlay was dropped
+     (design-live.md, "When `erx_code` ends"), which needs `erx_code` to tell a restart
+     from its first start.
   3. **The domain service records and announces** (`erx_domain_srv.erl`,
      `erx_domain_core.erl`): `built/5` records the answer's `supervised`;
      `{domain_code_agent, Ref, Id, Agent}` records `code` for the live record `Ref` names
@@ -740,7 +729,8 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   target" is settled with it: the record that keeps a created specification across its
   domains, the name it carries into each, and the domain service's word to `erx_code`
   when it gives a specification up, which bounds the targets `erx_code` keeps. The code
-  facet's loads and resets, with `serve`, `reply`, `stop_domain`, the resolution's
+  facet's loads and resets, with `serve`, `reply`, `stop_domain`, the store's hold on a
+  load's blobs from `begin_load` to `end_load`, the resolution's
   `overlay` limit (the domain service's answer, read from the target's specification;
   the build answer carries only the `supervised` flag) and the domain
   release's manifest for the verdicts, belong to the item "code service, other domains

@@ -11,6 +11,9 @@
 
 -module(erx_code_tests).
 
+%% The logger handler callback that forwards start-load records to the test.
+-export([log/2]).
+
 -include_lib("eunit/include/eunit.hrl").
 -include("generated/erx_abi.hrl").
 
@@ -178,9 +181,12 @@ a_stored_blob_whose_bytes_changed_never_loads() ->
     Two = beam(?A, 2),
     {ok, stored} = send(Two),
     %% The store's memory changed after the blob was checked in.
-    sys:replace_state(erx_code, fun(#{blobs := Blobs} = Store) ->
+    %% The store is the first field of erx_code's state record.
+    sys:replace_state(erx_code, fun(State) ->
+                                        #{blobs := Blobs} = Store = element(2, State),
                                         <<First, Rest/binary>> = map_get(hash(Two), Blobs),
-                                        Store#{blobs := Blobs#{hash(Two) := <<(First bxor 1), Rest/binary>>}}
+                                        Changed = Blobs#{hash(Two) := <<(First bxor 1), Rest/binary>>},
+                                        setelement(2, State, Store#{blobs := Changed})
                                 end),
     ?assertEqual({error, {hash_mismatch, name(?A)}}, erx_code:load([{name(?A), hash(Two)}])),
     ?assertEqual(1, version(?A)).
@@ -219,3 +225,176 @@ format_status_hides_a_request_headed_by_bytes_test() ->
     Shown = erx_code:format_status(#{message => {request, {<<"SECRET">>, 1}}}),
     ?assertEqual(nomatch, string:find(io_lib:format("~p", [Shown]), "SECRET")),
     ?assertEqual(#{message => {request, none}}, Shown).
+
+%% Start loads (docs/design-live.md, "The effect layer" and its Verification rows), with stub
+%% domain pids and code servers that forward what they receive to the test, and the
+%% deadline shortened to ?WAIT. A code server's message reaches erx_code as the runtime
+%% delivers one sent to the load's alias: in its domain's envelope, through the alias.
+
+-define(WAIT, 300).
+-define(ROW, {configured, storage}).
+
+start_loads_test_() ->
+    {foreach, fun start_loads/0, fun stop_loads/1,
+     [fun a_start_load_answered_ok_is_published_with_the_lifeline/0,
+      fun the_next_domain_ends_the_first_domains_start_load/0,
+      fun a_silent_code_server_ends_at_the_deadline_with_one_log_record/0,
+      fun a_domain_pid_end_ends_the_start_load_without_a_log_record/0,
+      fun an_ok_held_past_the_deadline_publishes_nothing/0,
+      fun a_restarted_erx_code_holds_nothing_of_its_predecessors_start_load/0]}.
+
+start_loads() ->
+    ok = logger:add_handler(?MODULE, ?MODULE, #{config => self()}),
+    {ok, Pid} = erx_code:start_link(#{load_wait => ?WAIT}),
+    unlink(Pid),
+    Pid.
+
+stop_loads(_) ->
+    ok = logger:remove_handler(?MODULE),
+    _ = [gen_server:stop(Pid) || Pid <- [whereis(erx_code)], is_pid(Pid)],
+    ok.
+
+log(#{msg := {"erx_code: the start load" ++ _, Args}}, #{config := Test}) -> Test ! {logged, Args};
+log(_, _) -> ok.
+
+a_start_load_answered_ok_is_published_with_the_lifeline() ->
+    log_here(),
+    {DomainPid, Agent} = domain(),
+    ok = erx_code:started(5, ?ROW, DomainPid, Agent),
+    Alias = start_load(Agent),
+    Alias ! {erx_origin, 5, {erx_code_loaded, Alias, ok}},
+    receive
+        {Agent, {erx_code_published, Alias, Lifeline}} -> ?assert(is_process_alive(Lifeline))
+    after 1000 -> error(no_word_of_publication)
+    end,
+    assert_ended(Alias),
+    assert_no_log().
+
+the_next_domain_ends_the_first_domains_start_load() ->
+    log_here(),
+    {D1, A1} = domain(),
+    ok = erx_code:started(5, ?ROW, D1, A1),
+    Alias1 = start_load(A1),
+    {D2, A2} = domain(),
+    ok = erx_code:started(6, ?ROW, D2, A2),
+    Alias2 = start_load(A2),
+    Alias1 ! {erx_origin, 5, {erx_code_loaded, Alias1, ok}},
+    Alias2 ! {erx_origin, 6, {erx_code_loaded, Alias2, ok}},
+    receive {A2, {erx_code_published, Alias2, _}} -> ok after 1000 -> error(no_word_of_publication) end,
+    %% Each stub forwards on its own, so the first domain's word, if sent, may arrive late.
+    receive {A1, Late} -> error({published, Late}) after 200 -> ok end,
+    assert_ended(Alias1),
+    assert_ended(Alias2),
+    assert_no_log().
+
+a_silent_code_server_ends_at_the_deadline_with_one_log_record() ->
+    log_here(),
+    {DomainPid, Agent} = domain(),
+    ok = erx_code:started(5, ?ROW, DomainPid, Agent),
+    Alias = start_load(Agent),
+    receive {logged, Args} -> ?assertEqual([?ROW, 0, {error, timeout}], Args)
+    after ?WAIT + 1000 -> error(no_log_record)
+    end,
+    assert_ended(Alias),
+    assert_no_log().
+
+a_domain_pid_end_ends_the_start_load_without_a_log_record() ->
+    log_here(),
+    {DomainPid, Agent} = domain(),
+    ok = erx_code:started(5, ?ROW, DomainPid, Agent),
+    Alias = start_load(Agent),
+    exit(DomainPid, kill),
+    receive {logged, Args} -> error({logged, Args}) after ?WAIT + 200 -> ok end,
+    assert_ended(Alias).
+
+%% An ok queued ahead of the load's timer, while erx_code is held past the deadline, is
+%% taken after the deadline: it publishes nothing, and the load ends as timed out.
+an_ok_held_past_the_deadline_publishes_nothing() ->
+    log_here(),
+    {DomainPid, Agent} = domain(),
+    ok = erx_code:started(5, ?ROW, DomainPid, Agent),
+    Alias = start_load(Agent),
+    ok = sys:suspend(erx_code),
+    Alias ! {erx_origin, 5, {erx_code_loaded, Alias, ok}},
+    timer:sleep(?WAIT + 100),
+    ok = sys:resume(erx_code),
+    receive {logged, Args} -> ?assertEqual([?ROW, 0, {error, timeout}], Args)
+    after 1000 -> error(no_log_record)
+    end,
+    receive {Agent, Word} -> error({published, Word}) after 0 -> ok end,
+    assert_ended(Alias).
+
+%% erx_code killed while a supervised domain's start load is in flight: the code server's
+%% ok to the old alias reaches no process, and the restarted erx_code holds no alias,
+%% timer or monitor of it and sends the next domain an empty start load.
+a_restarted_erx_code_holds_nothing_of_its_predecessors_start_load() ->
+    {D1, A1} = domain(),
+    ok = erx_code:started(5, ?ROW, D1, A1),
+    Alias1 = start_load(A1),
+    Old = whereis(erx_code),
+    Down = monitor(process, Old),
+    exit(Old, kill),
+    receive {'DOWN', Down, process, Old, killed} -> ok end,
+    {ok, New} = erx_code:start_link(#{load_wait => ?WAIT}),
+    unlink(New),
+    Alias1 ! {erx_origin, 5, {erx_code_loaded, Alias1, ok}},
+    ?assertEqual({monitors, []}, process_info(New, monitors)),
+    ?assertEqual({message_queue_len, 0}, process_info(New, message_queue_len)),
+    {D2, A2} = domain(),
+    ok = erx_code:started(6, ?ROW, D2, A2),
+    Alias2 = start_load(A2),
+    ?assertNotEqual(Alias1, Alias2).
+
+%% A stub domain pid, and a stub code server that forwards what it receives to the test.
+domain() ->
+    Test = self(),
+    {spawn(fun() -> receive stop -> ok end end),
+     spawn(fun Forward() -> receive Message -> Test ! {self(), Message}, Forward() end end)}.
+
+%% The empty start load the stub code server Agent received, and its alias.
+start_load(Agent) ->
+    receive {Agent, {erx_code_load, Alias, []}} -> Alias
+    after 1000 -> error(no_start_load)
+    end.
+
+%% A load's end deactivated its alias, so a message sent to it reaches no process, and
+%% removed the domain pid's monitor.
+assert_ended(Alias) ->
+    Erx = whereis(erx_code),
+    _ = sys:get_state(Erx),
+    ok = sys:suspend(Erx),
+    Alias ! {erx_origin, 5, {erx_code_loaded, Alias, ok}},
+    Queued = process_info(Erx, message_queue_len),
+    ok = sys:resume(Erx),
+    ?assertEqual({message_queue_len, 0}, Queued),
+    ?assertEqual({monitors, []}, process_info(Erx, monitors)).
+
+%% Start-load log records reach the case that calls it: the foreach's setup runs in
+%% another process.
+log_here() ->
+    ok = logger:update_handler_config(?MODULE, config, self()).
+
+assert_no_log() ->
+    receive {logged, Args} -> error({logged, Args}) after 200 -> ok end.
+
+%% The lifeline (docs/design-live.md, "When erx_code ends") ends with erx_code however
+%% erx_code ends, normal included.
+the_lifeline_ends_with_erx_code_test_() ->
+    [{atom_to_list(Reason), fun() -> lifeline_ends(Reason) end} || Reason <- [normal, shutdown, kill]].
+
+lifeline_ends(Reason) ->
+    {ok, Pid} = erx_code:start_link(#{}),
+    unlink(Pid),
+    {DomainPid, Agent} = domain(),
+    ok = erx_code:started(5, ?ROW, DomainPid, Agent),
+    Alias = start_load(Agent),
+    Alias ! {erx_origin, 5, {erx_code_loaded, Alias, ok}},
+    Lifeline = receive {Agent, {erx_code_published, Alias, L}} -> L after 1000 -> error(no_word) end,
+    Down = monitor(process, Lifeline),
+    case Reason of
+        kill -> exit(Pid, kill);
+        _ -> gen_server:stop(Pid, Reason, infinity)
+    end,
+    receive {'DOWN', Down, process, Lifeline, _} -> ok
+    after 1000 -> exit(Lifeline, kill), error(lifeline_outlived_erx_code)
+    end.
