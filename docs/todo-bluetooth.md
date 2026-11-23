@@ -157,7 +157,8 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   `test/erlang/stand_in/erx_device.erl` for input reaching the owner and the buffer posted again, a write answered only after
   its last buffer is back, and a broken queue stopping the driver); and the stage 1 peer (scanner) cases of the design's table.
   The Bluetooth domain and its grant stay out of QEMU virt's development manifest (docs/plan.md); the Raspberry Pi 4's
-  board part runs the domain on UART0.
+  board part runs the domain on UART0, where it has brought the controller up and advertised to a phone's scan.
+  Still open on the board: a connection, GATT reads and writes, and pairing, which the manual checklist covers.
 * [Medium] bluetooth, the line device's record (`liberx/backend/core/boot_manifest.c`, `tools/lib/erx/manifest.rb`
   `check_serial_devices`): the `serial` kind row makes the root write a given record for every placed serial device,
   so rule serial-device-granted refuses an ungranted one by exclusion. Choosing the line's record by the grant's index

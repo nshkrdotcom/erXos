@@ -1,7 +1,8 @@
 # Chapter 19. Bluetooth
 
 > **Status.** Built, with host tests, and its bring-up also on QEMU
-> `virt` against a Bumble virtual controller, but run on no board: the
+> `virt` against a Bumble virtual controller, and run on the Raspberry
+> Pi 4 as far as advertising: the
 > H4 framing and the HCI codec, the controller process with its
 > supervision, the patch reader, the advertising data and identity
 > address, the line tree with its keeper in the system domain, its
@@ -11,8 +12,10 @@
 > attribute table and its access gate, with the registry that
 > attaches a handler to a service and delivers each write to it; the
 > serial service's declaration and its table; and pairing and bonding
-> with the pairing window and the bond store. Designed: running the
-> Bluetooth domain on the Raspberry Pi 4, advertising a service's
+> with the pairing window and the bond store. On the Pi 4 the controller
+> comes up and a phone's scan sees the board advertising under the name
+> `erxos`; a connection, GATT access and pairing have not run on the
+> board. Designed: advertising a service's
 > UUID, an installed app's own `ble` grant, the rule that a service's
 > state belongs to its handler, the app that handles the serial
 > service, and tests against a Bumble peer that scans, connects, reads
@@ -162,7 +165,10 @@ with no power line, as on QEMU `virt`, skips the two power steps. The
 enable line is `BT_ON`, a pin of the firmware's GPIO expander
 ([research-wifi-pi4.md](../research-wifi-pi4.md#f3-host-wake-out-of-band-interrupt)),
 which the keeper asks the device service to switch; its pin and
-polarity are a board probe's question, and no board has run it.
+polarity are a board probe's question. The Raspberry Pi 4's row names the
+power line, and after its reset the controller answers and advertises, so
+the cycle runs on the board; the pin and polarity were not probed on their
+own.
 
 The Bluetooth domain mounts its grant of the line at `/line` and
 opens `/line/data` and `/line/ctl` as ordinary files. Its manifest
@@ -199,8 +205,9 @@ the chip is decoded in the Bluetooth domain, which holds no device.*
 The build makes a release of the stack, `erx_bt`, for a domain named
 `bt`. The Raspberry Pi 4's development manifest names that domain and
 grants it UART0's line, and the QEMU suite names it in a manifest of
-its own; QEMU `virt`'s development manifest does not. No board has run
-the Pi 4's row. No manifest grants `ble` to any domain, so no domain
+its own; QEMU `virt`'s development manifest does not. On the Pi 4 the row has
+brought the controller up and advertised; no connection, GATT access or
+pairing has run there. No manifest grants `ble` to any domain, so no domain
 reaches the domain's GATT table (section 19.6).
 
 ## 19.3 The HCI codec
@@ -315,10 +322,12 @@ Launch RAM records, so a damaged file sends nothing. A controller
 that reports another manufacturer than the manifest names stops the
 bring-up, so no vendor command reaches a chip it was not written
 for. The reader and these checks are **Built**, with host
-tests. The Pi 4's image carries `BCM4345C0.hcd`, unmodified under
-Cypress's license, and loads it in the mode every reset boots, the one
-that answers every command, so the patch needs no other kind of reset;
-that this mode takes the patch is a board probe's question.
+tests. The Pi 4's development image carries no patch: the controller's ROM
+alone advertises on the board. The design has the image carry
+`BCM4345C0.hcd`, unmodified under Cypress's license, and load it in the
+mode every reset boots, the one that answers every command, so the patch
+needs no other kind of reset; that this mode takes the patch is a board
+probe's question.
 
 ### 19.4.3 Commands and controller credits
 
@@ -578,8 +587,10 @@ What only a board answers, the design lists as board probes
 ([design-bluetooth.md, Board probes](../design-bluetooth.md#board-probes)):
 the UART's pins and the controller's power as the firmware leaves
 them, the enable pin, and whether the patch is needed. A manual
-checklist with a phone follows. No probe is recorded as run, and the
-stack has met no real controller.
+checklist with a phone follows. The board has run the domain to
+advertising on the ROM alone, with the pins set by the system domain's
+root at boot; connecting, reading and writing GATT values and pairing are
+not yet run on it.
 
 ## 19.8 Design choices
 
@@ -620,7 +631,8 @@ failure ends the controller group, whose restart resets the line and
 the controller. Above the controller, a table built once from checked-in
 declarations, one gate and pairing in a window someone opens decide
 what a phone may do. This is built and tested on the host, and its
-bring-up on QEMU against a Bumble controller, but on no board; an
+bring-up on QEMU against a Bumble controller, and on the Pi 4 it
+advertises, but no phone has connected, read or paired there; an
 installed app's grant, a service's handler as the owner of its state
 and advertised service UUIDs are designed.
 

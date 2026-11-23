@@ -1617,12 +1617,14 @@ Erlang, with Low Energy and the peripheral role first.
 cores), chapter 15 (drivers and devices).
 
 **Status.** Built, with host tests, and its bring-up also on QEMU `virt` against a Bumble
-virtual controller, but run on no board: the H4 framing and HCI codec, the controller
+virtual controller, and run on the Pi 4 as far as advertising (the controller comes
+up and a phone's scan sees the board; no connection, GATT access or pairing has run
+there): the H4 framing and HCI codec, the controller
 process with its supervision, the patch reader, advertising data and the identity address,
 the line tree with its keeper, its power cycle and its `line` file grant, the `ble`
 facet's mint, the GATT server with its table and gate, the registry, the serial
-service's declaration, and pairing and bonding. Designed: running the domain on the Pi 4,
-advertised service UUIDs, an installed app's `ble` grant, a service's state belonging to
+service's declaration, and pairing and bonding. Designed: connections, GATT and pairing
+on the Pi 4, advertised service UUIDs, an installed app's `ble` grant, a service's state belonging to
 its handler, the app that handles the serial service, and tests against a Bumble peer.
 
 1. **Bluetooth Low Energy, peripheral first.** What the role is, what

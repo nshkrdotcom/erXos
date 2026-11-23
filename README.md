@@ -391,8 +391,11 @@ Eshell V17.1.1 (type help(). for help)
 * On QEMU `virt` the Bluetooth domain brings up a controller over a serial
   line, a virtio console, whose device the line's grant names. A QEMU
   suite boots it against an emulated controller (Bumble) and checks the
-  reset, the identify commands and the start of advertising. It does not
-  run on the Pi 4 yet.
+  reset, the identify commands and the start of advertising. On the Pi 4
+  the root sets the on-board pin functions at boot, the domain brings up
+  the on-board controller, and a phone's scan sees the board advertising
+  as `erxos`; a connection, GATT access and pairing have not run on the
+  board.
 
 **Display and input**
 
@@ -472,8 +475,8 @@ Eshell V17.1.1 (type help(). for help)
 **Not built yet**
 
 * The rest of erXos's own kernel, terminal input and sockets for programs,
-  drivers for the Pi 4's Bluetooth and for WiFi, which have host-tested cores only (a Bluetooth
-  patch reader, and WiFi's join machine, SAE exchange and EAPOL-Key codec), the
+  the Pi 4's Bluetooth connections, GATT and pairing, and the WiFi driver, which has
+  host-tested cores only (WiFi's join machine, SAE exchange and EAPOL-Key codec), the
   rest of the browser client, and the POSIX-lite layer. Each has a design document in [docs/](docs/). The
   Pi 4's header (GPIO, SPI, I2C) has register descriptions, a pin table
   and the pure core of a pin's ownership, and no driver yet.
