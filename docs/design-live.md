@@ -2228,7 +2228,11 @@ and does not add application-state rollback.
   ([One load, three routes](#one-load-three-routes)). An install runs in
   the system domain's own runtime and has no deadline: `erx_code`'s
   atomic load runs no code of the modules it loads.
-  * **A supervised domain keeps only published code.** The code server
+  * **A supervised domain keeps only published code.** A batch runs
+    from the moment its runtime loads it, so for up to 30 s a
+    supervised domain may run a batch its overlay does not yet name;
+    what this rule promises is that no such domain keeps running it
+    past that window, not that the batch never ran. The code server
     of a supervised domain that has loaded a batch waits for
     `erx_code`'s word that the batch was published, until 30 s after it
     took the load, and ends its domain if the word does not come
@@ -2779,8 +2783,10 @@ again, as after any other cause of its ends.
 restart begins with no overlays, no stores and no histories, and the
 domains that run published code must not outlive the `erx_code` that
 holds it. `erx_code`'s **lifeline** carries that: a process `erx_code`
-starts and links to at its own start, which drops every message it
-receives and ends only with `erx_code`. A code server monitors it from
+starts and links to at its own start, which traps exits, drops every
+other message it receives, and exits on the exit signal from
+`erx_code` whatever its reason, `normal` included, so it ends with
+`erx_code` however `erx_code` ends. A code server monitors it from
 the first confirmed load that names a module (step 4), and its
 `'DOWN'`, whatever its reason, `noconnection` and `noproc` included,
 makes the code server exit with `{erx_code, down}`, which ends its
@@ -3697,6 +3703,11 @@ faults that must make its tests fail where it has any.
     an empty start load, under which a domain with no overlay ends with
     `erx_code`; a link to the lifeline in place of the monitor, under
     which the lifeline's `normal` end leaves the code server running.
+  * The lifeline on a host node: `erx_code`'s exit with the reason
+    `normal`, with `shutdown` and with `kill` each ends the lifeline.
+    Seeded: the lifeline without trapping exits, under which
+    `erx_code`'s `normal` exit leaves it, and every domain running
+    published code, alive.
   * A start load answered `{not_loaded, ...}`, one answered
     `hash_mismatch`, and one whose `ok` is never confirmed: each start
     fails, the code server ends its domain, with `{start_load, Result}`
