@@ -2709,7 +2709,8 @@ takes no byte.
 **Reading a terminal**, under the handshake. A read returns what the line
 discipline gives while the program's job is in the foreground, a line
 when the tty is cooked, and waits while the job is in the background, as
-on UNIX. A terminal read waits for input before it asks for
+on UNIX. Input the console's line lost reads as one NUL at its place, as
+FreeBSD's uart(4) gives it ([design-live.md](design-live.md#lost-input)). A terminal read waits for input before it asks for
 it, as a socket's read does, so the wait has no request in flight and a
 signal interrupts it by POSIX's rules ([Signals in
 liberx](#signals-in-liberx)). `liberx` first sends its handler a watch, which the handler answers at once

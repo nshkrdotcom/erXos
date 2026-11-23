@@ -451,23 +451,24 @@ flowchart LR
   C[console group: the shell's I/O]
   S[command shell]
   J[foreground job]
-  M -- six messages --> R
+  M -- seven messages --> R
   R --> C
   C --> S
   R --> J
 ```
 
 *Figure 20.2. A tty between its master and a session's shells. The
-master may live in another domain and speaks six fixed messages; the
+master may live in another domain and speaks seven fixed messages; the
 relay alone interprets the bytes, through the pure line discipline.*
 
 A master in another domain, such as the system domain's console,
-speaks exactly six messages to the tty
+speaks exactly seven messages to the tty
 ([design-live.md, The tty](../design-live.md#the-tty)). The tty
 announces itself with `{tty_open, Tty}`, sends output as
 `{tty_output, N, Bytes}` of at most 4 KiB, and hears back
-`{tty_taken, N}`. The master sends `{tty_input, Bytes}`,
-`{tty_size, Rows, Columns}` and `tty_hangup`. The master
+`{tty_taken, N}`. The master sends `{tty_input, Bytes}`, `tty_lost`
+where its line lost input, `{tty_size, Rows, Columns}` and
+`tty_hangup`. The master
 interprets none of the bytes, so the console, a terminal window and an
 SSH channel serve ttys with no editing or signal code of their own.
 
@@ -511,6 +512,18 @@ control sequences, and treats a BEL inside an open control string as
 the string's end, not as a key. The parser keeps its state from one read to the next, so
 no way of cutting the reply into pieces makes a `Ctrl-G`. It has host
 tests and a fuzz target.
+
+A UART has no flow control on the console's line, so a fast paste can
+overrun its receive FIFO. The driver reports each loss as an event of
+its own, in order with the bytes, and the console passes it on, to its
+own shell or as `tty_lost` to a session's tty, so the loss reaches the
+line editor between the keys typed before and after it
+([design-live.md, Lost input](../design-live.md#lost-input)). The
+editor then finishes no line of that read, ringing the bell at Enter,
+until the user empties the line, so a command that lost bytes never
+runs; a program reading the terminal gets a NUL where the input was
+lost, as on FreeBSD. The event is designed and not built: the drivers
+put a NUL byte in the input, which the editor refuses to run.
 
 The system domain has its own command shell, the **system shell**, with
 the system domain's authority, on the console's terminal, which runs no
@@ -689,6 +702,7 @@ hold it. The table follows each part.
 | A native program | Its spaces, via its handler | Its exit status or signal in `$status` |
 | The command shell itself | That shell | The console starts a fresh one, as `getty` would |
 | A tty's master (an SSH channel, a window) | That tty's shells | The relay's hangup ends them; the session's other ttys go on |
+| Input lost on a console UART | Nothing; the line is refused | The bell; Enter rings until the line is emptied |
 | The console service | Restarted by its supervisor | The slogan again on the line |
 
 A crash reason is not printed because it is an Erlang term that may
@@ -740,7 +754,7 @@ stage ends alone. Every pipe carries text; the Erlang commands print
 the familiar output, with `-` in a column for a value they do not have,
 and records stay in `erl` and the inspector. A tty's line discipline is a
 pure state machine run by the session's terminal relay, and every
-master speaks the same six messages to it. `service` gives the familiar
+master speaks the same seven messages to it. `service` gives the familiar
 verbs over start rows that carry no authority.
 
 ## Where to read next

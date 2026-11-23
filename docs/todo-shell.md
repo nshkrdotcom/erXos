@@ -762,31 +762,41 @@ to the corpus and follow rc
   reads pass as "Reading a terminal" describes, and that section's tests run.
 * [Medium] shell, edit 73 of [design-runtime.md](design-runtime.md) is built only in part
   (`otp/lib/stdlib/src/edlin_key.erl` `get_valid_escape_key/2`, `otp/lib/stdlib/src/edlin.erl`): a character that
-  cannot continue a CSI sequence ends it and is read again, NUL ends any sequence (edit 80), and a key cut after
+  cannot continue a CSI sequence ends it and is read again, NUL ends any sequence until the loss event below
+  replaces that rule, and a key cut after
   two or more CSI digits waits for the rest, but the rest is stock. A delivery that ends after one CSI digit takes `ESC [ 3` as a whole key and inserts
   the `~` that follows. Digits accumulate without the 15-character bound, a complete key takes one more `~`, and
   no line bound is kept: a line has no 65,536-codepoint limit and no count beside it, so a paste grows the group
   without end, and the scan for the lost-input mark each time a line is finished (edit 81) costs the length of
-  the line. Build the rest of edit 73 with its tests, beside `test/host/edlin_marker_test.rb`.
-* [Medium] shell and console, the lost-input marker's open cases (edits 80 and 81 of
-  [design-runtime.md](design-runtime.md), `otp/lib/stdlib/src/edlin.erl` `finish/4`): `prim_tty`
-  `split_cols/6` still counts a caret as two characters, so after a vertical
-  move in a multi-line edit deleting `^@` leaves a `^`. A refused accepted history search sends the search's
-  requests again after redrawing the line and leaves the history stack unpadded (reached only from a persisted
-  history holding NUL). The mini UART's marker can follow one byte from after the loss when the overrun falls
-  between a drain's read of LSR and its read of the byte, so a newline there finishes the line unmarked; mark
-  one byte earlier on a drain's later reads, or keep it as a residual. A NUL typed (Ctrl-Space, Ctrl-@) or a
-  PL011 break also holds the line, and a group in dumb mode returns a marked line unchanged. A held line drops
-  only text, keys bound to nothing and completion; a paste that carries a key bound to an edit (a form feed's
-  `Ctrl-L`, DEL, an escape sequence, or an ESC cut by a delivery's end that meets the next delivery's letter as a
-  meta key) ends the hold, and the rest of the paste joins the line, which still runs only once the `^@` is gone.
-  Bracketed paste (`ESC [ 200~` to `ESC [ 201~`) would mark where a paste ends, so the hold could end only at a
-  key typed outside one.
+  the line until the loss event below replaces it. Build the rest of edit 73 with its tests, beside
+  `test/host/edlin_marker_test.rb`.
+* [Medium] shell and console, the input-loss event ([design-live.md](design-live.md#lost-input), edits 80
+  and 81 of [design-runtime.md](design-runtime.md)): replace the NUL that console UART drivers put in their input
+  where bytes were lost with an event of its own, carried beside the end of input at each hop. Steps, each with
+  its tests from the design's verification table: `erx_mini_uart` and `erx_pl011` send `erx_console_lost` in
+  order with their `erx_console_input` (delete `erx_uart_marker.hrl`); `erx_console` drops a cut character, resets
+  `erx_console_keys`, rings the menu's bell, delivers `{self(), lost}` to its groups and, through
+  `erx_tty_master`, sends a session's tty `tty_lost`, which `abi/services/console.txt` declares as its seventh
+  operation and `erx_tty_link` checks; `erx_tty:lost/2` and `read_input/2` keep loss positions beside the held
+  bytes (with `lost` in `erx_tty_modes_tests` and `erx_tty_fuzz`), and `read/3` gives each as NUL;
+  the relay serves `{tty_read_input, Open, N}` and the session's console reads with it; `group` takes
+  `{Drv, lost}` and `{read, Ref, lost}` in its edited, dumb and raw modes; `edlin` takes `lost` as an input,
+  keeps the damage beside its kill buffer, refuses through `finish/4` until the line is empty, and drops the
+  hold, the NUL scan, `edlin_key`'s NUL rule and `group`'s history rule for marked lines;
+  `test/host/edlin_marker_test.rb` becomes `edlin_lost_test.rb`. The design's two open decisions (what ends the
+  damage; whether the tty's own drops are losses) are settled before `edlin` and `erx_tty` change.
+* [Low] console, the mini UART's loss position (`erlang/apps/erx_uart/src/erx_mini_uart.erl` `received/2`): a
+  loss can be placed one byte late when the overrun falls between a drain's read of LSR and its read of the
+  byte, so a newline there ends the line before the loss reaches the editor. The input-loss event carries
+  whatever position the driver gives and does not fix this; mark one byte earlier on a drain's later reads, or
+  keep it as a residual.
+* [Low] shell, `prim_tty` `split_cols/6` counts a caret as two characters, so after a vertical move in a
+  multi-line edit, deleting a control character shown in caret notation leaves its `^`.
 * [Medium] shell and console, the end of input on an unmarked line in `edlin`'s mode (`otp/lib/stdlib/src/edlin.erl`
   `finished/4`, `otp/lib/kernel/src/group.erl` `xterm/3`): as on stock, `edlin` finishes the line and hands no end of
   input on, and `group` reads the line, which has no newline, as an unfinished one and asks for more, so a read
   of a group in `edlin`'s mode, a shell's on a console line with a terminal (`erx_console` `group_options/1`), never
-  ends at the end of input, even on an empty line, and the console sends `eof` once. Only a marked line, which `edlin` drops, ends the read (edit 81
+  ends at the end of input, even on an empty line, and the console sends `eof` once. Only a line of a read that lost input, which `edlin` drops, ends the read (edit 81
   of [design-runtime.md](design-runtime.md)). Decide whether every line should: `edlin` would hand the end on
   after any line, and `group` would read the line, if it has text, and then the end, as its dumb mode does, with a
   test beside `test/host/edlin_marker_test.rb`'s end-of-input case.

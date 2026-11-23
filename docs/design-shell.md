@@ -1604,7 +1604,7 @@ stopped, as FreeBSD's do.
 
 **Its parties.**
 
-* The master speaks the six messages of
+* The master speaks the seven messages of
   [design-live.md](design-live.md#the-tty) ("Between domains").
 * The console of the session role reads through an open of its own, as
   every reader does. The relay is that console's line driver for the rest:
@@ -1664,7 +1664,8 @@ instead, and the handler copies between the two.
 | `{tty, Open, {tcsetattr, Termios, sigttou_ignored}}` | a program's handler, for a thread that ignores or blocks `SIGTTOU` ([design-programs.md](design-programs.md#the-terminal)) | as `{tcsetattr, Termios}`, but never `{background, Orphaned}`: the change is made whichever holder holds the terminal | as for `{tcsetattr, Termios}` |
 | `{tty, Open, winsize}` | a process given the open | `{ok, {Rows, Columns}}`, the size the master last reported | nothing |
 | `{watch, Open, [Kind]}`, `Kind` being `{read, Count}`, `in` or `out`, `Count` from 1 to 4,096 the bytes the read will ask for | a process given the open | `ok`; `{error, ebadf}` for `{read, Count}` on a write-only open | one `{ready, Open, [Kind], N}` to the caller, `N` the relay's signal number when it sends the report ([A reader the signal ends](#the-terminal-relays-protocol)), when `read_wait`, `poll_wait` or room in the output says so; a read's wait is ready at `Count` bytes when `Count` is fewer than `VMIN`, as FreeBSD's read returns once its buffer is full (`sys/kern/tty_ttydisc.c:290`, `:331`, `:384`) |
-| `{tty_read, Open, Max, N}`, `Max` from 0 to 4,096, `N` the number of the report the reader received | a process given the open | `{error, ebadf}` on a write-only open, whatever `N`; otherwise `{ok, Bytes}`; `eof` for the end of file, `Ctrl-D` at the start of a cooked line or any read that finds no bytes after a hangup; `{ok, <<>>}` for a raw read whose time ended with nothing; `eagain` when another reader took the bytes, the open may not read, or `N` is not the relay's signal number; a read of 0 bytes that passes those checks is answered `{ok, <<>>}` and waits for nothing | nothing |
+| `{tty_read, Open, Max, N}`, `Max` from 0 to 4,096, `N` the number of the report the reader received | a process given the open | `{error, ebadf}` on a write-only open, whatever `N`; otherwise `{ok, Bytes}`, each loss of input given as one NUL ([design-live.md](design-live.md#lost-input)); `eof` for the end of file, `Ctrl-D` at the start of a cooked line or any read that finds no bytes after a hangup; `{ok, <<>>}` for a raw read whose time ended with nothing; `eagain` when another reader took the bytes, the open may not read, or `N` is not the relay's signal number; a read of 0 bytes that passes those checks is answered `{ok, <<>>}` and waits for nothing | nothing |
+| `{tty_read_input, Open, N}`, `N` as for `tty_read` | a process given the open; the console of the session role reads with it, and every other reader with `tty_read` | as `{tty_read, Open, 1, N}`, but `lost` where that read would give a loss as NUL ([design-live.md](design-live.md#lost-input)) | nothing |
 | `{write, Open, Bytes}` | a process given the open | `{ok, N}`, the count `output/3` took; `eagain` when it took none, or bytes wait ahead of it | nothing |
 | `{console_group, Group}` | the console of the session role, at its start and in each step that changes its current group | `ok` | the events made while the console holds the terminal carry `Group` from this step on, and its `interrupt` and `suspend` count for `Group` ([Terminal events](#the-terminal-relays-protocol)) |
 | `{status, Line}` | the shell's report process ([`Ctrl-T`](#ctrl-t-status-and-the-info-request)) | `ok`, whether `status/3` takes the line or drops it | nothing |
@@ -1900,7 +1901,7 @@ holds the session's authority anyway (SH1).
   seen before anything runs, and both groups keep stock's behaviour
   here.
 * **The read.** On an ask, the console watches `{read, 1}`, and at the
-  report `{ready, Open, [{read, 1}], N}` calls `{tty_read, Open, 1, N}`,
+  report `{ready, Open, [{read, 1}], N}` calls `{tty_read_input, Open, N}`,
   as it makes its other requests,
   noting the group it reads for, and watches again only after the
   answer, so it has one watch or one read outstanding, never both. The
@@ -1932,7 +1933,10 @@ holds the session's authority anyway (SH1).
   held, as libedit keeps the last byte of an invalid sequence to start
   the next character (`read.c:325-331`). When the byte completes
   nothing, as for the first byte of `é`, the ask stays outstanding and
-  the console watches again. A read
+  the console watches again. A read answered `lost` drops what the
+  console holds for the group, the start of a character the loss cut,
+  and answers the group's ask `{Console, {read, Ref, lost}}`
+  ([design-live.md](design-live.md#lost-input)). A read
   answered `eagain` sends it back to watching. An end of file, which a
   read finds when a background program has set `ICANON` and `VEOF` is
   typed at a line's start, or after a hangup before the console has

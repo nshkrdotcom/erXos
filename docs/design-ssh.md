@@ -20,7 +20,7 @@ principals and the sessions a login starts from a session template alone
 the web domain's login, the precedent for a configured domain that
 parses untrusted bytes and asks the system domain to start a session
 ([design-web.md](design-web.md#logging-in-and-the-line)); ttys, whose
-master in another domain speaks six closed messages through its
+master in another domain speaks seven closed messages through its
 domain's envelope and whose `tty_hangup` ends the tty's shells
 ([design-live.md](design-live.md#paths)); pipes, whose ends stay in the
 session ([design-programs.md](design-programs.md#what-a-program-can-start),
@@ -181,7 +181,7 @@ What the sources say, read at the pins of [Sources](#sources):
                        v                                         |
              session domain of the principal                     |
                erx_ssh_line <-- open a tty or a job ------------'
-               terminal relay: tty <== six console messages ==> channel
+               terminal relay: tty <== seven console messages ==> channel
                rc on the tty, or rc on a job's pipes; programs as sub-spaces
 ```
 
@@ -204,7 +204,7 @@ the system domain beyond what a line already is:
   domain ([design-system.md](design-system.md#a-sessions-lines));
 * a channel's shell runs on a tty of the session's relay whose master is
   the channel's process in the SSH domain, speaking the console
-  interface's six messages, so line discipline, job control, `termios`,
+  interface's seven messages, so line discipline, job control, `termios`,
   window size and hangup are the tty layer's, unchanged.
 
 The consequences that would otherwise be special cases fall out:
@@ -863,7 +863,7 @@ domain, and answers each `ok` or
 * **`{open_tty, Channel, Run, Term, Rows, Columns}`** for a channel that
   asked for a pseudo-terminal and then a shell or a command. The relay
   makes a tty whose master is `Channel` and starts the principal's shell
-  on it. From then on the tty and the channel exchange the six console
+  on it. From then on the tty and the channel exchange the seven console
   messages, with `window-change` sent as `tty_size` and the channel's end
   or the connection's as `tty_hangup`. The shell's `TERM` is `Term` when
   `abi/terminal.txt` names it and `vt100` otherwise; a size of zero, which
@@ -1167,7 +1167,7 @@ identifier.
    daemon as `erx_ssh_dev` and logs whether it listens. A session
    channel's callback, `erx_ssh_dev_channel`, is the master of a tty of
    root's session for a channel that asked for one, speaking the tty's
-   six messages
+   seven messages
    to its relay as stage 2's channel does, so the command shell runs on
    it with the tty's line discipline. `pty-req` gives the tty's size and
    TERM, `window-change` resizes it, Ctrl-C
@@ -1524,7 +1524,7 @@ boots the card and logs in.
 | `erx_ssh_login`: `cookie`, `key_ok`, `login_key`, `login_passphrase`, `logout` | the SSH domain and the system domain | `abi/services/ssh.txt`, citing [Logging in](#logging-in) |
 | the `ssh_line` facet in front of `erx_ssh_line`: `open_tty` and `open_job` | the SSH domain and a session it logged in | `abi/services/ssh.txt`, `served_by session`, citing [Sessions, ttys and shells](#sessions-ttys-and-shells), each operation as the line serves it ([design-system.md](design-system.md#a-sessions-lines)) |
 | a job's messages, `job_input`, `job_eof`, `job_sent` and `job_hangup` to the job, `job_written`, `job_output` and `exited` from its relay, and a tty's ending, `exited` or `signaled` | a channel of the SSH domain, and the job's relay or the tty | this document's table in [Sessions, ttys and shells](#sessions-ttys-and-shells), routed as [Risks and open questions](#risks-and-open-questions) settles, and `abi/signals.txt`'s signal set `tty_master` |
-| the console interface's six messages | a channel and a tty | `abi/services/console.txt` ([design-live.md](design-live.md#paths)) |
+| the console interface's seven messages | a channel and a tty | `abi/services/console.txt` ([design-live.md](design-live.md#paths)) |
 | the credentials facet: `login_keys`, `add_login_key`, `del_login_key` | a session and the principal service | the principal service's service file, citing [Login keys](#login-keys) |
 | `{ssh_host, Name}` key facet | the SSH domain and the vault | [design-system.md](design-system.md#the-vault) |
 | the `login_keys` files service, read-only, of one file `root` of 51-byte key blobs (before the vault) | the storage domain that serves `system`, and the system domain and root's session, whose import of stage 1 reads it | `abi/manifest.txt`'s `login_keys_service` and the system manifest's grant, citing [Root's login keys on the medium](#roots-login-keys-on-the-medium) |

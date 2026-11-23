@@ -3097,7 +3097,7 @@ else of it. A terminal owns four things:
   ([design-programs.md](design-programs.md#the-terminal)), becomes its
   master, and starts the session's command shell on it with
   `TERM=xterm`. A master in the tty's own domain exchanges the tty's
-  six messages as plain Erlang messages, which are never dropped.
+  seven messages as plain Erlang messages, which are never dropped.
 
 The terminal's work is the master's side of those messages:
 
