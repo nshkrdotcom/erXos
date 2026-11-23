@@ -207,24 +207,29 @@ runtime along rules that each remove a failure of an earlier system
 5. **The kernel decides who runs.** Fiasco's fixed-priority scheduler
    picks the thread; what the runtime says about its own load is
    advice that nothing in the kernel acts on.
-6. **No thread lends its CPU time to another.** A service runs a
+6. **No domain lends its CPU time to another.** A service runs a
    client's request on its own threads, so no domain's scheduling
    depends on another's
    ([design.md, Alternatives considered](../design.md#alternatives-considered)).
+   The one loan is Fiasco's own: a call to the root service runs on
+   what is left of the caller's time slice until the next reschedule
+   ([design-fiasco.md, Scheduling](../design-fiasco.md#scheduling)).
 
-Fiasco's scheduler has priorities 1 to 255 and runs threads of one
-priority round robin, each for a time slice. Every thread runs at
-priority 1, except the watchdog at 255
+Fiasco's scheduler has priorities 1 to 255, always runs the highest
+ready thread, and runs threads of one priority round robin, each for a
+time slice
 ([design-fiasco.md, Scheduling](../design-fiasco.md#scheduling)).
 Within its threads, each runtime schedules its own processes with its
 own run queues, priorities and reductions.
 
 The design divides the CPUs among domains with three limits, set in
-each domain's row of the system configuration: a **band**, the
-priority all its threads run at; a set of CPUs its threads may run
-on; and a limit on how many threads it may have. There are six bands,
-from the watchdog at the top down to apps and programs, so a domain
-that spins delays only its own band and those below
+each domain's row of the system configuration: a **band**, the lowest
+and highest priority its threads may run at; a set of CPUs its threads
+may run on; and a limit on how many threads it may have. Since Fiasco
+has no quota, a priority above another is kept for work that ends: the
+trusted domains do their ordinary work at one priority and take turns,
+untrusted code runs below them, and only urgent work, such as handling
+an interrupt, runs above
 ([design-fiasco.md, Bands](../design-fiasco.md#bands)). These limits
 are designed and not built.
 
@@ -545,11 +550,11 @@ its device write anywhere in memory
 ([design-fiasco.md, Devices](../design-fiasco.md#devices)).
 
 **CPU time is not a share.** Fiasco charges each thread on its own,
-with no quota for a domain. Every domain's threads run at one
-priority, so a busy domain takes turns on a CPU with every other
-thread there. In the design, a domain is held to its
-band, its CPU set and its thread limit, so a domain that spins delays
-its own band and those below, and gets no fixed fraction of a CPU
+with no quota for a domain. In the design, a domain is held to its
+band, its CPU set and its thread limit: a trusted domain that spins
+takes turns on a CPU with every other trusted domain there, an app
+that spins delays no trusted domain, and no domain gets a fixed
+fraction of a CPU
 ([design-fiasco.md, The scheduler on Fiasco](../design-fiasco.md#the-scheduler-on-fiasco)).
 
 **A page can have two faces.** No one mapping is writable and

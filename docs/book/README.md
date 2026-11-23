@@ -834,7 +834,8 @@ carrying its object's generation; memory objects of seven kinds,
 mappings and the root's page pool; doorbells and device lines; thread
 creation, umtx waits and parking; fault gates and exit records; the
 machine's end on a fault of the root task; budgets as records that end
-what is charged to them. Designed: priority bands and per-domain CPU
+what is charged to them; each task's threads at its band's priority.
+Designed: priority bands as a base and a ceiling, and per-domain CPU
 sets; signals through vCPU upcalls; DMA spaces behind an IOMMU; rights
 on handles checked on every use; and the system-call
 fuzz campaign.
@@ -918,13 +919,18 @@ threads and waits; section 3.5.2 for schedulers and reductions.
 **Background boxes.** A C library, and musl.
 
 **Status.** Built: ERTS in user mode in every domain, with its Erlang
-processes as the system's one kind of process; Fiasco running every
-thread but the watchdog at one priority; executors and workers and how
+processes as the system's one kind of process; Fiasco running each
+task's threads at the priority of its band, from one table that ranks
+the bands; a call to the root service on the caller's remaining slice;
+executors and workers and how
 they park and wake; the event table that turns a doorbell into work;
 the system domain on the interpreter, with BeamAsm available to other
 domains; musl under ERTS, with FreeBSD's errno and signal numbers;
 hosted mode; `ps` over Erlang processes; and `erx:trace`. Designed:
-priority bands, CPU sets and thread limits; refusing an executor every
+the four levels and the bands as a base and a ceiling, with no rank
+among the configured domains; pinned schedulers, the 1 ms slice and
+parking in place of spinning; the urgent scheduler; CPU sets and thread
+limits; refusing an executor every
 other blocking wait; refusing code that is not installed; one shared
 copy of common code; native programs in `ps`; and services that admit
 each client within a share of their time.
@@ -934,12 +940,17 @@ each client within a share of their time.
    applications run unmodified), and the two levels in one picture:
    Fiasco schedules threads, each runtime its processes.
    *Draws on:* [design.md, The model](../design.md#the-model).
-2. **How Fiasco shares the processors.** Every thread but the watchdog
-   runs at one priority, round robin. Bands, CPU sets and thread limits
-   from the manifest are designed and not built; a band orders domains
-   and measures no share of CPU time.
+2. **How Fiasco shares the processors.** What a priority can do on
+   Fiasco, and the rule that a priority above another is only for work
+   that ends; four levels and five bands, with the configured domains'
+   ordinary work at one level; pinned schedulers, a 1 ms slice and
+   parking in place of spinning; the urgent scheduler, which waits above
+   the base for a trusted runtime's interrupts and runs its `high` work,
+   and its roster; CPU sets and thread limits. All designed and not
+   built but the band's priority from one table, which ranks the bands.
    *Draws on:* [design-fiasco.md, Scheduling](../design-fiasco.md#scheduling),
    [design-fiasco.md, Bands](../design-fiasco.md#bands),
+   [design-fiasco.md, Urgency](../design-fiasco.md#urgency),
    [design-fiasco.md, Threads, bands and stops](../design-fiasco.md#threads-bands-and-stops).
 3. **The runtime contract.** Executors run Erlang processes and never
    block except to park; workers may block. The lost wakeup, and the
@@ -980,8 +991,9 @@ each client within a share of their time.
    *Draws on:* [design-runtime.md, Crash handling](../design-runtime.md#crash-handling),
    [design-fiasco.md, The watchdog](../design-fiasco.md#the-watchdog).
 9. **Design choices.** Every Erlang process a kernel thread, scheduler
-   activations, shares instead of priorities, lending time to a
-   service, stock ERTS on a POSIX layer: why each was not chosen.
+   activations, shares instead of priorities, a rank among the
+   configured domains, raising a thread for urgent work, lending time
+   to a service, stock ERTS on a POSIX layer: why each was not chosen.
 
 **Figures.** 9.1: the two levels: Fiasco schedules threads, each runtime
 switches among its own processes on its executors. 9.2: park and wake,

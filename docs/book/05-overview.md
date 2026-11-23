@@ -156,15 +156,17 @@ records, and the sleeping and waking of executors, are **Built**
 (`liberx/backend/fiasco/group.c`, `liberx/backend/fiasco/park.c`).
 
 The design limits each domain's CPU with three settings. A **priority
-band** is a range of Fiasco priorities the domain's threads may use,
-so a domain whose threads spin delays only its own band and those
-below. A **CPU set** names the processors they may use, and a
-**thread limit** caps how many there are
+band** is the lowest and highest Fiasco priority the domain's threads
+may run at: the configured domains do their ordinary work at one
+priority and take turns, untrusted code runs below them, and only
+urgent work, such as handling an interrupt, runs above. A **CPU set**
+names the processors they may use, and a **thread limit** caps how
+many there are
 ([design-fiasco.md, Threads, bands and stops](../design-fiasco.md#threads-bands-and-stops)).
-These limits are **Designed** and not built. Every thread but the root's
-watchdog thread runs at one priority, so a busy domain takes turns
-with every other thread on its CPU
-([chapter 9](09-processes.md#921-one-priority-round-robin)).
+These limits are **Designed** and not built. Each thread starts at a
+priority its band takes from one table of the root service, which
+ranks the bands one above another
+([chapter 9](09-processes.md#922-levels-and-bands)).
 
 ### 5.1.5 Budget
 
@@ -851,9 +853,11 @@ Fiasco charges each thread on its own and gives no domain a share of
 a CPU, so CPU time between domains is a matter of priority, not of
 fraction
 ([design-fiasco.md, The scheduler on Fiasco](../design-fiasco.md#the-scheduler-on-fiasco)).
-A service such as storage runs on its own threads, never its clients'.
-A service never runs on its client's CPU time, so nothing must work
-out who pays. The price is that a saturated service slows all its
+A service such as storage runs on its own threads, never its clients'
+and never on its clients' CPU time, so nothing must work out who pays.
+The one exception is Fiasco's own: a call to the root service runs on
+what is left of the caller's time slice until the next reschedule
+([design-fiasco.md, Scheduling](../design-fiasco.md#scheduling)). The price is that a saturated service slows all its
 clients together.
 
 ### 5.6.6 The large alternatives

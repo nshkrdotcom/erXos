@@ -1026,12 +1026,14 @@ their own ERTS in an address space of their own ([the top-level README, Current
 status](../../README.md#current-status)).
 
 No domain gets a measured share of CPU time; each has a
-**priority band**, the Fiasco priority its threads start at, and a set
-of processors, so a spinning domain delays only its band and those
-below ([design-fiasco.md,
-Bands](../design-fiasco.md#bands)). The bands are **Designed** and not
-built: today every thread but the watchdog's runs at one priority
-(`liberx/backend/fiasco/service.c`).
+**priority band**, a lowest and a highest Fiasco priority its threads
+may run at, and a set of processors. The configured domains do their
+ordinary work at one priority, untrusted code below it, and only urgent
+work above it, so a spinning app delays no configured domain
+([design-fiasco.md, Bands](../design-fiasco.md#bands)). The bands are
+**Designed** and not built: each thread starts at a priority its band
+takes from one table of the root service, which ranks the bands one
+above another (`liberx/backend/fiasco/band.c`).
 
 Scheduling has two levels: ERTS switches between Erlang processes as
 section 3.5.2 describes, and the kernel schedules ERTS's threads by

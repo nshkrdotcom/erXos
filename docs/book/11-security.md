@@ -687,11 +687,18 @@ user pages charged to it and refuses a request past the wall, so a
 domain over its budget hurts only itself. Walls are designed and not
 built.
 
-CPU time is shared the same way. Every thread but the watchdog runs at
-one Fiasco priority, so a domain that spins every thread it may create
-takes its round-robin share of each CPU, and no domain is guaranteed
-any share. The design gives each domain a **band**, a priority level,
-a CPU set and a thread limit; bands are designed and not built.
+CPU time is shared by priority, not by account. Each thread starts at
+the Fiasco priority of its domain's band, and an app's band is the
+lowest, so an app that spins every thread it may create gets only
+what the configured domains leave of each CPU, and no domain is
+guaranteed any share. The design gives each domain a **band**, a
+lowest and a highest priority, with a CPU set and a thread limit: the
+configured domains share one priority for their ordinary work, and
+above it runs only urgent work, which a trusted runtime runs at Erlang
+`high` and whose cost for one message is bounded and listed,
+whoever sends it
+([design-fiasco.md, Urgency](../design-fiasco.md#urgency)). Bands in
+that form are designed and not built.
 
 ## 11.10 Machine code
 
@@ -886,7 +893,7 @@ gathers what holds today and what is designed.
 | services | facets and their five checks; 64 domain names per principal | admission by CPU share; a generated admission path |
 | files | file grants of `ro`, `rw` or `rx`; narrowing for programs | |
 | the clock | the facet path; the root sets the clock for any task | the root's check of the write right on the time page |
-| memory and CPU | budget records that refuse nothing; one priority | budgets as walls; bands |
+| memory and CPU | budget records that refuse nothing; a priority per band, apps lowest | budgets as walls; bands as a base and a ceiling; the urgent scheduler |
 | machine code | no single mapping writable and executable; JIT memory only for marked images; a plain object mappable writable and executable at two addresses | Fiasco's own refusal of a writable and executable mapping |
 | keys | three runtime images; the Ed25519 check; development keys | the vault, key facets and login with a passphrase |
 | text | the line and field escapes from one table; `erx_report` | |

@@ -567,8 +567,8 @@ stores the current time in one word of the root task, through
 other domain can call it.
 
 **The root's thread.** A thread of the root task at priority 255 (in
-Fiasco a higher number is more urgent), the only thread above the
-common priority, wakes once a second and feeds
+Fiasco a higher number is more urgent), above every other thread, wakes
+once a second and feeds
 a pure state machine, `erx_watchdog_step` in `kernel/core/watchdog.c`.
 The machine has three events. `START` arms the deadline `B` seconds
 ahead. Each `PET` moves it `D` seconds past the pet. Each `TICK`

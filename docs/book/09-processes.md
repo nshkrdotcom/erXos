@@ -2,13 +2,17 @@
 
 > **Status.** **Built:** ERTS in user mode in every domain, with its
 > Erlang processes as the system's one kind of process; Fiasco running
-> every thread but the watchdog at one priority; the two classes of
+> each task's threads at the priority of its band, from one table that
+> ranks the bands; a call to the root service on the caller's remaining
+> slice; the two classes of
 > runtime thread and how they sleep and wake; the table that turns a
 > doorbell into work; the system domain on the interpreter, with
 > BeamAsm available to other domains; musl under ERTS, with FreeBSD's
 > errno and signal numbers; hosted mode on macOS; `ps` over Erlang
-> processes; and `erx:trace`. **Designed:** priority bands, CPU sets and
-> thread limits; refusing a scheduler thread every other blocking wait;
+> processes; and `erx:trace`. **Designed:** the four levels and the
+> bands as a base and a ceiling, with no rank among the configured
+> domains; pinned schedulers, the 1 ms slice and parking in place of
+> spinning; the urgent scheduler; CPU sets and thread limits; refusing a scheduler thread every other blocking wait;
 > refusing code that is not installed; one shared copy of common code;
 > native programs in `ps`; and services that admit each client within a
 > share of their time.
@@ -130,65 +134,200 @@ What keeps one domain from taking all the processor time? On erXos the
 answer is Fiasco's fixed-priority scheduler and each domain's place in
 it.
 
-### 9.2.1 One priority, round robin
+### 9.2.1 What a priority can do
 
 Fiasco gives each thread a priority from 1 to 255 and always runs the
-highest-priority ready thread on each processor. Threads of equal
-priority take turns, a time slice each
-([design-fiasco.md, Scheduling](../design-fiasco.md#scheduling)). In
-erXos every thread but one runs at priority 1
-(`SERVICE_THREAD_PRIORITY` in `liberx/backend/fiasco/service.c`). The
-exception is the root service's watchdog, at 255
-(`watchdog_thread.c`), which takes no lock. This is **Built**.
+highest-priority ready thread on each processor. Four properties of
+that scheduler decide what a priority can be used for
+([design-fiasco.md, Bands](../design-fiasco.md#bands)):
 
-A spinning domain cannot shut the others out, but nothing gives the
-display domain precedence either. A thread that yields goes behind
-the others of its priority
-([section 8.5.1](08-kernel-interface.md#851-threads)).
+* **No quota.** A ready thread waits for every ready thread above it on
+  its processor, however long they run.
+* **Round robin within a priority.** Threads of one priority take
+  turns, a time slice each.
+* **A wake preempts its equals.** A thread that leaves a wait takes its
+  processor at once from a running thread of its own priority or a
+  lower one. A thread that is ready but not running waits its turn.
+* **No migration.** Fiasco has no load balancer. A thread stays on the
+  processor where it was placed until `erx_thread_set_affinity` moves
+  it.
 
-Fiasco has no load balancer. A thread stays on the processor where it
-was placed until `erx_thread_set_affinity` moves it, and a domain's
-threads started with no processor named share one processor
-([design-fiasco.md, Scheduling](../design-fiasco.md#scheduling)). ERTS
-names no processor for its schedulers. **So a domain's executors share
-one processor and take turns on it; they do not run in parallel**,
-whatever figure 9.1 suggests. The cost is unmeasured and is on
-[the performance watch list](../todo-performance.md).
+From the first two follows the rule the design is built on: **a
+priority above another is only for work that ends.** Work that may run
+without end, which is every runtime's ordinary work, belongs at one
+priority, where round robin lets none of it starve the rest. A higher
+priority is for work that an event started and that finishes, the
+handling of an interrupt first of all. Code the system does not trust
+runs below both, since nothing else on Fiasco bounds what it takes.
 
-### 9.2.2 Bands
+### 9.2.2 Levels and bands
 
-A **band** is a run of Fiasco priorities given to a domain by its row
-in the system manifest; every thread of the domain starts at its band's
-priority ([design-fiasco.md, Bands](../design-fiasco.md#bands)). The
-design has six bands, one priority each, listed in table 9.1 from the
-highest priority down.
+The design uses four priorities, called **levels**, listed in table
+9.1 from the highest down.
 
-| Band | Holds |
-| --- | --- |
-| 1 | the watchdog, at 255 |
-| 2 | the root service |
-| 3 | the system domain |
-| 4 | driver and device domains |
-| 5 | interactive domains: display, web, sessions |
-| 6 | apps and programs |
+| Level | Priority | What runs at it |
+| --- | --- | --- |
+| watchdog | 255 | the root's watchdog, which takes no lock |
+| urgent | 3 | a thread that waits for urgent work, in a domain trusted with it (section 9.2.4) |
+| base | 2 | the ordinary work of the root task and of every configured domain |
+| app | 1 | code the system does not trust: an app, the programs of every session, a domain a user requests |
 
-*Table 9.1. The six bands. A domain that spins delays only its own band
-and those below it.*
+*Table 9.1. The four levels
+([design-fiasco.md, Bands](../design-fiasco.md#bands)).*
 
-A band orders domains; it does not divide time among them. A spinning
-app, in the lowest band, gets what every other thread on its processor
-leaves. Inside a band, threads still take turns.
+A **band** is the range of levels a domain's threads may run at, a base
+and a ceiling. A thread starts at its band's base and never runs above
+its ceiling. Table 9.2 lists the bands.
 
-A band measures no share: a driver domain in a busy loop takes its
-processor from every interactive domain there, for as long as it
-loops. It bounds no latency. And it belongs to a domain, not to a
-request. When an app asks the storage service to write a file, the
-write runs on the storage domain's threads, at that domain's band, not
-at the app's.
+| Band | Base | Ceiling | Whose threads |
+| --- | --- | --- | --- |
+| watchdog | watchdog | watchdog | the root's watchdog |
+| root | base | urgent | the root service and the system domain |
+| driver | base | urgent | driver and device domains |
+| interactive | base | base | the display, web and session domains |
+| app | app | app | apps, the programs of every session, a domain a user requests |
 
-Bands are **Designed** and not built.
+*Table 9.2. The five bands. A domain's limits record in the system
+manifest names `driver`, `interactive` or `app`; the other two belong
+to the root task's own threads.*
 
-### 9.2.3 CPU sets and thread limits
+The configured domains are not ranked among themselves: the system
+domain, the drivers and the interactive domains do their ordinary work
+at the base level, beside the root service, and take turns. A rank
+would put work that does not end above other work, and with no quota
+that is starvation. With the system domain above the drivers, a busy
+loader in it would keep every driver and session off its processor;
+with the drivers above the system domain, a storage domain kept busy by
+its clients would keep the console off its own. What a rank was wanted
+for, handling an interrupt before everything that can wait, the urgent
+level does instead.
+
+So the bands give three things. Untrusted code delays no configured
+domain: an app's thread runs only while nothing at the base or urgent
+level is ready on its processor. No configured domain's busy threads
+starve another: at the base level every ready thread gets its slice in
+turn, and one that blocks loses nothing to one that spins beside it,
+since its wake preempts the spinner. And an interrupt's driver can get
+the processor at once, at the urgent level.
+
+They give no share and no bound. A configured domain gets a processor
+in proportion to its ready threads there, whatever its configured
+grant says. A band belongs to a domain, not to a request: when an app
+asks the storage service to write a file, the write runs on the storage
+domain's threads, at that domain's band, not at the app's.
+
+The root service records a band in the row of every task it makes,
+fixed from the domain's row when the task is made, and nothing a task
+sends changes it. A domain's own sub-spaces run at its band; a
+session's programs run at the app band, as does an app's own session
+whatever its template names
+([design-fiasco.md, Bands](../design-fiasco.md#bands)).
+
+The levels and bands of tables 9.1 and 9.2 are **Designed** and not
+built. What is built is the band in each task's row and one table of
+priorities in the root service that every thread start reads
+(`liberx/backend/fiasco/band.c`); that table ranks the bands one above
+another, the system band above the driver band above the interactive
+band above the app band, where the design puts the first three at one
+base level.
+
+### 9.2.3 Where the schedulers run
+
+Three settings make the base level work for ERTS
+([design-fiasco.md, Scheduling](../design-fiasco.md#scheduling)).
+
+**Each scheduler is pinned.** Since Fiasco never moves a thread, the
+runtime places its schedulers: normal scheduler `i`, and dirty CPU
+scheduler `i`, are pinned to the `i`-th processor of the domain's CPU
+set, and a runtime starts as many normal schedulers as that set has
+processors. So no normal scheduler waits behind another of its own
+runtime. Left unpinned, all of a domain's schedulers share the root
+service's processor and take turns there.
+
+**A slice is 1 ms.** A thread's time slice is its domain's configured
+slice, 1 ms in the development manifests, in place of Fiasco's 10 ms.
+The slice is what a ready thread waits for each thread ahead of it at
+its level, so it sets the step of what round robin costs.
+
+**A scheduler parks; it never spins.** A thread that waits for another
+thread's work blocks in Fiasco, because a wake preempts while a
+spinning or yielding thread is merely awake and learns of its work when
+its turn comes round. ERTS's busy waiting before a sleep is off in every
+runtime (`+sbwt none`). On the Raspberry Pi 4 with spinning off, none of
+54 receipts of the SD controller's interrupt took over 1 ms, and with
+ERTS's `very_short` spin 7 of 53 did (`pi4/2026-11-22-irq-probe/`,
+images E and F, in the project's history repository). Parking has a
+price: under HVF on one CPU of an Apple M3 Max under load, with QEMU
+11.1.3 and clang 23.1.3, the boot to the release shell takes a median
+of 818.8 ms with spinning off against 642.8 ms with stock ERTS's
+spinning, over 11 boots each (`bench/2026-11-22-spin/`, in the same
+repository). The design accepts that price.
+
+Pinned schedulers, the 1 ms slice and parking in place of spinning are
+**Designed** and not built. As built, ERTS names no processor for its
+schedulers, so a domain's executors share one processor and take turns
+on it; they do not run in parallel, whatever figure 9.1 suggests. The
+development manifests carry the 1 ms slice, and the root service starts
+each thread with Fiasco's default.
+
+### 9.2.4 Urgent work
+
+The Raspberry Pi 4's console shows why base-level round robin is not
+enough for every device. Its mini UART's receive FIFO holds eight
+bytes, 0.7 ms of input at 115200 baud. A probe that stamped Fiasco's
+interrupt entry, the wake and the driver's receipt found the kernel's
+path under 10 us, and the rest of a 0.6 to 6 ms delay spent with the
+driver's ERTS scheduler awake but not running, behind other threads of
+its priority on its processor (`pi4/2026-11-22-irq-probe/`, images C
+and E). A pasted line loses bytes.
+
+Fiasco gives a processor at once to a thread that leaves a wait, and to
+no thread that is merely ready. So the one thread sure to run when an
+interrupt arrives is a thread that was waiting for it, at a level
+above the work the interrupt must interrupt. In an ERTS runtime of the
+root or driver band, that thread is the **urgent scheduler**
+([design-fiasco.md, Urgency](../design-fiasco.md#urgency)):
+
+* It is one more scheduler thread, set once at its start to its band's
+  ceiling, the urgent level, and pinned to the first processor of the
+  domain's set. No thread's level ever moves after that.
+* It runs every process whose own priority is `high`, and no other;
+  `max`, which OTP keeps for the runtime's own processes such as the
+  distribution's, stays on the normal schedulers. The line owners
+  and the drivers whose devices cannot wait a slice run at `high` ([section 15.5](15-devices.md#1552-sharing-inside-one-domain)).
+* The domain's device lines are bound to it, so Fiasco delivers an
+  interrupt straight to its wait, and the delivery preempts every
+  thread on its processor but the watchdog.
+* While it runs a process, it checks for deliveries between processes
+  with a wait that does not block, so a new interrupt waits for the end
+  of the running process's slice, not for its queue to empty.
+
+Every process a runtime runs at `high` is on its **urgent
+roster**, a checked-in list that names what makes the process run and
+how much one message can cost it, whoever sends the message. The mini
+UART driver is on it twice over: for its line, at most 32 bytes a
+delivery, and for the console's output, which carries every session's
+output and is work an untrusted party asks for. That output is bounded
+by the line itself: the driver writes a byte only while the transmit
+FIFO has room and otherwise waits blocked.
+
+The urgent scheduler removes the wait for a turn at the base level. It
+does not remove a wait for a lock that a base-level thread holds, for a
+request to the root service, or for dirty work, and it gives no figure:
+what it achieves is measured against the 0.7 ms FIFO. A runtime whose
+`high` work does not end takes its processor from everything below the
+urgent level.
+
+The urgent scheduler is **Designed** and not built, and the design
+builds it only if the Raspberry Pi 4's measurement, run with the levels,
+the pinned schedulers, the 1 ms slice and parking in place, shows a
+loaded run losing a byte
+([design-fiasco.md, Open decisions](../design-fiasco.md#open-decisions)).
+Until then every thread runs at its band's base, and
+`erx_thread_set_urgency` answers `ERX_ENOTSUP`
+(`liberx/backend/core/refused.c`).
+
+### 9.2.5 CPU sets and thread limits
 
 A domain's **CPU set** names the processors its threads may run on, and
 its **thread limit** caps how many threads it may have across its
@@ -341,7 +480,9 @@ the scheduler
   vCPU mode, for no runtime thread; the design arms it only for native
   programs' workers, never an executor
   ([section 8.5.6](08-kernel-interface.md#856-signals-through-vcpu-upcalls)).
-* **No urgency.** A runtime cannot change one thread's priority:
+* **No moving priority.** A runtime cannot raise or lower a thread as
+  its work changes. In the design one thread, the urgent scheduler, sets
+  its own level once, at its start (section 9.2.4); as built,
   `erx_thread_set_urgency` answers `ERX_ENOTSUP`
   (`liberx/backend/core/refused.c`).
 * **No share.** Fiasco charges each thread for its own slices and keeps
@@ -366,25 +507,27 @@ for a job, keeping both would give a reader two models to learn
 
 ### 9.4.1 One mechanism per job
 
-Each job has one mechanism, ERTS's or erXos's. Table 9.2 shows the
+Each job has one mechanism, ERTS's or erXos's. Table 9.3 shows the
 scheduling rows.
 
 | Job | Mechanism |
 | --- | --- |
-| choosing which process runs | ERTS's run queues, priorities, reductions and stealing |
+| choosing which process runs | ERTS's run queues, priorities, reductions and stealing; in the design, `high` on the urgent scheduler of a root- or driver-band runtime |
 | choosing which thread runs | Fiasco |
 | waiting for work | `erx_park` with epochs |
 | readiness | doorbells on the ready list, through the event table |
 | timeouts | ERTS's timer wheel per scheduler, which files each Erlang timer by when it expires; a park's deadline is the wheel's next expiry |
 | long C calls | dirty schedulers: dirty CPU schedulers are executors, dirty I/O ones workers |
 
-*Table 9.2. Scheduling in ERTS on erXos
+*Table 9.3. Scheduling in ERTS on erXos
 ([design-runtime.md, One mechanism per job](../design-runtime.md#one-mechanism-per-job)).*
 
 ERTS's scheduler stays whole, because it has run production Erlang
 systems for decades. Its sleep and readiness are redone: the poll set
 assumes file descriptors, which a domain does not have, and the spin
-spends time that another domain at the same priority could have used.
+spends time that another domain at the same priority could have used,
+while on Fiasco a spinning scheduler hears of its work later than a
+parked one (section 9.2.3).
 
 ### 9.4.2 The inside of ERTS on erXos
 
@@ -667,8 +810,9 @@ process, which receives that session's requests and checks them
 5. If all of A's threads are busy, A takes turns on its processor with
    every other ready thread; nothing lends A the time of B or C.
 
-The design adds two parts. Bands order A, B and C by their manifest
-rows. And each facet admits its client's requests within a **share**
+The design adds two parts. Bands put A, B and C, all configured
+domains, at one base level, so each takes turns with the others and
+none is ranked above another. And each facet admits its client's requests within a **share**
 of reductions per period, so B's facet stops taking requests once B's
 share is spent, while C's are taken at once
 ([design-scheduler.md, Service work](../design-scheduler.md#service-work)).
@@ -691,8 +835,12 @@ processes. Only its own domain is affected. A long C call belongs on a
 dirty scheduler
 ([section 3.5.4](03-erlang.md#354-bifs-nifs-and-ports)).
 
-**A domain spins.** Its threads take turns with every other thread on
-their processors, at one priority, so other domains slow down but run.
+**A domain spins.** In the design its threads take turns at its band's
+base: a configured domain's with every other configured domain's
+threads on those processors, which slow down but run, and an app's
+only while nothing above the app level is ready. The built table ranks
+the bands instead, so there a spinning domain keeps every lower band
+off its processors.
 
 **An executor dies.** The park protocol's *release* event frees the
 slot, advances the group's epoch and wakes the longest-parked
@@ -732,17 +880,35 @@ share of processor time, a percentage of a core. That
 needs a scheduling class Fiasco does not have, a large change to its
 scheduler, accounting and switch path
 ([design-fiasco.md, The scheduler on Fiasco](../design-fiasco.md#the-scheduler-on-fiasco)).
-Bands give an order between domains for one number each; the cost is
-that a busy domain in a high band can starve every lower one on its
-processors.
+Bands need only the priorities Fiasco has; the cost is that nothing
+divides time: a configured domain's share follows its ready threads,
+and busy configured domains keep apps off their processors.
+
+**A rank among the configured domains.** The system domain could run
+above the drivers, or the drivers above the system domain. Without a
+quota either order starves someone whenever the higher domain's work
+does not end (section 9.2.2), so the configured domains share one
+level and only urgent work runs above it.
+
+**Raising a thread for urgent work.** A scheduler could raise itself to
+the urgent level when it picks up a `high` process. But a thread that is
+ready and not running cannot raise itself, and that is exactly the
+thread the Raspberry Pi 4's probe found the console waiting for; a
+waker that raised it would give a thread's level two writers whose
+order decides whether a raise is lost
+([design-fiasco.md, Urgency](../design-fiasco.md#urgency)).
 
 **Lending time to a service.** A client could donate its processor
 time to the server working for it, so that a server with no time of
 its own runs on its callers' time
 ([research-hierarchical-scheduling.md](../research-hierarchical-scheduling.md)).
-erXos does not: a service runs on its own threads, and nothing must
-work out who pays. The price is that a saturated service slows all its
-clients together
+erXos keeps this only where Fiasco gives it: a call to the root service
+runs on what is left of the caller's slice, at the caller's level,
+until the next reschedule on that processor
+([design-fiasco.md, Scheduling](../design-fiasco.md#scheduling)). A
+service in a domain runs on its own threads, and nothing must work out
+who pays. The price is that a saturated service slows all its clients
+together
 ([section 5.6.5](05-overview.md#565-shared-services-and-shared-cpu)).
 
 **Stock ERTS on a POSIX layer.** erXos could give ERTS a full POSIX
@@ -754,10 +920,13 @@ system ERTS was written for.
 
 ## Summary
 
-Every Erlang process is a process of the system. Fiasco runs every
-thread but the watchdog at one priority, round robin, and a domain's
-executors share one processor; bands, CPU sets and thread limits are
-designed. Executors only park, workers may block, and a park against
+Every Erlang process is a process of the system. Fiasco runs each
+thread at its band's priority, round robin within a priority, and a
+domain's executors share one processor. In the design, every
+configured domain's ordinary work shares one base level, untrusted
+code runs below it, pinned schedulers park instead of spinning, and an
+urgent scheduler, waiting above the base, takes a trusted runtime's
+interrupts and its `high` work. Executors only park, workers may block, and a park against
 two epochs cannot lose a wakeup. ERTS keeps its scheduler and replaces
 its sleep and readiness with `erx_park` and an event table. The system
 domain interprets; musl reaches `liberx` through one function; the
@@ -770,7 +939,8 @@ where those threads live, the domain, and the wall around it.
 ## Where to read next
 
 * [design-fiasco.md, The scheduler on Fiasco](../design-fiasco.md#the-scheduler-on-fiasco):
-  the scheduler design on Fiasco, the bands and the park protocol.
+  the scheduler design on Fiasco, the levels and bands, the urgent
+  scheduler and the park protocol.
 * [design-scheduler.md](../design-scheduler.md): the full two-level
   design.
 * [design-runtime.md](../design-runtime.md): ERTS on erXos, from the

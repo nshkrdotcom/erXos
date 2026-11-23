@@ -9,8 +9,9 @@
 > lines, rung and acknowledged straight through Fiasco on a capability
 > the root places at each handle's slot; thread creation, umtx waits and parking; fault gates and exit
 > records; the machine's end on a fault of the root task; budgets as
-> records that end what is charged to them. **Designed:** priority
-> bands and per-domain CPU sets; signals through vCPU upcalls; DMA
+> records that end what is charged to them; each task's threads at
+> its band's priority. **Designed:** priority bands as a base and a
+> ceiling, and per-domain CPU sets; signals through vCPU upcalls; DMA
 > spaces behind an IOMMU; rights narrowed per creation kind and checked
 > on every use; and the system-call fuzz campaign.
 
@@ -662,19 +663,22 @@ both end in these two calls. A thread that exits is deleted by a
 exited threads, so `pthread_join` works as POSIX describes.
 
 Fiasco schedules threads by fixed priority, from 1 to 255, and runs
-threads of equal priority round robin. Every thread but the root's
-watchdog runs at priority 1, and the watchdog at 255. Fiasco has no load balancer, so a thread stays on
+threads of equal priority round robin. The root starts each thread at
+the priority of its task's band, from one table, and the watchdog at
+255. Fiasco has no load balancer, so a thread stays on
 the CPU where it was started until `erx_thread_set_affinity` moves it.
-In the design, each domain has a priority **band**, the priority all
-its threads run at, and a **CPU set**, the CPUs its threads may use;
-chapter 9 treats both
+In the design, each domain has a priority **band**, the lowest and
+highest priority its threads may run at, and a **CPU set**, the CPUs
+its threads may use; chapter 9 treats both
 ([design-fiasco.md, Threads, bands and stops](../design-fiasco.md#threads-bands-and-stops)).
-Bands and CPU sets are designed and not built.
+Bands in that form and CPU sets are designed and not built.
 
-Equal priorities work because a thread that yields goes behind the
-other ready threads of its priority. Were it to keep its CPU to the
-end of its time slice, a spinner waiting for a lock holder on the same
-CPU would wait a whole slice each turn
+A thread that waits for another thread blocks in Fiasco; it never
+spins or yields in a loop. A thread that leaves a wait takes its CPU at
+once from a running thread of its priority, while one that spins is
+merely awake and learns of its work when its turn comes round. A yield
+puts the thread behind the other ready threads of its priority, so it
+gives its equals a turn, and reaches no thread of a lower priority
 ([design-fiasco.md, Scheduling](../design-fiasco.md#scheduling)).
 
 ### 8.5.2 Waiting: one semaphore per thread
@@ -1012,9 +1016,9 @@ A hostile domain could:
 * ring a peer's doorbell as often as it likes; the peer's pending state
   stays one listed entry, but each ring costs the peer a dispatcher run
   and up to one wake, and nothing bounds the rate;
-* spin every thread it can create; with every thread at one priority,
-  it takes its round-robin share of each CPU it runs on, and no domain
-  is guaranteed any share of CPU time;
+* spin every thread it can create; at the app band's priority, below
+  every configured domain's, it gets only what they leave of each CPU
+  it runs on, and no domain is guaranteed any share of CPU time;
 * send requests and take faults as fast as its threads can, delaying
   every other domain's setup on the root service's one thread;
 * map writable a side of a connection it was passed to read, and

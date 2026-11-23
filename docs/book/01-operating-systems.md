@@ -479,13 +479,15 @@ hangup signal ends it.
 9](09-processes.md#912-two-levels-in-one-picture)).
 Fiasco decides which kernel thread runs on each core, and inside each
 domain the Erlang runtime picks which Erlang process runs on its
-threads; that is built. Today every domain's threads run at one Fiasco
-priority, and the system does not measure how much processor time each
-domain uses. The design gives each domain a **priority band**, a range
-of priorities its threads start in, and a set of cores they may run on,
-so a spinning domain delays only domains in its band and below; that is
-designed, not built
-([design-fiasco.md](../design-fiasco.md#threads-bands-and-stops)).
+threads; that is built. The system does not measure how much processor
+time each domain uses. The design gives each domain a **priority
+band**, a lowest and a highest priority its threads may run at, and a
+set of cores they may run on: the trusted domains do their ordinary
+work at one priority and take turns, untrusted code runs below them,
+and only work that ends, such as handling an interrupt, runs above.
+So a spinning app delays no trusted domain, and a spinning trusted
+domain slows the others without shutting them out. That is designed,
+not built ([design-fiasco.md, Bands](../design-fiasco.md#bands)).
 erXos also gives UNIX's process two
 parts. The Erlang process runs and fails. A **domain**, a set of Erlang
 processes sharing one address space, is what the hardware walls off;

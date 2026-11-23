@@ -283,7 +283,10 @@ handle_info({erx_irq, Dev, ?IRQ_LINE}, State = #state{dev = Dev}) ->
 ```
 
 The line stays masked from its delivery until `erx_irq_line:ack`, so
-a device that holds its line raised cannot flood the domain. The
+a device that holds its line raised cannot flood the domain. That holds
+for a level-triggered line. An MSI is edge-triggered, and Fiasco unmasks it at each delivery, so its
+acknowledgement paces nothing
+([design-fiasco.md, Urgency](../design-fiasco.md#urgency)). The
 driver acknowledges before it drains the completions, so one that
 lands during the drain fires the line again instead of being missed.
 No thread blocks waiting: the domain's **dispatcher**
@@ -478,6 +481,14 @@ acknowledges a line. The console, in the system domain, joins the line
 owner of its line the same way
 ([design-shared-devices.md, The console](../design-shared-devices.md#the-console)).
 All of this is **Built**.
+
+A line owner runs at Erlang priority `high`, so it is taken before
+every queued process of priority `normal`. In the design the Raspberry
+Pi 4's mini UART driver runs at `high` too, since its eight-byte
+receive FIFO overruns within a time slice; that is designed and not
+built. In a driver or root domain the design also gives `high` work a
+scheduler thread of its own above every domain's ordinary work, the
+urgent scheduler of [section 9.2.4](09-processes.md#924-urgent-work).
 
 ## 15.6 PCIe
 

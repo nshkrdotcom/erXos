@@ -516,8 +516,8 @@ design, each domain's budget is a wall: a factory of its own with a
 quota for its kernel memory, and a page count in the root service for
 its user pages. That is designed and not built. Nor are CPU limits
 enforced: the design's priority band, CPU set and thread limit per
-domain are designed and not built, and every thread but the watchdog
-runs at one priority. A manifest that passes the check is one whose
+domain are designed and not built; each thread starts at a priority
+its band takes from one table of the root service. A manifest that passes the check is one whose
 numbers add up, not one the system holds to them ([chapter
 12](12-memory.md#1241-accounts-without-walls)).
 

@@ -59,7 +59,7 @@ behavior kept and an inside replaced.
 | --- | --- | --- |
 | L4 (Liedtke 1993, 1995) | A kernel of address spaces, threads and fast IPC, with everything else in user mode | [Chapter 2](02-microkernels.md#251-from-l3-to-sel4) |
 | Fiasco (TU Dresden, from 1998) | The kernel itself, behind erXos's kernel interface, with a few small patches | [Chapter 4](04-history.md#432-l4-and-fiasco-the-kernel), [chapter 8](08-kernel-interface.md) |
-| L4Re | A root task that creates every program and hands it its capabilities; its loader ned's CPU sets, the model for each domain's designed CPU set | [Chapter 2](02-microkernels.md#253-the-root-task), [chapter 8](08-kernel-interface.md#83-the-root-service-who-holds-what), [chapter 9](09-processes.md#923-cpu-sets-and-thread-limits) |
+| L4Re | A root task that creates every program and hands it its capabilities; its loader ned's CPU sets, the model for each domain's designed CPU set | [Chapter 2](02-microkernels.md#253-the-root-task), [chapter 8](08-kernel-interface.md#83-the-root-service-who-holds-what), [chapter 9](09-processes.md#925-cpu-sets-and-thread-limits) |
 | Dennis and Van Horn (1966) | The capability: a reference that carries rights | [Chapter 2](02-microkernels.md#232-a-capability-is-a-reference-with-rights) |
 | Saltzer and Schroeder (1975) | Least privilege, economy of mechanism and complete mediation | [Chapter 6](06-construction.md), [chapter 11](11-security.md) |
 | Hardy, "The Confused Deputy" (1988) | The problem that facets and minted handles answer | [Chapter 2](02-microkernels.md#234-the-confused-deputy), [chapter 11](11-security.md#116-facets-authority-over-services) |
