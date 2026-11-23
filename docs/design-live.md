@@ -3328,7 +3328,11 @@ nothing the routing does not.
   one call to the domain service, which applies the scope to its records
   and returns the domain's id, domain pid, target, principal, `supervised`
   flag, its specification's `overlay` limit and code server, and whether
-  the domain has reported ready, or `scope`.
+  the domain has reported ready, or `scope`. The `overlay` limit is the
+  one in the runtime limits of the specification the domain's record
+  keeps; the library's build answer carries the `supervised` flag alone,
+  so the limit a load is held to is the specification's, whatever the
+  library built.
 * **The verdicts.** `erx_code` then computes two verdicts from its store
   and hands them to `erx_code_target`, each a pure function of the
   principal's store, the target's release manifest and the hashes of

@@ -668,7 +668,9 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   (`erlang/apps/erx_code/src/erx_code.erl`, `erx_code_target.erl`;
   `erlang/apps/erx_domain/src/erx_domain_pid.erl`; `liberx/system/dom_core.c`,
   `erx_dom_plan_boot_flags`): the code server's supervised path, the boot information's
-  `supervised` flag, its reader and `erx_dist:supervised/0` are built, but no domain is
+  `supervised` flag, its reader, `erx_dist:supervised/0` and the library's build answer
+  carrying the flag (`erx_dom_created_t`, `supervised` in `erx_domain_lib:created()`) are
+  built, but no domain is
   supervised: nothing sends a start load, so the plan leaves the bit clear, which fails
   safe, since every code server then starts its domain at once on its release
   ([design-live.md](design-live.md#the-code-server), "Targets", "The effect layer").
@@ -690,15 +692,9 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   lands (the funnel item above), while the holders it leaves accumulate across its
   incarnations under the export table's connection-end gap
   ([todo-runtime.md](todo-runtime.md), "Runtime, export table", (2)); both items apply to
-  `erx_code` from package 2 on. Four packages, one reviewed commit each, in this order,
-  since a domain supervised before the last would wait for a start load that nothing
-  sends:
-  1. **The build answer carries the flag** (`include/erx/dom_lib.h`, `erx_dom_created_t`;
-     `liberx/system/dom_apply.c`; `created_term` in
-     `otp/erts/emulator/nifs/erxos/erx_domain_lib_nif.c`; `erx_domain_lib:created()`):
-     the apply computes the boot page's flags once and reports their `supervised` bit,
-     false everywhere until package 4. Test: the domain QEMU suite's create sees
-     `supervised := false`; seeded: the bit reported true. Run `make check` and that suite.
+  `erx_code` from package 2 on. Packages 2 to 4 remain (package 1 carried the flag in the
+  build answer), one reviewed commit each, in this order, since a domain supervised
+  before the last would wait for a start load that nothing sends:
   2. **`erx_code`'s targets for start loads** (`erx_code.erl`, `erx_code_target.erl`): the
      lifeline, the targets by name, each load's alias with its deadline, timer and
      domain-pid monitor, routing `{erx_origin, D, Msg}` by alias with the deadline checked
@@ -745,7 +741,8 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   domains, the name it carries into each, and the domain service's word to `erx_code`
   when it gives a specification up, which bounds the targets `erx_code` keeps. The code
   facet's loads and resets, with `serve`, `reply`, `stop_domain`, the resolution's
-  `overlay` limit (which the build answer would report beside the flag) and the domain
+  `overlay` limit (the domain service's answer, read from the target's specification;
+  the build answer carries only the `supervised` flag) and the domain
   release's manifest for the verdicts, belong to the item "code service, other domains
   and principals".
 * [Low] code bounds, the model's words and depth against the funnel
