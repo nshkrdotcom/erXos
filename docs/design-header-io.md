@@ -904,9 +904,12 @@ The PWM driver, `erx_pwm_core` and `/dev/pwm0` are as described above.
 **A TPM module on SPI, for the vault.** A manifest with a TPM places the
 `spi` unit in the vault's domain. There the TPM driver is the unit's one
 driver process; it uses `erx_spi_core` and the SPI register module as a
-library, serves no tree, and finds SPI0's pins set by the firmware, so
-the TPM's bytes cross no other domain and the vault depends on no other
-domain for them. The chip select is the module's, CE0 or CE1.
+library, serves no tree, and finds SPI0's pins set by the system
+domain's pin driver, whose start sets them before any configured domain
+is created
+([design-pinctrl.md](design-pinctrl.md#placement-and-boot-order)). So
+the TPM's bytes cross no other domain, and the vault depends for them
+on no domain but the system domain, on which every domain depends. The chip select is the module's, CE0 or CE1.
 
 A TPM on SPI paces its transactions itself (TCG PC Client Platform TPM
 Profile 1.03 v22, section 6.4.5): a transaction is a command byte that
@@ -1028,8 +1031,8 @@ under `/proc/domains/D/pins/`
 
 At build time the record reader refuses a header map as listed above,
 and the manifest check refuses: a holder of the pin controller's unit
-other than no domain, the system domain or a domain holding only such
-units (property 8); a `gpio` row's `pins` outside the header map's `gpio` rows;
+other than no domain or the system domain (property 8's pin clause);
+a `gpio` row's `pins` outside the header map's `gpio` rows;
 `rtc` rows of one server that disagree, or whose `bus` is not a driven
 `i2c` device of a unit the server holds.
 

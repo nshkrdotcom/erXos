@@ -3263,11 +3263,13 @@ list ([todo-performance.md](todo-performance.md)):
   opens the flow with nothing new.
 * **Setting UART0's pins from the line service.** The pin controller's page sets
   every pin, the console's included, so a manifest gives it to no
-  domain, the system domain or a domain of its own
-  ([design-header-io.md](design-header-io.md#the-pin-controller-and-the-console)), and the line
-  service cannot count on holding it; the pin controller's own driver
-  sets the pins from the pin table
-  ([design-pinctrl.md](design-pinctrl.md#at-start)).
+  domain or to the system domain
+  ([design-system.md](design-system.md#the-manifest), property 8;
+  [design-header-io.md](design-header-io.md#the-pin-controller-and-the-console)).
+  There it has one writer, the pin controller's own driver, which sets
+  the pins from the pin table
+  ([design-pinctrl.md](design-pinctrl.md#at-start)); the line service
+  writing them too would make a second writer of one page.
 * **The Pi 4 on its ROM alone.** The ROM advertises, accepts a
   connection and carries the first ATT PDU without the patch (probes
   B-P3 and B-P4), and leaving the patch out would save some eleven
