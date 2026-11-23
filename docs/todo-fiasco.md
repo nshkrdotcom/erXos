@@ -110,14 +110,17 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   object space with random operations, words and typed items from many threads, checking that the root and a
   neighbour still answer and no outside memory changed; its seeded failure is a removed bound in an IRQ
   object's bind ([design-fiasco.md](design-fiasco.md#verification)).
+* [Medium] 0.2 on Fiasco, the system-call fuzz campaign and the assembler: the campaign's baselines, coverage
+  and crash triage are taken on the LLVM-built kernel, before the 0.2 release build. Upstream's reason for
+  `-no-integrated-as` in Fiasco's `Makeconf` is unknown (unverified), so the integrated assembler's output for
+  Fiasco's `.S` files is covered only by the QEMU suites until then.
 * [Medium] 0.2 on Fiasco, `fiasco/kernel/ORIGIN.md`: the monthly upstream security watch, a review of
   Kernkonzept's `fiasco` commits since the last one recorded, backporting each fix reachable in erXos's
   configuration ([design-fiasco.md](design-fiasco.md#upstream-security-fixes)).
 * [Medium] 0.2 on Fiasco, the release build: a check that fails when any file of the release image's link
   closure (kernel, `bootstrap`, `sigma0`) is recorded with a license that is not permissive, headers
   included, with two seeded failures: a build with `jdb_object.cpp` listed again in `Modules.generic`, and one with the original
-  `kobject_rpc.h` restored in place of the clean-room header, made without anyone opening it; the check also
-  settles whether the toolchain's `libgcc` links into `bootstrap` or `sigma0` (`fiasco/mk/mk/Makeconf:505-506`)
+  `kobject_rpc.h` restored in place of the clean-room header, made without anyone opening it
   ([design-fiasco.md](design-fiasco.md#the-releases-fiasco-build)).
 * [High] 0.2 on Fiasco, `liberx/backend/fiasco` and `abi/manifest.txt`: per-domain thread, object and mapping
   limits in the domain-limits record, carried to the root in `domain_space_create` beside the bands and the
@@ -470,6 +473,32 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
 
 ## Bugs by subsystem
 
+* [Low] Fiasco bootstrap, `fiasco/kernel/src/kern/arm/64/bootstrap-arm-64.cpp` and
+  `kern/arm/bootstrap.cpp`: the AArch64 `bootstrap` must read no relocated word before `relocate()`
+  has run. `_start` takes its link address from the absolute symbol `_start_link_addr`, not from its
+  GOT slot, and the relocator reaches `_DYNAMIC` PC-relatively through a namespace-scope hidden
+  declaration, because clang drops the hidden attribute from a block-scope one in a template and
+  loads the address from the GOT. Nothing but the QEMU boot suites guards either: a GOT load brought
+  back into `_start` or `Elf::relocate`, or a compiler that addresses `_DYNAMIC` through the GOT
+  again, links cleanly and hangs before the kernel banner with no diagnostic. A build check that the
+  objects defining `_start` and `relocate` carry no GOT relocation (`R_AARCH64_ADR_GOT_PAGE`,
+  `R_AARCH64_LD64_GOT_LO12_NC`) in those functions, with a seeded failure, would catch it at link.
+* [Low] Fiasco bootstrap, `Elf::relocate` in `fiasco/kernel/src/kern/arm/bootstrap.cpp`: the relocator
+  skips without a word whatever it does not handle. It applies only the first `DT_RELACOUNT` entries
+  of `DT_RELA`, so a relocation past them (any non-`RELATIVE` one, which the linker sorts last) is
+  never applied; it treats every applied entry as `R_AARCH64_RELATIVE` without reading its type;
+  with no `DT_RELACOUNT` it applies nothing; and it ignores `DT_JMPREL` (PLT relocations) and
+  `DT_RELR` (`-z pack-relative-relocs`). `bootstrap.arm.ld` checks only the format (REL against
+  RELA). Each case links cleanly and boots with unrelocated words. A link check that
+  `RELASZ / RELAENT` equals `RELACOUNT` and that `.rela.plt` and `.relr.dyn` are empty, with a
+  seeded failure, would close all five.
+* [Low] Fiasco bootstrap, `fiasco/kernel/src/kern/arm/64/bootstrap-arm-64.cpp` (and
+  `32/bootstrap-arm-32.cpp`): entered with the MMU and data cache on, the bootstrap cleans
+  `start_of_loader`..`end_of_loader` from the data cache, but `bootstrap.arm.ld` defines both with
+  `ABSOLUTE`, so their GOT words hold link addresses (0x1050 and 0x2ec0 in the QEMU `virt` build)
+  that `relocate()` never adjusts, and the clean covers addresses the loader is not at. Whether any
+  erXos boot path (QEMU `virt` direct boot, the Pi firmware) enters with the MMU on is unverified.
+  Reach both PC-relatively, or add the load offset, once a boot path needs it.
 * [Medium] Fiasco backend, the console handoff (`liberx/backend/fiasco/service.c`, `service_log_take`): the log is
   handed to the console at the log service's first take, so the early console stops before the console's driver
   touches the UART only because `kernel_sup` starts `erx_syslog_sup` before `user_sup` starts `erx_console` and

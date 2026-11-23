@@ -688,8 +688,8 @@ Apple Silicon macOS is the primary host. You need:
 
 * Ruby, any version, with minitest and REXML;
 * GNU make, GNU sed, GNU timeout (`gtimeout`) and Perl;
-* LLVM clang and lld, and the LLVM binary tools;
-* AArch64 ELF GCC and binutils;
+* LLVM clang and lld, and the LLVM binary tools (`llvm-ar`, `llvm-nm`, `llvm-objcopy`,
+  `llvm-objdump`, `llvm-ranlib`, `llvm-size`, `llvm-strip`), installed beside clang;
 * Autoconf, Automake and Libtool, and a C and C++ compiler, which build
   fsimg, the tool that writes and verifies the EROFS images (`make setup`
   builds it);
@@ -709,8 +709,8 @@ the build does not check the version, so a compiler that is too old fails
 with its own errors. Release images are built with exactly LLVM 23.1.3,
 and their hashes are published so a rebuild can be compared.
 
-Only LLVM will do, and not Apple's SDK clang or GCC: the build uses clang
-as a cross compiler (`--target`) and its sanitizers with
+Only LLVM will do, and not Apple's SDK clang or GCC: the build, Fiasco and L4Re
+included, uses clang as a cross compiler (`--target`) and its sanitizers with
 `llvm-symbolizer`, links with lld and reads lld's link maps for the
 image's source record, and admits into an image only the LLVM resource
 headers that `config/provenance/llvm.json` lists, each by its own LLVM
@@ -730,12 +730,9 @@ For another installation, adjust the paths.
 FreeBSD (x86-64, 16-CURRENT) is a host too. Install the same tools from
 packages: `llvm23`, `gmake`, `coreutils` (for `gtimeout`), `gawk`,
 `perl5`, `autoconf`, `automake`, `libtool`, `ruby` with
-`rubygem-minitest` and `rubygem-rexml`, `b3sum`, `node`, and the
-AArch64 ELF GCC and binutils (`aarch64-none-elf-gcc`), plus QEMU, a JVM
+`rubygem-minitest` and `rubygem-rexml`, `b3sum`, `node`, plus QEMU, a JVM
 and Docker for what needs them as above. Fiasco and L4Re build there
-with the system's own `cp`, `find` and `sed`. The Fiasco build takes the cross
-tools under the port's `aarch64-none-elf-` prefix or Homebrew's
-`aarch64-elf-`, preferring Homebrew's where both are on `PATH`. The base
+with the system's own `cp`, `find` and `sed`. The base
 system's `dtc` serves. Run the
 top-level targets with GNU make (`gmake check`), and point the build at
 the port's LLVM:

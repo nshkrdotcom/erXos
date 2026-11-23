@@ -1633,8 +1633,7 @@ website's browser demo runs 0.1's image.
   under a license that is not permissive in an image beyond the
   accepted ones: the Pi 4's device tree under GPL-2.0, shipped with its
   source, and the Raspberry Pi firmware under Broadcom's license
-  ([design.md](design.md#dependencies)). The cross compiler's three
-  headers are inputs of the kernel's build, not files of an image. The
+  ([design.md](design.md#dependencies)). The
   packer refuses a package that is not permissive in every image but a
   local one ([design-packaging.md](design-packaging.md#adding-an-app-to-an-image));
   Doom, an example, enters as `/bin/doom` under GPL-2.0-or-later, the
@@ -1806,8 +1805,8 @@ neighbour answering. The release notes carry the downsides table.
 * The downsides table is in the release notes and the user
   documentation.
 
-Release images are built and their hashes published as M11 says, with the
-`aarch64-elf-gcc` release that builds Fiasco pinned beside LLVM's.
+Release images are built and their hashes published as M11 says, with
+LLVM 23.1.3 pinned for Fiasco and for everything else.
 
 **After 0.2.** [Track F](#track-f-fiasco-improved-to-the-decision)
 improves Fiasco up to gate GF, which decides whether erXos builds its

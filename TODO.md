@@ -17,7 +17,7 @@ goes to the document of the subsystem its component pointer names.
 * [erXos's kernel](docs/todo-kernel.md#major-initiatives): erXos's own kernel (Phase 2, Track K): the C17 cores, the chokepoint checks, the scheduler and the kernel ABI generator.
   1 item (1 High).
 * [Fiasco](docs/todo-fiasco.md#major-initiatives): Fiasco, the release kernel, and `liberx`'s Fiasco backend: 0.2's work, the patches, the boot and the build.
-  38 items (22 High, 15 Medium, 1 Low).
+  39 items (22 High, 16 Medium, 1 Low).
 * [liberx and the ABI](docs/todo-liberx.md#major-initiatives): liberx and its program layer, the ABI and its generators, the domain library.
   6 items (3 Medium, 3 Low).
 * [Network](docs/todo-network.md#major-initiatives): the network stack (`erx_net`), WiFi and HTTPS clients.
@@ -73,7 +73,7 @@ goes to the document of the subsystem its component pointer names.
 * [erXos's kernel](docs/todo-kernel.md#bugs-by-subsystem): erXos's own kernel (Phase 2, Track K): the C17 cores, the chokepoint checks, the scheduler and the kernel ABI generator.
   54 items (1 Critical, 1 High, 42 Medium, 10 Low).
 * [Fiasco](docs/todo-fiasco.md#bugs-by-subsystem): Fiasco, the release kernel, and `liberx`'s Fiasco backend: 0.2's work, the patches, the boot and the build.
-  51 items (26 Medium, 25 Low).
+  56 items (27 Medium, 29 Low).
 * [liberx and the ABI](docs/todo-liberx.md#bugs-by-subsystem): liberx and its program layer, the ABI and its generators, the domain library.
   89 items (39 Medium, 50 Low).
 * [Domains and the system manifest](docs/todo-domains.md#bugs-by-subsystem): the domain service, domains, the code service, facets, the system manifest and its checks, the funnel.

@@ -803,8 +803,8 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   recorded clang hash is the driver's, not `libclang-cpp` and `libLLVM`,
   which hold the code generator; hash the linked libraries.
 * [Low] build, supported compilers: decide which compilers and versions
-  erXos supports (LLVM for erXos's code, `aarch64-elf-gcc` for the
-  Fiasco) and state them in README's Host setup. Nothing checks a
+  erXos supports (LLVM for erXos's code and for Fiasco) and state them
+  in README's Host setup. Nothing checks a
   compiler's version until then; release images are built with exactly
   LLVM 23.1.3 (docs/plan.md, M11).
 * [Medium] build, glue seam: the glue's include path is a copy of
@@ -820,7 +820,7 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   complete audit is their only check. `erxos_notice?` also accepts any
   SPDX expression containing `BSD-2-Clause`; parse it with
   `Attribution`'s parser instead.
-* [Medium] build, the glue in Fiasco: the design compiles the glue with GCC's
+* [Medium] build, the glue in Fiasco: the design compiles the glue with
   `-fstack-usage` and checks it (B2, B3, B9, B11);
   `fiasco/kernel/src/erx/erx_handoff.cpp`, the glue, gets only
   `ERX_GLUE_CXXFLAGS` (`fiasco/kernel/src/Makeconf`). The glue checks
@@ -858,8 +858,7 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   programs change with a world install or pkgbase upgrade under the
   same `uname` and `freebsd-version -u` on a -CURRENT host; reuse there
   needs the base programs and their libraries named by content, and the
-  helpers a package runs by unversioned path (`/usr/local/libexec/gcc/...`
-  cc1, `/usr/local/lib/perl5`), which `directory_identities` does not name;
+  helpers a package runs by unversioned path (`/usr/local/lib/perl5`), which `directory_identities` does not name;
   Homebrew's versioned Cellar paths name them by path.
 * [Low] host tooling, the Fiasco build (`tools/lib/erx/fiasco.rb`, `memo_key`): a
   perl that is a version-manager shim (plenv, mise) goes on the build's PATH

@@ -1641,9 +1641,8 @@ examples/         example apps that no list of the build names, each built
 
 The development host is macOS on Apple Silicon. Tools, installed through
 Homebrew or built from pinned sources: LLVM's clang and `lld` (the latter
-a separate formula) for erXos's own code and the runtimes; the GNU cross
-toolchain `aarch64-elf-gcc` and binutils (FreeBSD's port names them
-`aarch64-none-elf-`, and the build takes either prefix), GNU make 4.4.1 and
+a separate formula) for erXos's own code, the runtimes, and Fiasco and L4Re
+(with LLVM's binary tools beside clang); GNU make 4.4.1 and
 Perl for Fiasco, as L4Re's macOS guide prescribes
 ([research](research-hierarchical-scheduling.md#fiasco-under-hvf)); Ruby;
 QEMU 11.1; `dtc`; CBMC, at the version `test/cbmc/roster.json` pins, for `make check-cbmc`; `b3sum`, the oracle the imported BLAKE3 is compared with;
@@ -1886,8 +1885,7 @@ built out of tree, its own build scripts not run unless the row says so.
 | OTP's Common Test controller, a reporting copy | exact case and job records for the host oracle ([design-build.md](design-build.md#oracle-and-protocol-models)) | Apache-2.0 | permanent, development only | [test/oracle/common_test/ORIGIN.md](../test/oracle/common_test/ORIGIN.md) |
 | Third-party code inside OTP: asmjit, PCRE2, zlib, zstd, Ryu | the JIT's assembler (BeamAsm image only), `re`, `zlib`, `zstd`, float printing | asmjit and zlib Zlib; PCRE2 BSD-3-Clause WITH PCRE2-exception; zstd BSD-3-Clause; Ryu Apache-2.0 | permanent; asmjit never in the system domain's image | part of `otp/` |
 | musl | the C library of every runtime and native program | MIT, with the parts listed in [research](research-c-library.md#musl-126) | permanent | [musl/ORIGIN.md](../musl/ORIGIN.md) |
-| Fiasco, with `bootstrap`, `sigma0`, `l4sys` and `mk` | the kernel of Phase 1 and of the first release, behind erXos's interface ([design-fiasco.md](design-fiasco.md)) | MIT, except the GPL-2.0 `jdb_object.cpp`, which only a kernel with the debugger compiles; the tree's `kobject_rpc.h` is erXos's MIT clean-room replacement of Fiasco's GPL-2.0 original ([design-fiasco.md](design-fiasco.md#the-releases-fiasco-build)); Fiasco's other GPL and LGPL parts are excluded at import | **release**, replaced by erXos's kernel in Phase 2 if gate GF of [plan.md](plan.md#track-f-fiasco-improved-to-the-decision) chooses it; 0.1's images carry a development kernel, with the debugger and `jdb_object.cpp`, by decision, under CLAUDE.md's exception for the website's images with their source offered, and 0.2's release the release kernel's build without them ([site/README.md](../site/README.md), [design-kernel.md](design-kernel.md)) | [kernel](../fiasco/kernel/ORIGIN.md), [bootstrap](../fiasco/bootstrap/ORIGIN.md), [l4re-core](../fiasco/l4re-core/ORIGIN.md), [mk](../fiasco/mk/ORIGIN.md) |
-| `stdarg.h`, `stdbool.h` and `stddef.h` of the cross `aarch64-elf-gcc` | macros and types Fiasco's build includes; no GCC library is linked | GPL-3.0-or-later WITH GCC-exception-3.1 | **release**: inputs of Fiasco's build, allowed by name and hash in the release's link closure ([design-fiasco.md](design-fiasco.md#the-releases-fiasco-build)) | named by release and SHA-256 in the build record |
+| Fiasco, with `bootstrap`, `sigma0`, `l4sys` and `mk` | the kernel of Phase 1 and of the first release, behind erXos's interface ([design-fiasco.md](design-fiasco.md)) | MIT, except the GPL-2.0 `jdb_object.cpp`, which only a kernel with the debugger compiles; the tree's `kobject_rpc.h` is erXos's MIT clean-room replacement of Fiasco's GPL-2.0 original ([design-fiasco.md](design-fiasco.md#the-releases-fiasco-build)); Fiasco's other GPL and LGPL parts are excluded at import | **release**, replaced by erXos's kernel in Phase 2 if gate GF of [plan.md](plan.md#track-f-fiasco-improved-to-the-decision) chooses it; built with LLVM like everything else, its freestanding headers Apache-2.0 WITH LLVM-exception; 0.1's images carry a development kernel, with the debugger and `jdb_object.cpp`, by decision, under CLAUDE.md's exception for the website's images with their source offered, and 0.2's release the release kernel's build without them ([site/README.md](../site/README.md), [design-kernel.md](design-kernel.md)) | [kernel](../fiasco/kernel/ORIGIN.md), [bootstrap](../fiasco/bootstrap/ORIGIN.md), [l4re-core](../fiasco/l4re-core/ORIGIN.md), [mk](../fiasco/mk/ORIGIN.md) |
 | Code translated from Fiasco into erXos's kernel | the kernel's design and know-how | MIT, notice kept per file and in `kernel/NOTICE-fiasco`; only from files whose effective license is permissive ([Licenses and notices](#licenses-and-notices)) | permanent | written in `kernel/` |
 | libfdt | device-tree parsing in the kernel, Fiasco and the root task | BSD-2-Clause (dual GPL-2.0-or-later) | permanent | [fiasco/libfdt/ORIGIN.md](../fiasco/libfdt/ORIGIN.md) |
 | `drivers-frst`, its PL011 UART subset | `bootstrap`'s console during Fiasco's boot | MIT | **release**, replaced with Fiasco | [fiasco/drivers-frst/ORIGIN.md](../fiasco/drivers-frst/ORIGIN.md) |
@@ -1932,7 +1930,7 @@ built out of tree, its own build scripts not run unless the row says so.
 | Raspberry Pi `usbboot` secure-boot images | an installation's secure boot ([design-platforms.md](design-platforms.md#trust-in-the-boot)) | Apache-2.0, firmware license for its binaries | permanent, run by the board's owner | `deps.lock` |
 | TF-A's BL31 for the Pi 4 | the firmware calls that start CPUs and end the machine ([design-platforms.md](design-platforms.md#firmware)) | BSD-3-Clause | permanent, board-specific | `deps.lock` |
 | The boards' device trees, from Linux | describe each board to the kernel | Pi 4 GPL-2.0, an accepted permanent copyleft dependency, shipped as a file of its own with its edited source and Linux's GPL-2.0 text; Pi 5 not permissive throughout in the Raspberry Pi kernel's tree (GPL-2.0-only includes and an unlicensed `rp1.dtsi`), which tree ships is open ([design-platforms.md](design-platforms.md#the-pi-5s-device-tree-and-its-license)) | permanent, board-specific | `deps.lock`, compiled with `dtc` |
-| Host tools: LLVM clang, lld and binary tools, GNU make, QEMU, `dtc`, Ruby, Perl, Node.js and pnpm, GNU coreutils, git, host OTP 29.1.2, `b3sum`, herdtools7's `herd7`, Autoconf, Automake, Libtool; `aarch64-elf-gcc` and binutils for Fiasco | building, running and testing; release images are built with exactly LLVM 23.1.3 | various | tools | Homebrew; host OTP and `herd7` from pinned sources, `herd7` built with dune alone; the site workflow takes pnpm, its one executable, from the npm registry's `@pnpm/exe.linux-x64` at a pinned version and SHA-256 |
+| Host tools: LLVM clang, lld and binary tools (they build Fiasco and L4Re too), GNU make, QEMU, `dtc`, Ruby, Perl, Node.js and pnpm, GNU coreutils, git, host OTP 29.1.2, `b3sum`, herdtools7's `herd7`, Autoconf, Automake, Libtool | building, running and testing; release images are built with exactly LLVM 23.1.3 | various | tools | Homebrew; host OTP and `herd7` from pinned sources, `herd7` built with dune alone; the site workflow takes pnpm, its one executable, from the npm registry's `@pnpm/exe.linux-x64` at a pinned version and SHA-256 |
 | OpenSSH's `ssh` and `ssh-keygen`, the host's own | the development login key and `tools/erx ssh` ([design-ssh.md](design-ssh.md#login-keys)) | OpenSSH's (unverified) | tools | the host's own, not pinned |
 | TLA+ tools | protocol models ([design-verification.md](design-verification.md#model-suite-and-runner)) | MIT | permanent host tool | `deps.lock` |
 | A Docker-compatible engine and the oracle's toolchain image | isolated stock OTP suites ([design-host-oracle.md](design-host-oracle.md)) | Apache-2.0; OrbStack's vendor license | development tools | image by digest in `deps.lock` |
@@ -2047,13 +2045,7 @@ Permissive License of l4re-core's `ldscripts/kip_addr.S`, enters every
 build. A license that is not permissive enters only from one closed
 table, `LicenseCheck::TABLE`, whose every row names one input by
 its status, its label, its exact license and where the build reads
-it, and the build kinds that take it: the cross compiler's three
-freestanding headers that Fiasco includes, `stdarg.h`, `stdbool.h` and
-`stddef.h`, under GPL-3.0-or-later with the GCC Runtime Library
-Exception, which lets code compiled with them go out under any terms,
-each from a GCC include directory outside the tree,
-`lib/gcc/TARGET/RELEASE/include`, whose release and file name its
-label carries, in every build, release builds included; Doom's
+it, and the build kinds that take it: Doom's
 archive, the `example`, under GPL-2.0-or-later at
 `build/doom/libdoom.a`, in development builds only; and, from the
 staged copy of Fiasco's inputs in `build/fiasco/inputs/`,
@@ -2062,8 +2054,7 @@ which goes out only in the website's images with its source offered.
 Beyond the table a development build accepts only a local test image's
 own packages (`package-local`), which no published image takes, so a
 copyleft file that comes back into any other closure, a stopgap's or a
-release component's included, fails the build, as does a file under
-the GCC exception other than those three headers. The only development images that
+release component's included, fails the build. The only development images that
 leave the project are the ones the website offers, the demo image and
 the board cards, which the site serves with a link to the erXos source
 they were built from, a release tag or commit, so what they carry goes

@@ -54,7 +54,7 @@ system's release, which names the system's own programs and libraries
 (`/usr/bin`, `/bin`, `/usr/sbin`, `/sbin`). Homebrew installs each
 version and revision of a package in a directory of its own, so the real
 path also names the helpers a driver runs from its install by path
-(gcc's `cc1`, its `libgcc.a`).
+(clang's resource directory with its freestanding headers).
 
 * **Native compiles** (`CompileMemo`, for every compile of `NativeRoot`)
   are stored: the object and dependency file are copied out of the memo
@@ -74,8 +74,8 @@ path also names the helpers a driver runs from its install by path
 * **Fiasco build** is recorded in place: its key is the
   captured inputs' record (FiascoInputs), the build tools' own Ruby, the
   compiler and the environment the build runs in. Its `PATH` holds the
-  directory each package it uses really lives in (GNU make, the cross gcc
-  and binutils, the host compilers for its Kconfig and L4Re host tools (`gcc` and `g++` on macOS, `cc`
+  directory each package it uses really lives in (GNU make, clang, `ld.lld`
+  and LLVM's binary tools, the host compilers for its Kconfig and L4Re host tools (`gcc` and `g++` on macOS, `cc`
   and `c++` elsewhere; passed as `HOSTCC`, `HOST_CC` and `HOST_CXX`), gawk, dtc and perl) and, after them, the operating system's directories, whose cp,
   find, ln and sed the build runs in their POSIX forms, and the key names every
   program in the former that is not a system directory. A directory the caller's `PATH` also names (the
@@ -374,10 +374,11 @@ read from the recorded tree when the image is packed.
 The kernel configuration runs in kernel mode, with `CONFIG_CPU_VIRT`
 disabled, device-tree discovery and the interrupt controllers required by
 QEMU `virt` enabled. Configuration inputs are checked in; the resolved
-configuration is recorded with the executable. Fiasco uses the
-documented cross GCC/binutils toolchain as subprocesses. erXos's own C17
-code continues to use its LLVM build. Both record compiler identity,
-effective flags, linker maps and dependency files.
+configuration is recorded with the executable. Fiasco is built
+with the same LLVM clang, `ld.lld` and binary tools as erXos's own C17
+code, as subprocesses, through `Makeconf.local` files that name them
+([design-fiasco.md](design-fiasco.md#the-releases-fiasco-build)). Both
+record compiler identity, effective flags, linker maps and dependency files.
 
 `bootstrap`'s direct library requirements are `drivers_uart`, `libfdt`,
 `libc_minimal`, `cxx_base` and `cxx_io`. Only the pinned `drivers-frst`
@@ -400,7 +401,7 @@ compiles none: the compiler runtime packages of the import name no library, and
 the link takes no start or end object from a compiler runtime (`sigma0` defines
 its own `__dso_handle`, in `dso_handle.c`). `sigma0` and `bootstrap` take
 the compiler's freestanding headers (`stdarg.h`, `stdbool.h`, `stddef.h`)
-from the cross compiler's include directory, which the build records by
+from clang's resource directory, which the build records by
 release and hash. erXos's own links take LLVM compiler-rt's builtins
 (`tools/lib/erx/compiler_rt.rb`). The minimal
 libc uses the pinned `l4re-core` source selection and its bundled libc

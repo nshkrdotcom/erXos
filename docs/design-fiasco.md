@@ -1612,9 +1612,8 @@ A release kernel links only sources a release build may carry: its build runs th
 (`FiascoProvenance`) over the kernel and fails naming each linked source whose license, as its
 import record or toolchain registration gives it, the one rule of
 [design.md](design.md#licenses-and-notices) (`LicenseCheck`) does not accept in a release
-build, the rule the image check applies. It accepts a permissive license anywhere, and beyond that
-only the cross compiler's three GCC headers, each from a GCC include directory
-([License](#the-releases-fiasco-build)), so `jdb_object.cpp` (GPL-2.0-only), whose row of the
+build, the rule the image check applies. It accepts a permissive license anywhere and nothing
+beyond it ([License](#the-releases-fiasco-build)), so `jdb_object.cpp` (GPL-2.0-only), whose row of the
 closed table accepts it in development builds only, is built only with `CONFIG_JDB`, into
 development kernels, the published images' included; a source the audit cannot attribute fails
 the build too, and a file without a license passes only as configuration or as one made from
@@ -3831,6 +3830,31 @@ and which widen what a thread can do with itself ([Who holds what](#who-holds-wh
 `UART_CHECKSUM` and every other option with no consumer. A release build that turns the debugger on
 fails the check. Development builds keep the debugger.
 
+**Toolchain.** Fiasco (kernel and `bootstrap`) and L4Re (`sigma0` and `l4re-core`) are built with
+LLVM: clang, `ld.lld` and LLVM's binary tools (`llvm-ar`, `llvm-nm`, `llvm-objcopy`,
+`llvm-objdump`, `llvm-ranlib`, `llvm-size`, `llvm-strip`) installed beside clang, not with a GNU
+cross compiler and binutils. `tools/lib/erx/fiasco_toolchain.rb` (`FiascoToolchain`) takes clang
+from `ERX_CLANG` and `ld.lld` from `ERX_LLD`, the two variables every other erXos build uses.
+`CROSS_COMPILE` is the constant `aarch64-none-elf-` and only names clang's `--target`; no program
+of that prefix runs. The toolchain reaches the inherited make systems through `Makeconf.local`
+files, never the make command line: the kernel build directory's (`CC`, `CXX`, `CPP=clang-cpp`,
+`LD=ld.lld` and the `llvm-` tools) and the assembled L4Re source's (`CLANG` as clang's directory,
+`LD = ld.lld -m $(LD_EMULATION)` and the `llvm-` tools). The fork carries five small edits for it:
+the kernel's `Makeconf` drops `ASFLAGS-clang += -no-integrated-as`, so clang assembles `.S` files
+with its integrated assembler, and uses the `CPP` that `Makeconf.local` names as given, with no
+`CROSS_COMPILE` prefix; `mk/mk/Makeconf` admits clang 23 in `CC_WHITELIST-clang`; and
+`kern/arm/Makerules.KERNEL.arm` keeps `.dynsym` and `.dynstr` in the raw `bootstrap` image,
+because `llvm-objcopy` refuses to remove them while the dynamic relocation section links to them
+(they lie inside the loaded range, so only those bytes change). The fifth makes the AArch64
+`bootstrap` relocate itself under LLD as under GNU ld: `_start` takes its link address from
+`_start_link_addr`, an absolute symbol of `bootstrap.arm.ld` that no relocation touches, rather
+than from its GOT slot, a load LLD may relax into the run-time address of `_start`; LLD gets
+`--apply-dynamic-relocs`, so every relocated word holds its link-time value, which a bootstrap
+without an MMU needs because it relocates nothing; the relocator reaches `_DYNAMIC`
+through a namespace-scope hidden declaration, which clang addresses PC-relatively; and the
+relocator names the format it applies in `bootstrap_reloc_tag`, so `bootstrap.arm.ld` fails the
+link on a dynamic relocation of the format the relocator would skip without a word.
+
 **Patches.** These are the changes the release's Fiasco build makes to what Fiasco's kernel does,
 each small and contained in the fork. An entry names its test where it has one, and says so where
 no test can drive the change:
@@ -3936,21 +3960,14 @@ is one. Its seeded failures are two: a release build with `jdb_object.cpp` liste
 `Modules.generic`, and one with the original `kobject_rpc.h` restored in place of the clean-room
 header, so the headers case fails on its own; neither seed needs anyone to open either file. The mk
 build links the toolchain's `libgcc` only under `CONFIG_COMPILER_RT_USE_TOOLCHAIN_LIBGCC`
-(`fiasco/mk/mk/Makeconf:505-506`); whether the release's `bootstrap` and `sigma0` set it is
-unverified, and the check settles it, since `libgcc` is not among the allowed files. The one
-allowed exception is the cross compiler's `stdarg.h`, `stdbool.h` and `stddef.h`,
-GPL-3.0-or-later WITH GCC-exception-3.1 ([design.md](design.md#dependencies)): they define only
-macros and types, and the exception lets Target Code that GCC generates with them be conveyed
-"under terms of your choice" (`COPYING.RUNTIME`, section 1, of `aarch64-elf-gcc` 16.2.0, SHA-256
-`9d6b43ce4d8de0c878bf16b54d8e7a10d9bd42b75178153e3af6a815bdc90f74`), so the check allows exactly
-those three files, by name and path, each from the cross gcc's include directory, the build record
-naming their hash, and only when
-GCC builds Fiasco; the GCC exception on any other file fails it. They are the closed table's GCC
-row, which every build kind takes, and inputs of Fiasco's
-`release` row in the dependency table ([design.md](design.md#dependencies)). A
-release therefore pins the `aarch64-elf-gcc` release that builds Fiasco beside the LLVM release
-that builds the rest. Fiasco's notices go into `NOTICES` like every other third-party component's
-([design.md](design.md#licenses-and-notices)).
+(`fiasco/mk/mk/Makeconf:505-506`); erXos sets no such option, and the check confirms that no
+`libgcc` is linked, since it is not among the allowed files. The compiler's freestanding headers
+`stdarg.h`, `stdbool.h` and `stddef.h` come from clang's resource directory, Apache-2.0 WITH
+LLVM-exception, a permissive license that the reviewed LLVM profile
+(`config/provenance/llvm.json`) records and `FiascoProvenance.llvm_registry` adds to the build
+record, so the check needs no exception: every linked source must be permissive. A release pins one
+toolchain, LLVM 23.1.3 (clang and lld), for Fiasco and for everything else. Fiasco's notices go into `NOTICES` like every other
+third-party component's ([design.md](design.md#licenses-and-notices)).
 
 ## Upstream security fixes
 
@@ -4431,8 +4448,8 @@ Decided, and applied above:
   that the root's watchdog thread arms and reloads on every boot ([The watchdog](#the-watchdog)).
 * **A missed pet and a root fault** reset the machine; neither turns it off
   ([The end path](#the-end-path)).
-* **The cross compiler's three headers** are allowed by name and hash
-  ([The release's Fiasco build](#the-releases-fiasco-build)).
+* **The toolchain** is LLVM 23.1.3 for Fiasco and for everything else, with no exception to the
+  permissive link closure ([The release's Fiasco build](#the-releases-fiasco-build)).
 * **The scheduler's stages**, the cooperation pieces and group quotas, follow once everything else
   works ([Stages beyond bands](#stages-beyond-bands)).
 * **Fiasco's limits** are the downsides above, published with the release, never plugged by
