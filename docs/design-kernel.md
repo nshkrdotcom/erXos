@@ -2736,7 +2736,8 @@ platform record the build checked
 ([design-board-sensors.md](design-board-sensors.md#the-construction-the-firmwares-requests-are-rows-of-the-platform-record)):
 
 * **The rows.** Each row is a tag from a closed set, with the argument
-  words the record gives, as many as the tag's request, and a fixed
+  words the record gives, or a power line's declaration for the rows
+  the build derives from a power row, as many as the tag's request, and a fixed
   answer window of at most 64 bytes. A resource carved with `ERX_CARVE_DEVICE` from a device entry
   the platform record names with requests names that device's rows, such
   as a PCIe bridge's notification that has the USB controller behind it
@@ -2776,7 +2777,9 @@ platform record the build checked
   included, is `ERX_EPROTO`; so is a first tag other than the row's,
   which is refused rather than searched for. A response word without
   bit 31 is the firmware ignoring the tag and answers `ERX_ENOTSUP`,
-  except a word of 0 on a tag whose declaration takes it as performed
+  except a word of 0 on a tag whose declaration says the firmware
+  answers it in its first value word, where that word, 0 when
+  performed and otherwise `ERX_ENOTSUP`, decides
   ([design-board-sensors.md](design-board-sensors.md#the-requests)). A
   length, bits 30-0, below the tag's least answer is `ERX_EPROTO`.
   So `ERX_ENOTSUP` says the firmware does not perform the request, and

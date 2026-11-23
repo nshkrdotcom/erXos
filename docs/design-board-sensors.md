@@ -196,7 +196,11 @@ row and the call:
   answer window; the row cannot. A machine row is written as a reading's
   name alone, a member of the closed set `fw_reading`, whose declaration
   gives the tag and the argument; the generator derives the row's other
-  fields from it.
+  fields from it. A device's power line is written as a power row, the
+  device and a member of the closed set `fw_power_line`, whose
+  declaration gives the tag, the pin and the off and on states; the
+  generator derives the device's off and on rows from it
+  ([design-bluetooth.md](design-bluetooth.md#the-power-line)).
 * **The call**, `erx_firmware_request(resource (CARVE), index)`, sends
   row `index` among the rows of what the resource names, a device's
   resource naming that device's rows and the root resource naming the
@@ -268,8 +272,9 @@ Each requirement then follows:
 header, a tag's header and the end tag), its codes and response bit,
 the closed set of tags erXos sends, each with what it may belong to, the
 size of its request and of its answer window, the least answer it
-accepts and whether the firmware is known to leave its response word 0,
-and the closed set of readings below. The generator computes every
+accepts and whether the firmware answers it in its first value word,
+the closed set of readings below and the closed set of power lines
+([design-bluetooth.md](design-bluetooth.md#the-power-line)). The generator computes every
 buffer size and offset from these facts, derives every machine row from
 its reading, and validates every row of every platform record against
 them.
@@ -287,14 +292,16 @@ Every tag but one takes a response word with bit 31 set as performed,
 and one without it as ignored, as the interface defines (wiki, line 5).
 The exception is the Bluetooth line's `0x00038041`, set GPIO state,
 whose response word FreeBSD records the firmware not setting, and whose
-word of 0 FreeBSD takes as an answer (`bcm2835_mbox.c:362-370`): its
-declaration takes a response word of 0 as performed, an answer of no
-bytes, and a nonzero word without bit 31 as ignored. That is a fact
+word of 0 FreeBSD takes as an answer (`bcm2835_mbox.c:362-370`), and
+whose first value word, the pin, the firmware writes 0 on success
+(`raspberrypi_gpio.c:253-255`): its declaration takes a response word
+of 0, or one with bit 31 set, with a first value word of 0 as
+performed, an answer of no bytes, any other first value word as not
+performed, and a nonzero word without bit 31 as ignored. That is a fact
 about the tag, so it is written once, in the tag's declaration, and no
-caller handles it. On this tag a firmware that ignored the request
-cannot be told from one that performed it; the controller's bring-up
-after the power cycle is what shows a power line that did nothing, and
-probe B-P2 records the raw word the board's firmware leaves
+caller handles it. A buffer the firmware left untouched keeps the pin
+the request wrote, so an ignored request is not taken as performed;
+probe B-P2 records the raw words the board's firmware leaves
 ([design-bluetooth.md](design-bluetooth.md#board-probes)).
 
 **The readings** are the closed set `fw_reading`, declared in the same
@@ -318,8 +325,8 @@ A platform record's machine rows are readings' names, in the order the
 platform polls them, and nothing else. The Raspberry Pi 4's record,
 `config/platforms/raspi4b.json`, gains a list `firmware_requests` whose
 machine part is the nine readings in the table's order, rows 0 to 8; its
-device rows, the VL805's and UART0's notifications, move into the same
-list with their tags and arguments. The generator derives a machine
+device rows move into the same list: the VL805's notification with its
+tag and argument, and UART0's power row. The generator derives a machine
 row's tag and argument from its reading and validates every device row
 against its tag's declaration, so a row cannot send one reading's tag
 under another's name. The rows reach the system domain in the system
@@ -636,7 +643,7 @@ already show.
 | Call | Result | When |
 | --- | --- | --- |
 | `erx_firmware_request` | `ERX_OK` with `n` and the answer | the answer passed every check |
-| | `ERX_ENOTSUP` | a resource that names no rows, an index past its list, a platform with no rows; a response word without bit 31, other than 0 on a tag declared to take it as performed: the firmware ignored the tag |
+| | `ERX_ENOTSUP` | a resource that names no rows, an index past its list, a platform with no rows; a response word without bit 31, other than 0 on a tag declared to answer in its first value word: the firmware ignored the tag; on such a tag, a first value word other than 0: the firmware did not perform it |
 | | `ERX_EPROTO` | a response code other than success, `0x80000001` included; a first tag other than the row's; a response length below the tag's least answer |
 | | `ERX_ERIGHTS` | a resource without `CARVE` |
 | | `ERX_ETIMEDOUT` | no answer within 1 s of the call's start, and every call after one in the boot |

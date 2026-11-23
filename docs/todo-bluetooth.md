@@ -157,7 +157,7 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   test runs the steps over the device stand-in (`test/erlang/stand_in/erx_device.erl`), so a drain that ignores `RXFE`
   or its bound, or a step sent to the wrong register, passes; trace `keep` against the sequence it replaced and the
   drain's two stops. With it, [Low]: between a line driver's end and its fresh start, through a reset's off wait,
-  the UART keeps the old driver's `IMSC`, so a controller's bytes raise a line it shares with the host link with no
+  and after a reset that fails, the UART keeps the old driver's `IMSC`, so a controller's bytes raise a line it shares with the host link with no
   driver to clear them; the old driver could mask it as it ends.
 * [Medium] bluetooth, the line keeper's shape (`erlang/apps/erx_uart/src/erx_line.erl`): its decisions and effects
   (the driver's sends, `exit/2`, the answers) are made in the same steps, so its tests are hand-picked cases rather

@@ -785,9 +785,9 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   buffer's layouts and NOTIFY_XHCI_RESET alone, as the closed set `fw_tag` and three loose limits that
   `kernel/core/vc_property.c` assembles into
   its `erx_vc_tag_t` and bounds with a `_Static_assert`, and the schema has no `sensors` kind. Make the tags one
-  generated table (tag, belonging, request, window, least answer, a response word of 0 taken as performed) whose
+  generated table (tag, belonging, request, window, least answer, whether the tag answers in its first value word) whose
   generator checks each row's bounds, derives `vc_request_max` and the buffer's size from the rows and emits the
-  core's table, so no caller builds a declaration and the hand-kept assert goes; add `fw_reading`, `fw_throttle` with
+  core's table, so no caller builds a declaration and the hand-kept assert goes; add `fw_reading`, `fw_power_line`, `fw_throttle` with
   its span and `board_sensor_period`; add the kind `sensors` at `[sensors]`, the units `mdegC`, `uV` and `Hz`, and
   `@fw_throttle`.
 * [Low] boot records, `-erx_record given` ([design-fiasco.md](design-fiasco.md#device-records)): the record's
