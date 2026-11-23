@@ -282,7 +282,10 @@ once, and then runs one pure state machine, `erx_irq_line_core`, whose
 next action it performs: a notice to a driver or the line's
 acknowledgement. Its state is the set of members and the round in
 progress. It runs at Erlang priority `high`, and the drivers at
-`normal`. The line stays masked from a firing until the owner
+`normal`, except the driver of a device whose buffer overruns within a
+scheduling slice, the Raspberry Pi 4's mini UART, which runs at `high`
+too: its work for each notice is bounded by its FIFO, as the owner's is
+by its members. The line stays masked from a firing until the owner
 acknowledges it, which the owner does only once it runs after the last
 member's answer, so every moment the owner waits for its scheduler the
 line is deaf. A process of priority `high` does not interrupt a process
@@ -291,9 +294,12 @@ slice, but it is taken before every queued process of priority
 `normal`. So a device whose buffer fills in less than a few time
 slices of other processes, as the Raspberry Pi 4 mini UART's
 eight-byte receive FIFO does in 0.7 ms, is not held deaf behind its
-domain's busy processes; how soon the line can fire again after the
-acknowledgement is the kernel's (docs/todo-drivers.md, the mini UART
-item). The priority starves no process of priority `normal` while the
+domain's busy processes. On Fiasco the priority is also what takes the
+owner's and such a driver's scheduler above every domain's ordinary
+work, since an executor holding work of priority `high` runs at its
+band's ceiling ([design-fiasco.md](design-fiasco.md#urgency)); what
+that leaves of the delay is measured on the board (docs/todo-drivers.md,
+the mini UART item). The priority starves no process of priority `normal` while the
 owner's work stays bounded: it runs only when a message arrives and
 does a bounded amount of work for each (a notice to each member, or one
 acknowledgement); a firing comes at most once per round, and the rest

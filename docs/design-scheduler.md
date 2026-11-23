@@ -1903,10 +1903,15 @@ from Erlang; and a NIF that blocks on a normal scheduler fails instead of
 stalling it.
 
 On Fiasco a group is a record in `liberx`'s Fiasco backend and gives
-readiness only; quotas, urgency resolution, charging, shared areas and the
+readiness only; quotas, charging, shared areas, published urgency and the
 finishing share are unsupported, per the backend's table
 ([design-fiasco.md](design-fiasco.md#the-call-table)), and threads run on
-Fiasco's fixed priorities, each at its domain's band
+Fiasco's fixed priorities, each within its domain's band: at the band's
+base, or at its ceiling while the thread holds urgent work, which it says
+of itself with `erx_thread_set_urgency`, the one form of that call Fiasco
+serves ([design-fiasco.md](design-fiasco.md#urgency)). A grant's `cpuset`
+and `slice_us` are honoured there, and its `base` only as the value an
+urgency must exceed to be urgent
 ([design-fiasco.md](design-fiasco.md#the-scheduler-on-fiasco)). The
 features of configurations C0 to C2 are erXos's kernel's alone
 ([design-kernel.md](design-kernel.md#the-current-implementation-the-modified-fiasco)),

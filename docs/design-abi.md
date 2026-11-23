@@ -1593,10 +1593,10 @@ cannot change a configured domain at runtime.
 FD15). `band` is one of `driver`, `interactive` and `app`; the bands
 above them belong to the root task's own threads and have no name here
 ([design-fiasco.md](design-fiasco.md#bands)). The domain library hands
-the four, with the grant's `cpuset` and the band of the domain's
-sub-spaces, to the root in the Fiasco backend's root-only form of the
+the four, with the grant's `cpuset` and `slice_us` and the band of the
+domain's sub-spaces, to the root in the Fiasco backend's root-only form of the
 domain's space create, and the root bounds by them what the domain can
-make it hold and starts the domain's threads at the band's priority
+make it hold and starts the domain's threads at the band's base
 within the `cpuset`, so the CPU set has one source on both kernels. They
 live in the limits record, not the configured-domain row, so that a
 session takes them from its template's limits as it takes every other

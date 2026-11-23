@@ -506,7 +506,7 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   `uartgap-high.txt`). What remains is not in the kernel: the interrupt probe found Fiasco's path to the
   dispatcher under 10 us and the delay in the owner's ERTS scheduler waiting behind other ERTS threads at the
   same priority on CPU 0 (history repository `pi4/2026-11-22-irq-probe/`, commits 924e652, de6a618 and 66b1a9e).
-  The work is ERTS's spinning off and the priority bands, after which the probe is re-run. A lost byte is
+  The work is the bands of docs/design-fiasco.md ("Bands", "Urgency", "Scheduling"), with this driver at priority `high` (docs/design-shared-devices.md, "The owner"), after which that document's Pi 4 measurement is run. A lost byte is
   marked: the driver puts a NUL where the bytes were lost and the line editor refuses to finish a line that
   holds it (docs/design-live.md, "The console"), so what is left is the loss itself, a pasted line refused and
   typed again. Typing at human speed loses nothing, and the user guide sends pastes to SSH. Should a loss

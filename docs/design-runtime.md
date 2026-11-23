@@ -1102,7 +1102,9 @@ ERTS's scheduler is the second level, kept whole except at these points:
   with `ERX_GROUP_PLACE` the kernel places each on an idle CPU of the run
   at its wake, so a dirty NIF that starts while one idles does not wait
   behind a busy normal scheduler, and without it each stays on its home
-  CPU. The domain's normal and dirty CPU work thus stay on its run,
+  CPU. On Fiasco, which never moves a thread, dirty CPU scheduler `i` is
+  pinned to the `i`-th CPU of the run as the normal ones are
+  ([design-fiasco.md](design-fiasco.md#scheduling)). The domain's normal and dirty CPU work thus stay on its run,
   where the policy places no other domain's share. Dirty I/O schedulers,
   ERTS's helper threads (the aux thread and the system-message
   dispatcher) and the gate worker are workers in the same group, unpinned.
@@ -1131,7 +1133,10 @@ ERTS's scheduler is the second level, kept whole except at these points:
   writing the poll set's pipe.
 * **Spinning.** ERTS spins 10,000 iterations before an event sleep. A spin
   burns the group's quota, so the adapter's default is ERTS's
-  `+sbwt none`, with `very_short` selectable; E-S1 measures both.
+  `+sbwt none`, with `very_short` selectable; E-S1 measures both. On
+  Fiasco `none` is the only setting, since a spinning executor there
+  hears of its work later than a parked one
+  ([design-fiasco.md](design-fiasco.md#scheduling)).
 * **The safe point.** At each entry to `erts_schedule`, between processes,
   the adapter does, in this order: if the status area's `ready` is not
   zero, take the group's ready list and dispatch each label through the
@@ -1148,7 +1153,11 @@ ERTS's scheduler is the second level, kept whole except at these points:
   priority and the highest priority queued on its run queue, mapped into
   the group's band (`low` and `normal` to the group's base, `high` to base
   plus one, `max` to the ceiling). It republishes when either changes,
-  which ERTS knows at enqueue and at schedule-in.
+  which ERTS knows at enqueue and at schedule-in. Without hints, as on
+  Fiasco, the executor sets the same value on itself with
+  `erx_thread_set_urgency` at its safe point, when it differs from the
+  one it last set, and lowers itself before it parks
+  ([design-fiasco.md](design-fiasco.md#urgency)).
 * **Deferral.** With `ERX_GROUP_DEFER`, the adapter raises the control
   line's `defer` count around the scheduler's run-queue locks, process
   locks taken by the scheduler, and the allocator's carrier locks, and when
@@ -4389,7 +4398,7 @@ specification writes each `+` as `-`:
 | `+SDio N` | dirty I/O schedulers, workers; 2 by default |
 | `+MMmcs N`, `+Mulmbcs N`, `+Musmbcs N` | `2`, `1024` and `128` by default, in every runtime ([Memory](#memory)); a specification may change them, and what its carriers hold is charged to the domain's own budget |
 | `+sbt u` | executors unpinned, placed by the kernel at each wake; any other value pins in cpuset order |
-| `+sbwt`, `+sbwtdcpu`, `+sbwtdio`: `none` (default) or `very_short` | busy waiting before parking, which spends the group's quota; longer settings are clamped to `very_short` |
+| `+sbwt`, `+sbwtdcpu`, `+sbwtdio`: `none` (default) or `very_short` | busy waiting before parking, which spends the group's quota; longer settings are clamped to `very_short`, and on Fiasco every setting to `none` |
 | `+JPperf`, `+JMsingle` | ignored with a warning: there is no `perf`, and a mapping is never writable and executable at once |
 | `-erx lane_batch N` | frames one run of a connection port's input task takes before it reschedules itself |
 | `-erx test_lane_hold` | a test's switch, off by default: a process of the domain may then hold the ring of one of its own lane ports with the lane driver's control command 4, `port_control(Port, 4, <<1>>)`, which the input task obeys by taking only the control table, if the port has one, until `<<0>>` or the port's finish releases it; without the flag the command answers `badarg`. It reaches only the domain's own port, so no other domain |

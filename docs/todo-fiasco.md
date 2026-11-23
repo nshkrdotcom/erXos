@@ -491,10 +491,10 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   share CPU 0 at the same Fiasco priority (history repository commits 924e652 and de6a618,
   `pi4/2026-11-22-irq-probe/`, images A to C). With ERTS's busy-wait spinning off (image E, commit 66b1a9e)
   the SD line's receipts all fall under 615 us, but the console's lags stay at 0.6 to 2.1 ms. The work is
-  erXos's: ERTS's spinning off, and the priority bands of docs/design-fiasco.md ("Bands"), which put the system domain (the
-  console's holder) and the driver domains (the SD controller's) above every interactive and app domain. Bands separate a domain from other domains' threads, not from its
-  own; which domain's threads the owner waited behind is not recorded, so the probe is re-run on the Pi 4
-  once both are in.
+  erXos's, the bands of docs/design-fiasco.md ("Bands", "Urgency", "Scheduling"): one normal scheduler pinned to each CPU,
+  parks in place of spinning, the grant's 1 ms slice as the quantum, and an executor that holds work of priority `high`
+  raised above every domain's ordinary work. Which threads the owner waited behind is not recorded, so the
+  Pi 4's measurement of that document's "Verification" is run as each lands.
 
 * [Medium] Fiasco backend, `liberx/backend/fiasco/park.c`: `erx_park` and `erx_group_take_ready` refuse a thread
   that is not an executor (`ERX_ETYPE`), and that is all of the executor rule. Refusing to arm a vCPU
