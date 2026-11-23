@@ -107,9 +107,8 @@ the names config's files lists, has settled: installed, failed, or idle
 while its server row is not starting. in_place/3 decides it from the
 grants alone and the rows the service names as starting, so it needs no
 state of its own, and a grant with an operation is bounded by its
-deadline, a starting server by its boot timeout. A display's row waits
-for its server by the same rule (server_settled/3): no starting row
-serves the display's service.
+deadline, a starting server by its boot timeout. A server has settled by
+the same rule (server_settled/3): no starting row serves its service.
 
 One incarnation's grant (docs/design-system.md, "A session takes the
 console"). system_grant/3 answers a wait for the system domain's grant of a
@@ -124,11 +123,18 @@ bounds, or while the core has not yet heard of the incarnation, which its
 row's boot timeout bounds for an incarnation of the server row, since its
 ready report or its end follows. The grant is matched by the incarnation,
 never by the service alone, so no wait is answered with a predecessor's facet.
+
+The settlement wait (docs/design-system.md, "Waiting for a grant").
+settled/3 answers each query of the closed set query() by one of the three
+decisions above, namespace by in_place/3 for the system domain, {server, Name}
+by server_settled/3 and {grant, Name, Id} by system_grant/3, or answers wait,
+so the domain service keeps every waiter in one list and asks it again after
+each change of the grants or the starting rows.
 """.
 
--export([new/1, step/2, grants/1, granted/3, granted_names/2, granted_services/2, in_place/3, server_settled/3, system_grant/3,
+-export([new/1, step/2, grants/1, granted/3, granted_names/2, granted_services/2, in_place/3, settled/3,
          pair_area/3]).
--export_type([state/0, config/0, event/0, action/0, grant/0, key/0, pair/0]).
+-export_type([state/0, config/0, event/0, action/0, grant/0, key/0, pair/0, query/0]).
 
 -define(SYSTEM_ID, 4).
 -define(DEADLINE, 10000).
@@ -147,6 +153,8 @@ never by the service alone, so no wait is answered with a predecessor's facet.
 -type reason() :: {introduce, term()} | bad_reply | {deadline, pending()}.
 %% The service whose grant a session's ready report marks, the display its start named.
 -type marked() :: {display, name()} | none.
+%% What a process of the system domain waits to see settle (settled/3), a closed set.
+-type query() :: namespace | {server, name()} | {grant, name(), id()}.
 -type grant() :: idle
                | {introducing, pair(), tag()}
                | {minting, pair(), tag()}
@@ -288,33 +296,46 @@ namespace in place.
 -spec in_place(grantee(), Starting :: [row()], state()) -> boolean().
 in_place(Grantee, Starting, #{grants := Grants, files := Files}) ->
     lists:all(fun({{_, Name}, #{server := Server, state := Grant}}) ->
-                      not lists:member(Name, Files) orelse settled(Grant, Server, Starting)
+                      not lists:member(Name, Files) orelse grant_settled(Grant, Server, Starting)
               end, [Entry || {{G, _}, _} = Entry <- maps:to_list(Grants), G =:= Grantee]).
 
 -doc """
-Whether the server of service Name has settled (docs/design-system.md, "A
-session takes the console", a display's row): no configured row among
-Starting, those whose domain runs without having reported ready, serves
-Name. Its server is then ready, stopped for its boot timeout, ended, or
-refused its start. A name no configured row serves, such as one the
-system domain serves, has no start to wait for and has settled.
+The answer to Query, a wait of a process of the system domain
+(docs/design-system.md, "Waiting for a grant"), once its facts have settled,
+and wait until then, from the grants and Starting alone, the configured rows
+whose domain runs without having reported ready and those held at boot.
+namespace is answered ok once the system domain's namespace is in place
+(in_place/3), {server, Name} ok once Name's server has settled
+(server_settled/3), and {grant, Name, Id} as system_grant/3 answers it.
 """.
--spec server_settled(name(), Starting :: [row()], state()) -> boolean().
+-spec settled(query(), Starting :: [row()], state()) ->
+          wait | ok | {ok, erx_facets:facet()} | {error, failed | ended | unprovided}.
+settled(namespace, Starting, State) ->
+    ok_or_wait(in_place(system, Starting, State));
+settled({server, Name}, Starting, State) ->
+    ok_or_wait(server_settled(Name, Starting, State));
+settled({grant, Name, Id}, _Starting, State) ->
+    system_grant(Name, Id, State).
+
+ok_or_wait(true) -> ok;
+ok_or_wait(false) -> wait.
+
+%% Whether the server of service Name has settled (docs/design-system.md, "A
+%% session takes the console", a display's row): no configured row among
+%% Starting serves Name. Its server is then ready, stopped for its boot timeout,
+%% ended, or refused its start. A name no configured row serves, such as one the
+%% system domain serves, has no start to wait for and has settled.
 server_settled(Name, Starting, #{declared := Declared}) ->
     not lists:any(fun(Row) -> lists:member(Name, maps:get(Row, Declared, [])) end, Starting).
 
--doc """
-The answer to a wait for the system domain's grant of service Name from Id,
-an incarnation of the grant's server row: {ok, Facet} once the grant is
-installed with Id as its server, Facet as the installation in the system
-domain's registry carries it (installed_facet/3), {error, failed} once it failed with Id as
-its server, {error, ended} once Id has ended or the grant carries another
-server, {error, unprovided} once Id is ready and the grant is idle, and wait
-while none of these holds. A name the system domain is granted by no row is
-{error, unprovided}: nothing will ever be installed for it.
-""".
--spec system_grant(name(), id(), state()) ->
-          wait | {ok, erx_facets:facet()} | {error, failed | ended | unprovided}.
+%% The answer to a wait for the system domain's grant of service Name from Id,
+%% an incarnation of the grant's server row: {ok, Facet} once the grant is
+%% installed with Id as its server, Facet as the installation in the system
+%% domain's registry carries it (installed_facet/3), {error, failed} once it failed
+%% with Id as its server, {error, ended} once Id has ended or the grant carries
+%% another server, {error, unprovided} once Id is ready and the grant is idle, and
+%% wait while none of these holds. A name the system domain is granted by no row is
+%% {error, unprovided}: nothing will ever be installed for it.
 system_grant(Name, Id, #{grants := Grants, rows := Rows} = State) ->
     Key = {system, Name},
     case Grants of
@@ -344,10 +365,12 @@ heard(Id, {Id, ended}) -> ended;
 heard(Id, Newest) when is_tuple(Newest), element(1, Newest) > Id -> ended;
 heard(_Id, _NewestOrNone) -> unheard.
 
-settled({installed, _Pair, _Facet}, _Server, _Starting) -> true;
-settled({failed, _Pair, _Reason}, _Server, _Starting) -> true;
-settled(idle, Server, Starting) -> not lists:member(Server, Starting);
-settled(_Pending, _Server, _Starting) -> false.
+%% Whether one grant has settled for a namespace (in_place/3): installed, failed, or
+%% idle while its server row is not starting.
+grant_settled({installed, _Pair, _Facet}, _Server, _Starting) -> true;
+grant_settled({failed, _Pair, _Reason}, _Server, _Starting) -> true;
+grant_settled(idle, Server, Starting) -> not lists:member(Server, Starting);
+grant_settled(_Pending, _Server, _Starting) -> false.
 
 -doc "The next state and the actions to perform for Event, in order.".
 -spec step(event(), state()) -> {state(), [action()]}.

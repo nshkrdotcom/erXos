@@ -211,9 +211,32 @@ class ErxDomainTest < Minitest::Test
     # The system domain's namespace (docs/design-system.md, "A session takes the console"):
     # a wait answered before its files grant settles lets the start table read rc.conf
     # before the system domain's data grant is installed.
-    Fault.new(name: "a wait for the system domain's namespace answered at once", file: SERVICE,
-              from: '    case InPlace(system) of', to: '    case is_function(InPlace) of',
+    Fault.new(name: "a wait for the system domain's namespace answered at once", file: MINTS,
+              from: 'ok_or_wait(in_place(system, Starting, State));', to: 'ok_or_wait(is_map(State));',
               tests: 'erx_domain_mints_srv_tests', caught_by: 'system_namespace'),
+    # The settlement wait (docs/design-system.md, "Waiting for a grant"): settled/3 behind
+    # the one list. A grant query matched by its service alone answers a wait for one
+    # incarnation with a predecessor's facet; a list answered whole at any evaluation
+    # answers the grant's asker before its installation; and an end's step evaluated
+    # after the ended row's successor starts leaves a server's asker waiting through the
+    # successor's boot.
+    Fault.new(name: 'a settled grant query matched by its service alone', file: MINTS,
+              from: '#{Key := #{state := {installed, {Id, _}, Pid}}} ->',
+              to: '#{Key := #{state := {installed, _Pair, Pid}}} ->',
+              tests: 'erx_domain_mints_tests', caught_by: 'settled_answers_each_query_as_its_decision_test'),
+    Fault.new(name: 'every settlement asker answered at any evaluation', file: SERVICE,
+              from: "Answer =/= wait],\n    State\#{settling := [Wait || {Wait, wait} <- Answers]}.",
+              to: "true],\n    State\#{settling := []}.",
+              tests: 'erx_domain_mints_srv_tests', caught_by: 'settling'),
+    Fault.new(name: "an end's step evaluated after its successor starts", file: SERVICE,
+              from: "Told = unprovide(Origin, Id, perform(Actions, State\#{core := Ended, links := Unlinked})),\n" \
+                    "            _ = retire(Lib, Id),\n" \
+                    "            %% A PCIe row's end releases the hold at boot, after its own restart.\n" \
+                    "            Restarted = restart(Origin, Id, Life, Info, Where, waiter_ended(Id, Life, Info, Told)),",
+              to: "Told = perform(Actions, State\#{core := Ended, links := Unlinked}),\n" \
+                  "            _ = retire(Lib, Id),\n" \
+                  "            Restarted = unprovide(Origin, Id, restart(Origin, Id, Life, Info, Where, waiter_ended(Id, Life, Info, Told))),",
+              tests: 'erx_domain_mints_srv_tests', caught_by: 'display_ended'),
     # One incarnation's grant (docs/design-pcie.md, "Facets"), the pure decision of
     # erx_domain_mints:system_grant/3: one matched by the service alone answers a wait for
     # one incarnation with another's installed facet; and without the idle case the wait

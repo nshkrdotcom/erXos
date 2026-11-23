@@ -55,7 +55,7 @@
 %%   no refused step and no fired deadline, every grant that has a pair is
 %%   installed;
 %% * grant_answer: where the system domain is a grantee, a wait for its grant
-%%   (system_grant/3) for any domain id the model has issued, and the next, is
+%%   (settled/3) for any domain id the model has issued, and the next, is
 %%   answered with a facet only for S's ready incarnation and with that
 %%   incarnation's own facet, failed or unprovided only for S's ready
 %%   incarnation, and ended for any other; one for an id older than S's ready
@@ -219,6 +219,37 @@ system_grantee_skips_the_introduction_test() ->
                   [{install, 1, 4, data, facet(5)}],
                   [{disarm, 1}]], Actions),
     ?assertEqual(#{{system, data} => {installed, {5, 4}, facet(5)}}, erx_domain_mints:grants(State)).
+
+%% The settlement wait (docs/design-system.md, "Waiting for a grant"): settled/3 answers
+%% each query as its decision does. The system domain's namespace waits for its data
+%% grant, of a files service here, to settle; data's server has settled once row ?S is
+%% not starting, and a name no row serves at once; and a wait for one incarnation's
+%% grant is answered with that incarnation's facet, never with a predecessor's.
+settled_answers_each_query_as_its_decision_test() ->
+    Settled = fun(Query, Starting, State) -> erx_domain_mints:settled(Query, Starting, State) end,
+    Idle = erx_domain_mints:new((config([system]))#{files => [data]}),
+    ?assertEqual(wait, Settled(namespace, [?S], Idle)),
+    ?assertEqual(ok, Settled(namespace, [], Idle)),
+    ?assertEqual(wait, Settled({server, data}, [?S], Idle)),
+    ?assertEqual(ok, Settled({server, data}, [], Idle)),
+    ?assertEqual(ok, Settled({server, other}, [?S], Idle)),
+    ?assertEqual(wait, Settled({grant, data, 5}, [?S], Idle)),
+    {_, Minting} = run([ready(?S, 5, #{data => mint(5)})], Idle),
+    ?assertEqual(wait, Settled(namespace, [], Minting)),
+    ?assertEqual(wait, Settled({grant, data, 5}, [], Minting)),
+    {_, Installed} = run([{minted, 5, 1, {ok, facet(5)}}, {installed, 4, 1}], Minting),
+    ?assertEqual(ok, Settled(namespace, [], Installed)),
+    ?assertEqual({ok, {facet(5), rw}}, Settled({grant, data, 5}, [], Installed)),
+    ?assertEqual({error, ended}, Settled({grant, data, 8}, [], Installed)),
+    ?assertEqual({error, unprovided}, Settled({grant, other, 5}, [], Installed)),
+    {_, Failed} = run([{deadline, 1}], Minting),
+    ?assertEqual(ok, Settled(namespace, [], Failed)),
+    ?assertEqual({error, failed}, Settled({grant, data, 5}, [], Failed)),
+    {_, Successor} = run([{ended, ?S, 5}, ready(?S, 8, #{data => mint(8)})], Installed),
+    ?assertEqual({error, ended}, Settled({grant, data, 5}, [], Successor)),
+    ?assertEqual(wait, Settled({grant, data, 8}, [], Successor)),
+    {_, Unprovided} = run([ready(?S, 5, #{})], Idle),
+    ?assertEqual({error, unprovided}, Settled({grant, data, 5}, [], Unprovided)).
 
 two_grants_keep_their_own_operations_test() ->
     {Actions, State} = run([ready(?S, 5, #{data => mint(5)}), ready(?G, 6, #{}), {minted, 5, 2, {ok, facet(5)}},
@@ -665,7 +696,7 @@ check_state(Core, Env, Node, Seen) ->
 check_grant_answer(Core, #{next_id := NextId, armed := Armed} = Env, Node, Seen) ->
     Ready = ready_id(?S, Env),
     lists:foreach(fun(Id) ->
-                          Answer = erx_domain_mints:system_grant(data, Id, Core),
+                          Answer = erx_domain_mints:settled({grant, data, Id}, [], Core),
                           Expected = case Answer of
                                          {ok, Facet} -> Id =:= Ready andalso Facet =:= facet(Id);
                                          _ when is_integer(Ready), Id < Ready -> Answer =:= {error, ended};

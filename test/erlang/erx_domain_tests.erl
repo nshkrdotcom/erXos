@@ -409,7 +409,7 @@ hold_released_by_the_report_answer_test_() ->
         ok = ready(5),
         held_not_started(),
         %% Held, usb is starting, so the display it serves is not settled until it reports.
-        Settled = erx_domain:display_settled(<<"screen">>),
+        Settled = erx_domain:server_settled(<<"screen">>),
         ?assertEqual(timeout, gen_server:wait_response(Settled, 300)),
         ok = erx_domain:pci_report_answered(),
         started(7, 1, <<"usb">>),

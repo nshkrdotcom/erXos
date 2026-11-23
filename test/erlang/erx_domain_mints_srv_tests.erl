@@ -48,15 +48,22 @@ system_namespace_test_() ->
     {setup, fun() -> setup(5) end, fun cleanup/1, fun(_) -> {timeout, 20, fun system_namespace/0} end}.
 
 %% A display's row waits for its server (docs/design-system.md, "A session takes the
-%% console"): erx_domain:display_settled/1 is answered once no starting row serves the
+%% console"): erx_domain:server_settled/1 is answered once no starting row serves the
 %% display, its server ready, ended or stopped for its boot timeout, and at once for a
 %% name no configured row serves. late (row 1, id 5) serves screen and never reports by
 %% itself.
-display_settled_test_() ->
+server_settled_test_() ->
     [{setup, fun() -> display_setup() end, fun cleanup/1,
       fun(_) -> {timeout, 20, {Name, Case}} end}
      || {Name, Case} <- [{"ready", fun display_ready/0}, {"ended", fun display_ended/0},
                          {"boot timeout", fun display_timed_out/0}]].
+
+%% The settlement wait (docs/design-system.md, "Waiting for a grant"): three askers, one
+%% of each query, each answered at the step that settles its own query, over late (row
+%% 1, id 5), which here serves echo, of no files interface, to the system domain.
+settling_test_() ->
+    {setup, fun() -> display_setup([{1, echo, 1}], [{system, echo, 1, #{}}]) end, fun cleanup/1,
+     fun(_) -> {timeout, 20, fun settling/0} end}.
 
 %% One incarnation's grant (docs/design-system.md, "A session takes the console"):
 %% erx_domain:await_grant/2 is answered once the system domain's grant of echo has
@@ -815,12 +822,15 @@ await_unprovided() ->
 
 %% The service over b (row 0) and late (row 1, id 5), which serves screen, a windows
 %% service no row is granted.
-display_setup() ->
+display_setup() -> display_setup([{1, screen, ?ERX_SERVICE_WINDOWS}], []).
+
+%% The same over late serving Services, and Grants of them.
+display_setup(Services, Grants) ->
     Row = fun(Row, Place, Name) -> #{row => Row, place => Place, name => Name, principal => 1, kind => service,
                                      restarts => 3, restart_period_s => 60} end,
     persistent_term:put({erx_domain_fake_lib, boot},
                         #{domains => [Row(0, 1, <<"b">>), Row(1, 0, <<"late">>)],
-                          services => [{1, screen, ?ERX_SERVICE_WINDOWS}], grants => []}),
+                          services => Services, grants => Grants}),
     Log = erx_domain_fake_lib:start_log(),
     {ok, Service} = erx_domain_srv:start_link(#{lib => erx_domain_fake_lib, agent => erx_domain_fake_lib,
                                                  exports => erx_domain_fake_lib, principals => ?PRINCIPALS,
@@ -832,8 +842,8 @@ display_setup() ->
 %% A wait for screen, still unanswered while late starts, and one for a name no row
 %% serves, answered at once.
 display_waits() ->
-    Wait = erx_domain:display_settled(<<"screen">>),
-    ?assertEqual({reply, ok}, gen_server:receive_response(erx_domain:display_settled(<<"other">>), 2000)),
+    Wait = erx_domain:server_settled(<<"screen">>),
+    ?assertEqual({reply, ok}, gen_server:receive_response(erx_domain:server_settled(<<"other">>), 2000)),
     %% wait_response/2 keeps the request on its timeout, where receive_response/2 abandons it.
     ?assertEqual(timeout, gen_server:wait_response(Wait, 200)),
     Wait.
@@ -844,20 +854,46 @@ display_ready() ->
     domain_pid(5) ! {erx_origin, 5, {erx_ready, #{connections => erx_domain_fake_lib:agent(<<"late">>, 5),
                                                   inspect => erx_domain_fake_lib:agent(<<"late">>, 5)}}},
     ?assertEqual({reply, ok}, gen_server:receive_response(Wait, 2000)),
-    ?assertEqual({reply, ok}, gen_server:receive_response(erx_domain:display_settled(<<"screen">>), 2000)).
+    ?assertEqual({reply, ok}, gen_server:receive_response(erx_domain:server_settled(<<"screen">>), 2000)).
 
-%% late's end answers the wait before its restart, which a later wait waits for again.
+%% late's end answers the wait at the end's step, before its restart starts, which a
+%% later wait waits for again (docs/design-system.md, "Waiting for a grant").
 display_ended() ->
     Wait = display_waits(),
     exit(domain_pid(5), kill),
     ?assertEqual({reply, ok}, gen_server:receive_response(Wait, 2000)),
-    ?assertEqual(timeout, gen_server:wait_response(erx_domain:display_settled(<<"screen">>), 200)).
+    ?assertEqual(timeout, gen_server:wait_response(erx_domain:server_settled(<<"screen">>), 200)).
 
 %% late stopped for its boot timeout answers the wait, as its timer would.
 display_timed_out() ->
     Wait = display_waits(),
     erx_domain_srv ! {timeout, make_ref(), {boot_timeout, 5}},
     ?assertEqual({reply, ok}, gen_server:receive_response(Wait, 2000)).
+
+%% The namespace is answered at its own call, echo being no files service, while the
+%% others wait; echo's server at late's ready report, while the grant still waits; and
+%% late's grant at its installation, once the agent has written the system domain's
+%% registry, which then holds the facet the answer names. A query outside the closed
+%% set is answered badarg, as is a server named by its atom rather than by its text.
+settling() ->
+    Grant = erx_domain:await_grant(echo, 5),
+    Server = erx_domain:server_settled(<<"echo">>),
+    ?assertEqual({reply, ok}, gen_server:receive_response(erx_domain:system_namespace(), 2000)),
+    [?assertEqual({error, badarg}, gen_server:call(erx_domain_srv, {settled, Query}))
+     || Query <- [rogue, {server, echo}, {grant, echo, 0}, {grant, <<"echo">>, 5}]],
+    %% wait_response/2 keeps the request on its timeout, where receive_response/2 abandons it.
+    ?assertEqual(timeout, gen_server:wait_response(Server, 200)),
+    ?assertEqual(timeout, gen_server:wait_response(Grant, 0)),
+    domain_pid(5) ! {erx_origin, 5, {erx_ready, #{connections => erx_domain_fake_lib:agent(<<"late">>, 5),
+                                                  inspect => erx_domain_fake_lib:agent(<<"late">>, 5),
+                                                  provides => #{<<"echo">> => pid('late@erxos', 5, 1)}}}},
+    ?assertEqual({reply, ok}, gen_server:receive_response(Server, 2000)),
+    #{{system, echo} := {minting, {5, 4}, Tag}} = wait(fun(#{{system, echo} := {minting, _, _}}) -> true end),
+    ?assertEqual(timeout, gen_server:wait_response(Grant, 200)),
+    Facet = pid('late@erxos', 5, 3),
+    domain_pid(5) ! {erx_origin, 5, {erx_facet_minted, Tag, {ok, Facet}}},
+    ?assertEqual({reply, {ok, Facet}}, gen_server:receive_response(Grant, 2000)),
+    ?assertEqual(Facet, erx_facets:find(echo)).
 
 %% An app's session (docs/design-packaging.md, "An app's session"): the boot's app
 %% template, 2, is granted two of a's services, screen (facet row 0), a display of the

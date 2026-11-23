@@ -39,7 +39,7 @@ class AppsChokepointsTest < Minitest::Test
     {
       'another call' => "i(D) -> erx_domain:info(D).\n",
       'the node' => "n(D) -> erx_domain:node(D).\n",
-      'a name the wait for a display begins' => "w(D) -> erx_domain:display_settled_all(D).\n",
+      'a name the wait for a display begins' => "w(D) -> erx_domain:server_settled_all(D).\n",
       'an introduction' => "i(A, B) -> erx_domain:introduce(A, B).\n",
       'a module atom' => "m() -> M = erx_domain, M.\n",
       'a variable module' => "c(M, S) -> M:create(S).\n",
@@ -67,7 +67,7 @@ class AppsChokepointsTest < Minitest::Test
           {ok, H} = erx_domain:start_session(P, S\#{display => D}),
           link(erx_domain:pid(H)), _ = erx_domain:id(H),
           F = fun erx_domain:stop/2, ok = ?MODULE:apply_text(<<>>),
-          _ = erx_domain:display_settled(<<"screen">>), _ = erx_domain:system_namespace(),
+          _ = erx_domain:server_settled(<<"screen">>), _ = erx_domain:system_namespace(),
           <<N:16, _:N/binary>> = S, #{k := V} = S,
           try F(H, normal) catch C:R:St -> erlang:raise(C, R, St) end.
     ERL

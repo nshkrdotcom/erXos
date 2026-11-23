@@ -45,7 +45,7 @@ or stopped.
 """.
 
 -export([create/1, start_session/2, start_app/2, info/1, introduce/2, line/3, stop/2, id/1, node/1, pid/1]).
--export([system_principal/0, system_principal_request/0, system_namespace/0, display_settled/1,
+-export([system_principal/0, system_principal_request/0, system_namespace/0, server_settled/1,
          await_grant/2, pci_report_answered/0]).
 -export([inspect_view/1]).
 -export_type([domain/0, spec/0]).
@@ -200,12 +200,12 @@ debuggability").
 """.
 -spec system_namespace() -> gen_server:request_id().
 system_namespace() ->
-    gen_server:send_request(erx_domain_srv, system_namespace).
+    gen_server:send_request(erx_domain_srv, {settled, namespace}).
 
 -doc """
-Asks the domain service to answer once the server of display Name, a
-service name, has settled (docs/design-system.md, "A session takes the
-console", a display's row): no configured row that serves Name is
+Asks the domain service to answer once the server of service Name has
+settled (docs/design-system.md, "Waiting for a grant", and "A session takes
+the console", a display's row): no configured row that serves Name is
 starting, so its server is ready, was stopped for its boot timeout, ended,
 or was refused its start. The answer is ok; the server row's boot timeout
 bounds the wait, and a name no configured row serves is answered at once.
@@ -214,9 +214,9 @@ table takes the answer with gen_server:check_response/2 and starts the row
 that names the display then, whether its display came up or not
 (docs/design-apps.md, "Keeping a session").
 """.
--spec display_settled(binary()) -> gen_server:request_id().
-display_settled(Name) when is_binary(Name) ->
-    gen_server:send_request(erx_domain_srv, {display_settled, Name}).
+-spec server_settled(binary()) -> gen_server:request_id().
+server_settled(Name) when is_binary(Name) ->
+    gen_server:send_request(erx_domain_srv, {settled, {server, Name}}).
 
 -doc """
 Asks the domain service to answer once the system domain's grant of service
@@ -236,7 +236,7 @@ answers a PCIe domain's report, Id the domain its envelope names, only on it
 """.
 -spec await_grant(atom(), pos_integer()) -> gen_server:request_id().
 await_grant(Name, Id) when is_atom(Name), is_integer(Id), Id > 0 ->
-    gen_server:send_request(erx_domain_srv, {await_grant, Name, Id}).
+    gen_server:send_request(erx_domain_srv, {settled, {grant, Name, Id}}).
 
 -doc """
 Tells the domain service that the device service has answered a PCIe

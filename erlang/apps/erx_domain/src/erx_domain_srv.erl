@@ -93,13 +93,18 @@ reported ready; the row's boot timeout bounds that. The system domain's
 namespace is in place by the same rule, for the grants to the system domain,
 and erx_domain:system_namespace/0 is answered ok once it is, which the start
 table waits on before its first read of rc.conf (docs/design-system.md, the
-boot's step 5). erx_domain:display_settled/1 is answered ok, by the same
-checks, once no starting configured row serves the display it names, which
-the start table waits on before it starts a row that names a display.
-erx_domain:await_grant/2 is answered, by the same checks, once the system
-domain's grant of the service it names has settled for the incarnation it
-names (erx_domain_mints:system_grant/3), which the device service waits on
-before it answers a PCIe domain's report (docs/design-pcie.md, "Facets").
+boot's step 5). erx_domain:server_settled/1 is answered ok once no starting
+configured row serves the service it names, which the start table waits on
+before it starts a row that names a display. erx_domain:await_grant/2 is
+answered once the system domain's grant of the service it names has settled
+for the incarnation it names, which the device service waits on before it
+answers a PCIe domain's report (docs/design-pcie.md, "Facets"). These three
+are the settlement wait (docs/design-system.md, "Waiting for a grant"): each
+is a query, {settled, Query}, its caller waits in one list, settling, and each
+is answered once erx_domain_mints:settled/3 no longer answers wait, checked at
+every call of answer_in_place/1, so after each step of the mint core, each
+stop for a boot timeout and the release of the rows held at boot, and at an
+end before the ended row's successor starts (ended/4).
 
 A session's ready report names its lines among its provides, each under a
 name of the closed set ?ERX_LINES: its line to the web domain, web_line, and to
@@ -222,11 +227,8 @@ state(Lib, Principals, Opts) ->
     %% Whether the runtime is a node, as kernel's start left it, since net_kernel starts
     %% before any application and lives as long as the runtime (close_side/4). Waiting
     %% holds, by domain id, each create or session's start not yet answered (wait_created/4),
-    %% and system_waiting, newest first, each erx_domain:system_namespace/0 caller not yet
-    %% answered (answer_in_place/1), display_waiting, newest first, each
-    %% erx_domain:display_settled/1 caller not yet answered, with the service it named,
-    %% and grant_waiting, newest first, each erx_domain:await_grant/2 caller not yet
-    %% answered, with the service and the incarnation it named.
+    %% and settling, in arrival order, each settlement query not yet answered, with its
+    %% caller (answer_settling/2).
     %% Introducing holds, by the pair's key, each introduce/2 caller, or {mints, Tag} for the mint core (reply/2), waiting for its
     %% connection to come up, with the timer of its deadline (settle_introductions/1).
     %% Held holds, by principal and in arrival order, each start waiting for the
@@ -250,7 +252,7 @@ state(Lib, Principals, Opts) ->
     MintConfig = maps:merge(#{owner => fun erx_dist:owner/1}, maps:with([owner, deadline], maps:get(mints, Opts, #{}))),
     #{lib => Lib, agent => Agent, exports => Exports, node => erlang:is_alive(), core => undefined,
       boot_timeout => ?BOOT_TIMEOUT, release => {booting, []},
-      configured => #{}, templates => #{}, waiting => #{}, system_waiting => [], display_waiting => [], grant_waiting => [],
+      configured => #{}, templates => #{}, waiting => #{}, settling => [],
       links => erx_domain_links:new(),
       introducing => #{}, introduce_timeout => maps:get(introduce_timeout, Opts, ?INTRODUCE_TIMEOUT),
       held => #{}, release_wait => maps:get(release_wait, Opts, ?RELEASE_WAIT),
@@ -496,19 +498,11 @@ handle_call({introduce, A, B}, From, State) when is_integer(A), is_integer(B) ->
         {Reply, Next} ->
             {reply, Reply, Next}
     end;
-handle_call(system_namespace, From, #{system_waiting := System} = State) ->
-    {noreply, answer_in_place(State#{system_waiting := [From | System]})};
-%% The start table names a display as the binary its rows hold, and the mint core a
-%% service by its atom, as the library makes it; a name with no atom is no service, so
-%% nothing serves it and the wait is answered at once. The atom is never made here.
-handle_call({display_settled, Name}, From, #{display_waiting := Displays} = State) when is_binary(Name) ->
-    try binary_to_existing_atom(Name) of
-        Service -> {noreply, answer_in_place(State#{display_waiting := [{Service, From} | Displays]})}
-    catch
-        error:badarg -> {reply, ok, State}
+handle_call({settled, Asked}, From, #{settling := Settling} = State) ->
+    case settling_query(Asked) of
+        {wait, Query} -> {noreply, answer_in_place(State#{settling := Settling ++ [{Query, From}]})};
+        {answer, Reply} -> {reply, Reply, State}
     end;
-handle_call({await_grant, Name, Id}, From, #{grant_waiting := Grants} = State) when is_atom(Name), is_integer(Id) ->
-    {noreply, answer_in_place(State#{grant_waiting := [{Name, Id, From} | Grants]})};
 handle_call({register_app, Package}, _From, #{apps := Apps} = State) ->
     case erx_principal:register(Package, Apps) of
         {ok, Registered} -> {reply, ok, State#{apps := Registered}};
@@ -1757,22 +1751,16 @@ mints(Event, #{mints := Mints} = State) ->
 %% holds none, which would read as in place. A session whose domain pid has died is
 %% ending, and its end answers it with an error (settle/2).
 %%
-%% The system domain's own callers of erx_domain:system_namespace/0 wait in
-%% system_waiting by the same rule, for the grants to the system domain: it holds every
-%% grant it will have from the boot on, so its grants are checked from the first call.
-%%
-%% The start table's callers of erx_domain:display_settled/1 wait in display_waiting
-%% until no starting row serves the display they named (erx_domain_mints:server_settled/3).
-%%
-%% The device service's callers of erx_domain:await_grant/2 wait in grant_waiting until
-%% the system domain's grant of the service they named has settled for the incarnation
-%% they named (erx_domain_mints:system_grant/3), and are answered with what it settled as.
+%% The settlement queries wait in settling until their facts settle, and are answered
+%% with erx_domain_mints:settled/3's answer (answer_settling/2). The system domain holds
+%% every grant it will have from the boot on, so its namespace is checked from the first
+%% call. A starting row is one whose domain runs without having reported ready, or a row
+%% held at boot, which stays starting until the hold's release starts it.
 answer_in_place(#{core := Core, mints := Mints} = State) ->
     Starting = [Row || #{origin := {configured, Row}, state := running} <- erx_domain_core:domains(Core)]
         ++ pci_held(State),
     InPlace = fun(Grantee) -> erx_domain_mints:in_place(Grantee, Starting, Mints) end,
-    Settled = fun(Name) -> erx_domain_mints:server_settled(Name, Starting, Mints) end,
-    answer_grants(answer_displays(Settled, answer_system(InPlace, answer_sessions(InPlace, State)))).
+    answer_settling(Starting, answer_sessions(InPlace, State)).
 
 answer_sessions(InPlace, #{waiting := Waiting, core := Core} = State) ->
     Ready = [Id || Id := #{answer_at := in_place, pid := Pid} <- Waiting, Pid =/= gone, is_ready(Id, Core)],
@@ -1789,27 +1777,31 @@ send_app(Id, Core) ->
         {ok, #{app := App, pid := Pid, ref := Ref}} -> Pid ! {Ref, app, App}, ok
     end.
 
-answer_system(_InPlace, #{system_waiting := []} = State) ->
-    State;
-answer_system(InPlace, #{system_waiting := System} = State) ->
-    case InPlace(system) of
-        true ->
-            lists:foreach(fun(From) -> gen_server:reply(From, ok) end, lists:reverse(System)),
-            State#{system_waiting := []};
-        false ->
-            State
-    end.
+%% Each settlement query asked of the service, in arrival order, answered once its
+%% answer is no longer wait; the rest keep waiting, each for its own query alone.
+answer_settling(Starting, #{settling := Settling, mints := Mints} = State) ->
+    Answers = [{Wait, erx_domain_mints:settled(Query, Starting, Mints)} || {Query, _From} = Wait <- Settling],
+    _ = [gen_server:reply(From, Answer) || {{_Query, From}, Answer} <- Answers, Answer =/= wait],
+    State#{settling := [Wait || {Wait, wait} <- Answers]}.
 
-answer_displays(Settled, #{display_waiting := Displays} = State) ->
-    {Answered, Waiting} = lists:partition(fun({Name, _From}) -> Settled(Name) end, Displays),
-    lists:foreach(fun({_Name, From}) -> gen_server:reply(From, ok) end, lists:reverse(Answered)),
-    State#{display_waiting := Waiting}.
-
-answer_grants(#{grant_waiting := Grants, mints := Mints} = State) ->
-    Answer = fun({Name, Id, _From}) -> erx_domain_mints:system_grant(Name, Id, Mints) end,
-    {Waiting, Answered} = lists:partition(fun(Wait) -> Answer(Wait) =:= wait end, Grants),
-    lists:foreach(fun({_Name, _Id, From} = Wait) -> gen_server:reply(From, Answer(Wait)) end, lists:reverse(Answered)),
-    State#{grant_waiting := Waiting}.
+%% A settlement query as the service keeps it, erx_domain_mints:query(), or the answer
+%% given at once (docs/design-system.md, "Waiting for a grant"). The start table names a
+%% server as the binary its rows hold, and the mint core a service by its atom, as the
+%% library makes it; a name with no atom is no service, so nothing serves it and the
+%% wait is answered at once. The atom is never made here. A query outside the closed
+%% set is answered badarg.
+settling_query(namespace) ->
+    {wait, namespace};
+settling_query({server, Name}) when is_binary(Name) ->
+    try binary_to_existing_atom(Name) of
+        Service -> {wait, {server, Service}}
+    catch
+        error:badarg -> {answer, ok}
+    end;
+settling_query({grant, Name, Id} = Query) when is_atom(Name), is_integer(Id), Id > 0 ->
+    {wait, Query};
+settling_query(_Asked) ->
+    {answer, {error, badarg}}.
 
 is_ready(Id, Core) ->
     case erx_domain_core:fetch(Id, Core) of

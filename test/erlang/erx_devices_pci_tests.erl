@@ -77,7 +77,7 @@ over(Devices, Bridges, Pcie, Live) ->
     persistent_term:put({?MODULE, devices}, Devices),
     persistent_term:put({?MODULE, bridges}, Bridges),
     Facet = server(Pcie),
-    Domains = server(fun({await_grant, pcie, D}) ->
+    Domains = server(fun({settled, {grant, pcie, D}}) ->
                              case lists:member(D, Live) of
                                  true -> {ok, Facet};
                                  false -> {error, ended}
@@ -85,7 +85,7 @@ over(Devices, Bridges, Pcie, Live) ->
                      end),
     {ok, Pid} = erx_devices_pci:start_link(#{lib => ?MODULE, register => false,
                                              await => fun(Name, Id) ->
-                                                              gen_server:send_request(Domains, {await_grant, Name, Id})
+                                                              gen_server:send_request(Domains, {settled, {grant, Name, Id}})
                                                       end}),
     unlink(Pid),
     {Pid, Facet}.

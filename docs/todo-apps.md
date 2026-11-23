@@ -181,7 +181,7 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   `erx_domain:start_session/2` with `display` and `default_display`, and the session mark; the session's default
   display, the display its start names or the one its template is granted, set as its `display` variable when
   the session is planned; a row that names a
-  display started once that display's server has settled (`erx_domain:display_settled/1`).
+  display started once that display's server has settled (`erx_domain:server_settled/1`).
   Not built: the reset count cleared by the first kept session; and start flags (design-apps.md,
   "Start flags"): `limit start_flags_max u32 1024` in `abi/manifest.txt` and a string field for the default in
   `erx_mf_start`, under a name other than `flags`, which the layout gives its `mf_start_flags` bits, with the
@@ -230,7 +230,7 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
     `onestop` are judged on the row as last applied; the boot applies the file to the rows of the boot's
     package set when it arrives, and a later publication records the rows it adds `installed` and starts
     nothing; a restarted table reads the file only to finish a boot the mark says is not done; the keeper waits
-    on `erx_domain:display_settled/1` before each start of its session; and a row runs while its kept or its
+    on `erx_domain:server_settled/1` before each start of its session; and a row runs while its kept or its
     `onestart` session stands (the A5c residual);
   * flags and limits: the start flags' byte rule excludes `"`, `\`, `$` and `` ` ``; packages declare default
     `flags` in `app.txt` and `abi/formats/package.txt`, and `erx_app` passes a native app's program the one

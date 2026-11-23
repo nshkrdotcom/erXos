@@ -48,7 +48,7 @@ erx_start_table's; this process carries them out.
   the row clears the mark as it starts the row.
 * **A row that names a display.** Its supervisor starts only once the
   domain service answers that the display's server has settled
-  (erx_domain:display_settled/1): ready, or no longer starting, so a
+  (erx_domain:server_settled/1): ready, or no longer starting, so a
   display that is down delays the row by at most its boot timeout and the
   row then starts all the same. The table asks once per display for every
   start waiting on it, and asks again at the next start, so it keeps no
@@ -559,7 +559,7 @@ answer(From, Answer) -> gen_server:reply(From, Answer).
 wait_display(Display, Name, Reply, #{displays := Displays} = State) ->
     Entry = case Displays of
                 #{Display := {Request, Waiting}} -> {Request, [{Name, Reply} | Waiting]};
-                #{} -> {erx_domain:display_settled(Display), [{Name, Reply}]}
+                #{} -> {erx_domain:server_settled(Display), [{Name, Reply}]}
             end,
     State#{displays := Displays#{Display => Entry}}.
 

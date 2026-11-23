@@ -603,7 +603,7 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
 
 * [Medium] grants, one wait per kind of fact ([design-system.md](design-system.md#waiting-for-a-grant);
   `erlang/apps/erx_domain/src/erx_domain_srv.erl`, `erx_domain_mints.erl`, `erx_devices_pci.erl`,
-  `erx_devices_pci_core.erl`): build the rest of the design's three waits (the registry wait is built) and
+  `erx_devices_pci_core.erl`): build the rest of the design's three waits (the registry wait and the settlement wait are built) and
   delete what they replace. The steps land one
   at a time or as one batch. Every commit builds, and leaves green the host tests it touches, with the
   fixtures, oracles and stand-ins that build a changed representation changed in the same step; every
@@ -614,17 +614,7 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
      (:43 sets 0 for the others): after the first key it kills the domain's first incarnation, waits for
      the display to follow the new input facet and types a second key that must arrive. Suites: `usb`,
      `net_device`.
-  2. Settlement wait. `erx_domain_srv.erl`: `system_waiting`, `display_waiting` and `grant_waiting`
-     (:210-215, :239), their three `handle_call` clauses (:485-497) and `answer_system/2`,
-     `answer_displays/2`, `answer_grants/1` (:1776-1796) become one `settling` list, one clause taking
-     `{settled, Query}` and `erx_domain_mints:settled/3` over the three decisions as they stand, evaluated
-     at each call of `answer_in_place/1`, an end's step before its successor starts (`ended/4`, :1645).
-     `erlang/apps/erx_domain/src/erx_domain.erl:217-219`: `display_settled/1` becomes `server_settled/1`
-     (callers `erx_starter.erl:562`, the tests `erx_starter_tests.erl:256`, `erx_domain_tests.erl:412`,
-     `erx_domain_mints_srv_tests.erl:55,834-853`, the source check `tools/lib/erx/chokepoint_rules/apps.rb`
-     and its test `test/host/apps_chokepoints_test.rb`, and `docs/todo-apps.md`'s two references).
-     Suites: `apps`, `usb`.
-  3. The hold moves. Out of `erx_domain_srv.erl`: `PCI_HOLD_AFTER_READY` and its option (:148-151, :172,
+  2. The hold moves. Out of `erx_domain_srv.erl`: `PCI_HOLD_AFTER_READY` and its option (:148-151, :172,
      :243), `pci_hold` (:220-221), `pci_hold/2` through `pci_held/1` (:317-398), the cast and timer clauses
      (:638-639, :666-667), the calls at :680, :1103, :1658 and :1756, and the moduledoc's paragraph (:26-31).
      `handle_continue(boot)` (:308-315) asks `erx_devices:held_at_boot/1`, which the domain service's tests
@@ -636,10 +626,8 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
      lines for `pci` and `pci_bus` (:191-192) stay. `test/host/dom_core_test.rb` gains the case that a
      function a report confirmed `ready` is given before any report is answered. Suites: `pcie`, `usb`.
   Tests while developing, the step's own: `erx_input_follower_tests`, `erx_ssh_dev_tests` (step 1);
-  `erx_domain_mints_tests`, `erx_domain_mints_srv_tests`, `erx_starter_tests`, `erx_domain_tests`,
-  `apps_chokepoints_test` (step 2);
   `erx_devices_pci_core_tests`, `erx_devices_pci_tests`, `erx_domain_mints_srv_tests`, `dom_core_test`
-  (step 3).
+  (step 2).
 * [Medium] code server, the rest of its inputs (`erlang/apps/erx/src/erx_code_agent.erl`,
   `erxos_env/2`; `erlang/apps/erx_code/src/erx_code_target.erl`): the code server reads
   its boot information's `supervised` flag and its runtime's limits, but no reader of the

@@ -15,11 +15,11 @@ module Erx
     START_CALLERS = ['erlang/apps/erx/src/erx_console.erl', KEEPER].freeze
     # What erx_starter may call of erx_domain: start_session/2, start_app/2 and stop/2;
     # system_namespace/0, the wait before the first read of rc.conf, and
-    # display_settled/1, the wait before a row that names a display starts,
+    # server_settled/1, the wait before a row that names a display starts,
     # neither of which changes anything; the handle's accessors id/1 and
     # pid/1, which reach nothing; and the handle's types, domain() and
     # spec(), which a -spec names.
-    STARTER_REACHES = %w[start_session start_app stop system_namespace display_settled id pid domain spec].freeze
+    STARTER_REACHES = %w[start_session start_app stop system_namespace server_settled id pid domain spec].freeze
     STARTER_REACH = "#{ErlangText::ATOM.call('erx_domain')}\\s*:\\s*" \
                     "(?:#{STARTER_REACHES.map { |name| ErlangText::ATOM.call(name) }.join('|')})"
     # An atom or a variable in a function's place.
@@ -37,7 +37,7 @@ module Erx
         # would have to come from outside the module's source.
         Chokepoints::ErlangForbidden.new(
           name: 'starter-reach', rule: 'erx_starter reaches the domain service only through erx_domain:start_session/2, ' \
-                                       'erx_domain:stop/2, erx_domain:system_namespace/0 and erx_domain:display_settled/1 ' \
+                                       'erx_domain:stop/2, erx_domain:system_namespace/0 and erx_domain:server_settled/1 ' \
                                        '(reading a handle with id/1 and pid/1), ' \
                                        'and calls nothing through a variable or ' \
                                        'macro module or apply',

@@ -227,7 +227,7 @@ watch() ->
 %% only once the test sends it finish. It answers the table's wait for the system domain's
 %% namespace (erx_domain:system_namespace/0) at once, or holds it until the test
 %% sends release_namespace. It holds each wait for a display
-%% (erx_domain:display_settled/1) until the test sends {release_display, Name}.
+%% (erx_domain:server_settled/1) until the test sends {release_display, Name}.
 stub(#{refuse := Refuse, hold := Hold, held := Held, next := Id} = State) ->
     Stub = self(),
     receive
@@ -248,12 +248,12 @@ stub(#{refuse := Refuse, hold := Hold, held := Held, next := Id} = State) ->
                                end,
                     stub(report({started, Principal, Start, Session}, Answered#{next := Id + 1}))
             end;
-        {'$gen_call', From, system_namespace} ->
+        {'$gen_call', From, {settled, namespace}} ->
             case State of
                 #{namespace := answer} -> gen:reply(From, ok), stub(State);
                 #{namespace := held} -> stub(State#{namespace := {held, From}})
             end;
-        {'$gen_call', From, {display_settled, Name}} ->
+        {'$gen_call', From, {settled, {server, Name}}} ->
             stub(State#{display := {held, Name, From}});
         {release_display, Name} ->
             #{display := {held, Name, From}} = State,
