@@ -22,7 +22,8 @@ class BenchPeriodicTest < Minitest::Test
   SOURCES = %w[test/guest/bench/bench_hist.c test/guest/bench/bench_periodic.c test/guest/bench/bench_clock.c
                test/guest/bench/bench_line.c
                test/fixtures/bench_cores_driver.c].freeze
-  EXPECTED = ['hist ok', 'stall ok', 'early ok', 'sweep ok', 'tick ok', 'offset ok', 'cell ok', 'drift ok'].freeze
+  EXPECTED = ['hist ok', 'stall ok', 'early ok', 'sweep ok', 'tick ok', 'offset ok', 'cell ok', 'drift ok', 'reads ok',
+              'median ok'].freeze
 
   # name => [file, original, replacement]; each must turn a line of EXPECTED into a failure.
   MUTANTS = {

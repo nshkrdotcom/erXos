@@ -39,3 +39,20 @@ erx_bench_hist_add(erx_bench_hist_t *hist, uint64_t value)
 	hist->count[erx_bench_hist_index(value)]++;
 	hist->samples++;
 }
+
+uint64_t
+erx_bench_hist_median(const erx_bench_hist_t *hist)
+{
+	uint64_t rank = hist->samples / 2 + hist->samples % 2, seen = 0, low, last;
+
+	if (hist->samples == 0)
+		return (0);
+	for (unsigned i = 0; i < ERX_BENCH_HIST_BUCKETS; i++) {
+		seen += hist->count[i];
+		if (seen >= rank) {
+			erx_bench_hist_bounds(i, &low, &last);
+			return (last);
+		}
+	}
+	return (0);
+}

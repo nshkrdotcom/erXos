@@ -63,7 +63,9 @@ module Erx
     COUNTS = %w[lost early missed].freeze
     # The CLOCK line: one per boot, the guest's calibration (docs/design-bench.md, "A
     # benchmark", "The one clock"), which becomes the record's clock group.
-    CLOCK_FIELDS = %w[clock frequency_hz increment read_cost wait_rounding pairs].freeze
+    CLOCK_FIELDS = %w[clock frequency_hz increment read_cost wait_rounding cycles_per_tick pairs].freeze
+    # Cycles per counter tick, the CPU's frequency over the counter's, is at most this.
+    MAX_CYCLES_PER_TICK = 1000
     PAIR_FIELDS = %w[cpus before after].freeze
     PAIRS = 64
     CPU = (0..255)
@@ -72,7 +74,56 @@ module Erx
     # The cell one BENCH line reports for benchmark, whose operations profiles maps to
     # the BenchRecord::Profile each ran at. Raises Erx::Error naming the first field that
     # is wrong; the line's text is never quoted.
-    def cell(text, benchmark:, profiles:)
+    def cell(text, benchmark:, profiles:) = refusing('BENCH') { bench_cell(text, benchmark: benchmark, profiles: profiles) }
+
+    # The clock group one CLOCK line reports, frozen through. Each pair of CPUs, lower
+    # first, a cell was stamped across has its offset interval before the cells and after
+    # them, each [lowest, highest] in ticks of the second CPU's counter less the first's,
+    # or null where the stamps contradicted each other. cycles_per_tick is a number, or
+    # unknown where the CPU's cycle counter could not be read. Raises Erx::Error naming
+    # the first wrong field.
+    def clock(text) = refusing('CLOCK') { clock_group(text) }
+
+    # A boot's clock group and cells from the guest lines it printed, each a BENCH or a
+    # CLOCK line (docs/design-bench.md, "A benchmark"). Without exactly one valid CLOCK
+    # line the boot has no calibration and every cell is rejected, and so is a cell whose
+    # frequency is not the CLOCK line's. Each refused line's reason is returned in
+    # refused, never its text, for the runner to give the cells it expected.
+    def boot(lines, benchmark:, profiles:)
+      clocks, benches = lines.partition { |text| text.is_a?(String) && text.b.start_with?('CLOCK ') }
+      cells, refused = benches.map { |text| judged { cell(text, benchmark: benchmark, profiles: profiles) } }
+                              .partition { |answer| answer.is_a?(BenchRecord::Cell) }
+      calibration = clocks.size == 1 ? judged { clock(clocks.first) } : 'the boot has not exactly one CLOCK line'
+      group = calibration unless calibration.is_a?(String)
+      { clock: group, cells: cells.map { |found| verdict(found, group) }, refused: refused + [calibration].grep(String) }
+    end
+
+    # The block's answer, or the reason it was refused.
+    def judged
+      yield
+    rescue Error => e
+      e.message
+    end
+
+    def verdict(cell, group)
+      return rejected(cell, 'no valid CLOCK line in the boot') if group.nil?
+      return rejected(cell, 'frequency differs from the CLOCK line') if
+        cell.detail['frequency_hz'] != group.fetch('frequency_hz')
+
+      cell
+    end
+
+    def rejected(cell, reason) = BenchRecord::Cell.new(**cell.to_h, status: 'rejected', reason: reason, detail: {})
+
+    # A line's refusals, from its own checks and from the record part it builds, each
+    # say once which kind of line was refused.
+    def refusing(kind)
+      yield
+    rescue BenchRecord::Invalid => e
+      raise Error, "#{kind} line #{e.reason}"
+    end
+
+    def bench_cell(text, benchmark:, profiles:)
       fields = decode(text, kind: 'BENCH', required: REQUIRED, known: REQUIRED + OPTIONAL.keys)
       need(fields['benchmark'] == benchmark, 'field benchmark is not the benchmark run')
       operation = profiles.keys.find { |name| name == fields['operation'] }
@@ -90,25 +141,25 @@ module Erx
                             detail: detail(fields, profile: profile.name, samples: samples))
     end
 
-    # The clock group one CLOCK line reports, frozen. Each pair of CPUs a cell was stamped
-    # across has its offset interval before the cells and after them, each [lowest,
-    # highest] in ticks of the second CPU's counter less the first's, or null where the
-    # stamps contradicted each other. Raises Erx::Error naming the first wrong field.
-    def clock(text)
+    def clock_group(text)
       fields = decode(text, kind: 'CLOCK', required: CLOCK_FIELDS, known: CLOCK_FIELDS)
       need(GUEST_CLOCKS.include?(fields['clock']), 'field clock is not a guest clock')
       need(frequency?(fields['frequency_hz']), 'field frequency_hz is not a frequency')
       need(tick?(fields['increment']) && fields['increment'].positive?, 'field increment is not a positive tick count')
       %w[read_cost wait_rounding].each { |name| need(tick?(fields[name]), "field #{name} is not a tick count") }
+      cycles = fields['cycles_per_tick']
+      need(cycles == 'unknown' || (cycles.is_a?(Numeric) && cycles.finite? && cycles.positive? &&
+                                   cycles <= MAX_CYCLES_PER_TICK),
+           'field cycles_per_tick is not a positive number or unknown')
       pairs(fields['pairs'])
-      fields
+      BenchRecord.frozen(fields)
     end
 
     # The JSON object of a kind's line: printable ASCII, bounded, no key twice, every
     # required key and no unknown one, frozen.
     def decode(text, kind:, required:, known:)
       prefix = "#{kind} "
-      need(text.is_a?(String) && text.b.start_with?(prefix), "is not a #{kind} line")
+      need(text.is_a?(String) && text.b.start_with?(prefix), "does not begin with #{kind} and a space")
       body = text.b.delete_prefix(prefix)
       need(body.bytesize <= LINE_BYTES, 'is longer than 64 KiB')
       need(body.each_byte.all? { |byte| byte.between?(0x20, 0x7e) }, 'holds a byte that is not printable ASCII')
@@ -119,12 +170,12 @@ module Erx
       need(fields.is_a?(Hash), 'is not a JSON object')
       need((required - fields.keys).empty?, 'lacks a required field')
       need((fields.keys - known).empty?, 'holds an unknown field')
-      fields.freeze
+      fields
     end
 
     # JsonInput's refusals name the line's kind, never its text.
     def parsed(body, kind:)
-      JsonInput.parse(body, max_bytes: LINE_BYTES, max_nesting: 4, label: "#{kind} line")
+      JsonInput.parse(body, max_bytes: LINE_BYTES, max_nesting: 4, label: 'it')
     rescue Error => e
       need(false, "is not one JSON object nested at most four deep (#{e.message})")
     end
@@ -152,19 +203,15 @@ module Erx
       need(value.is_a?(Array) && value.size <= PAIRS &&
            value.all? { |pair| pair.is_a?(Hash) && pair.keys.sort == PAIR_FIELDS.sort },
            'field pairs is not at most 64 objects of cpus, before and after')
-      need(value.all? { |pair| cpus?(pair['cpus']) }, 'field pairs holds cpus that are not two different CPUs')
+      need(value.all? { |pair| cpu_pair?(pair['cpus']) }, 'field pairs holds cpus that are not two CPUs, lower first')
       need(value.map { |pair| pair['cpus'] }.uniq.size == value.size, 'field pairs names one pair twice')
       need(value.all? { |pair| [pair['before'], pair['after']].all? { |interval| interval?(interval) } },
            'field pairs holds an interval that is neither null nor a lowest and highest offset')
     end
 
-    def cpus?(value) = value.is_a?(Array) && value.size == 2 && value.all? { |cpu| cpu.is_a?(Integer) && CPU.cover?(cpu) } &&
-                       value.uniq.size == 2
-
-    def interval?(value)
-      value.nil? || (value.is_a?(Array) && value.size == 2 && value.all? { |end_| end_.is_a?(Integer) && OFFSET.cover?(end_) } &&
-                     value.first <= value.last)
-    end
+    def cpu_pair?(value) = ends?(value, CPU) && value.first < value.last
+    def interval?(value) = value.nil? || (ends?(value, OFFSET) && value.first <= value.last)
+    def ends?(value, range) = value.is_a?(Array) && value.size == 2 && value.all? { |end_| end_.is_a?(Integer) && range.cover?(end_) }
 
     def parameter?(value) = tick?(value) ||
                             (value.is_a?(String) && BenchRecord::NAME.match?(value))
@@ -184,6 +231,7 @@ module Erx
       need(histogram.sum { |_, _, count| count } == samples, 'field histogram does not hold every sample')
       range = BenchRecord.extremes(fields)
       largest(fields['largest'], range: range, samples: samples)
+      need(profile != 'expensive' || fields.key?('raw'), 'field raw is absent from an expensive cell')
       raw(fields['raw'], range: range, samples: samples) if fields.key?('raw')
       phases(fields, samples: samples) if profile == 'periodic'
       need(!fields.key?('uncertainty') || tick?(fields['uncertainty']), 'field uncertainty is not a tick count')
@@ -197,11 +245,11 @@ module Erx
     end
 
     # The largest samples, [sequence, value] with value not increasing, the first the
-    # maximum; at most sixteen, and no more than there are samples.
+    # maximum: sixteen, or every sample where there are fewer.
     def largest(value, range:, samples:)
-      need(value.is_a?(Array) && value.size <= [LARGEST, samples].min &&
+      need(value.is_a?(Array) && value.size == [LARGEST, samples].min &&
            value.all? { |entry| entry.is_a?(Array) && entry.size == 2 && entry.all?(Integer) },
-           'field largest is not at most sixteen [sequence, value] pairs')
+           'field largest is not the sixteen largest [sequence, value] pairs, or every sample')
       need(value.all? { |sequence, sample| (0...samples).cover?(sequence) && range.cover?(sample) } &&
            value.each_cons(2).all? { |(_, high), (_, low)| high >= low } &&
            (value.empty? || value.first.last == range.last),
@@ -226,11 +274,10 @@ module Erx
       need(excess.sum { |_, _, count| count } == samples, 'field excess does not hold every sample')
     end
 
-    def need(valid, reason)
-      raise Error, "guest line #{reason}" unless valid
-    end
+    def need(valid, reason) = valid || raise(BenchRecord::Invalid, reason)
 
-    private_class_method :measured, :decode, :parsed, :conditions, :tick?, :count?, :frequency?, :pairs, :cpus?, :interval?, :parameter?, :counts, :detail, :histogram, :largest,
-                         :raw, :phases, :need
+    private_class_method :measured, :judged, :verdict, :rejected, :refusing, :bench_cell, :clock_group, :decode,
+                         :parsed, :conditions, :tick?, :count?, :frequency?, :pairs, :cpu_pair?, :interval?, :ends?,
+                         :parameter?, :counts, :detail, :histogram, :largest, :raw, :phases, :need
   end
 end

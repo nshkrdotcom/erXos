@@ -158,20 +158,31 @@ offset_case(void)
 	    erx_bench_offset_half_width(offset) == 101);
 }
 
-/* Half-width 101: a median of 1,010 ticks is accepted, 1,009 refused. */
+static bool
+reason_is(const char *reason, const char *ending)
+{
+	size_t length = reason == NULL ? 0 : strlen(reason), tail = strlen(ending);
+
+	return (length >= tail && strcmp(reason + length - tail, ending) == 0);
+}
+
+/* Half-width 101: a median of 1,010 ticks is accepted, 1,009 unsupported. */
 static bool
 cell_case(void)
 {
 	erx_bench_offset_t offset = calibrate(50, 100, 1000000);
 
-	return (erx_bench_cell_bounded(true, offset, offset, 1010) &&
-	    !erx_bench_cell_bounded(true, offset, offset, 1009) &&
-	    erx_bench_cell_bounded(false, offset, offset, 1));
+	return (erx_bench_cell_unsupported(true, offset, offset, 1010) == NULL &&
+	    reason_is(erx_bench_cell_unsupported(true, offset, offset, 1009), "not bounded closely enough") &&
+	    erx_bench_cell_unsupported(false, offset, offset, 1) == NULL);
 }
 
 static const erx_bench_round_t before_rounds_none[1];
 
-/* An offset that moves by 300 ticks between the calibrations refuses the cells. */
+/*
+ * An offset that moves by 300 ticks between the calibrations, or a calibration whose stamps
+ * contradict each other, leaves the cells unsupported with the reason.
+ */
 static bool
 drift_case(void)
 {
@@ -181,10 +192,87 @@ drift_case(void)
 	erx_bench_offset_t moved = calibrate(200, 100, 5000000);
 
 	/* A 150-tick move that still overlaps is bounded by the hull, half-width 176. */
-	return (!after.empty && !erx_bench_cell_bounded(true, before, after, UINT64_MAX / 16) &&
-	    !erx_bench_cell_bounded(true, before, moved, 1759) &&
-	    erx_bench_cell_bounded(true, before, moved, 1760) &&
-	    erx_bench_offset(before_rounds_none, 0, 1).empty);
+	erx_bench_offset_t none = erx_bench_offset(before_rounds_none, 0, 1);
+
+	return (!after.empty &&
+	    reason_is(erx_bench_cell_unsupported(true, before, after, UINT64_MAX / 16), "moved during the run") &&
+	    reason_is(erx_bench_cell_unsupported(true, before, moved, 1759), "not bounded closely enough") &&
+	    erx_bench_cell_unsupported(true, before, moved, 1760) == NULL && none.empty &&
+	    reason_is(erx_bench_cell_unsupported(true, none, after, UINT64_MAX / 16), "contradicted each other"));
+}
+
+/* The sixteen largest of n values, or all of them, largest first; returns how many. */
+static size_t
+largest_of(const uint64_t *values, size_t n, erx_bench_sample_t *out)
+{
+	static bool taken[64];
+	size_t found = 0;
+
+	if (n > sizeof(taken) / sizeof(taken[0]))
+		return (0);
+	for (size_t i = 0; i < n; i++)
+		taken[i] = false;
+	for (; found < ERX_BENCH_LARGEST && found < n; found++) {
+		size_t best = n;
+
+		for (size_t i = 0; i < n; i++)
+			if (!taken[i] && (best == n || values[i] > values[best]))
+				best = i;
+		taken[best] = true;
+		out[found] = (erx_bench_sample_t){ best, values[best] };
+	}
+	return (found);
+}
+
+/* A counter that moves 7 ticks between pairs and 1, 3 and 3 within them, in turn. */
+static uint64_t
+fake_counter(void)
+{
+	static const uint64_t steps[] = { 7, 1, 7, 3, 7, 3 };
+	static uint64_t now, k;
+
+	now += steps[k++ % 6];
+	return (now);
+}
+
+/* 9,999 pairs of the fake counter: the smallest increment is 1 and the median read 3. */
+static bool
+reads_case(void)
+{
+	static erx_bench_reads_t pairs[9999];
+	static erx_bench_hist_t deltas;
+	erx_bench_read_cal_t cal;
+	size_t n = sizeof(pairs) / sizeof(pairs[0]);
+
+	erx_bench_read_pairs(fake_counter, pairs, n);
+	cal = erx_bench_read_calibration(pairs, n, &deltas);
+	if (cal.increment != 1 || cal.read_cost != 3 || deltas.samples != n)
+		return (false);
+	/* No pair that moved: no increment to report. */
+	pairs[0] = (erx_bench_reads_t){ 5, 5 };
+	return (erx_bench_read_calibration(pairs, 1, &deltas).increment == 0);
+}
+
+/* The median is the upper end of the bucket holding the sample of rank ceil(n / 2). */
+static bool
+median_case(void)
+{
+	static erx_bench_hist_t hist;
+	uint64_t low, last;
+
+	if (erx_bench_hist_median(&hist) != 0)
+		return (false);
+	for (uint64_t v = 1; v <= 5; v++)
+		erx_bench_hist_add(&hist, v);
+	if (erx_bench_hist_median(&hist) != 3)
+		return (false);
+	erx_bench_hist_add(&hist, 1000);
+	erx_bench_hist_add(&hist, 1000);
+	erx_bench_hist_add(&hist, 1000);
+	erx_bench_hist_add(&hist, 1000);
+	erx_bench_hist_bounds(erx_bench_hist_index(1000), &low, &last);
+	/* Nine samples: rank 5 is the last of 1..5. */
+	return (erx_bench_hist_median(&hist) == 5 && low <= 1000 && last >= 1000);
 }
 
 /*
@@ -198,36 +286,61 @@ print_lines(void)
 	static erx_bench_stamp_t stamps[32];
 	static erx_bench_periodic_t periodic;
 	static char line[64 << 10];
-	erx_bench_sample_t largest[] = { { 7, 1199 }, { 3, 1100 } };
+	static uint64_t values[40];
+	erx_bench_sample_t largest[ERX_BENCH_LARGEST];
+	const erx_bench_param_t params[] = { { "threads", NULL, 2 }, { "mode", "spin", 0 } };
 	erx_bench_pair_t pairs[] = {
 		{ { 0, 1 }, { -40, 12, false }, { -35, 15, false } },
 		{ { 0, 2 }, { 0, 0, true }, { INT64_MIN, INT64_MAX, false } },
 	};
 
-	for (uint64_t i = 0; i < 40; i++)
-		erx_bench_hist_add(&fast, i == 7 ? 1199 : i == 3 ? 1100 : 1000 + i);
+	for (uint64_t i = 0; i < 40; i++) {
+		values[i] = i == 7 ? 1199 : i == 3 ? 1100 : 1000 + i;
+		erx_bench_hist_add(&fast, values[i]);
+	}
 	erx_bench_cell_t cell = { .benchmark = "wake", .operation = "wake-same-cpu", .load = "idle",
-		.placement = "same-cpu", .clock = "counter", .batch = 1, .frequency_hz = 24000000,
-		.status = "measured", .hist = &fast, .min = 1000, .max = 1199, .largest = largest,
-		.nlargest = 2 };
+		.placement = "same-cpu", .params = params, .nparams = 2, .clock = "counter", .batch = 1,
+		.frequency_hz = 24000000, .status = "measured", .hist = &fast, .min = 1000, .max = 1199,
+		.largest = largest, .nlargest = largest_of(values, 40, largest) };
 	if (erx_bench_line_cell(line, sizeof(line), &cell) != 0)
 		printf("%s\n", line);
 
-	for (uint32_t k = 0; k < 32; k++)
-		stamps[k] = (erx_bench_stamp_t){ k, erx_bench_periodic_deadline(1000, 1000, k) + 5 + k % 3 };
+	for (uint32_t k = 0; k < 32; k++) {
+		values[k] = 5 + k % 3;
+		stamps[k] = (erx_bench_stamp_t){ k, erx_bench_periodic_deadline(1000, 1000, k) + values[k] };
+	}
 	erx_bench_periodic_classify(1000, 1000, stamps, 32, &periodic);
 	cell = (erx_bench_cell_t){ .benchmark = "wake", .operation = "park-deadline", .load = "idle",
 		.placement = "service-cpu", .clock = "counter", .batch = 1, .frequency_hz = 24000000,
 		.status = "partial", .reason = "cut short", .hist = &periodic.late, .min = 5, .max = 7,
-		.largest = (erx_bench_sample_t[]){ { 2, 7 } }, .nlargest = 1, .periodic = &periodic };
+		.largest = largest, .nlargest = largest_of(values, 32, largest), .periodic = &periodic };
 	if (erx_bench_line_cell(line, sizeof(line), &cell) != 0)
 		printf("%s\n", line);
 
-	erx_bench_calibration_t clock = { "counter", 24000000, 1, 2, 24, pairs, 2 };
+	static erx_bench_hist_t costly;
+	for (uint64_t i = 0; i < 20; i++) {
+		values[i] = 5000 + i * 7 % 13;
+		erx_bench_hist_add(&costly, values[i]);
+	}
+	cell = (erx_bench_cell_t){ .benchmark = "wake", .operation = "trigger-take", .load = "idle",
+		.placement = "same-cpu", .clock = "counter", .batch = 1, .frequency_hz = 24000000,
+		.status = "measured", .hist = &costly, .min = 5000, .max = 5012, .largest = largest,
+		.nlargest = largest_of(values, 20, largest), .raw = values, .nraw = 20 };
+	if (erx_bench_line_cell(line, sizeof(line), &cell) != 0)
+		printf("%s\n", line);
+
+	erx_bench_calibration_t clock = { .clock = "counter", .frequency_hz = 24000000, .increment = 1,
+		.read_cost = 2, .wait_rounding = 24, .cycles_per_tick_milli = 27778, .pairs = pairs, .npairs = 2 };
 	if (erx_bench_line_clock(line, sizeof(line), &clock) != 0)
 		printf("%s\n", line);
-	/* A line that does not fit is not written. */
-	printf("short %s\n", erx_bench_line_clock(line, 40, &clock) == 0 ? "refused" : "written");
+	/*
+	 * A line fits a buffer one byte longer than itself, for its NUL; one byte shorter and
+	 * nothing is written, the buffer left an empty string.
+	 */
+	size_t length = erx_bench_line_clock(line, sizeof(line), &clock);
+	bool fits = erx_bench_line_clock(line, length + 1, &clock) == length;
+	bool cut = erx_bench_line_clock(line, length, &clock) == 0 && line[0] == '\0';
+	printf("boundary %s\n", length != 0 && fits && cut ? "ok" : "bad");
 }
 
 int
@@ -243,7 +356,8 @@ main(int argc, char **argv)
 	} cases[] = {
 		{ "hist", hist_case }, { "stall", stall_case }, { "early", early_case },
 		{ "sweep", sweep_case }, { "tick", tick_case }, { "offset", offset_case },
-		{ "cell", cell_case }, { "drift", drift_case },
+		{ "cell", cell_case }, { "drift", drift_case }, { "reads", reads_case },
+		{ "median", median_case },
 	};
 
 	for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++)

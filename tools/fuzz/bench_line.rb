@@ -38,7 +38,7 @@ module Erx
                           'batch' => 1 },
         'frequency_hz' => 24_000_000, 'status' => 'measured', 'samples' => samples.size, 'histogram' => buckets,
         'min' => samples.min, 'max' => samples.max,
-        'largest' => samples.each_with_index.max_by(3) { |value, index| [value, -index] }.map(&:reverse),
+        'largest' => samples.each_with_index.max_by([16, samples.size].min) { |value, index| [value, -index] }.map(&:reverse),
         'counts' => { 'lost' => 0, 'early' => 0, 'missed' => 0 }
       }
       fields['raw'] = samples if profile.name == 'expensive'
@@ -52,7 +52,7 @@ module Erx
     # A valid CLOCK line, a two-CPU guest's calibration, and overrides merged over it.
     def clock_line(**overrides)
       fields = { 'clock' => 'counter', 'frequency_hz' => 24_000_000, 'increment' => 1, 'read_cost' => 2,
-                 'wait_rounding' => 24,
+                 'wait_rounding' => 24, 'cycles_per_tick' => 'unknown',
                  'pairs' => [{ 'cpus' => [0, 1], 'before' => [-40, 12], 'after' => [-35, 15] }] }
       "CLOCK #{JSON.generate(fields.merge(overrides.transform_keys(&:to_s)))}"
     end
@@ -85,8 +85,7 @@ module Erx
       return MEASUREMENT.clock(text) if text.start_with?('CLOCK')
 
       cell = MEASUREMENT.cell(text, benchmark: 'wake', profiles: PROFILES)
-      histogram = cell.detail.fetch('histogram')
-      samples = histogram.sum(&:last)
+      samples = cell.summary.fetch('samples', 0)
       raise 'an accepted histogram past its profile' if samples > PROFILES.fetch(cell.operation).samples
     rescue Erx::Error
       nil

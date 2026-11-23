@@ -3,6 +3,8 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <strings.h>
+
 #include "bench_clock.h"
 
 /* What one round's causality allows the offset to be. */
@@ -40,20 +42,49 @@ erx_bench_offset_half_width(erx_bench_offset_t offset)
 	return (width / 2 + (width & 1));
 }
 
-bool
-erx_bench_cell_bounded(bool two_cpus, erx_bench_offset_t before,
+const char *
+erx_bench_cell_unsupported(bool two_cpus, erx_bench_offset_t before,
     erx_bench_offset_t after, uint64_t median)
 {
 	erx_bench_offset_t hull;
 
 	if (!two_cpus)
-		return (true);
+		return (NULL);
 	if (before.empty || after.empty)
-		return (false);
+		return ("counters across CPUs contradicted each other");
 	if (before.low > after.high || after.low > before.high)
-		return (false);
+		return ("counters across CPUs moved during the run");
 	/* The offset during the run lies between the two: their hull, not their overlap. */
 	hull.low = before.low < after.low ? before.low : after.low;
 	hull.high = before.high > after.high ? before.high : after.high;
-	return (erx_bench_offset_half_width(hull) <= median / 10);
+	if (erx_bench_offset_half_width(hull) > median / 10)
+		return ("counters across CPUs not bounded closely enough");
+	return (NULL);
+}
+
+void
+erx_bench_read_pairs(uint64_t (*read)(void), erx_bench_reads_t *pairs, size_t n)
+{
+	for (size_t i = 0; i < n; i++) {
+		pairs[i].first = read();
+		pairs[i].second = read();
+	}
+}
+
+erx_bench_read_cal_t
+erx_bench_read_calibration(const erx_bench_reads_t *pairs, size_t n, erx_bench_hist_t *deltas)
+{
+	erx_bench_read_cal_t cal = { 0, 0 };
+
+	bzero(deltas, sizeof(*deltas));
+	for (size_t i = 0; i < n; i++) {
+		/* One CPU's counter never goes back, so the difference is the read's cost. */
+		uint64_t delta = pairs[i].second - pairs[i].first;
+
+		erx_bench_hist_add(deltas, delta);
+		if (delta != 0 && (cal.increment == 0 || delta < cal.increment))
+			cal.increment = delta;
+	}
+	cal.read_cost = erx_bench_hist_median(deltas);
+	return (cal);
 }

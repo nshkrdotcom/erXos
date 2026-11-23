@@ -5,12 +5,16 @@
 
 #include "bench_line.h"
 
-/* The line being written; once a write does not fit, full is set and nothing more is. */
+/*
+ * The line being written. Once a write does not fit, full is set and nothing more is.
+ * first is set while the innermost open object or array has no member yet.
+ */
 typedef struct {
 	char *buf;
 	size_t size;
 	size_t len;
 	bool full;
+	bool first;
 } text_t;
 
 static void
@@ -49,13 +53,55 @@ put_i64(text_t *t, int64_t v)
 		put_u64(t, (uint64_t)v);
 }
 
-/* ,"key": before every field but the first. */
+/* v thousandths as a decimal with three fraction digits: 27778 is 27.778. */
+static void
+put_milli(text_t *t, uint64_t v)
+{
+	char fraction[] = "000";
+
+	put_u64(t, v / 1000);
+	for (unsigned i = 0, rest = (unsigned)(v % 1000); i < 3; i++, rest /= 10)
+		fraction[2 - i] = (char)('0' + rest % 10);
+	put(t, ".");
+	put(t, fraction);
+}
+
+/* A member's separator: a comma before every member of an object or array but its first. */
+static void
+member(text_t *t)
+{
+	if (!t->first)
+		put(t, ",");
+	t->first = false;
+}
+
+/* "name": as the next member of the open object. */
 static void
 key(text_t *t, const char *name)
 {
-	put(t, ",\"");
+	member(t);
+	put(t, "\"");
 	put(t, name);
 	put(t, "\":");
+}
+
+/* Opens an object or array (open is "{" or "["), named where name is not NULL. */
+static void
+open_value(text_t *t, const char *name, const char *open)
+{
+	if (name != NULL)
+		key(t, name);
+	else
+		member(t);
+	put(t, open);
+	t->first = true;
+}
+
+static void
+close_value(text_t *t, const char *close)
+{
+	put(t, close);
+	t->first = false;
 }
 
 static void
@@ -74,53 +120,79 @@ number(text_t *t, const char *name, uint64_t value)
 	put_u64(t, value);
 }
 
+/* [a, b] as the next member of the open array. */
+static void
+pair(text_t *t, uint64_t a, uint64_t b)
+{
+	open_value(t, NULL, "[");
+	member(t);
+	put_u64(t, a);
+	member(t);
+	put_u64(t, b);
+	close_value(t, "]");
+}
+
 /* Every non-empty bucket as [low, last, count], ascending. */
 static void
 histogram(text_t *t, const char *name, const erx_bench_hist_t *hist)
 {
-	const char *sep = "";
 	uint64_t low, last;
 
-	key(t, name);
-	put(t, "[");
+	open_value(t, name, "[");
 	for (unsigned i = 0; i < ERX_BENCH_HIST_BUCKETS; i++) {
 		if (hist->count[i] == 0)
 			continue;
 		erx_bench_hist_bounds(i, &low, &last);
-		put(t, sep);
-		put(t, "[");
+		open_value(t, NULL, "[");
+		member(t);
 		put_u64(t, low);
-		put(t, ",");
+		member(t);
 		put_u64(t, last);
-		put(t, ",");
+		member(t);
 		put_u64(t, hist->count[i]);
-		put(t, "]");
-		sep = ",";
+		close_value(t, "]");
 	}
-	put(t, "]");
+	close_value(t, "]");
 }
 
 static void
 interval(text_t *t, const char *name, erx_bench_offset_t offset)
 {
-	key(t, name);
 	if (offset.empty) {
+		key(t, name);
 		put(t, "null");
 		return;
 	}
-	put(t, "[");
+	open_value(t, name, "[");
+	member(t);
 	put_i64(t, offset.low);
-	put(t, ",");
+	member(t);
 	put_i64(t, offset.high);
-	put(t, "]");
+	close_value(t, "]");
 }
 
+/* Starts the line: its kind, a space and the open top-level object. */
+static text_t
+start(char *buf, size_t size, const char *kind)
+{
+	text_t t = { buf, size, 0, size == 0, true };
+
+	put(&t, kind);
+	put(&t, " ");
+	open_value(&t, NULL, "{");
+	return (t);
+}
+
+/* Closes the line; a line that did not fit leaves buf an empty string. */
 static size_t
 finish(text_t *t)
 {
-	put(t, "}");
-	if (t->full)
+	close_value(t, "}");
+	if (t->full) {
+		if (t->size != 0)
+			t->buf[0] = '\0';
 		return (0);
+	}
 	t->buf[t->len] = '\0';
 	return (t->len);
 }
@@ -128,20 +200,24 @@ finish(text_t *t)
 size_t
 erx_bench_line_cell(char *buf, size_t size, const erx_bench_cell_t *cell)
 {
-	text_t t = { buf, size, 0, size == 0 };
+	text_t t = start(buf, size, "BENCH");
 
-	put(&t, "BENCH {\"benchmark\":\"");
-	put(&t, cell->benchmark);
-	put(&t, "\"");
+	string(&t, "benchmark", cell->benchmark);
 	string(&t, "operation", cell->operation);
-	put(&t, ",\"conditions\":{\"load\":\"");
-	put(&t, cell->load);
-	put(&t, "\"");
+	open_value(&t, "conditions", "{");
+	string(&t, "load", cell->load);
 	string(&t, "placement", cell->placement);
-	put(&t, ",\"parameters\":{}");
+	open_value(&t, "parameters", "{");
+	for (size_t i = 0; i < cell->nparams; i++) {
+		if (cell->params[i].text != NULL)
+			string(&t, cell->params[i].name, cell->params[i].text);
+		else
+			number(&t, cell->params[i].name, cell->params[i].count);
+	}
+	close_value(&t, "}");
 	string(&t, "clock", cell->clock);
 	number(&t, "batch", cell->batch);
-	put(&t, "}");
+	close_value(&t, "}");
 	number(&t, "frequency_hz", cell->frequency_hz);
 	string(&t, "status", cell->status);
 	if (cell->reason != NULL)
@@ -152,34 +228,30 @@ erx_bench_line_cell(char *buf, size_t size, const erx_bench_cell_t *cell)
 		number(&t, "min", cell->min);
 		number(&t, "max", cell->max);
 	}
-	key(&t, "largest");
-	put(&t, "[");
-	for (size_t i = 0; i < cell->nlargest && i < ERX_BENCH_LARGEST; i++) {
-		put(&t, i == 0 ? "[" : ",[");
-		put_u64(&t, cell->largest[i].sequence);
-		put(&t, ",");
-		put_u64(&t, cell->largest[i].value);
-		put(&t, "]");
-	}
-	put(&t, "]");
-	put(&t, ",\"counts\":{\"lost\":");
-	put_u64(&t, cell->lost);
+	open_value(&t, "largest", "[");
+	for (size_t i = 0; i < cell->nlargest && i < ERX_BENCH_LARGEST; i++)
+		pair(&t, cell->largest[i].sequence, cell->largest[i].value);
+	close_value(&t, "]");
+	open_value(&t, "counts", "{");
+	number(&t, "lost", cell->lost);
 	number(&t, "early", cell->early);
 	number(&t, "missed", cell->missed);
-	put(&t, "}");
+	close_value(&t, "}");
+	if (cell->raw != NULL) {
+		open_value(&t, "raw", "[");
+		for (size_t i = 0; i < cell->nraw; i++) {
+			member(&t);
+			put_u64(&t, cell->raw[i]);
+		}
+		close_value(&t, "]");
+	}
 	if (cell->has_uncertainty)
 		number(&t, "uncertainty", cell->uncertainty);
 	if (cell->periodic != NULL) {
-		key(&t, "phases");
-		put(&t, "[");
-		for (unsigned p = 0; p < ERX_BENCH_PHASES; p++) {
-			put(&t, p == 0 ? "[" : ",[");
-			put_u64(&t, cell->periodic->phase_min[p]);
-			put(&t, ",");
-			put_u64(&t, cell->periodic->phase_returns[p]);
-			put(&t, "]");
-		}
-		put(&t, "]");
+		open_value(&t, "phases", "[");
+		for (unsigned p = 0; p < ERX_BENCH_PHASES; p++)
+			pair(&t, cell->periodic->phase_min[p], cell->periodic->phase_returns[p]);
+		close_value(&t, "]");
 		histogram(&t, "excess", &cell->periodic->excess);
 	}
 	return (finish(&t));
@@ -188,27 +260,32 @@ erx_bench_line_cell(char *buf, size_t size, const erx_bench_cell_t *cell)
 size_t
 erx_bench_line_clock(char *buf, size_t size, const erx_bench_calibration_t *clock)
 {
-	text_t t = { buf, size, 0, size == 0 };
+	text_t t = start(buf, size, "CLOCK");
 
-	put(&t, "CLOCK {\"clock\":\"");
-	put(&t, clock->clock);
-	put(&t, "\"");
+	string(&t, "clock", clock->clock);
 	number(&t, "frequency_hz", clock->frequency_hz);
 	number(&t, "increment", clock->increment);
 	number(&t, "read_cost", clock->read_cost);
 	number(&t, "wait_rounding", clock->wait_rounding);
-	key(&t, "pairs");
-	put(&t, "[");
+	if (clock->cycles_per_tick_milli == 0 || clock->cycles_per_tick_milli > 1000 * 1000)
+		string(&t, "cycles_per_tick", "unknown");
+	else {
+		key(&t, "cycles_per_tick");
+		put_milli(&t, clock->cycles_per_tick_milli);
+	}
+	open_value(&t, "pairs", "[");
 	for (size_t i = 0; i < clock->npairs; i++) {
-		put(&t, i == 0 ? "{\"cpus\":[" : ",{\"cpus\":[");
+		open_value(&t, NULL, "{");
+		open_value(&t, "cpus", "[");
+		member(&t);
 		put_u64(&t, clock->pairs[i].cpus[0]);
-		put(&t, ",");
+		member(&t);
 		put_u64(&t, clock->pairs[i].cpus[1]);
-		put(&t, "]");
+		close_value(&t, "]");
 		interval(&t, "before", clock->pairs[i].before);
 		interval(&t, "after", clock->pairs[i].after);
-		put(&t, "}");
+		close_value(&t, "}");
 	}
-	put(&t, "]");
+	close_value(&t, "]");
 	return (finish(&t));
 }

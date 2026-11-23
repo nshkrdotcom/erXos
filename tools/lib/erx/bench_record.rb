@@ -52,9 +52,34 @@ module Erx
     # A reason: words starting lowercase, no control character, nothing a terminal interprets.
     REASON = /\A[a-z][A-Za-z0-9 ,:_()-]{0,79}\z/
 
-    # A condition that a value fails names the field, never the value.
-    def self.check(valid, what)
-      raise Error, "bench record: #{what}" unless valid
+    # A record part that fails a condition. reason names the field, never the value, so
+    # a line's validator can say which line it refused.
+    class Invalid < Error
+      attr_reader :reason
+
+      def initialize(reason)
+        @reason = reason
+        super("bench record: #{reason}")
+      end
+    end
+
+    def self.check(valid, what) = valid || raise(Invalid, what)
+
+    # value and everything it holds, frozen: a record's parts never change once built.
+    def self.frozen(value)
+      check(json?(value), 'a record part holds a value that is not JSON')
+      JSON.parse(JSON.generate(value), freeze: true)
+    end
+
+    # What a record holds: JSON's values, with string keys and finite numbers.
+    def self.json?(value)
+      case value
+      when String, Integer, true, false, nil then true
+      when Float then value.finite?
+      when Array then value.all? { |item| json?(item) }
+      when Hash then value.all? { |key, item| key.is_a?(String) && json?(item) }
+      else false
+      end
     end
 
     def self.plain_hash?(value) = value.is_a?(Hash) && value.keys.all?(String)
@@ -70,9 +95,28 @@ module Erx
       end
       (first_low, first_last, _), (last_low, last_last, _) = histogram.values_at(0, -1)
       min, max = given.values_at('min', 'max')
-      check(min.is_a?(Integer) && max.is_a?(Integer) && min.between?(first_low, first_last) &&
+      check(min.is_a?(Integer) && max.is_a?(Integer) && min <= max && min.between?(first_low, first_last) &&
             max.between?(last_low, last_last), 'min and max do not lie in the histogram buckets that hold them')
       min..max
+    end
+
+    # Whether a one-way cell's uncertainty, where it has one, is at most a tenth of its
+    # median, the guest's rule (docs/design-bench.md, "The one clock") held again here.
+    # The median is the guest's own (erx_bench_hist_median): the upper end of the bucket
+    # holding the sample of rank ceil(n / 2), for any number of samples.
+    def self.uncertainty_bounded?(detail)
+      uncertainty = detail['uncertainty']
+      return true if uncertainty.nil?
+
+      median = median(detail.fetch('histogram', []))
+      uncertainty.is_a?(Integer) && !median.nil? && 10 * uncertainty <= median
+    end
+
+    # The upper end of the bucket holding the sample of rank ceil(n / 2); nil for none.
+    def self.median(histogram)
+      rank = (histogram.sum { |_, _, count| count } * P50).ceil
+      seen = 0
+      histogram.find { |_, _, count| (seen += count) >= rank }&.at(1) unless rank.zero?
     end
 
     # Buckets [low, last, count] of tick counts, each holding low to last, both included,
@@ -95,7 +139,7 @@ module Erx
         BenchRecord.check(cpus.nil? || (cpus.is_a?(Integer) && cpus.between?(1, 1024)), 'CPU count is not positive')
         BenchRecord.check(system.nil? || SYSTEMS.include?(system), 'system is not one of the board systems')
         BenchRecord.check(BenchRecord.plain_hash?(details), 'environment details are not a map')
-        super(kind: kind, model: model, cpus: cpus, system: system, details: details.freeze)
+        super(kind: kind, model: model, cpus: cpus, system: system, details: BenchRecord.frozen(details))
         name
       end
 
@@ -126,7 +170,7 @@ module Erx
         BenchRecord.check(revision.is_a?(String) && REVISION.match?(revision), 'revision is not a lowercase hash')
         BenchRecord.check([true, false].include?(dirty), 'dirty is not a boolean')
         BenchRecord.check(BenchRecord.plain_hash?(details), 'subject details are not a map')
-        super(revision: revision, dirty: dirty, details: details.freeze)
+        super(revision: revision, dirty: dirty, details: BenchRecord.frozen(details))
       end
     end
 
@@ -156,7 +200,7 @@ module Erx
         BenchRecord.check(BenchRecord.plain_hash?(parameters), 'workload parameters are not a map')
         BenchRecord.check(CLOCKS.include?(clock), 'clock is not one of the clocks')
         BenchRecord.check(batch.is_a?(Integer) && batch.positive?, 'batch size is not positive')
-        super(load: load, placement: placement, parameters: parameters.freeze, clock: clock, batch: batch)
+        super(load: load, placement: placement, parameters: BenchRecord.frozen(parameters), clock: clock, batch: batch)
       end
     end
 
@@ -197,8 +241,10 @@ module Erx
                           'a cell with a lost wake or an early return is failed, not measured')
         BenchRecord.check(!NO_SUMMARY.include?(status) || detail.fetch('histogram', []).empty?,
                           "a #{status} cell has no samples")
+        BenchRecord.check(status != 'measured' || BenchRecord.uncertainty_bounded?(detail),
+                          'a measured cell has an uncertainty above a tenth of its median')
         super(benchmark: benchmark, operation: operation, conditions: conditions, profile: profile, status: status,
-              reason: reason, counts: counts.freeze, detail: detail.freeze)
+              reason: reason, counts: BenchRecord.frozen(counts), detail: BenchRecord.frozen(detail))
       end
 
       # What the profile lets the cell claim, from its histogram: the sample count, the
@@ -223,7 +269,7 @@ module Erx
         BenchRecord.check(BenchRecord.plain_hash?(clock), 'clock calibration is not a map')
         BenchRecord.check(cells.is_a?(Array) && !cells.empty? && cells.all?(Cell), 'record holds no cells')
         BenchRecord.check(cells.map(&:key).uniq.size == cells.size, 'record holds one cell twice')
-        super(environment: environment, subject: subject, run: run, clock: clock.freeze, cells: cells.freeze)
+        super(environment: environment, subject: subject, run: run, clock: BenchRecord.frozen(clock), cells: cells.freeze)
       end
 
       # The run directory's name: UTC time, the revision's first twelve hex digits, and
@@ -362,7 +408,7 @@ module Erx
         refuse("shares the erXos repository's common git directory: #{@root}") if
           real_path(common, 'common git directory') == real_path(erxos_common, 'common git directory')
         refuse("shares a root commit with the erXos repository: #{@root}") unless
-          (roots(@root) & roots(erxos_root)).empty?
+          (roots(@root, side: 'history destination') & roots(erxos_root, side: 'the erXos repository')).empty?
         @worktrees = worktrees(erxos_root)
         outside_worktrees(@root)
       end
@@ -419,13 +465,14 @@ module Erx
 
       # The root commits of every ref in directory, none for a repository with no commit
       # yet. A second clone of erXos has a common git directory of its own but erXos's
-      # roots, on whatever branch it has checked out; a shallow clone hides them, so it is
-      # refused.
-      def roots(directory)
-        refuse("is a shallow clone: #{directory}") unless git(directory, 'rev-parse', '--is-shallow-repository') == 'false'
+      # roots, on whatever branch it has checked out; a shallow clone hides them, so either
+      # side shallow is refused, naming that side.
+      def roots(directory, side:)
+        shallow = git(directory, 'rev-parse', '--is-shallow-repository') != 'false'
+        raise Error, "bench record: #{side} is a shallow clone: #{directory}" if shallow
 
         listing = git(directory, 'rev-list', '--max-parents=0', '--all')
-        refuse("cannot list the root commits at #{directory}") unless listing
+        raise Error, "bench record: cannot list the root commits of #{side} at #{directory}" unless listing
         listing.split("\n")
       end
 

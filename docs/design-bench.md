@@ -234,21 +234,29 @@ A guest reports its clock's calibration ([The one clock](#the-one-clock))
 as one more line per boot, `CLOCK` followed by one JSON object, printed
 after its last cell's calibration: the clock and its frequency, the
 smallest increment two reads observed, the median cost of a read, the
-rounding of a timed wait, and for each pair of CPUs a cell stamped
-across, the offset interval measured before the cells and the one
-measured after them, each as its lowest and highest offset in ticks.
+rounding of a timed wait, the CPU's cycles per counter tick as a number,
+or `unknown` where the run could not measure it, and for each pair of
+CPUs a cell stamped across, lower CPU first, the offset interval
+measured before the cells and the one measured after them, each as its
+lowest and highest offset in ticks, or null where that calibration's
+stamps contradicted each other.
 The record's `clock` group is that line's object. `BenchMeasurement`
 validates it as it does a `BENCH` line, with the same refusals, and the
 one fuzz target takes the guests' `CLOCK` lines as seeds beside their
 `BENCH` lines. The guest, not the host, applies the cross-CPU rule: it
 prints a cell stamped across a pair only once both intervals are
 measured, corrects its samples by the hull's middle and gives the
-hull's half-width as the cell's `uncertainty`, and marks the cell
-`unsupported` with the reason `counters across CPUs not bounded closely
-enough` when that half-width is more than a tenth of its median, and
-with `counters across CPUs moved during the run` when the two intervals
-do not overlap. A boot whose `BENCH` lines arrive without one valid
-`CLOCK` line has no calibration, and its cells are `rejected`.
+hull's half-width as the cell's `uncertainty`, and otherwise marks the
+cell `unsupported` with the reason that applies: `counters across CPUs
+contradicted each other` when either interval is null, `counters across
+CPUs moved during the run` when the two intervals do not overlap, and
+`counters across CPUs not bounded closely enough` when the hull's
+half-width is more than a tenth of the cell's median. The host holds a
+`measured` cell to the same bound, against its median bucket's upper
+end, and refuses one whose `uncertainty` exceeds it. A boot whose
+`BENCH` lines arrive without exactly one valid `CLOCK` line has no
+calibration, and its cells are `rejected`; so is a cell whose frequency
+is not its `CLOCK` line's.
 
 ### The histogram
 
@@ -301,25 +309,28 @@ in under a second, and records:
   50-tick offset hidden inside 100-tick transfers stays inside the
   interval instead of passing as zero; rounds whose transfers split
   differently narrow the intersection, and an empty one means the stamps
-  contradict each other and the pair is refused. The construction
-  assumes the offset does not change during the run, so calibration runs
-  again after the run's cells, and the cells across that pair are
-  refused unless the two intervals overlap, and are otherwise bounded by
-  their hull, which holds the offset however it moved between them;
+  contradict each other: the interval is carried as null and the cells
+  across that pair are `unsupported`. The construction assumes the
+  offset does not change during the run, so calibration runs again after
+  the run's cells, and the cells across that pair are `unsupported`
+  unless the two intervals overlap, and are otherwise bounded by their
+  hull, which holds the offset however it moved between them;
 * the rounding of a timed wait (`erx_fiasco_time_wait_us` rounds a
   deadline up to the microsecond, `liberx/backend/fiasco/time_table.c`),
   so lateness under a microsecond is recorded as unresolvable;
 * on the Raspberry Pi 4, the CPU's cycles per counter tick over one second
   where its cycle counter is readable in user mode (`CONFIG_PERF_CNT_USER`
   is set; that the board allows the read is unverified), and otherwise
-  `unknown`.
+  `unknown`; the `CLOCK` line carries it as a number or `unknown`.
 
 The rule applies to a cell whose start and end stamps are read on
 different CPUs; a round trip stamped on one CPU needs no calibration,
 wherever its work ran. Such a one-way interval is corrected by the
 interval's middle and reported with its half-width as its uncertainty,
-and its cell reports `unsupported: counters across CPUs not bounded
-closely enough` when the half-width is more than a tenth of its median.
+and its cell reports `unsupported` with the reason of the `CLOCK`
+paragraph in [A benchmark](#a-benchmark) when an interval is null, the
+two do not overlap, or the half-width is more than a tenth of its
+median.
 A round trip is never halved into a one-way number.
 
 **Short operations.** An operation whose warm-up median is under 100
@@ -429,7 +440,7 @@ A cell's status is one of:
 | `measured` | every sample asked for was taken and every result was correct | in full |
 | `partial` | fewer samples than asked, with the reason (a deadline, a load that ended) | from the samples taken, labelled partial |
 | `timed_out` | the guest's deadline passed before the operation reported | none |
-| `unsupported` | the call answered `ERX_ENOTSUP`, the environment lacks what the operation needs (a second CPU, a readable cycle counter), or calibration refused it; the reporter is named | none |
+| `unsupported` | the call answered `ERX_ENOTSUP`, the environment lacks what the operation needs (a second CPU, a readable cycle counter), or calibration could not bound its counters; the reporter is named | none |
 | `failed` | a result was wrong: a lost wake, an early return, a reply with the wrong status | the samples before the failure, and the failure |
 | `rejected` | the guest's line failed validation | none, and the reason |
 | `not_run` | expected and never reported | none |
@@ -1006,7 +1017,7 @@ fault that must fail it:
 | a replayed log | a replayed boot's numbers appear in the report and are refused as a baseline run | the replay mark ignored: a replayed log counts as a third baseline run |
 | the histogram (C and Erlang, on the host) | samples spread over twenty octaves each land in a bucket whose bounds contain them and whose width is at most 1/64 of its lower bound | an off-by-one in the sub-bucket index: a sample lands outside its bucket |
 | the `BENCH` line reader | a fuzz target over the line validator, with the guests' own lines as seeds, runs its budget clean | the check that the histogram holds the line's sample count removed: the fuzzer finds an accepted histogram holding more samples than its profile asked for, the bound that also bounds its length |
-| the cross-CPU offset | host stamps with a true offset of 50 ticks and every transfer 100 ticks give, with the one-tick widening, the interval `[-51, 151]`: it contains 50, its half-width is 101, a cell with a 1,010-tick median is accepted and one of 1,009 refused; stamps whose offset moves by 300 ticks between the calibration before and after give disjoint intervals and the cells are refused; a round trip stamped on one CPU is never refused | the ordering test of the stamps used instead of the causal interval: a bound of one tick is reported |
+| the cross-CPU offset | host stamps with a true offset of 50 ticks and every transfer 100 ticks give, with the one-tick widening, the interval `[-51, 151]`: it contains 50, its half-width is 101, a cell with a 1,010-tick median is accepted and one of 1,009 is `unsupported`; stamps whose offset moves by 300 ticks between the calibration before and after give disjoint intervals and the cells are `unsupported`; a round trip stamped on one CPU is never `unsupported` | the ordering test of the stamps used instead of the causal interval: a bound of one tick is reported |
 | a periodic deadline | the classifier, given the stamps of a 5 ms stall at period 100, reports at least four missed periods and a maximum lateness of at least 5 ms, and given a return 10 us before its deadline, one early return | the next deadline taken from the return: the stall shows as one late period; the early test written `<=` the deadline: an on-time return counts as early |
 | the phase sweep | deadlines over 160 periods visit each of the sixteen phases ten times, and a fake timer that fires only on ticks gives a minimum observed lateness that varies across phases by about a tick, with each sample's excess above its phase's minimum reported | the phase term dropped: every deadline has one phase |
 | a lost wake | in the guest, the `wake` handshake reports `measured` and no loss | the wake sent to another slot: B's park times out after 1 s and the cell is `failed` |

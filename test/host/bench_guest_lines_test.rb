@@ -35,14 +35,18 @@ class BenchGuestLinesTest < Minitest::Test
   end
 
   def test_the_guests_lines_pass_the_hosts_validator
-    fast, periodic, clock, short = guest_lines
+    fast, periodic, costly, clock, boundary = guest_lines
     cell = Erx::BenchMeasurement.cell(fast, benchmark: 'wake', profiles: PROFILES)
     assert_equal [40, 1000, 1199], cell.summary.values_at('samples', 'min', 'max')
+    assert_equal({ 'threads' => 2, 'mode' => 'spin' }, cell.conditions.parameters)
     late = Erx::BenchMeasurement.cell(periodic, benchmark: 'wake', profiles: PROFILES)
     assert_equal ['partial', 'cut short', 32], [late.status, late.reason, late.summary.fetch('samples')]
+    expensive = Erx::BenchMeasurement.cell(costly, benchmark: 'wake', profiles: PROFILES)
+    assert_equal [20, 20], [expensive.summary.fetch('samples'), expensive.detail.fetch('raw').size]
     calibration = Erx::BenchMeasurement.clock(clock)
+    assert_in_delta 27.778, calibration.fetch('cycles_per_tick'), 1e-9
     assert_equal [[-40, 12], [-35, 15], nil, [-(1 << 63), (1 << 63) - 1]],
                  calibration.fetch('pairs').flat_map { |pair| pair.values_at('before', 'after') }
-    assert_equal 'short refused', short
+    assert_equal 'boundary ok', boundary
   end
 end

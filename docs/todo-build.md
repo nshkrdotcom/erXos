@@ -33,11 +33,21 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   each with its seed. Open review point of the first slice: `slower` and `faster` are not yet held to a paired run.
 * [High] benchmarks, `wake` ([design-bench.md](design-bench.md#1-wake-how-late-a-waiting-thread-runs)): the
   histogram and the periodic schedule of `test/guest/bench/` and the `bench` QEMU suite, whose cells are pending,
-  exist; still to build are the library's calibration and `BENCH` lines, the native bench guest
+  and the guest library's `BENCH` and `CLOCK` line emitter exist; still to build are the library's calibration
+  loop (read cost, smallest increment, the offset rounds), the native bench guest
   `test/guest/native_bench/` reusing `native_irq`'s handshake and holder and `native_task`'s program,
   `park-deadline`, the two wake handshakes, `trigger-take`, and `bench/erx_wake_bench.erl` with
   `bench/erx_bench_hist.erl` for `erlang-timer` in the `xdomain` bench image, each boot given to the suite as its
   runner. Lands with its two seeded runs.
+* [Medium] benchmarks, the guest line validator (`tools/lib/erx/bench_measurement.rb`): a `BENCH` line's
+  load cell, placement and clock are checked only as names, not against the cell the run asked for, and a
+  two-CPU placement's pair is not checked against the `CLOCK` line's pairs; the suite's runner should pass the
+  declared cell and the boot's calibration to `BenchMeasurement.boot` and refuse a line that reports another.
+* [Low] benchmarks, reasons the host writes itself (`timed_out`, `not_run`, a `rejected` cell's reason from
+  `BenchMeasurement.boot`): `BenchRecord::Cell` holds every reason to `BenchRecord::REASON`, but a refusal's
+  message, which embeds `JsonInput`'s reason and path names from the history destination, has no character-set
+  check of its own before it reaches the terminal; give the refusal messages the console line escaper or a test
+  that every refusal's text is plain.
 * [Low] benchmarks, the `BENCH` line fuzz target (`tools/fuzz/bench_line.rb`): its seeded fault, the
   validator's check that a histogram holds the line's sample count removed, is run by hand and kept nowhere;
   make it a test that runs a fixed number of inputs from a fixed seed against the faulted validator, so the

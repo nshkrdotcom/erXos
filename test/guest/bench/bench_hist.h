@@ -32,5 +32,10 @@ unsigned erx_bench_hist_index(uint64_t value);
  */
 void erx_bench_hist_bounds(unsigned index, uint64_t *low, uint64_t *last);
 void erx_bench_hist_add(erx_bench_hist_t *hist, uint64_t value);
+/*
+ * The upper end of the bucket holding the sample of rank ceil(samples / 2), the median
+ * the host's reader derives too; 0 for no samples.
+ */
+uint64_t erx_bench_hist_median(const erx_bench_hist_t *hist);
 
 #endif

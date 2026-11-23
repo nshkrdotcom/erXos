@@ -147,7 +147,11 @@ class BenchRecordTest < Minitest::Test
     assert_match(/root commit/, assert_raises(Erx::Error) { write(orphan) }.message)
     shallow = File.join(@scratch, 'shallow')
     git(@scratch, 'clone', '-q', '--depth', '1', "file://#{@erxos}", shallow)
-    assert_match(/shallow/, assert_raises(Erx::Error) { write(shallow) }.message)
+    assert_match(/history destination is a shallow clone/, assert_raises(Erx::Error) { write(shallow) }.message)
+    separate = File.join(@scratch, 'separate')
+    git_init(separate)
+    message = assert_raises(Erx::Error) { Record.write(record, history: separate, erxos_root: shallow) }.message
+    assert_match(/the erXos repository is a shallow clone/, message)
   end
 
   def test_a_clone_whose_head_names_a_missing_branch_is_refused
@@ -226,6 +230,26 @@ class BenchRecordTest < Minitest::Test
     assert_raises(Erx::Error) { cell(histogram: histogram, extremes: { 'min' => 1000 }) }
     assert_raises(Erx::Error) { cell(status: 'partial', histogram: [], extremes: { 'min' => 1, 'max' => 1 }) }
     cell(histogram: histogram, extremes: { 'min' => 1003, 'max' => 1009 })
+    # Both extremes in one bucket, the minimum above the maximum.
+    assert_raises(Erx::Error) { cell(histogram: [[1000, 1016, 2000]], extremes: { 'min' => 1010, 'max' => 1005 }) }
+  end
+
+  # A one-way cell across CPUs is measured only while its uncertainty is at most a tenth
+  # of its median (here the median bucket's upper end, 1016).
+  def test_a_measured_cells_uncertainty_is_at_most_a_tenth_of_its_median
+    bounds = { 'min' => 1000, 'max' => 1016 }
+    assert_match(/uncertainty/, assert_raises(Erx::Error) { cell(extremes: bounds.merge('uncertainty' => 102)) }.message)
+    cell(extremes: bounds.merge('uncertainty' => 101))
+    cell(status: 'partial', extremes: bounds.merge('uncertainty' => 5000))
+  end
+
+  def test_the_median_is_its_buckets_upper_end_at_any_count
+    assert_equal 4, Record.median([[1, 1, 1], [2, 2, 1], [3, 4, 2], [5, 5, 1]])
+    assert_nil Record.median([])
+  end
+
+  def test_a_cells_detail_is_frozen_through
+    assert cell.detail.fetch('histogram').first.frozen?
   end
 
   def test_a_cells_reason_holds_nothing_a_terminal_interprets
