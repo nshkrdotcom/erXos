@@ -287,7 +287,9 @@ neither the console nor the host link); a driven device, the console's
 and the host link's UARTs among them, that is missing a signal its
 controller cannot work without or names one signal on two rows; a
 driven device at a controller of the SoC table that no row names; `jtag` rows that leave out a JTAG
-signal, since `enable_jtag_gpio` sets all six pins; a `gpio` or
+signal, since `enable_jtag_gpio` sets all six pins; a console or `jtag`
+row on a pin its firmware setting does not set
+([design-pinctrl.md](design-pinctrl.md#the-pin-table)); a `gpio` or
 `reserved` row with a function, or a `jtag` row with a pull. A pull on
 a `gpio` row is refused too: a GPIO pin's pull is its holder's to set.
 
@@ -546,7 +548,9 @@ One directory per pin of the grant's scope, named by its GPIO number
 
 A pin's **idle state** is input with no pull and no edge detection: the
 state that drives nothing. The pin driver puts every `gpio` pin in it at
-its start, and a pin returns to it when its hold ends, so no holder
+its start, a pin returns to it when its hold ends, and a hold is granted
+only on a pin that reads idle
+([design-pinctrl.md](design-pinctrl.md#plain-gpio)), so no holder
 inherits another's settings.
 
 ### `/dev/i2c1`

@@ -1247,8 +1247,10 @@ data in the platform record
   expander lines, these are registers a domain can reach, but this
   driver needs none of them: it never power-cycles the card, never
   changes its signalling and never reads card detect, setting the
-  card-detect test bits as on the Pi 4. So the bank is given to no
-  domain, and the start's refusal of a card left at 1.8 V stays.
+  card-detect test bits as on the Pi 4. So no row of the pin table names
+  the bank's lines, the bank is in no controller entry and no unit
+  ([design-pinctrl.md](design-pinctrl.md#placement-and-boot-order)), and
+  the start's refusal of a card left at 1.8 V stays.
 * **When the bank is needed.** A power cycle is the one way back from
   1.8 V signalling (Physical Layer Figure 3-16, p.22), so if the board
   probe finds that the firmware leaves the card at 1.8 V, or when UHS-I
@@ -1257,10 +1259,13 @@ data in the platform record
   owned by the SD controller, with a state for each arrangement of power
   and signalling level, which the storage domain's driver selects by
   name through its `pins` grant
-  ([design-pinctrl.md](design-pinctrl.md#states-at-run-time)). The bank
-  itself, `gio_aon`, one 64-byte block, lies in the always-on pin
-  controller's unit and stays with that unit's holder, its register
-  layout taken into a facts record with that change.
+  ([design-pinctrl.md](design-pinctrl.md#states-at-run-time)). A state
+  stays until the driver selects another, so the driver's start selects
+  the arrangement it needs, and a restart of the pin driver moves
+  neither line. With those rows the bank itself, `gio_aon`, one 64-byte
+  block, joins the always-on pin controller's entry and so its unit,
+  which the system domain holds, its register layout taken into a facts
+  record with that change.
 
 The Pi 5's board probe runs the Pi 4's above on `sdio1` and also
 records the levels of lines 3, 4 and 5 and the SD pin selection as the

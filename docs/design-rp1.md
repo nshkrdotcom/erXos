@@ -245,8 +245,11 @@ takes register readings and returns the next writes. Its start:
 Each part's driver resets its device and then calls
 `erx_rp1:master(Part)`, as a single function's driver sends `master`
 after its reset. `erx_rp1` sends the function's `master` once every part
-the platform record lists for the unit has called, and answers each call
-then; a call after that is answered at once. The GEM's driver calls
+the platform record lists for the unit, the pin blocks apart, has called,
+and answers each call then; a call after that is answered at once. The
+pin blocks ([Pins](#pins)) are left out by their role, `gpio`: it marks
+them as the pin driver's, which resets nothing and masters nothing, so
+the barrier waits for no call that never comes. The GEM's driver calls
 after its reset's first step ([The driver](#the-driver)), and a host's
 controller process after its controller's reset, where a PCIe
 function's controller sends `master` ([The USB hosts](#the-usb-hosts)).
@@ -276,10 +279,13 @@ entry.
 
 **Supervision.** The holder's unit supervisor
 ([design-system.md](design-system.md#the-holders-driver-control-facet))
-is `rest_for_one`: `erx_rp1` first, then a `one_for_one` supervisor of
-the parts' drivers, the GEM's lender and one USB tree per host. The end
-of a part's driver restarts that driver alone, and the function stays
-mastering. The end of `erx_rp1` ends every part's driver and starts the
+is `rest_for_one`: `erx_rp1` first, then the pin driver, `erx_pins`
+([Pins](#pins)), then a `one_for_one` supervisor of the parts' drivers,
+the GEM's lender and one USB tree per host. The end of a part's driver
+restarts that driver alone, and the function stays mastering. The end of
+`erx_pins` restarts the parts' drivers after it, and its own restart
+writes no pin of a device that reads as one of its states, so the PHY's
+reset line does not move until the GEM's restarted driver moves it. The end of `erx_rp1` ends every part's driver and starts the
 unit again from step 1. A part's driver that keeps failing before its
 call ends its supervisor within that supervisor's intensity, and with it
 the unit. The unit supervisor's own end ends the domain,
@@ -375,11 +381,12 @@ pin driver of [design-pinctrl.md](design-pinctrl.md#the-pin-driver),
 lists as parts, with no entry and the role of a pin controller's
 device, `gpio`
 ([design-header-io.md](design-header-io.md#placement-units-and-domains)),
-the blocks its rows need: `io_bank1` (`0xd4000`) and `pads_bank1` (`0xf4000`) for GPIO 32,
-and `io_bank2` (`0xd8000`) for GPIO 42 and 43. The header's bank joins
-them with the first driver of a header pin. The unit supervisor starts
-`erx_pins` after `erx_rp1` answers and before the parts' drivers, so
-every part finds its pins in their `default` state.
+the blocks its rows need: `io_bank1` (`0xd4000`) and `pads_bank1`
+(`0xf4000`) for GPIO 32, and `io_bank2` (`0xd8000`) and `pads_bank2`
+(`0xf8000`) for GPIO 42 and 43. The header's bank joins them with the
+first driver of a header pin. The unit supervisor starts `erx_pins`
+after `erx_rp1` answers and before the parts' drivers, so every part
+finds its pins in a state the table lists.
 
 The table's rows on RP1, of kind `rp1`:
 
@@ -388,24 +395,49 @@ The table's rows on RP1, of kind `rp1`:
 | 32 | `eth` | `out`, level 1 | `reset`: level 0 |
 | 42, 43 | `usb0` | `vbus1` | |
 
-GPIO 32 is the PHY's reset (`ETH_RST_N`), active low. The `rp1` kind
-realizes `out` through IO bank 1's own overrides, which RP1's
-documentation gives: `FUNCSEL` 5 (GPIO), output enable forced on
-(`OEOVER` 3) and the level forced by `OUTOVER` (2 low, 3 high), with the
-pad's output-disable bit clear
+**What a setting writes.** On RP1 a function alone connects nothing: a
+pad's output-disable bit is set at reset and overrides the peripheral,
+and its input-enable bit is clear at reset
 ([section 6](research-rp1-clocks.md#6-pads-function-select-and-the-gpio-setup-found--not-found)).
-Linux drives the level through RP1's RIO block instead, whose base the
-record does not give. The GEM's driver resets the PHY by selecting
-`reset`, waiting 5 ms and selecting `default`, the tree's duration with
-Linux's post-delay of 0; a driver that ends in between leaves the PHY
-out of reset, since a state lasts only while its selector lives. At the
-pin driver's start a PHY the firmware left in reset is released, and
-one already out of reset sees no write.
+So the `rp1` kind plans a pin's `CTRL` word and its pad together, and a
+pin is set only when both read as planned:
+
+| Setting | `CTRL` | Pad |
+| --- | --- | --- |
+| a signal | its `FUNCSEL`; `OUTOVER` and `OEOVER` 0, so the peripheral drives the pin | output disable clear, input enable set; the pull bits when the row names a pull |
+| `out` | `FUNCSEL` 5 (GPIO); `OEOVER` 3, output enable forced on; `OUTOVER` 2 for level 0 and 3 for level 1 | the same |
+| `in` | `FUNCSEL` 5; `OEOVER` 2, output disabled | output disable set, input enable set; the pull bits when the row names a pull |
+
+Clearing output disable and setting input enable for every signal lets
+the peripheral's own output enable decide the direction, so the kind
+needs no table of which signals are inputs. That choice is this
+design's, made from the fields' descriptions. `INOVER`, whose values the
+facts record does not list, is left as read and shown in `/proc` until
+the record gives them. Drive strength, slew rate, the Schmitt trigger
+and each bank's `VOLTAGE_SELECT` are in no setting and stay as the
+firmware left them
+([design-pinctrl.md](design-pinctrl.md#what-the-firmware-leaves)).
+
+GPIO 32 is the PHY's reset (`ETH_RST_N`), active low, driven through IO
+bank 1's own overrides. Linux drives the level through RP1's RIO block
+instead, whose base the record does not give. The GEM's driver resets
+the PHY by selecting `reset`, waiting 5 ms and selecting `default`, the
+tree's duration with Linux's post-delay of 0. A state stays until
+another is selected, so a driver that ends between the two leaves the
+PHY in reset until its restart, which begins with the same two selects.
+At the pin driver's start a PHY found held in reset through this pin is
+left so for the GEM's driver, and one found any other way is put in
+`default`.
 
 GPIO 42 and 43 carry the USB ports' power enable and over-current input
 in function `vbus1` (`FUNCSEL` 2), which the Raspberry Pi firmware's
-tree gives `usb0` as its default state; which host drives which pin is
-not known, and the rows give no pull, so the pads stay as found.
+tree gives `usb0` as its default state. Their `CTRL` words and their
+pads' output-disable and input-enable bits are planned as for any
+signal, so the two signals do not rest on what the firmware left there.
+Which pin is the input is not known, so the rows name no pull, and the
+pads' pull bits are the one thing about these pins the design takes from
+the firmware. The board check records them, and a row gains a pull if
+the reading shows the input needs one.
 
 ## The Ethernet controller
 

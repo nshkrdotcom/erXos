@@ -496,7 +496,8 @@ kernel at the address `bootstrap` is linked for, the armstub,
 the mini UART with
 its clock pinned so its divisor holds, and a `gpio=` line for each
 of the header's bus pins; the pins the board wires to its own chips
-the root sets later, before any domain starts
+are set later, before any configured domain starts, by the system
+domain's pin driver in the design and by its root in what is built
 ([chapter 15](15-devices.md#1581-one-table-of-pins)). The firmware stays resident
 with access to all memory, and BL31 stays at EL3
 ([design-platforms.md, Firmware](../design-platforms.md#firmware));

@@ -636,7 +636,10 @@ Which pin does what is one table per board, the **pin table** in the
 platform record
 ([design-pinctrl.md, The pin table](../design-pinctrl.md#the-pin-table)).
 A row gives a pin one owner: a device, plain `gpio`, the firmware
-(for the console and the JTAG debug port), or `reserved`. A device's
+(for the console and the JTAG debug port), or `reserved`. In the
+design a firmware row must also be a pin that one of the firmware
+settings the build writes really sets, so a table cannot move the
+console by naming other pins. A device's
 row adds the pin's function and pull. A pin has one row, so two
 devices cannot own one pin, and the table is checked against a table
 of the chip's pins from its datasheet, so it cannot give the console's
@@ -652,11 +655,12 @@ In the design one driver, the **pin driver**, runs in the domain that
 holds a pin controller and is the only code with a name for a pin
 register ([design-pinctrl.md, The pin
 driver](../design-pinctrl.md#the-pin-driver)). At its start it reads
-the registers, and a pure function returns the writes that make every
-device's pins what the table says, or refuses the whole plan. The
-driver applies the plan and reads the registers back. A pin that is
-already right costs no write. Every other driver therefore finds its
-pins set and never asks for them.
+the registers, and a pure function returns the writes that put every
+device's pins in a state the table lists, or refuses the whole plan.
+The driver applies the plan, reads the registers again and plans
+again: a pin the second plan would still write is reported as not
+set. A pin that is already right costs no write. Every other driver
+therefore finds its pins set and never asks for them.
 
 After its start the pin driver writes for two kinds of request only.
 One is a line written to `/dev/gpio`, for a plain GPIO pin that a
@@ -664,11 +668,12 @@ grant holds. The other is the name of a **state**. A row may give a
 pin a second setting under a name, and a driver changes its own pins
 by selecting that name: the Pi 5's Ethernet driver resets its PHY by
 selecting `reset` and then `default`, and the table says which pin
-goes low. No driver sends a function number or a level. A state lasts
-while the process that selected it lives, so a driver that dies
-holding a chip in reset releases it. `/proc` shows each pin's owner,
-the setting the table wants and the setting its registers hold. The
-pin driver is designed and not built.
+goes low. No driver sends a function number or a level. A state stays
+until another is selected, and the pin driver keeps no record of it:
+the state a device is in is read from its registers, so a restart of
+the pin driver changes no pin of a device in use. `/proc` shows each
+pin's owner, the setting the table wants and the setting its registers
+hold. The pin driver is designed and not built.
 
 What is **Built** is narrower. The firmware sets the header's bus
 pins from the `gpio=` lines the packer writes into `config.txt`, one
