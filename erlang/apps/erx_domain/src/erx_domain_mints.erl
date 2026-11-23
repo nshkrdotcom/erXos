@@ -650,8 +650,10 @@ session_lines(Id, Node, Provides, State) when is_map(Provides) ->
         false ->
             {[{undeclared, {session, Id}}], #{}};
         true ->
-            lists:foldl(fun({Name, Mint}, {Refusals, Accepted}) ->
-                                case is_pid(Mint) andalso is_owned(Mint, {Id, Node}, State) of
+            lists:foldl(fun({Name, Mint}, {Refusals, Accepted}) when not is_pid(Mint) ->
+                                {Refusals ++ [{not_a_pid, {session, Id, Name}}], Accepted};
+                           ({Name, Mint}, {Refusals, Accepted}) ->
+                                case is_owned(Mint, {Id, Node}, State) of
                                     true -> {Refusals, Accepted#{Name => Mint}};
                                     false -> {Refusals ++ [{foreign_mint, {session, Id, Name}}], Accepted}
                                 end

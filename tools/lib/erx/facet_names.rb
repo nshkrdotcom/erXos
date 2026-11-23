@@ -181,7 +181,6 @@ module Erx
         %% "Facets"): each system manifest service's public name, and no other.
         -define(ERX_FACET_NAMES, [#{atoms.map { |atom| "'#{atom}'" }.join(', ')}]).
 
-
         -endif.
       ERLANG
     end

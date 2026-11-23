@@ -1522,7 +1522,7 @@ boots the card and logs in.
 | Interface | Between | Declared in |
 | --- | --- | --- |
 | `erx_ssh_login`: `cookie`, `key_ok`, `login_key`, `login_passphrase`, `logout` | the SSH domain and the system domain | `abi/services/ssh.txt`, citing [Logging in](#logging-in) |
-| the `ssh_line` facet in front of `erx_ssh_line`: `open_tty` and `open_job` | the SSH domain and a session it logged in | `abi/services/ssh.txt`, `served_by session`, citing [Sessions, ttys and shells](#sessions-ttys-and-shells), each operation as the line serves it ([design-system.md](design-system.md#a-sessions-lines)) |
+| the `ssh_line` facet in front of `erx_ssh_line`: `open_tty` | the SSH domain and a session it logged in | `abi/services/ssh.txt`, `served_by session`, citing [Sessions, ttys and shells](#sessions-ttys-and-shells), each operation as the line serves it ([design-system.md](design-system.md#a-sessions-lines)) |
 | a job's messages, `job_input`, `job_eof`, `job_sent` and `job_hangup` to the job, `job_written`, `job_output` and `exited` from its relay, and a tty's ending, `exited` or `signaled` | a channel of the SSH domain, and the job's relay or the tty | this document's table in [Sessions, ttys and shells](#sessions-ttys-and-shells), routed as [Risks and open questions](#risks-and-open-questions) settles, and `abi/signals.txt`'s signal set `tty_master` |
 | the console interface's seven messages | a channel and a tty | `abi/services/console.txt` ([design-live.md](design-live.md#paths)) |
 | the credentials facet: `login_keys`, `add_login_key`, `del_login_key` | a session and the principal service | the principal service's service file, citing [Login keys](#login-keys) |

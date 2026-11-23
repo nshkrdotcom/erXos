@@ -939,6 +939,8 @@ session_line_providers_test() ->
     Foreign = (line_mints())#{ssh_line := forged(?SESSION)},
     {[_, Refused], One} = run([ready(?G, ?PEER, #{}), line_ready(Foreign)], new()),
     ?assertEqual([{refused, foreign_mint, {session, ?SESSION, ssh_line}}], Refused),
+    {[_, NoPid], _} = run([ready(?G, ?PEER, #{}), line_ready((line_mints())#{ssh_line := not_a_pid})], new()),
+    ?assertEqual([{refused, not_a_pid, {session, ?SESSION, ssh_line}}], NoPid),
     ?assertMatch({[[{arm, 1, _}, _]], _}, run([line_request(asker)], One)),
     ?assertEqual([{error, no_line}],
                  answers(element(1, run([{line, asker, ssh_line, ?SESSION, ?PEER, ?OPENING}], One)))),
