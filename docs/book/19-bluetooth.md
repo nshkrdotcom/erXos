@@ -293,8 +293,10 @@ Launch RAM records, so a damaged file sends nothing. A controller
 that reports another manufacturer than the manifest names stops the
 bring-up, so no vendor command reaches a chip it was not written
 for. The reader and these checks are **Built**, with host
-tests; whether the Pi 4's chip needs the patch is a question for a
-board probe.
+tests. The Pi 4's image carries `BCM4345C0.hcd`, unmodified under
+Cypress's license, and loads it in the mode every reset boots, the one
+that answers every command, so the patch needs no other kind of reset;
+that this mode takes the patch is a board probe's question.
 
 ### 19.4.3 Commands and controller credits
 

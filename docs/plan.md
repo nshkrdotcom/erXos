@@ -2944,7 +2944,7 @@ without pairing.
   the stage 4 peers. The phone console joins it once the one login
   design ([design-display.md](design-display.md#risks-and-decisions),
   14) gives the console its login facet.
-* **(d) The Raspberry Pi 4, on Fiasco.** Board probes B-P1 to B-P5,
+* **(d) The Raspberry Pi 4, on Fiasco.** Board probes B-P1 to B-P6,
   `erx_pl011`'s fresh start with hardware flow control, the system
   domain's line groups for the host link and the line trees, the Pi 4's
   `line` grant,

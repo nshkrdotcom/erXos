@@ -1931,7 +1931,7 @@ built out of tree, its own build scripts not run unless the row says so.
 | Raspberry Pi firmware | starts the boards and loads the kernel | Broadcom's binary license ([research](research-boards-storage.md#the-raspberry-pi-firmware-license)) | permanent, board-specific | `deps.lock`, copied unmodified |
 | CYW43455 WiFi firmware, NVRAM and CLM files | run by the Pi 4's WiFi chip ([design-wifi.md](design-wifi.md#the-chip)) | Cypress's binary license: object code only, unmodified, for Cypress chips, accepted by downloading ([design-wifi.md](design-wifi.md#sources)) | permanent, board-specific | `deps.lock`, copied unmodified with its license |
 | wpa_supplicant and hostapd | the supplicant's differential oracle and the test access point ([design-wifi.md](design-wifi.md#verification)) | BSD-3-Clause | test tools | `deps.lock` |
-| Cypress's `BCM4345C0.hcd` | the Pi 4's Bluetooth controller patch ([design-bluetooth.md](design-bluetooth.md#the-bring-up)) | Cypress's driver license: object code, unmodified | permanent, board-specific | `deps.lock`, a data file of `erx_bt` |
+| Cypress's `BCM4345C0.hcd` | the Pi 4's Bluetooth controller patch, loaded into the CYW43455's RAM at every bring-up ([design-bluetooth.md](design-bluetooth.md#the-bring-up)) | Cypress's Wireless Connectivity Devices Driver End User License Agreement (linux-firmware's `LICENSES/LICENCE.cypress`): object code only, unmodified, solely for use with Cypress chips; no notice condition on object code; accepted for this file | permanent, board-specific | `RPi-Distro/bluez-firmware` at `cdf61dc691a4`, `debian/firmware/broadcom/BCM4345C0.hcd`, SHA-256 `51c45e77ddad91a19e96dc8fb75295b2087c279940df2634b23baf71b6dea42c`, pinned in `deps.lock` with the license's text; a data file of `erx_bt` in the Pi 4's images |
 | Raspberry Pi `usbboot` secure-boot images | an installation's secure boot ([design-platforms.md](design-platforms.md#trust-in-the-boot)) | Apache-2.0, firmware license for its binaries | permanent, run by the board's owner | `deps.lock` |
 | TF-A's BL31 for the Pi 4 | the firmware calls that start CPUs and end the machine ([design-platforms.md](design-platforms.md#firmware)) | BSD-3-Clause | permanent, board-specific | `deps.lock` |
 | The boards' device trees, from Linux | describe each board to the kernel | Pi 4 GPL-2.0, an accepted permanent copyleft dependency, shipped as a file of its own with its edited source and Linux's GPL-2.0 text; Pi 5 not permissive throughout in the Raspberry Pi kernel's tree (GPL-2.0-only includes and an unlicensed `rp1.dtsi`), which tree ships is open ([design-platforms.md](design-platforms.md#the-pi-5s-device-tree-and-its-license)) | permanent, board-specific | `deps.lock`, compiled with `dtc` |
@@ -2029,10 +2029,11 @@ copyleft license only for a file
   for the CYW43455's firmware, NVRAM and CLM files in the WiFi
   application's `priv/firmware` of a Raspberry Pi image
   ([design-wifi.md](design-wifi.md#the-chip)), and Cypress's driver
-  license for the Pi 4's Bluetooth patch, which the packer places
-  unmodified as a data file of `erx_bt` and never links into an
-  executable ([design-bluetooth.md](design-bluetooth.md#the-bring-up)),
-  each for those files and no other. Test images, which are never
+  license for the Pi 4's Bluetooth patch, `BCM4345C0.hcd`, which the
+  packer places unmodified as a data file of `erx_bt` and never links
+  into an executable, with the license's text in the image's notices
+  ([design-bluetooth.md](design-bluetooth.md#the-bring-up)), each for
+  those files and no other. Test images, which are never
   distributed, have an allowlist of their own that adds the licenses of
   the test tools they carry, such as the Open POSIX Test Suite's
   GPL-2.0-or-later, and the packer refuses to mark a test image as a

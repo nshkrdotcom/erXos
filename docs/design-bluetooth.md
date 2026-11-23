@@ -164,11 +164,11 @@ sees it (4.8.1); the Report Map is at most 512 octets (HIDS 2.6.1).
   Complete, sleeps, and resets (`init_bcm43xx.c:105-141`); Zephyr's
   Infineon driver does the same and stops at any record but `0xFC4C`
   (Write RAM) and `0xFC4E` (Launch RAM), though only after sending it
-  (`hci_uart_infineon.c:141-191`). erXos loads a patch only where a
-  board's manifest names one ([The bring-up](#the-bring-up), step 4), and
-  the Pi 4's manifests name none; whether a Pi 4 image ships
-  `BCM4345C0.hcd` at all is an open decision
-  ([Decisions](#decisions), 4).
+  (`hci_uart_infineon.c:141-191`). erXos does the same where a board's
+  manifest names a patch, and the Pi 4's manifests name
+  `BCM4345C0.hcd`, which the bring-up loads in the mode every reset
+  boots ([The bring-up](#the-bring-up), step 4;
+  [Decisions](#decisions), 4).
 * **QEMU has no Bluetooth.** QEMU removed its Bluetooth emulation in 5.0
   "without replacement" (QEMU's 5.0 change log), and QEMU `virt`'s two
   PL011s are the console and the host link (`virt.rst:36`, `:55-62`). The
@@ -180,9 +180,10 @@ sees it (4.8.1); the Report Map is at most 512 octets (HIDS 2.6.1).
 ### Sources
 
 Every source was read at a pinned version, fetched over HTTPS into a
-directory outside the tree; none under the GPL or the LGPL was read. The
-Bluetooth SIG's specifications are their HTML editions, the Core
-Specification at
+directory outside the tree; none under the GPL or the LGPL was read,
+except `bluez-firmware`'s `debian/copyright`, license records that hold
+no code. The Bluetooth SIG's specifications are their HTML editions,
+the Core Specification at
 `https://www.bluetooth.com/wp-content/uploads/Files/Specification/HTML/Core_v6.3/out/en/index-en.html`.
 
 | Source | Version | File | SHA-256 |
@@ -205,10 +206,14 @@ Specification at
 | Zephyr | main `7cd4b562b30a` | `drivers/bluetooth/hci/hci_uart_infineon.c` | `07aa15b3b1db206875ab3df72c739174d83e328ed9b59fc65cacd16917b8a288` |
 | | | `subsys/bluetooth/controller/ll_sw/ull_conn.c` | `d1924c47dc5ce20aba6625c31c226874f75b055d953313febe6f6c39e6feb620` |
 | | | `subsys/bluetooth/controller/ll_sw/ull_llcp.c` | `ecae74df5b3c4baa1e3e8d396a1a768dba3784d952b462b5b9de02bf233a9fa1` |
+| Zephyr | `v4.2.0` | `drivers/bluetooth/hci/Kconfig.infineon` | `faaf674fd582dc4925cf873200b1f01bb6e24bac6c18511ac67e16d1e1310f90` |
 | FreeBSD | releng/15.1 `95719d8a895b` | `sys/arm/broadcom/bcm2835/raspberrypi_gpio.c` | `ad34506dd6f69144bc4bfb3bfb00fb87b6c327ad5fe30ae03ee80437e3a79224` |
 | | | `sys/arm/broadcom/bcm2835/bcm2835_firmware.h` | `9dfeb72a9a56556531afab024d80d45baaba40bc07351b970f651325b3d339a7` |
 | | | `usr.sbin/bluetooth/hcsecd/hcsecd.h` | `fcb787bdad0ea5cde10d6fd3d6a058414686a1d783d34aa324b148c26de0e849` |
-| RPi-Distro bluez-firmware | `cdf61dc691a4` | `LICENSE.cypress` | `a92f031f19089fa63bd24ac4c5298ca1356670321b39c67024a961ee3285fff7` |
+| RPi-Distro bluez-firmware | `cdf61dc691a49ff01a124752bd04194907f0f9cd`, release 1.2-13+rpt2 | `debian/firmware/broadcom/BCM4345C0.hcd`, git blob `007611e37b40` | `51c45e77ddad91a19e96dc8fb75295b2087c279940df2634b23baf71b6dea42c` |
+| | | `debian/firmware/broadcom/LICENSE.cypress`, a saved web page of linux-firmware blob `070ef66f4342` | `a92f031f19089fa63bd24ac4c5298ca1356670321b39c67024a961ee3285fff7` |
+| | | `debian/copyright` | `5f6acad870790f7e23150a30cab85c643f926266bf16e6a63acbde4257b957d4` |
+| linux-firmware | `a1ebb5ad7eae3caca60b8b3db5792cf43339ba58`, from `git.kernel.org` | `LICENSES/LICENCE.cypress`, git blob `070ef66f43421ab8913299953926bfdd8c7b7a91` | `ae0db6cc4db33941148df0f67de53e76a77b1b5a46b3165edb7040aa2750015f` |
 | Raspberry Pi documentation | `c6a64966af13` | `computers/configuration/interfaces.adoc` | `20c0c5f8dcf2ba501ec7888028aa576be2c965f9b06dd04022e3c9d187b33cef` |
 | | | `config_txt-gpio.adoc` | `4ad5c0286da3f97f4eb0031af2377c11bd89d78c81f92c3c022187b942b454c0` |
 | Infineon, AIROC HCI firmware download user guide | 002-32056 Rev. *B | `infineon.github.io/btsdk-docs/BT-SDK/AIROC-HCI-Firmware-Download.pdf`, fetched 2026-11-22 | `a9c593bdd184c673eeb0df2b76a70cd86cfed6d7f1e9fbbd001f4f38254b8e60` |
@@ -448,8 +453,9 @@ no device. Its release script, `bt`, ships `kernel`, `stdlib`, `erx`, `erx_files
 * its arguments: the advertised name (the machine's host name by
   default), the appearance, the connection limit (1 by default, at most
   `bt_connections_max`), the patch file and the manufacturer it applies
-  to where the board's controller needs one (none on the Pi 4, whose ROM
-  serves the stages, [The hardware](#the-hardware)), and the service the console serves, if
+  to where the board's manifest names one (on the Pi 4,
+  `-erx_bt patch 'BCM4345C0.hcd' -erx_bt patch_manufacturer 15`, the
+  manufacturer `0x000f` its ROM reports, [The bring-up](#the-bring-up)), and the service the console serves, if
   any (the opt-in of [Decisions](#decisions), 2: absent from every
   manifest erXos ships). They are application keys of `erx_bt` in OTP's
   own form, `-erx_bt Key Value` among the row's `init` arguments, which
@@ -1026,30 +1032,71 @@ status as its reason.
    `0x6119`, and the address `aa:aa:aa:aa:aa:aa`, a placeholder that
    names no board, which the identity address never uses
    ([The identity address](#the-identity-address)).
-4. **Patch**, only when the row names a patch; with none, as on the Pi
-   4, the bring-up goes from step 3 to step 5. The row also names the
-   manufacturer the patch is for, as Read Local Version reports it; a controller that
-   reports another stops the bring-up with `patch_for_other_controller`,
-   so no vendor command reaches a controller it was not written for. The
-   step sends `0xFC2E` and waits `bt_patch_minidriver_ms`, replays the
-   patch's records, each a command whose Command Complete it awaits, waits
-   `bt_patch_launch_ms`, and then runs two steps of its own: **`HCI_Reset`
-   after the patch** and **identify after the patch**, the commands of
-   steps 2 and 3 again, so `/proc/bt` shows the patched version, after
-   which it goes to step 5. The patched states are distinct from the
-   first ones, so the bring-up patches at most once and is a line of
-   states, not a loop. The waits are NetBSD's, 1 s
-   and 4 s (`init_bcm43xx.c:123-125`, `:139`), the longer of the two
-   permissive hosts' (Zephyr waits none and 270 ms). Only the download mode
-   was seen to take the minidriver, and no record was sent, so on a
-   board whose manifest names a patch, probe B-P5 settles the waits and
-   whether the mode step 1 boots takes the minidriver and the records. The patch is read whole, by `erx_bt_patch:records/1`, before its
-   first record is sent: it accepts a file made only of complete records
-   of the opcodes `0xFC4C` and `0xFC4E`, which Zephyr's loader also
-   requires, and refuses any other, so a damaged file sends nothing
-   rather than half a patch. The controller's name, which NetBSD uses to choose the file
-   (`init_bcm43xx.c:110-114`), is text the controller writes and chooses
-   nothing here.
+4. **Patch**, when the row names a patch, as the Pi 4's does; with
+   none the bring-up goes from step 3 to step 5. The row also names the
+   manufacturer the patch is for, as Read Local Version reports it; a
+   controller that reports another stops the bring-up with
+   `patch_for_other_controller`, so no vendor command reaches a
+   controller it was not written for. The patch is loaded in the mode
+   step 1 boots, the one that answers every command, so loading it is a
+   run of commands on the line every bring-up already has: no second
+   kind of reset, no word of `ctl` and no state of the line exists for
+   it. The step sends Download Minidriver, `0xFC2E`, with no
+   parameters, and waits `bt_patch_minidriver_ms`; replays the patch's
+   records in file order, each a command whose Command Complete it
+   awaits, the last of them Launch RAM, `0xFC4E`; waits
+   `bt_patch_launch_ms`; and then runs two steps of its own:
+   **`HCI_Reset` after the patch** and **identify after the patch**, the
+   commands of steps 2 and 3 again, so `/proc/bt` shows the patched
+   version, after which it goes to step 5. The patched states are
+   distinct from the first ones, so the bring-up patches at most once
+   and is a line of states, not a loop. The patch is read whole, by
+   `erx_bt_patch:records/1`, before its first record is sent: it
+   accepts a file made only of complete records of the opcodes `0xFC4C`
+   and `0xFC4E`, which Zephyr's loader also requires, and refuses any
+   other, so a damaged file sends nothing rather than half a patch. The
+   controller's name, which NetBSD uses to choose the file
+   (`init_bcm43xx.c:110-114`), is text the controller writes and
+   chooses nothing here.
+
+   **Why the mode every reset boots.** NetBSD sends `0xFC2E` right
+   after Read Local Name (`init_bcm43xx.c:105-125`), a command only that
+   mode answers (probe B-P3, run 3), so its download starts there, and
+   it waits for every record's Command Complete, Launch RAM's included,
+   before its wait and its reset (`:127-141`; `btattach.c:523-550`,
+   which reads until the matching Command Complete arrives). Zephyr's
+   Infineon driver sends `HCI_Reset` and then the same commands the
+   same way (`hci_uart_infineon.c:141-191`, `:261-295`); it requires
+   hardware flow control (`:34-35`) and powers the controller with its
+   UART open (`:239-246`), so its controller probably boots in the
+   download mode, but whether its UART asserts RTS during the power-up
+   is not in the source read, and its Kconfig says the download mode is
+   "not required on older AIROC controllers", only on newer ones such as
+   the CYW555xx (`Kconfig.infineon:199-212`, v4.2.0). Infineon's guide
+   loads its parts with flash from the download mode, which accepts
+   "read, write, and launch commands", and expects each Write RAM's and
+   Launch RAM's Command Complete within 200 ms (AIROC HCI firmware
+   download, 3.2, 3.3). So no source says the mode ready for every
+   command refuses the download, and one host's download starts from
+   it. On the Pi 4 the download mode answered `0xFC2E` (B-P3, run 3);
+   the mode step 1 boots has not yet been sent `0xFC2E` or any record,
+   and probe B-P5 reads it ([Board probes](#board-probes)). Were it to
+   refuse, the patch would need a power-up with RTS asserted, a second
+   kind of reset with a `ctl` word of its own, and a launch that leaves
+   the download mode, which no run has read (run 4's launches decided
+   nothing); that change comes back to this design before step 4 runs
+   on the board.
+
+   **The waits.** NetBSD waits 1 s after the minidriver and 4 s after
+   the launch (`init_bcm43xx.c:125`, `:139`); Zephyr waits none and
+   270 ms (`hci_uart_infineon.c:42`, `:284`); `bt_patch_minidriver_ms`
+   and `bt_patch_launch_ms` are NetBSD's, the longer, and B-P5 reads
+   whether Zephyr's suffice.
+
+   **The Pi 4's patch.** `BCM4345C0.hcd` is 63,806 bytes of 323
+   records: 322 Write RAM, each an address and at most 200 bytes, and
+   one Launch RAM, last, to the address `0xFFFFFFFF`, whose meaning no
+   source read states (the guide's reboot address is 0, 4.3).
 5. **Buffers.** LE Read Buffer Size (7.8.2); a controller that answers a
    length or a count of 0 has no LE buffers of its own and shares its
    BR/EDR buffers, which Read Buffer Size gives (7.8.2, 4.1.1). A length
@@ -1078,20 +1125,59 @@ status as its reason.
 
 A patch, where a board's manifest names one, ships in that board's image
 as a file of `erx_bt`'s `priv` directory, unmodified, under its license,
-with its notice in the image's `NOTICES`, and only the manifest that
-names it brings it in. It is in the boot image rather than on the boot
+with the license's text in the image's `NOTICES`, and only the manifest
+that names it brings it in. It is in the boot image rather than on the boot
 partition beside the VideoCore firmware because erXos, not the
 firmware, reads it, and only the slot writer may read a slot's partitions
-([design-system.md](design-system.md#the-manifest), property 8). The
-Pi 4's controller advertises, connects and carries the first ATT PDU
-without one ([The hardware](#the-hardware)), so the Pi 4's manifests
-name none.
-Its patch, `BCM4345C0.hcd`, is under Cypress's Driver End User License
-Agreement, `LICENSE.cypress` of the firmware repository, which grants
-reproduction and distribution "in object code form only, solely for use
-in connection with Cypress integrated circuit products" and forbids
-modification; whether a Pi 4 image ships it is open
-([Decisions](#decisions), 4).
+([design-system.md](design-system.md#the-manifest), property 8).
+
+**The Pi 4's patch and its license.** The Pi 4's patch is the file
+Raspberry Pi OS ships for this controller: `BCM4345C0.hcd` of Raspberry
+Pi's `bluez-firmware` repository, `RPi-Distro/bluez-firmware` at commit
+`cdf61dc691a4` (its release 1.2-13+rpt2), path
+`debian/firmware/broadcom/BCM4345C0.hcd`, SHA-256
+`51c45e77ddad91a19e96dc8fb75295b2087c279940df2634b23baf71b6dea42c`. The
+fetch step pins it in `deps.lock` as the source `cypress-bt-bcm4345c0`,
+with the license's text as the source `cypress-bt-license`
+([Sources](#sources)). It is under Cypress's Wireless Connectivity
+Devices Driver End User License Agreement: the repository's
+`debian/copyright` names that license for `debian/firmware/broadcom/*`,
+and the `LICENSE.cypress` beside the file is a saved web page of
+linux-firmware's `LICENCE.cypress`, git blob `070ef66f4342`, whose plain
+text is pinned from linux-firmware, where the same blob is
+`LICENSES/LICENCE.cypress`. The license grants a non-exclusive,
+non-transferable right "to reproduce and distribute the Software in
+object code form only, solely for use in connection with Cypress
+integrated circuit products"; forbids modifying the file, making works
+derived from it and reverse engineering it; asks for no notice to be
+kept with object code, its notice clause covering source code alone;
+binds the distributor to export-control law; and ends on any breach. A
+Pi 4 image meets it. The file is copied byte for byte: the fetch step
+checks its SHA-256 and the packer changes nothing. It goes only into an
+image whose manifest names it, the Pi 4's, whose controller is
+Cypress's CYW43455, and is sent only to a controller that reports the
+manifest's manufacturer. Nothing in erXos reads it beyond splitting it
+into records. The image's notices carry the license's text, which the
+license does not ask for, so a recipient reads the terms the file comes
+under. QEMU `virt`'s manifests name no patch, so the QEMU images and
+the browser demo carry none. The license is accepted for this one file
+([Decisions](#decisions), 4;
+[design.md](design.md#licenses-and-notices)). Its preamble binds
+whoever downloads the file, so every host whose fetch step fetches it
+accepts the license too.
+
+Both pins are `file` sources of `deps.lock`, status `permanent`, each
+with the SHA-256 of [Sources](#sources): `cypress-bt-bcm4345c0`, file
+`BCM4345C0.hcd`, from
+`https://raw.githubusercontent.com/RPi-Distro/bluez-firmware/cdf61dc691a49ff01a124752bd04194907f0f9cd/debian/firmware/broadcom/BCM4345C0.hcd`,
+and `cypress-bt-license`, file `LICENCE.cypress`, from
+`https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git/plain/LICENSES/LICENCE.cypress?id=a1ebb5ad7eae3caca60b8b3db5792cf43339ba58`.
+The patch is `permanent`, board-specific, in the dependency table of
+[design.md](design.md): it runs in the controller, outside every
+domain's trusted base, so it is not a `release` component, and no stage
+of the roadmap replaces it, so it is not a `stopgap`; it is the chip
+vendor's code for the chip, as the WiFi chip's firmware is
+([design-wifi.md](design-wifi.md#the-chip)).
 
 ### Commands and data credits
 
@@ -2504,6 +2590,9 @@ and stops in the reverse order, the controller process first.
 | a line tree or the host link ends, or line 153's owner | its line group's supervisor | the group after it: on the Pi 4, the tree's fids and, for the owner, the host link's sessions | the group restarts, its owner first; the console, in no group, is untouched. The Bluetooth domain's `line` grant ended with the tree, and a grant of a system domain's service comes only in a ready answer, so `/line` answers `eio` to the controller group's restarts until the domain ends at its intensity; the domain service restarts it, and its ready answer brings a grant of the new tree |
 | a power notification that fails | `reset`'s answer, `eio` | the bring-up; the line, left broken with no driver, the holding one ended | the group's restart retries within its intensity; after an unanswered request every later notification of the boot fails at once, the VL805's included, so the Bluetooth domain ends at its intensity, and its log records and the line service's `/proc` show why |
 | a configuration write the store does not keep | the store, `unknown` or a `put` not `ok` | nothing: Unlikely Error, the configuration unchanged | the phone writes again |
+| the row's patch file missing, or not made only of complete Write RAM and Launch RAM records | `erx_bt_patch:records/1`, as the controller process starts, before the line is touched | the controller process, `{patch_refused, File, Reason}`, at every start | none: the image is wrong; the group restarts until the domain ends at its intensity, its log naming the file and the reason |
+| a controller reporting another manufacturer than the row's `patch_manufacturer` | the first identify | the controller group, `patch_for_other_controller`, before any vendor command | none: the manifest names a patch for another controller; the domain ends at its intensity as above |
+| a patch command answered with a status other than success, or not within the command deadline | the controller process, as any bring-up step | the controller group, with the record's number as the step | the group restarts; its `reset` power-cycles the controller, so no part of a half-loaded patch survives in its RAM |
 
 ## Refusals and error results
 
@@ -2662,22 +2751,30 @@ advertising. Its seeded failure is a line whose reset passes the grant's
 flow to the holding start: the controller then boots in download mode,
 answers `HCI_Reset` and not Read Local Version, and the bring-up stops at
 its identify step at the command deadline, which shows the reset's order
-is what the passing run rests on. On a board whose manifest names a
-patch, a `reset` written mid-way through the patch download is also
-followed by a bring-up that reaches advertising. The board probes
-precede the first of these ([Board probes](#board-probes)).
+is what the passing run rests on. The Pi 4 loads its patch at every
+bring-up: `/proc/bt` shows the versions identify read after the patch
+beside the ROM's, the LMP subversion after it being the one probe B-P5
+recorded rather than the ROM's `0x6119`, and a `reset` written mid-way
+through the patch download is also followed by a bring-up that reaches
+advertising. Its seeded failures are two rows: one whose
+`patch_manufacturer` is another company's, which stops the bring-up at
+its first identify with `patch_for_other_controller` before `0xFC2E` is
+sent, and one with no `patch`, whose `/proc/bt` shows the ROM's
+subversion and no reading after a patch; together they show the passing
+reading comes from the patch step. The board probes precede the first
+of these ([Board probes](#board-probes)).
 
 ## Performance
 
 Nothing here is on a fast path. What may matter, and is on the watch
 list ([todo-performance.md](todo-performance.md)):
 
-* the patch download at 115200 baud, on a board whose manifest names a
-  patch: `BCM4345C0.hcd` is 63,806 bytes in
-  the firmware repository's tree listing at `cdf61dc691a4`, about 5.5 s
-  at 11,520 bytes a second before the record overheads and the 5 s of
-  waits, so a boot or a restart advertises some ten seconds after the
-  bring-up starts; the vendor rate command `0xFC18`
+* the patch download at 115200 baud on the Pi 4: `BCM4345C0.hcd`
+  puts 64,129 bytes on the line, its 323 records with their indicators
+  and headers, about 5.6 s at 11,520 bytes a second, and each record
+  waits for its 7-byte Command Complete, so with the 5 s of waits a boot
+  or a restart advertises some eleven seconds after the bring-up
+  starts; the vendor rate command `0xFC18`
   (`init_bcm43xx.c:152-158`; `hci_uart_infineon.c:100-131`) and a `rate`
   word of `ctl` would cut it, if a measurement says the wait matters;
 * a phone's write reaching a handler and its answer coming back across
@@ -2741,11 +2838,23 @@ list ([todo-performance.md](todo-performance.md)):
   ([design-header-io.md](design-header-io.md#the-pin-controller-and-the-console)), and the line
   service cannot count on holding it; `config.txt` sets the pins before
   anything runs, as it sets UART3's.
-* **The patch on the Pi 4.** Loading `BCM4345C0.hcd` at every bring-up
-  costs some ten seconds at 115200 baud
-  ([Performance](#performance)), puts a binary under Cypress's driver
-  license in the image, and fixes nothing the stages were seen to need:
-  the ROM advertises and accepts a connection without it.
+* **The Pi 4 on its ROM alone.** The ROM advertises, accepts a
+  connection and carries the first ATT PDU without the patch (probes
+  B-P3 and B-P4), and leaving the patch out would save some eleven
+  seconds of every bring-up ([Performance](#performance)) and keep a
+  binary under Cypress's driver license out of the image. But every
+  host surveyed loads the patch before use, NetBSD and Zephyr in their
+  code and Raspberry Pi OS by shipping it in its `bluez-firmware`
+  package, so the ROM alone is a state no other host runs this
+  controller in, and a defect of it would show only as a failure of
+  the board's checklist.
+* **The patch from the download mode.** A power-up with RTS asserted
+  boots the mode that Infineon's guide loads from, and in which the Pi
+  4 answered `0xFC2E`. It needs a second kind of reset, holding RTS
+  asserted through the power cycle, with a `ctl` word of its own, and a
+  launch that leaves the download mode, which no run has read; the mode
+  every reset boots needs neither, and one host loads from it
+  ([The bring-up](#the-bring-up), step 4).
 * **A UART left as the last driver had it.** Restarting `erx_pl011` the
   console's way keeps the boot's divisors and both FIFOs, so a restarted
   bring-up would meet the last controller's bytes and whatever rate the
@@ -2801,18 +2910,21 @@ list ([todo-performance.md](todo-performance.md)):
    them, wait for an out-of-band method, by NFC or a code the phone
    scans, designed separately. Static passkeys printed on a device are
    excluded: they leak over repeated attempts.
-4. **Open: whether a Pi 4 image ships `BCM4345C0.hcd`.** The Pi 4's ROM
-   advertises, accepts a connection and carries the peer's first ATT
-   PDU without the patch (probes B-P3 and B-P4), so the stages begin
-   without it, and the Pi 4's manifests name none; whether the ROM
-   serves the rest of each stage is the board's checklist's
-   ([On the board](#on-the-board)). Shipping it would bring a binary under Cypress's
-   Driver End User License Agreement into every Pi 4 image, beside its
-   entry in the dependency table of [design.md](design.md) and the
-   image license check's acceptance of that license. Recommendation:
-   ship nothing, take the dependency row and the license acceptance out,
-   and leave the patch step unbuilt until a board's checklist fails on
-   its ROM; the step stays designed here for that board.
+4. **Decided: a Pi 4 image ships `BCM4345C0.hcd`, and the Pi 4's
+   manifests name it.** The bring-up loads it at every start, in the
+   mode every reset boots ([The bring-up](#the-bring-up), step 4), so
+   the controller runs in the state every surveyed host runs it in,
+   although its ROM advertises, accepts a connection and carries the
+   peer's first ATT PDU without it (probes B-P3 and B-P4). The file
+   ships unmodified, in `erx_bt`'s `priv` directory of the Pi 4's
+   images only, under Cypress's Wireless Connectivity Devices Driver
+   End User License Agreement, which is accepted for this one file:
+   the dependency table of [design.md](design.md) lists it, and the
+   image license check admits that license for that file and no
+   other ("The Pi 4's patch and its license" in
+   [The bring-up](#the-bring-up)). The cost is some eleven seconds of
+   every bring-up at 115200 baud, on the watch list
+   ([Performance](#performance)).
 5. **Open: where the line `gpio=30-33=a3` comes from.** The Pi 4's
    `config.txt` gets its `gpio=` lines from the header map, whose rows
    are GPIO 0 to 27, the 40-pin header's
@@ -2847,19 +2959,49 @@ are read; what they settle is in [The hardware](#the-hardware),
   ROM reports HCI version 7, LMP version 7, manufacturer `0x000f`, LMP
   subversion `0x6119` and the placeholder address `aa:aa:aa:aa:aa:aa`;
   powered up with RTS asserted, it is in download mode. The reading
-  after a patch belongs to a board whose manifest names one.
+  after the patch is B-P5's.
 * **B-P4, read.** On the ROM the controller advertises (runs 4 and 5)
   and accepts a connection as a peripheral, after which the peer sends
   its ATT Exchange MTU Request (run 5): the stages need no patch to begin. Whether the
   ROM serves GATT, the serial service and pairing as the stages build
   them is read by the board's checklist over the real stack
   ([On the board](#on-the-board)), not by a probe.
-* **B-P5**, on a board whose manifest names a patch: the patch's two
-  waits, whether the download succeeds with Zephyr's shorter ones, and
-  whether the mode the reset boots takes the minidriver and the records:
-  only the download mode was seen to take the minidriver (run 3), and
-  no run sent a record.
-* **B-P6**, on a board whose manifest names a patch: kill the Bluetooth
+* **B-P5**, the patch in the mode every reset boots, which step 4 of
+  [The bring-up](#the-bring-up) rests on. After a reset as
+  [A reset](#a-reset) gives it, RTS deasserted through the power-up
+  and the grant's `rts_cts` flow after it, and `HCI_Reset` and identify
+  as steps 2 and 3, the probe sends `BCM4345C0.hcd` as step 4 does and
+  logs, for each command, the bytes sent, every byte received and the
+  time to its Command Complete. It reads:
+  1. `0xFC2E`'s Command Complete and its status. Status 0 keeps the
+     mode step 4 uses; another status, or none within the command
+     deadline, sends the probe to item 6;
+  2. each Write RAM's Command Complete, its status, and the longest
+     time to one, against the guide's 200 ms, and whether a first
+     Write RAM sent at once after `0xFC2E`'s answer, Zephyr's way, is
+     answered;
+  3. Launch RAM's Command Complete and its status, which says whether
+     the answer comes before the controller relaunches;
+  4. every byte the controller sends unasked in the 4 s after the
+     launch's answer, each decoded as the core would take it;
+  5. the shortest of 0, 50, 270, 1000 and 4000 ms after the launch at
+     which `HCI_Reset` is answered, a power cycle and a fresh download
+     before each; then Read Local Version, Read Local Supported
+     Commands, LE Read Local Supported Features and Read BD_ADDR,
+     beside B-P3's readings of the ROM, which shows whether the patch
+     took (the LMP subversion against `0x6119`) and what it changes;
+     then B-P4's advertising and a connection on the patched
+     controller;
+  6. only when item 1, 2 or 3 fails: the same download after a
+     power-up with RTS asserted, `HCI_Reset` first, and, after the
+     launch, whether Read Local Version is answered with RTS under the
+     grant's flow, which says whether a launch leaves the download
+     mode. A pass here changes step 4's mode and comes back to this
+     design.
+
+  Items 2 and 5 settle `bt_patch_minidriver_ms` and
+  `bt_patch_launch_ms`.
+* **B-P6**, on the Pi 4: kill the Bluetooth
   domain mid-way through a patch download, with CTS held off by the
   controller, and check that the next `reset` starts the driver without
   waiting on `BUSY` and that the next bring-up reaches advertising.
