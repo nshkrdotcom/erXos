@@ -6,9 +6,10 @@
 > section 3.5) runs in every **domain**, erXos's protected group of
 > Erlang processes (section 3.9). Domains message each other as Erlang
 > nodes do (section 3.6). Device drivers are supervised Erlang
-> processes, and modules are reloaded from the development host.
-> **Designed**: each domain's priority band, the refusal, by erXos's
-> most trusted domain, of code that is not installed, and its decoding
+> processes, and modules are reloaded from the development host into
+> the system domain. **Designed**: each domain's priority band, loading
+> code into other domains, the refusal, by erXos's most trusted
+> domain, of code that is not installed, and its decoding
 > of other domains' messages without creating atoms.
 
 **Background needed.** [Chapter
@@ -1181,14 +1182,15 @@ alias](../design-fiasco.md#shared-objects-and-the-jit-alias)).
 development host. It names each module by the SHA-256 hash of its file,
 and the system checks the bytes against that hash before the loader
 reads them, refusing a mismatch with `hash_mismatch`
-(`erlang/apps/erx_code/src/erx_code_store.erl`). **Built** ([the top-level README, Current status](../../README.md#current-status)). The system domain goes further and loads only code
-from installed storage, never a binary a service merely received
-([design-runtime.md, Code in the system
-domain](../design-runtime.md#code-in-the-system-domain)). This is
-**Designed** and not built: the boot information carries the flag that
-asks for it, and ERTS ignores it. [Chapter
-21](21-live-machine.md#214-code-from-the-host-named-by-its-hash) covers code from the host,
-and the tools of section 3.7 extended to the machine.
+(`erlang/apps/erx_code/src/erx_code_store.erl`). This is **Built** for
+the system domain ([the top-level README, Current status](../../README.md#current-status)).
+The same hash names the modules a domain loads at boot from its
+release slice, so hot loading and booting use one mechanism. Loading
+into other domains, and the system domain's refusal of code that is
+not installed, are **Designed**. [Chapter
+21](21-live-machine.md#214-how-code-gets-into-a-domain) follows code
+from the boot image and from the host into a domain, and covers the
+tools of section 3.7 extended to the machine.
 
 ### 3.9.7 The chapter's ideas at a glance
 

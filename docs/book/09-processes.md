@@ -541,6 +541,8 @@ bytes lie in **installed storage**: the pages of its release, or an
 arena only the code service writes. It refuses any other with
 `{error, not_installed}`, however the binary travelled. That refusal is
 designed and not built.
+[Chapter 21, section 21.4](21-live-machine.md#214-how-code-gets-into-a-domain)
+follows a module from the boot image, the host and an app into a domain.
 
 ### 9.5.3 Shared code
 

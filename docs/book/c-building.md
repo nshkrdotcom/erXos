@@ -260,7 +260,7 @@ prompt comes up. HVF is chosen when QEMU offers it, TCG otherwise;
 1 to 8. Ctrl-A then X quits QEMU. The first build of ERTS takes a while.
 
 `--hostlink` also puts the guest's host link
-([chapter 21](21-live-machine.md#2141-the-host-link)) on a UNIX socket in
+([chapter 21](21-live-machine.md#2144-the-host-link)) on a UNIX socket in
 `build/production-image/hostlink/`, and gives the guest a fresh data
 medium for `/data`. The boot prints the `tools/erx web --socket PATH`
 line to run in a second terminal, which serves the browser client.

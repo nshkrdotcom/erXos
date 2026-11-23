@@ -235,6 +235,9 @@ the DHCP client. In the steps, `%` is the command shell's prompt.
 
 ## Load code over SSH
 
+[Loading code into a running machine](loading-code.md) explains the model
+and what works today; this section is the board's steps.
+
 On a development image you can replace a module of the running system
 without writing a new card or rebooting. From your host, with the board
 on the network and your key in root's `authorized_keys` (see "What is on

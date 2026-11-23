@@ -416,7 +416,7 @@ follows it.
 Two further models are designed and not built: the update protocol of
 [chapter 16](16-storage.md#166-updates-through-two-slots), with its
 slots, trials, torn records and resets, and the host link's sessions
-([chapter 21](21-live-machine.md#214-code-from-the-host-named-by-its-hash)).
+([chapter 21](21-live-machine.md#214-how-code-gets-into-a-domain)).
 
 ### 25.4.2 Litmus tests under herd7
 

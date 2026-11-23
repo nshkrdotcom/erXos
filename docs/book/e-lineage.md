@@ -119,7 +119,7 @@ look is erXos's own.
 | OpenBSD's `bwfm(4)` | The WiFi driver's model, the chip's supplicant off | [Chapter 18](18-wifi.md#181-wifi-on-the-cyw43455) |
 | Fuchsia's WLAN stack | Policy apart from the state machine, its transitions written once | [Chapter 18](18-wifi.md#182-the-station-three-pure-parts) |
 | wpa_supplicant | The states of SAE's public half | [Chapter 18](18-wifi.md#183-keys) |
-| Cheshire and Baker, COBS (1999) | The framing of the host link over a serial line | [Chapter 21](21-live-machine.md#214-code-from-the-host-named-by-its-hash) |
+| Cheshire and Baker, COBS (1999) | The framing of the host link over a serial line | [Chapter 21](21-live-machine.md#214-how-code-gets-into-a-domain) |
 
 *Table E.6. Sources for devices and I/O
 ([design-wifi.md, Lineage](../design-wifi.md#lineage) holds the full

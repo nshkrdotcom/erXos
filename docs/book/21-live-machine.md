@@ -6,13 +6,15 @@
 > `ps` and `top`; `erx:source/1` within the caller's runtime; `erx:trace/1`
 > over the system domain's processes and the root service's trace
 > ring; the host link with `tools/erx load`, `watch`, `files` and
-> `web`; the code store, loading into the system domain; the log
-> service to the console; the report filter; the crash record on the
-> console. Designed: tracing other domains and the frames between
+> `web`; the code store; loading into the system domain over the host
+> link socket, over SSH and as the shell's `load -s`; booting a domain
+> from its release slice; the log service to the console; the report
+> filter; the crash record on the console. Designed: tracing other domains and the frames between
 > them; the host link's inspect, trace, source and console commands;
-> loading code into other domains, with overlays; refusing code
-> outside installed storage; log files under `/var/log`; a crash
-> record that survives the reset; domain crash dumps under `/proc`;
+> loading code into other domains, with overlays and `load -r`; the
+> system domain refusing code outside installed storage; the host
+> tool's `--tty`; log files under `/var/log`; a crash record that
+> survives the reset; domain crash dumps under `/proc`;
 > the host's tree mounted in the machine.
 
 **Background needed.** [Chapter 3](03-erlang.md), sections 3.6 and
@@ -37,7 +39,8 @@ Erlang process, as a record of attributes, each carrying who reported
 it and a status (21.1, 21.2). Tracing puts Erlang processes and the
 root service's events on one clock (21.3). Code compiled on the
 developer's Mac loads into the running machine, named by the hash of
-its bytes (21.4). Logs and crash reports are attributed, escaped and
+its bytes, by the same mechanism that gives a domain its code at boot
+(21.4). Logs and crash reports are attributed, escaped and
 free of process data (21.5, 21.6). Each part is ordinary Erlang code
 and fails the ordinary way: one process ends, and the rest goes on.
 
@@ -430,13 +433,15 @@ are designed and not built. The built trace refuses any domain but the
 system domain's with `{error, scope}`
 (`erlang/apps/erx/src/erx_trace.erl`, `domains/0`).
 
-## 21.4 Code from the host, named by its hash
+## 21.4 How code gets into a domain
 
 A developer edits a module on the Mac and wants it running in the
 machine a second later, without a reboot. Erlang already replaces
 modules in a running node
 ([chapter 3](03-erlang.md#361-two-versions-of-a-module)); erXos adds
 a link to carry the module and a name for it that cannot be faked.
+This section starts from how a domain gets its code at boot, because
+loading from the host runs the same mechanism after the boot.
 
 > **Background: what a code hash names.** A module's name, `lists`,
 > says which module, not which version. Two builds of `lists` share
@@ -447,13 +452,121 @@ a link to carry the module and a name for it that cannot be faked.
 > one if its bytes hash to the name. It proves the bytes are the ones
 > named, not that they are safe to run.
 
-### 21.4.1 The host link
+### 21.4.1 Blobs and manifests
+
+Every compiled artifact, a BEAM module or a native image, is a **blob**
+named by the SHA-256 of its bytes, and a module's version is its blob's
+hash. A **manifest** maps names to hashes. The boot image's index is a
+manifest, each OTP release has one, and so does an **overlay**, the
+modules loaded into a domain from outside (21.4.6)
+([design-live.md, The code store](../design-live.md#the-code-store)).
+Naming code by hash gives the transfer, the deduplication, the history
+and the integrity check one mechanism: a copy from any store is the
+right module if its bytes hash to the name, and a store that changed a
+byte fails the load instead of changing what runs.
+
+Blobs live in three kinds of place. The boot image and the EROFS images
+of installed apps hold read-only blobs under their manifests. The code
+service, in the system domain, holds hot-loaded blobs in memory, one
+**hot store** for each principal, so no principal learns what another
+loaded. A domain's loader always starts from a hash and a place to
+fetch it from; it never trusts the place.
+
+### 21.4.2 Code at boot
+
+A domain starts from three things the boot image holds. Figure 21.3
+shows them for two domains.
+
+```mermaid
+flowchart LR
+  subgraph B[boot image]
+    S[runtime images]
+    R1[slice of the system domain]
+    R2[slice of another domain]
+  end
+  S --> D1[system domain: interpreter ERTS]
+  R1 --> D1
+  S --> D2[other domain: BeamAsm ERTS]
+  R2 --> D2
+  D1 -- "init runs the boot script" --> L1[modules load from the slice]
+  D2 -- "init runs the boot script" --> L2[modules load from the slice]
+```
+
+*Figure 21.3. What a domain starts from. The runtime is one file of the
+boot image; the slice holds the domain's own `.beam` files and boot
+script.*
+
+* **A runtime image.** The system domain runs the **system image**, an
+  interpreter build of ERTS with no JIT, so the trusted base holds no
+  generated machine code. Every other domain runs the BeamAsm image,
+  which translates each module to machine code as it loads, or the
+  interpreter image when its specification chooses it
+  ([design-runtime.md, BeamAsm](../design-runtime.md#beamasm)).
+* **A release slice.** Each domain's code is an OTP release: the
+  `.beam` files of its applications, their application files and a
+  boot script, a file `init` reads that lists the modules to load and
+  the applications to start, in order. `tools/erx pack` builds the boot
+  image with each domain's release as one **release slice**, a read-only
+  part of the image
+  ([chapter 14](14-files.md#1411-what-a-namespace-holds)
+  names it the `release` provider at `/`).
+* **A start.** The domain library maps the runtime image and the slice
+  into the new domain and starts ERTS's first thread
+  ([design-runtime.md, Starting a runtime](../design-runtime.md#starting-a-runtime)).
+  ERTS starts, `init` runs the boot script, and the code loader reads
+  each module from the slice. In the QEMU development image the
+  system domain's arguments name the script: `-boot /bin/start`
+  ([chapter 24](24-startup.md#2423-erts-boots-the-system-release)).
+
+Because the boot image is read-only memory, the same bytes can serve
+every domain that loads them. Each domain's loader copies the
+modules it loads into its own memory, charged to its own budget; one
+read-only image of the common modules, mapped by every domain, is the
+shared code of [section 9.5.3](09-processes.md#953-shared-code), which
+is designed and not built.
+
+**Apps.** An installed app's code is not in the boot image. It comes in
+an EROFS image, a read-only file system image whose hash tree lets each
+domain's own reader check every block it reads
+([chapter 16](16-storage.md#162-read-only-system-images)), so the
+domain that loads a module from an app checks its bytes itself.
+Packages placed in the system partition when the image is built are
+admitted and started at boot ([chapter 23](23-apps.md)); installing
+one on a running machine is designed and not built.
+
+Booting from the slice is **Built**: every QEMU suite starts its
+domains this way.
+
+### 21.4.3 The system domain runs only installed code
+
+The system domain runs the services every other domain depends on, so
+it must never run code that a service merely received. Its runtime is
+designed to start with the flag `ERX_BOOT_INSTALLED_ONLY`, after which
+ERTS accepts a module only if its bytes lie in **installed storage**:
+the pages of the system release's slice, or the **install arena**, a
+region of the system domain whose binaries only the call
+`erx_code:install_beam/2` creates, and which refuses every caller but
+the code service. Any other binary fails to load with
+`{error, not_installed}`. The check is by address range, so it holds
+however the binary travelled inside the domain, and the install facet
+(21.4.5) is the one way in from outside
+([design-runtime.md, Code in the system domain](../design-runtime.md#code-in-the-system-domain)).
+Every other domain loads any code it is given, and a malformed module
+ends only that domain.
+
+This rule is designed and not built. The boot information carries the
+flag and ERTS ignores it; there is no install arena, and the code
+service loads the checked bytes from its own heap. Without the rule, any code in the system domain can load a binary with
+`code:load_binary/3`, and what keeps untrusted bytes out of the system
+domain is that the development build runs trusted code only.
+
+### 21.4.4 The host link
 
 The **host link** connects the host tool, `tools/erx`, to the machine
 over a second serial line that belongs to the system domain. Under QEMU
 that line is a UNIX socket in the run's own directory, which only its
 user can enter ([design-live.md, The host link](../design-live.md#the-host-link)).
-`tools/erx boot --hostlink` sets it up. Figure 21.3 shows the parts.
+`tools/erx boot --hostlink` sets it up. Figure 21.4 shows the parts.
 
 ```mermaid
 flowchart LR
@@ -471,7 +584,7 @@ flowchart LR
   end
 ```
 
-*Figure 21.3. The host link. Every request names a facet by its number
+*Figure 21.4. The host link. Every request names a facet by its number
 in the host link session's facet table; the code service checks each
 module against its hash before anything is loaded.*
 
@@ -523,15 +636,14 @@ and the modules beside it), with its framing fuzzed
 `code`, answer `{error, unsupported}`: they, and `tools/erx inspect`, `trace`,
 `source` and `console` over them, are designed and not built.
 
-### 21.4.2 The code store
+### 21.4.5 Loading from the host
 
-Every compiled module is a **blob**, named by the SHA-256 of its bytes,
-and a module's version is its blob's hash. A **manifest** maps module
-names to hashes. A load has three steps, each a call on the install
-facet (`erlang/apps/erx_code/src/erx_code.erl`):
+A load is an exchange with the **install facet** of the code service
+(`erlang/apps/erx_code/src/erx_code.erl`), whoever holds the facet. It
+has three steps:
 
-1. **Missing.** The tool hashes each module on the Mac and asks which
-   hashes the store lacks.
+1. **Missing.** The holder hashes each module and asks which hashes
+   the store lacks.
 2. **Put.** It sends each missing blob in 64 KiB pieces. The store
    keeps it only if the bytes hash to the name; a blob one bit off is
    refused with `hash_mismatch`.
@@ -557,38 +669,90 @@ make room it frees first
 the blobs that only older history names, and never a module's current
 blob (`erlang/apps/erx_code/src/erx_code_store.erl`).
 
-From the Mac, `tools/erx load FILE...` sends files as one batch, and
-`tools/erx watch DIR` polls a source tree every half second, compiles
-each changed source with the same `erlc` that built the image, and
-loads it. A QEMU check reloads a module 32 times on four CPUs while
-workers call it, and checks that no call ran stale code
-(`tools/lib/erx/reload_guest.rb`). The code service, its in-memory
-store with history, and `load` and `watch` into the system domain are
-**Built**.
+**Routes.** Two holders run the exchange. The host link's session
+holds the install facet for the host tool, and a login session holds
+it for the session command `load`, which reaches the machine over SSH.
+The routes differ only in how the bytes arrive
+([design-live.md, One load, three routes](../design-live.md#one-load-three-routes)):
 
-### 21.4.3 What the design adds
+| Command | Carries the bytes | Used for |
+| --- | --- | --- |
+| `tools/erx load --socket PATH --system FILE...` | the host link: under QEMU, the UNIX socket that `tools/erx boot --hostlink` makes; on a board, a UART bridge's socket | QEMU, and a board whose network is down |
+| `tools/erx load --ssh DEST --system FILE...` | an SSH `exec` of the session's `load -s -m`, the modules on its standard input | a board on the network |
+| `load -s FILE.beam ...` in the machine's own shell | a file the session can read | a module already on the machine |
 
-The design takes the same store to every domain and makes it outlive
-restarts ([design-live.md, The code store](../design-live.md#the-code-store)):
+`tools/erx watch` takes the same transports and loads each source of a
+directory when it changes: it polls the directory every half second,
+compiles each changed source with the same `erlc` that built the image,
+and loads the last good compile of every module it has compiled as one
+batch. The tool refuses a call that names no target or two, and the
+host link session opens the install facet alone, so `--socket` takes
+`--system` only (`tools/lib/erx/code_commands.rb`). A QEMU check
+reloads a module 32 times on four CPUs while workers call it, and
+checks that no call ran stale code (`tools/lib/erx/reload_guest.rb`).
 
-* **Other domains.** A domain's code facet sends modules to that
-  domain's code server; a malformed module harms only that domain.
-* **Overlays.** For a domain the domain service restarts, the code
-  service keeps an **overlay**, the manifest of the modules loaded into
-  it from outside, which the restarted domain loads before its
-  applications start. An overlay made over another release is dropped.
-* **Per-principal stores.** Each principal's blobs live in a store of
-  its own, in memory charged to its budget, so no principal learns what
-  another loaded.
-* **Installed storage.** The system domain's runtime refuses any
-  module outside its release and the code service's arena with
-  `{error, not_installed}`
-  ([chapter 9](09-processes.md#952-code-by-hash)).
+The code service, its in-memory store with history, and `load` and
+`watch` into the system domain, over the host link socket, over SSH and
+as the board's own `load -s`, are **Built**. The tool's `--tty DEVICE`,
+which opens a serial adapter directly, is designed and not built; a
+board's host link UART is reached through a bridge that serves it as a
+UNIX socket.
 
-These four are designed and not built. `tools/erx load` and `watch`
-take `--domain` with only the system domain's id, 4.
+Whoever holds the install facet can change what the system domain
+runs. A development build gives it to the host link and to `root`'s
+session, so an SSH key in root's `authorized_keys` is as strong as
+root's password ([the Raspberry Pi guide](../guide/raspberry-pi-4.md#load-code-over-ssh)).
 
-### 21.4.4 Files and the browser
+### 21.4.6 Other domains and overlays
+
+The same exchange reaches any other domain through a **code facet**,
+a second service of the same interface that differs from the install
+facet only in scope. The install facet's scope is the system domain.
+A code facet's is the domains of the principal that holds it, or
+every domain but the system domain for the development build's
+`root`, and the system domain is in no code facet's scope
+([design-live.md, Code from the host](../design-live.md#code-from-the-host)).
+Four more parts make this safe and give it a memory:
+
+* **The code server.** Every domain but the system domain runs one
+  code server, `erx_code_agent`, a process under `kernel`'s
+  supervisor and the only process through which the code service loads
+  into that domain. The code service sends it the manifest; the code
+  server asks for each missing blob one 64 KiB piece at a time, checks
+  its hash, loads the batch whole with the same `prepare_loading` and
+  `finish_loading` pair, and answers
+  ([design-live.md, The code server](../design-live.md#the-code-server)).
+  A module of any size therefore fits every message and every heap
+  limit, and a malformed module ends only the domain that loaded it.
+* **Overlays.** A **supervised** domain is one the domain service
+  starts again from the same specification when it ends. The code
+  service keeps an **overlay** for each such specification: the
+  manifest of the modules loaded into it from outside, with the hash of
+  the release it was loaded over. A load is a candidate overlay, a batch
+  load by the code server, and then the code service publishes the
+  candidate. A batch that is not published ends its domain, so a
+  supervised domain runs only code its published overlay names, and
+  the restarted domain loads the overlay before its applications
+  start. An overlay made over another release is dropped.
+* **History, rollback and reset.** The code service keeps the last 16
+  hashes it published for each module, and a rollback is a load of an
+  older hash. The command `load -d DOMAIN -r` drops the overlay, and
+  the domain's next start boots the release as built.
+* **Memory only.** An overlay and the hot stores live in the code
+  service's memory. A reboot returns every domain to the release in
+  the boot image; a change that must outlive a reboot ships in a new
+  boot image or a new version of the app.
+
+Loading into another domain is designed and not built. The code
+server and the code service's per-target state machine are written,
+but no code facet is granted, so `tools/erx load --domain D` over SSH
+is refused with `load: no code facet`, and over the host link socket
+it is refused by the tool, which opens the install facet alone. The
+domain service does not report a domain's start to the code
+service, which an overlay needs. The reset command `-r` is designed
+and not built.
+
+### 21.4.7 Files and the browser
 
 `tools/erx files` relays a UNIX socket on the Mac to the host link's
 files stream, so any 9P2000.L client on the host mounts the machine's
