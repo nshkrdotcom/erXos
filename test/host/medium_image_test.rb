@@ -70,8 +70,10 @@ class MediumImageTest < Minitest::Test
     assert_includes lines, "blk: window vault sector #{vault.sectors - 1} holds host #{vault.last}"
     # The data window's first block holds /data's littlefs volume, which installation wrote.
     assert_empty lines.grep(/\Ablk: window data sector 0 /)
-    assert_nil Device.line_difference("#{lines.map { |line| "#{line}\r\n" }.join}", expected: lines)
-    assert_match(/driver line 2:/, Device.line_difference("#{lines.first}\nblk: done\n", expected: lines))
+    # The test module's lines reach the serial line as debug log records of the system domain.
+    record = ->(line) { "#1 1.000000 debug space 0: #{line}\r\n" }
+    assert_nil Device.line_difference(lines.map(&record).join, expected: lines)
+    assert_match(/driver line 2:/, Device.line_difference(record[lines.first] + record['blk: done'], expected: lines))
   end
 
   def test_the_medium_after_a_good_run_is_as_expected_and_a_missed_write_is_reported

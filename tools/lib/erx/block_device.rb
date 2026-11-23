@@ -12,6 +12,7 @@ require_relative 'erlang_apps'
 require_relative 'error'
 require_relative 'fiasco'
 require_relative 'medium_image'
+require_relative 'native_root'
 require_relative 'oracle'
 require_relative 'output_directory'
 require_relative 'production_image'
@@ -29,7 +30,8 @@ module Erx
   # development manifest gives the block unit, so the module, started in the system
   # domain, waits for storage@erxos to run erx_storage, loads its own object code
   # there and runs each step at that node over erpc; the system domain prints the
-  # lines the step answers on the serial line, and the harness then reads the image
+  # lines the step answers on its standard output, which reaches the serial line as
+  # debug log records of its space (DRIVER_LINE), and the harness then reads the image
   # back.
   #
   # The module is test code, so it reaches the guest only in a test image: the
@@ -146,6 +148,10 @@ module Erx
     # which ends no line and so may open the driver's next one; it is not part of the
     # driver's line.
     PROMPT = '% '
+    # The test module prints through the system domain's standard output, which reaches the
+    # console as debug log records of its space (NativeRoot::DOMAIN_RECORD), so a driver
+    # line is the text of a record, perhaps opened by PROMPT; a bare line is someone else's.
+    DRIVER_LINE = /\A(?:#{Regexp.escape(PROMPT)})?#{NativeRoot::DOMAIN_RECORD}(?<text>blk: .*)\z/n
     # The test module, the guest directory its beam is packed in, and the kernel command
     # line words that start it after the release.
     GUEST_SOURCE = 'test/guest/block_device/erx_blk_check.erl'
@@ -271,13 +277,12 @@ module Erx
       "medium sectors not as expected: #{wrong.join(', ')}"
     end
 
-    # The driver's lines in the serial bytes, in order, without line endings, up to
-    # and including the first "blk: done", each without a PROMPT that opened it;
-    # whatever follows it is not judged. Serial bytes come from the guest and are
-    # only compared here; a report quotes them only through quote.
+    # The driver's lines in the serial bytes, in order, each the text of its DRIVER_LINE
+    # without the line ending, up to and including the first "blk: done"; whatever
+    # follows it is not judged. Serial bytes come from the guest and are only compared
+    # here; a report quotes them only through quote.
     def guest_lines(bytes)
-      lines = bytes.b.split("\n").map { |line| line.chomp("\r").delete_prefix(PROMPT) }
-                   .select { |line| line.start_with?('blk: ') }
+      lines = bytes.b.split("\n").filter_map { |line| DRIVER_LINE.match(line.chomp("\r"))&.[](:text) }
       done = lines.index('blk: done')
       done ? lines.first(done + 1) : lines
     end
@@ -323,7 +328,8 @@ module Erx
     # test module's last line, within seconds of the banner, on a machine of memory_mib.
     def checkpoints(memory_mib:, seconds: GUEST_SECONDS)
       [*Qemu.boot_transcript(memory_mib: memory_mib, test_image: true),
-       { name: 'block-done', pattern: /^(?:#{Regexp.escape(PROMPT)})?blk: done\r?\n/n, seconds: seconds }.freeze].freeze
+       { name: 'block-done', pattern: /^(?:#{Regexp.escape(PROMPT)})?#{NativeRoot::DOMAIN_RECORD}blk: done\r?\n/n,
+         seconds: seconds }.freeze].freeze
     end
 
     # The kernel command line of a boot under accel: the harness's words for it, then

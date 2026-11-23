@@ -16,7 +16,7 @@ module Erx
   # The littlefs restart boots the block device suite's test image (block_device.rb, which
   # builds it with the test module erx_blk_check) on a fresh medium and starts the module's
   # `lfs_restart` entry in the system domain. Its lines, in this order and no others
-  # starting with "blk: ", each perhaps opened by the command shell's prompt:
+  # starting with "blk: ", each the text of a debug log record (BlockDevice::DRIVER_LINE):
   #
   #   blk: lfs wrote 10000 bytes    at the storage domain's node, /data/restarted written
   #                                 with DATA_BYTES bytes and closed

@@ -14,8 +14,13 @@ class BlockDeviceTest < Minitest::Test
   # The RAM of the machine the suite boots on, which its banner reports.
   MEMORY_MIB = Erx::Platform.development(File.expand_path('../..', __dir__)).memory_mib
 
+  # The test module prints through the system domain's standard output, which reaches the
+  # console as debug log records of its space, so each of its lines is a record's text.
+  def record(line, seq: 21) = "##{seq} 1.004463 debug space 0: #{line}\r\n"
+
   def good_log(lines = Device.expected_lines)
-    "Hello\r\nerXos\r\n#{lines.map { |line| "#{line}\r\n" }.join}shell>\r\n"
+    records = lines.each_with_index.map { |line, index| record(line, seq: 21 + index) }
+    "Hello\r\nerXos\r\n#13 0.846845 debug space 3: erx_blk: virtio-mmio version 2\r\n#{records.join}shell>\r\n"
   end
 
   def test_the_expected_lines_are_the_documented_sequence
@@ -84,19 +89,29 @@ class BlockDeviceTest < Minitest::Test
   def test_the_checkpoints_end_on_the_last_driver_line
     last = Device.checkpoints(memory_mib: MEMORY_MIB).last
     assert_equal 'block-done', last.fetch(:name)
-    assert_match last.fetch(:pattern), "blk: done\r\n"
-    refute_match last.fetch(:pattern), "blk: wrote sector 7\r\n"
+    assert_match last.fetch(:pattern), record('blk: done')
+    assert_match last.fetch(:pattern), "#7 2.000000 debug space 0 dropped 3: blk: done\n"
+    refute_match last.fetch(:pattern), record('blk: wrote sector 7')
   end
 
-  # The command shell's prompt ends no line, so the driver's next line can follow it.
+  # A driver line is the text of a debug log record; a bare line of the same text is
+  # not the test module's output and neither ends the guest nor counts as a line.
+  def test_a_line_outside_a_debug_log_record_is_not_a_driver_line
+    refute_match Device.checkpoints(memory_mib: MEMORY_MIB).last.fetch(:pattern), "blk: done\r\n"
+    bare = "erXos\r\n#{Device.expected_lines.map { |line| "#{line}\r\n" }.join}"
+    assert_match(/line 1: expected "blk: transport version 2", got no line/, Device.line_difference(bare))
+  end
+
+  # The command shell's prompt ends no line, so the driver's next record can follow it.
   def test_a_command_shell_prompt_may_open_a_driver_line
-    assert_match Device.checkpoints(memory_mib: MEMORY_MIB).last.fetch(:pattern), "% blk: done\r\n"
-    prompted = good_log.sub("blk: done\r\n", "% blk: done\r\n").sub('blk: read sector 4 ok', '% blk: read sector 4 ok')
+    pattern = Device.checkpoints(memory_mib: MEMORY_MIB).last.fetch(:pattern)
+    assert_match pattern, "% #{record('blk: done')}"
+    prompted = good_log.lines.map { |line| line.match?(/: blk: (?:done|read sector 4 ok)\r/) ? "% #{line}" : line }.join
     refute_equal good_log, prompted
     assert_nil Device.line_difference(prompted)
-    failed = prompted.sub('% blk: read sector 4 ok', '% blk: read sector 4 failed')
+    failed = prompted.sub('blk: read sector 4 ok', 'blk: read sector 4 failed')
     assert_match(/line 7: .*got "blk: read sector 4 failed"/, Device.line_difference(failed))
-    refute_match Device.checkpoints(memory_mib: MEMORY_MIB).last.fetch(:pattern), "%% blk: done\r\n"
+    refute_match pattern, "%% #{record('blk: done')}"
   end
 
   def test_the_power_cut_lines_are_the_documented_sequence
