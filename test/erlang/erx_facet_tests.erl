@@ -282,11 +282,12 @@ a_timed_out_start_has_ended_before_it_answers_test_() ->
     end}.
 
 %% Monitors the process that names itself with {watch, Pid}, and answers {seen, From}
-%% with that monitor's 'DOWN' if it has arrived, without waiting for it.
+%% with that monitor's 'DOWN', waiting a second for it, since nothing orders the
+%% facet's signal to the watcher before the test's.
 watcher() ->
     receive {watch, Pid} -> watched(Pid, monitor(process, Pid)) end.
 
 watched(Pid, Monitor) ->
     receive {seen, From} ->
-        From ! {self(), receive {'DOWN', Monitor, process, Pid, Reason} -> {down, Reason} after 0 -> alive end}
+        From ! {self(), receive {'DOWN', Monitor, process, Pid, Reason} -> {down, Reason} after 1000 -> alive end}
     end.

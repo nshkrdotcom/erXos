@@ -271,7 +271,7 @@ unknown_name(Name) ->
 %% stands outside it and still passes with a process of the system domain, so the spec
 %% fails only at its boot, and is refused with a process of another node; log, a
 %% manifest service name in the table that a spec cannot hand on, since the funnel
-%% passes no facet on unattenuated (attenuated/2), web_line, a line of the check's LINES but
+%% passes no facet on unattenuated (attenuated/2), web_line, a `served_by session` line (?ERX_LINES) but
 %% no stopgap of the funnel, and a name in neither are refused, alone or beside
 %% console.
 stopgap_names() ->

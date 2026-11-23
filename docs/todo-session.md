@@ -339,6 +339,21 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   message, as `erx_ssh_dev_channel` then takes it, and `erx_ssh_line` sends a front end nothing; its `Notify`
   and its `{erx_ssh_line, ended, Tty, Ending}` report go. The design's "no door beside the facet" test, row 7
   of its tests table, lands with it, with its seeded fault, the line process sending a tty's ending itself.
+* [Medium] session lines, a line for the system domain (`erlang/apps/erx_domain/src/erx_domain_mints.erl`,
+  `request_line`, `start_line`, `live_peer/2`; [design-system.md](design-system.md#a-sessions-lines), the answers
+  table): the design answers `erx_domain:line/4` for the system domain as peer `{error, refused}`, but the mint core
+  sends the line a mint request at once, which the line drops (`erx_session_line`, `Grantee =/= System`), so the
+  caller waits out the 10 s deadline and gets `unavailable`. No caller asks for it. Refuse it in `request_line` and
+  delete the core's system-peer branches, with a case in the core's tests.
+* [Low] session lines, a forward from an ended facet (`erlang/apps/erx/src/erx_session_line.erl`, the forward
+  clause of `line/4`; `erx_web_line:view_init/1`): a forward the old facet sent before a replacement or the host's
+  close still reaches `request/4`, so a web view it starts sends one record to the old grantee's caller before it
+  takes its facet's `'DOWN'`, and a stale `open_tty` opens a tty whose reply is lost. Match the held facet in
+  the forward clause, so only its forwards are served, and change the design's replacement row with it.
+* [Low] web line, calls of the session's own ([design-system.md](design-system.md#a-sessions-lines), "Calls of the
+  session's own"; `erlang/apps/erx_web_line/src/erx_web_line.erl`): the design has session processes call the line
+  directly, but the line serves no local call, which reaches `info/2` and is dropped. Nothing calls it yet; the
+  browser renderer adds the clause, or the design says the session reaches the line by messages.
 * [Medium] SSH, how a job's messages reach their job ([design-ssh.md](design-ssh.md#risks-and-open-questions)):
   the channel's `job_input`, `job_eof`, `job_sent` and `job_hangup` name no job, and through the line's facet they
   would arrive by `message/2`, which names the grantee and not the sender and is dropped once `in_flight` forwards

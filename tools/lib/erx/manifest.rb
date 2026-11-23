@@ -2880,7 +2880,9 @@ module Erx
       def check_no_line_services(service_rows)
         lines = @codec.schema.session_lines.to_h { |service| [service.fetch(:number), service.fetch(:name)] }
         service_rows.each do |row|
-          line = lines[row.fetch('interface')] or next
+          line = lines[row.fetch('interface')]
+          next unless line
+
           invalid("service #{row.fetch('name')} is of #{line}, a session's line, which no manifest row grants",
                   'service.interface')
         end

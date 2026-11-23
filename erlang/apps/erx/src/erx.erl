@@ -7,8 +7,7 @@ erXos's functions for a person at an Erlang shell in any domain
 (docs/design-live.md, "Erlang, in every domain"). Each is a thin entry
 to the module that does the work, with that module's authority and no
 authority of its own. The exception is call_from/3, the check of a call
-from another domain that erx_facet and erx_session_line share, which does
-its small work itself.
+from another domain that erx_facet asks, which does its small work itself.
 """.
 
 -export([i/0, i/1, inspect/2, source/1, trace/1, trace_stop/1, export/3, exports/1, owner/1,
@@ -171,10 +170,9 @@ third domain; call_from/3 returns false for such a call, as for a `From` of
 any other shape, and calls `Owner` only on a pid and a reference. A true
 answer is the caller's guarantee that `From` is `{Pid, [alias | Ref]}`. The
 protocol's owner takes the envelope off its own shapes and asks this of the
-call it finds inside; `D` is `none` for a session's line that serves no
-peer yet, and no call is then `D`'s.
+call it finds inside.
 """.
--spec call_from(pos_integer() | none, term(), fun((pid() | reference()) -> non_neg_integer())) ->
+-spec call_from(pos_integer(), term(), fun((pid() | reference()) -> non_neg_integer())) ->
     boolean().
 call_from(D, {Caller, [alias | Alias]}, Owner) when is_pid(Caller), is_reference(Alias) ->
     Owner(Caller) =:= D andalso Owner(Alias) =:= D;

@@ -246,12 +246,11 @@ module Erx
     def interfaces_of(path, text)
       cited = text.each_line.take_while { |line| line.start_with?('#') }.join.gsub(/\n#\s*/, ' ')
       design = CITATION.match(cited)&.then { |found| [found[:doc], found[:heading]] }
-      lines = text.lines
-      lines.each_with_index.filter_map do |line, index|
+      text.each_line.with_index(1).filter_map do |line, number|
         found = /\Aservice\s+(?<name>\S+)\s+(?<number>\d+)\s*\z/.match(line.strip)
         next unless found
 
-        Interface.new(name: found[:name], number: Integer(found[:number], 10), path: path, line: index + 1,
+        Interface.new(name: found[:name], number: Integer(found[:number], 10), path: path, line: number,
                       design: design)
       end
     end
