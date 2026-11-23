@@ -86,9 +86,15 @@ init(Parent, Env) ->
         {below, Limit, Value, Floor} ->
             logger:error("erx_code_agent: ~s is ~b, below the code protocol's floor of ~b", [Limit, Value, Floor]),
             proc_lib:init_fail({error, {below_floor, Limit}}, {exit, normal});
-        Checked ->
-            Checked =:= unknown andalso
-                logger:notice("erx_code_agent: the runtime's limits are unknown; the code protocol's floors are not checked"),
+        unknown ->
+            logger:notice("erx_code_agent: the runtime's limits are unknown; the code protocol's floors are not checked"),
+            serve(Parent, Env);
+        ok ->
+            serve(Parent, Env)
+    end.
+
+serve(Parent, Env) ->
+    begin
             put(dropped, 0),
             maps:get(domain_pid, Env) ! {erx_code_agent, self()},
             {Core, Effects} = erx_code_agent_core:new(maps:get(supervised, Env)),
@@ -100,7 +106,11 @@ init(Parent, Env) ->
 loop(#{env := #{system := SystemId}, core := Core} = State) ->
     Idle = erx_code_agent_core:idle(Core),
     Lifeline = erx_code_agent_core:lifeline(Core),
-    Next = receive
+    Next = case remaining(Core) of
+        0 ->
+            %% Past the deadline: the load ends before any message still queued for it.
+            step(timeout, State);
+        Wait -> receive
         {erx_origin, SystemId, {erx_code_load, Alias, Manifest}} when Idle, is_reference(Alias) ->
             take(Alias, Manifest, State);
         {erx_origin, SystemId, {erx_code_piece, Alias, Hash, Offset, Bytes}}
@@ -117,8 +127,9 @@ loop(#{env := #{system := SystemId}, core := Core} = State) ->
             %% A load waits in the mailbox while another is in flight; anything else
             %% of another origin or shape is dropped.
             apply_effects([dropped], State)
-    after remaining(Core) ->
+    after Wait ->
         step(timeout, State)
+    end
     end,
     ?MODULE:loop(Next).
 
@@ -127,13 +138,15 @@ loop(#{env := #{system := SystemId}, core := Core} = State) ->
 take(Alias, Manifest, #{env := Env} = State) ->
     Release = maps:get(release, Env, none),
     Deadline = erlang:monotonic_time(millisecond) + maps:get(wait, Env, ?ERX_CODE_LOAD_WAIT),
-    try [{Name, Hash, Size, source(Name, Hash, Release)} || {Name, Hash, Size} <- Manifest] of
-        Plan -> step({take, Alias, Plan, Deadline}, State)
-    catch
-        error:_ -> apply_effects([dropped], State)
+    case erx_code_agent_core:is_manifest(Manifest) of
+        true ->
+            Plan = [{Name, Hash, Size, source(Name, Hash, Release)} || {Name, Hash, Size} <- Manifest],
+            step({take, Alias, Plan, Deadline}, State);
+        false ->
+            apply_effects([dropped], State)
     end.
 
-source(Name, Hash, Release) when is_binary(Name), byte_size(Hash) =:= 32 ->
+source(Name, Hash, Release) ->
     case current_hash(Name, Release) of
         Hash -> current;
         _ -> released(Hash, Release)

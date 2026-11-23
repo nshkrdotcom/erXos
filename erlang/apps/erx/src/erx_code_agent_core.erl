@@ -44,7 +44,7 @@ publication only for the load in flight, at the cursor, and reports any other as
 `dropped`, which the edge counts.
 """.
 
--export([new/1, step/2, idle/1, deadline/1, lifeline/1, monitoring/2, floor_check/2]).
+-export([new/1, step/2, is_manifest/1, idle/1, deadline/1, lifeline/1, monitoring/2, floor_check/2]).
 -export_type([core/0, event/0, effect/0, plan/0, limits/0]).
 
 -type name() :: binary().
@@ -136,6 +136,20 @@ floor_check(Limits, Floors) ->
         [] -> ok;
         [First | _] -> First
     end.
+
+-doc """
+Whether Manifest has the shape of a load's manifest: a list of `{Name, Hash, Size}`, a
+binary name, a 32-byte hash and a positive size. erx_code is the trusted base and sends no
+other; anything else did not come from it and is dropped whole.
+""".
+-spec is_manifest(term()) -> boolean().
+is_manifest(Manifest) when is_list(Manifest) ->
+    lists:all(fun({Name, Hash, Size}) -> is_binary(Name) andalso is_binary(Hash) andalso byte_size(Hash) =:= 32
+                                         andalso is_integer(Size) andalso Size > 0;
+                 (_Entry) -> false
+              end, Manifest);
+is_manifest(_Manifest) ->
+    false.
 
 -doc "The next core and the effects of one event.".
 -spec step(core(), event()) -> {core(), [effect()]}.

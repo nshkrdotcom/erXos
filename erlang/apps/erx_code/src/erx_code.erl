@@ -18,8 +18,8 @@ three steps, sending only what the store lacks: `missing/1` with the modules' ha
 A load is planned whole before it changes anything. The plan names every module's verified
 bytes (`erx_code_store:plan_load/2`), and `erx_code_batch:load/1`, which every domain's code
 server also loads through, makes the batch current or refuses it whole: either every
-module of the manifest is current when `load/1` returns `ok` or none changed. Names become
-atoms only here, after the manifest has been read, at most 1,024 of 255 bytes each per
+module of the manifest is current when `load/1` returns `ok` or none changed. `erx_code_batch:load/1` makes the
+names atoms, only after the manifest has been read, at most 1,024 of 255 bytes each per
 load; a load the loader refuses still leaves its names' atoms behind (TODO.md).
 """.
 
