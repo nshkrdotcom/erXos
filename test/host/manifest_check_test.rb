@@ -658,9 +658,9 @@ class ManifestCheckTest < Minitest::Test
                     'flags' => 0, 'dma_memory' => 0)
   end
 
-  # media_source with a block device's drive, disk0, whose unit holder holds (a domain
-  # disk, a copy of the development manifest's usb domain, which holds nothing), and the
-  # platform that places the device.
+  # media_source with a block device's drive, disk0, whose device's unit holder holds
+  # (by default disk, a copy of the development manifest's usb domain, which holds
+  # nothing else), and the platform that places the device.
   def block_drive_source(holder: '@domain.disk', holders: USB_HOLDERS)
     disk = @source[/^domain usb\n(?:  .*\n)*/].sub("domain usb\n", "domain disk\n")
     [media_source(holders) + SPARE_UNIT + disk + "unit extra\n  placement \"extra\"\n  holder #{holder}\n" + drive_window('disk0', device: '/extra@0'),
@@ -702,6 +702,9 @@ class ManifestCheckTest < Minitest::Test
             against, message: message.call('services'))
     refused(Erx::Manifest::Invalid, 'facets', source + files_facet('start', '@domain.disk', rights: 'rw'),
             against, message: message.call('facets'))
+    two = context(platform: usb_platform(extra: [extra_block_row, spare_block_row.merge('placement_key' => 'extra')],
+                                         spare: [spare_block_row.merge('path' => '/third@0')]))
+    refused(Erx::Manifest::Invalid, 'units', source, two, message: message.call('units'))
     held, = block_drive_source(holder: 'system')
     refused(Erx::Manifest::Invalid, 'unit.holder', held, against,
             message: /the device of drive disk0 is held by a configured domain/)
@@ -758,6 +761,10 @@ class ManifestCheckTest < Minitest::Test
     end
     usb_refused('facets', /#{MEDIA_HOLDS} facets row names it/,
                 media_source + drive_window('disk0') + files_facet('packages', '@domain.media'))
+    # A facet of the log interface is the log's only as the service named log.
+    usb_refused('facets', /#{MEDIA_HOLDS} facets row names it/,
+                media_source + drive_window('disk0') + "service slog\n  server @domain.storage\n  interface log\n" +
+                log_facet('@domain.media').sub('@service.log', '@service.slog').sub('operations write', 'operations none'))
   end
 
   def test_a_media_domain_serving_another_service_is_refused

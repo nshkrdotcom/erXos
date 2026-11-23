@@ -3127,7 +3127,7 @@ module Erx
       end
 
       # Refuses the first row that names the domain at index and that the block does not
-      # admit, what completing the refusal: the allow-list form of a domain that holds
+      # admit, with what as the refusal's start: the allow-list form of a domain that holds
       # nothing else (check_pcie, check_drive_domains), under which a table the ABI adds
       # later names the domain only once the block admits it.
       def holds_only(tables, index, what)
@@ -3294,10 +3294,10 @@ module Erx
         device = devices.fetch(window.fetch('device'))
         return unless device.fetch('role') == device_role('block')
 
-        drive = "drive disk#{window.fetch('drive')}"
+        label = "drive disk#{window.fetch('drive')}"
         holder = device_holder(tables, window.fetch('device'))
-        invalid("the device of #{drive} is held by a configured domain", 'unit.holder') if holder == @codec.constant('mf_none')
-        what = "the holder of #{drive}, #{domain_name(tables, holder)}, holds nothing but its device's unit and log facets"
+        invalid("the device of #{label} is held by a configured domain", 'unit.holder') if holder == @codec.constant('mf_none')
+        what = "the holder of #{label}, #{domain_name(tables, holder)}, holds nothing but its device's unit and log facets"
         holds_only(tables, holder, what) do |scope, row|
           if scope == 'units'
             placed = unit_devices(devices, row)
@@ -3309,11 +3309,15 @@ module Erx
       end
 
       # What either drive domain's allow-list admits besides its own rows: its place in
-      # the boot order and its log facets (docs/design-log.md, "The log facet").
+      # the boot order and its log facets, each of the service named log, of the log
+      # interface and served by the system domain (docs/design-log.md, "The log facet"),
+      # since the system domain picks a facet's callback by the service's name.
       def drive_domain_reference?(scope, row, tables)
         case scope
         when 'boot_order' then true
-        when 'facets' then tables.fetch('services').fetch(row.fetch('service')).fetch('interface') == fetch_interface('log')
+        when 'facets'
+          service = tables.fetch('services').fetch(row.fetch('service'))
+          service.values_at('name', 'interface', 'server') == ['log'.b, fetch_interface('log'), @codec.constant('mf_none')]
         else false
         end
       end

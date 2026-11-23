@@ -31,7 +31,8 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
      as a `nofollow` mark a provider carries, the provider `{facet, media}` marked by `erx_ns` by the
      facet's name (design-drives.md, "Links and rights"); the ordered end's step 2 freezing the media
      service; the shell's `mount` and `umount` forms ([todo-shell.md](todo-shell.md)). The media
-     domain's durability facet to the system domain in the facet table, and the board manifests'
+     domain's durability facet to the system domain in the facet table, which `check_drive_domains`'
+     list then admits, and the board manifests'
      media domain, service and drive rows, land here and not in step 1: the durability interface
      does not exist before this step, and no release serves media before `erx_media` does.
   5. The FAT server, `erx_fat`, over a FAT16 or FAT32 volume: its read path, then its batches, dirty flag
@@ -114,6 +115,12 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
 
 ## Bugs by subsystem
 
+* [Medium] storage, manifest check, a block drive holder's allow-list (`tools/lib/erx/manifest.rb`,
+  `check_block_drive_holder`; [design-drives.md](design-drives.md#manifest-rows)): it admits only the
+  device's unit and log facets, so it refuses the driver-control service every unit holder serves the
+  system domain ([design-system.md](design-system.md)) and the `pci` facet a PCIe-function block
+  device needs, which keeps NVMe and virtio-blk-pci from being drives. It fails safe; whether the list
+  admits the two, or block drives go without them, is an open question for the design.
 * [Medium] storage and images, the development boot image is 68 MB (`kernel8.img` on the Pi 4 boot
   partition, 68,202,496 bytes) and stays in RAM for the whole boot; it also weighs on the Pi 4 secure-boot
   check item below. Three shrinks are open: 12.2 MB are byte-identical OTP files in both `system/lib` and
@@ -360,6 +367,10 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
 
 ## Security residuals
 
+* [Medium] USB, a USB domain's holdings (`tools/lib/erx/manifest.rb`; [design-usb.md](design-usb.md)):
+  the rule that a USB domain holds its controller's unit and nothing else, which keeps what drives a
+  stick from parsing anything, has no check, as the media domain's and a block drive holder's
+  allow-lists have (`check_drive_domains`).
 * [Low] storage, a host writing beside the boot-selection record (`erlang/apps/erx_storage/src/erx_fat_read.erl`;
   [design-storage.md](design-storage.md#removable-media-fat)): a computer that writes the `ERXOS` volume,
   copying `authorized_keys` or its own metadata (macOS's `.Trashes`, `._` files, `.fseventsd`), may put clusters

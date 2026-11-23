@@ -454,8 +454,10 @@ manifest that names the domain must be one the list admits, so a table
 the manifest gains later names it only once its list admits it.
 
 * **The media domain's list:** its drive windows; the one service it
-  serves, `media`; its facets of the `log` interface
-  ([design-log.md](design-log.md#the-log-facet)); and its place in the
+  serves, `media`, and the service of its durability facet
+  ([Finishing a volume](#finishing-a-volume)); its facets of the system
+  domain's service `log` ([design-log.md](design-log.md#the-log-facet));
+  and its place in the
   boot order. It holds no unit and no other window, and no facet of any
   other service, the system domain's `start` and `machine` trees and
   every storage domain's tree among them. Its drives' grants come from
@@ -463,7 +465,8 @@ the manifest gains later names it only once its list admits it.
   ([design-usb.md](design-usb.md#media-and-drives)), never through a
   facet row.
 * **A block drive holder's list:** the one unit that places the drive's
-  device and no other device, its facets of the `log` interface, and its
+  device and no other device, its facets of the system domain's `log`,
+  and its
   place in the boot order. It is a configured domain, and it holds no
   window and serves no service, so the domain that drives the device
   parses nothing a medium holds and nothing else of the machine sits
@@ -1012,12 +1015,12 @@ follows none in an app's tree: where it would follow one, it answers
 `eacces`, as FreeBSD's `nosymfollow` mount does, and an operation on the
 link itself acts on it
 ([design-app-trees.md](design-app-trees.md#links)). The rule belongs to
-the provider: `erx_ns` marks the facet provider `{facet, media}`
-`nofollow` by the facet's name, in its one table of the facets it knows
-by name, the table that gives `media` its mount point
-(`erx_ns:place/1`), as it marks `{facets, svc}`. So every mount of a
-`media` facet carries the mark, wherever it is mounted and whatever
-options the mount names, and every bind of `/media` or of a volume under
+the provider: `erx_ns` derives the mark from the provider of a facet
+named `media` whenever it builds or resolves that provider, never from
+an option a mount names, so it is not one of the options `place/1`
+gives `media` with its mount point. Every mount of a `media` facet
+therefore carries the mark, wherever it is mounted and whatever
+options it names, and every bind of `/media` or of a volume under
 it, and every program's table that takes its entries, keeps it. The
 resolver keeps one rule, to follow no link in a tree whose provider
 carries the mark
