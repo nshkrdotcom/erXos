@@ -32,6 +32,7 @@ class ErxUsbBusTest < Minitest::Test
     test/erlang/erx_pcie_log_capture.erl
   ].freeze
   DEADLINE_SECONDS = '300'
+  EUNIT_OPTIONS = '[verbose, {scale_timeouts, 12}]'
   BUS = 'erlang/apps/erx_usb/src/erx_usb_bus.erl'
   CORE = 'erlang/apps/erx_usb/src/erx_usb_bus_core.erl'
   SUP = 'erlang/apps/erx_usb/src/erx_usb.erl'
@@ -126,13 +127,14 @@ class ErxUsbBusTest < Minitest::Test
   private
 
   # The cases run with the logger off, so the crashes the cases cause keep each case's
-  # verdict on its line.
+  # verdict on its line, and with EUnit's per-case timeout scaled from 5 s to 60 s, above
+  # the cases' own waits (WAIT_MS), so a loaded host fails no case that would pass.
   def run_cases(replaced)
     Dir.mktmpdir('erx-usb-bus-test') do |work|
       ErlangBuild.compile(work, applications: APPLICATIONS, tests: TESTS, replaced: replaced)
       Open3.capture2e('gtimeout', '-k', '10', DEADLINE_SECONDS, ENV.fetch('ERX_ERL'), '-noshell',
                       '-kernel', 'logger_level', 'none', '-pa', work,
-                      '-eval', 'halt(case eunit:test(erx_usb_bus_tests, [verbose]) of ok -> 0; _ -> 1 end)',
+                      '-eval', "halt(case eunit:test(erx_usb_bus_tests, #{EUNIT_OPTIONS}) of ok -> 0; _ -> 1 end)",
                       chdir: work, stdin_data: '')
     end
   end

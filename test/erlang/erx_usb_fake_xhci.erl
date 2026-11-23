@@ -30,16 +30,17 @@ below.
 
 -include("generated/erx_abi.hrl").
 
--export([start_link/1, plug/3, unplug/2, replace/3, fail_status_transfer/2, stick_fault/3, log/1, bus/1]).
+-export([start_link/1, init/3, plug/3, unplug/2, replace/3, fail_status_transfer/2, stick_fault/3, log/1, bus/1]).
 
-%% The controller start erx_usb_bus_sup takes. The fake registers as Name, so the
-%% test reaches each restart by it, and tells each start to the process registered as
-%% erx_usb_bus_tests. A World of `fails_at_start` is a controller that fails as soon
-%% as its bus attaches, as one whose host controller error returns after every reset.
+%% The controller start erx_usb_bus_sup takes. The fake registers as Name before its
+%% start returns, so the test reaches each start by it as soon as the start is done, and
+%% tells each start to the process registered as erx_usb_bus_tests. A World of
+%% `fails_at_start` is a controller that fails as soon as its bus attaches, as one whose
+%% host controller error returns after every reset. init/3 is exported only for
+%% proc_lib to run it.
 -doc "Starts the fake, registered as Name, with RootPorts root ports and the world World.".
 start_link({Name, RootPorts, World}) ->
-    Pid = proc_lib:spawn_link(fun() -> init(Name, RootPorts, World) end),
-    {ok, Pid}.
+    proc_lib:start_link(?MODULE, init, [Name, RootPorts, World]).
 
 plug(Name, Place, Thing) -> call(Name, {plug, Place, Thing}).
 unplug(Name, Place) -> call(Name, {unplug, Place}).
@@ -49,16 +50,26 @@ stick_fault(Name, Place, Fault) -> call(Name, {stick_fault, Place, Fault}).
 log(Name) -> call(Name, log).
 bus(Name) -> call(Name, bus).
 
+%% The fake's answer to Request, waited for as long as the fake lives.
 call(Name, Request) ->
-    Ref = make_ref(),
-    Name ! {test, self(), Ref, Request},
-    receive {Ref, Reply} -> Reply after 5000 -> error({fake_timeout, Request}) end.
+    case whereis(Name) of
+        undefined ->
+            error({no_fake, Request});
+        Fake ->
+            Monitor = monitor(process, Fake),
+            Fake ! {test, self(), Monitor, Request},
+            receive
+                {Monitor, Reply} -> demonitor(Monitor, [flush]), Reply;
+                {'DOWN', Monitor, process, Fake, Reason} -> error({fake_ended, Request, Reason})
+            end
+    end.
 
 %% The state: the bus, the world, each place's port (powered, enabled, its change
 %% bits pending), each device reference's place, the status transfer posted on each
 %% hub, the hubs whose next transfer fails, and the log.
 init(Name, RootPorts, World) ->
     true = register(Name, self()),
+    proc_lib:init_ack({ok, self()}),
     case whereis(erx_usb_bus_tests) of
         undefined -> ok;
         Tests -> Tests ! {fake_started, self()}

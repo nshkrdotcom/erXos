@@ -15,10 +15,11 @@
 -include("generated/erx_abi.hrl").
 
 -define(FAKE, erx_usb_fake_xhci_under_test).
-%% How long a case waits for each thing it expects. A case whose expectation never
-%% comes usually fails on its own assertion, within EUnit's 5 s; one that chains
-%% waits may time out instead, which the runner counts as a failure too.
--define(WAIT_MS, 2500).
+%% How long a case waits for each thing it expects before it fails. Only a failing case
+%% waits it out, so it is long enough for a host loaded many times over; the runner
+%% scales EUnit's per-case timeout above it. A case that chains waits may still time out
+%% instead of failing on its own assertion, which the runner counts as a failure too.
+-define(WAIT_MS, 10000).
 
 %% ---------------------------------------------------------------------------
 %% Cases
@@ -146,6 +147,19 @@ a_stick_behind_a_hub_is_served_beside_a_keyboard_test() ->
         ?assert(is_process_alive(Running)),
         ?assertMatch({ok, #{transport := usb_bot}}, erx_blk:info(transport()))
     end).
+
+%% The fake answers by name as soon as its start returns, as a case reaches it straight
+%% after the controllers start: checked straight after each of many starts.
+the_fake_answers_by_name_once_started_test() ->
+    [begin
+         {ok, Fake} = erx_usb_fake_xhci:start_link({?FAKE, 1, #{}}),
+         ?assertEqual([], erx_usb_fake_xhci:log(?FAKE)),
+         unlink(Fake),
+         Monitor = monitor(process, Fake),
+         exit(Fake, kill),
+         receive {'DOWN', Monitor, process, Fake, _} -> ok end
+     end || _ <- lists:seq(1, 50)],
+    ok.
 
 %% A stick on a root port serves its medium: reset recovery, Get Max LUN, INQUIRY, TEST
 %% UNIT READY, READ CAPACITY and the readiness SYNCHRONIZE CACHE make a block transport
@@ -359,6 +373,8 @@ a_controller_failing_at_every_reset_is_given_up_test() ->
     try
         ok = erx_usb:start_controllers([{erx_usb_fake_xhci, start_link, [{?FAKE, 1, fails_at_start}]}]),
         {places, Places, _, _} = lists:keyfind(places, 1, supervisor:which_children(Sup)),
+        wait(fun() -> element(2, lists:keyfind({controller, 0}, 1, supervisor:which_children(Sup))) =:=
+                          undefined end),
         Starts = fake_starts(0),
         ?assertEqual(?ERX_USB_BUS_RESTARTS_MAX + 1, Starts),
         ?assertMatch({{controller, 0}, undefined, _, _}, lists:keyfind({controller, 0}, 1, supervisor:which_children(Sup))),
@@ -456,8 +472,9 @@ stop(Sup) ->
 flush() ->
     receive _ -> flush() after 0 -> ok end.
 
+%% The fake's starts, each told before it failed, so all are in once the group is given up.
 fake_starts(Count) ->
-    receive {fake_started, _} -> fake_starts(Count + 1) after 1000 -> Count end.
+    receive {fake_started, _} -> fake_starts(Count + 1) after 0 -> Count end.
 
 %% The stand-in's refused starts, counted from its reports.
 refusals(Count) ->
