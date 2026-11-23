@@ -2069,6 +2069,10 @@ loads modules as [Atoms, code, ETS and names](#atoms-code-ets-and-names)
 says, and its `user` and logger proxy are those of
 [design-runtime.md](design-runtime.md#the-console-and-standard-io) and
 [design-live.md](design-live.md#the-console).
+While `kernel` starts, the domain's code server names itself to the
+domain pid and loads the domain's start load, its published overlay,
+before any other application starts
+([design-live.md](design-live.md#the-code-server)).
 Init reports ready to the domain pid, naming the agents and the mints its
 services provide, in `{erx_ready, #{connections => Agent, inspect =>
 InspectAgent, provides => Provides}}`, which leaves `inspect` out when no
@@ -2853,8 +2857,11 @@ answers `noconnection`.
 
 The protocol also carries the inspector's questions to each domain's
 inspection agent, which init's ready report names beside the connection
-agent and so exports to the system domain; they travel as ordinary
-messages in the system connection's ring, outside the domain pid.
+agent and so exports to the system domain, and the code service's loads
+to each domain's code server, which names itself to the domain pid in a
+report of its own before the ready report; both travel as ordinary
+messages in the system connection's ring, outside the domain pid, which
+relays only the code server's report.
 
 | Message | Direction | Meaning |
 | --- | --- | --- |
@@ -2870,6 +2877,9 @@ messages in the system connection's ring, outside the domain pid.
 | `{erx_facet_minted, Tag, Reply}` | a mint of the domain to domain pid | the reply to the mint request tagged `Tag`, `{ok, Facet}` or `refused`, sent with `erx_facet:minted/2` to the domain's own domain pid, which the agent names to the domain at its start ([design-system.md](design-system.md#facets-a-configured-domain-serves)) |
 | `{erx_inspect_ask, Alias, Query}` | the system domain's inspector to the domain's inspection agent | a question about the domain's own runtime, `Query` being `{inspect, Path, Options}` or `{entries, Path}` for a path the domain owns; the agent takes it only in the system domain's envelope and answers to `Alias`, which the question exported ([design-live.md](design-live.md#the-runtime-agent)) |
 | `{Alias, Answer}` | inspection agent to the inspector | the runtime's attributes for the path, of the inspector's answer types, within `inspect_reply_max`; the inspector validates and marks them `runtime` whatever they claim, and an answer missing after `inspect_agent_wait` is `{timeout, 500}` |
+| `{erx_code_agent, Agent}` | code server to domain pid | the domain's code server, sent once from `kernel` before init's ready report; the domain pid takes the first, keeps it only when the reporting incarnation owns it, node and creation both, and passes it to the domain service, which records it and tells the code service ([design-live.md](design-live.md#the-code-server)) |
+| `{erx_code_load, Alias, Manifest}`, `{erx_code_piece, Alias, Hash, Offset, Bytes}` | the code service to the domain's code server | a load and the pieces its code server asked for; the code server takes them only in the system domain's envelope ([design-live.md](design-live.md#the-code-server)) |
+| `{erx_code_get, Alias, Hash, Offset}`, `{erx_code_loaded, Alias, Result}` | code server to the code service, through `Alias` | a request for the next piece of the load in flight, and the load's outcome; the code service takes each only in the envelope of the domain the load went to, to that load's alias, while it is in flight ([design-live.md](design-live.md#the-code-server)) |
 
 The `erx_connection_up` and `erx_connection_down` messages are the **connection-control records**. The
 domain service sends the records about one peer node name one at a time,
@@ -2890,8 +2900,8 @@ the funnel and delivers it to the agent as a message from the domain pid
 are ordinary messages, frames in the domain's lane to the system domain.
 Every answer is built of atoms the system domain's code already holds, so
 the safe decoder creates none. Of its domain's messages the domain pid
-passes on only the three answers and init's ready report, by their
-shapes, and drops and counts any other; the domain service applies an
+passes on only the three answers, the code server's report and init's
+ready report, by their shapes, and drops and counts any other; the domain service applies an
 answer only to a connection of the domain in the state that expects it,
 and drops and counts the rest ([design-system.md](design-system.md#ending-a-domain)).
 
