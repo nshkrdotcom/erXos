@@ -149,6 +149,21 @@ class BenchRecordTest < Minitest::Test
     assert_match(/shallow/, assert_raises(Erx::Error) { write(shallow) }.message)
   end
 
+  def test_a_clone_whose_head_names_a_missing_branch_is_refused
+    clone = File.join(@scratch, 'dangling')
+    git(@scratch, 'clone', '-q', @erxos, clone)
+    git(clone, 'symbolic-ref', 'HEAD', 'refs/heads/missing')
+    assert_match(/shares a root commit/, assert_raises(Erx::Error) { write(clone) }.message)
+  end
+
+  def test_a_plain_clone_is_refused_while_erxos_is_on_an_orphan_branch
+    clone = File.join(@scratch, 'plain')
+    git(@scratch, 'clone', '-q', @erxos, clone)
+    git(@erxos, 'checkout', '-q', '--orphan', 'elsewhere')
+    git(@erxos, '-c', 'user.name=t', '-c', 'user.email=t@example.invalid', 'commit', '-q', '--allow-empty', '-m', 'y')
+    assert_match(/shares a root commit/, assert_raises(Erx::Error) { write(clone) }.message)
+  end
+
   def test_a_separate_repository_with_its_own_history_is_written
     git(@history, '-c', 'user.name=t', '-c', 'user.email=t@example.invalid', 'commit', '-q', '--allow-empty',
         '-m', 'history')

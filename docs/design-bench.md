@@ -425,10 +425,13 @@ a diagnostic, never read.
 writer. It refuses the history root unless it exists, is the top of a
 git work tree whose common git directory is not the erXos repository's,
 and lies, by real path, outside every worktree `git worktree list` gives
-for the erXos repository. It also refuses a history root whose `HEAD`
-shares a root commit (`git rev-list --max-parents=0 HEAD`) with the
-erXos repository's, so a second clone of erXos, which has a common git
-directory of its own, is never a history root. It then checks the destination itself, not
+for the erXos repository. It also refuses a history root that shares a
+root commit with the erXos repository, the roots of each taken over
+every ref (`git rev-list --max-parents=0 --all`), so a second clone of
+erXos, which has a common git directory of its own, is never a history
+root whatever branch either has checked out; a shallow repository,
+whose roots git cannot list, is refused, and so is any git failure
+while listing them. It then checks the destination itself, not
 only the root: it walks from the root to the run directory one
 component at a time, refuses any component that is a symbolic link, and
 refuses unless the run directory's real path lies under the root's and
