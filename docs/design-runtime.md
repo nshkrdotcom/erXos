@@ -721,8 +721,8 @@ answer `{Drv, {read, Ref, Chars}}` ends the ask and is taken as stock takes
 `{Drv, {data, Chars}}`; the driver never answers an end of file, since the
 line's end comes as `erx_console_eof`. A session's console reads its tty only
 for an outstanding ask, one byte at a time, so the group is never handed a
-byte past the key that ends its line; the system console's driver sends input
-as it arrives, and the ask stays unanswered there. No stock driver minds the ask's
+byte past the key that ends its line, and the system console reads its own tty
+the same way ([design-live.md](design-live.md#lost-input)). No stock driver minds the ask's
 new shape: `ssh_cli` matches it with none of its clauses but the last,
 which ignores it (`ssh_cli.erl:280-338`), and `user_drv`, the one driver
 that reads stock's count (`user_drv.erl:501-505`), does not run where
@@ -2720,17 +2720,17 @@ speak these messages:
 | --- | --- | --- |
 | `{erx_console_output, From, Bytes}` | to the driver | write these bytes, whole and in order; `From` is opaque to the driver |
 | `{erx_console_written, From}` | to `erx_console` | those bytes are written or the line is gone; every output message gets this answer |
-| `erx_console_taken` | to the driver | `erx_console` has taken the last input message and has room for another drain; `erx_stdio` waits for it before it sends more, and a UART's driver drops it ([design-live.md](design-live.md#lost-input)) |
+| `erx_console_taken` | to the driver | `erx_console` has taken the last input message: at once on a person's terminal, and on a pipe once its tty has room for another drain; a driver sends its next input message only after it, a UART's driver draining meanwhile into a store of one drain whose overflow is a loss ([design-live.md](design-live.md#lost-input)) |
 | `{erx_console_input, Bytes}` | to `erx_console` | bytes as read, in order, cut anywhere |
 | `{erx_console_size, Rows, Columns}` | to `erx_console` | the line's size is known or has changed, rows first as in `struct winsize`; `erx_console` ignores a side outside 1 to 65,535 (`console_side_max`) |
 | `erx_console_eof` | to `erx_console` | input has ended, after every byte read before it |
 | `erx_console_lost` | to `erx_console` | input was lost here, after the bytes read before the loss and before those read after it; only a console UART's driver sends it ([design-live.md](design-live.md#lost-input)) |
 
-They send input as it arrives, since nothing else reads their line, at most
-one drain's worth at a time ([design-live.md](design-live.md#lost-input)), and
-`erx_console` takes it into a tty of its own, input alone, which its groups
-read on demand as a session's console reads its relay, so what waits for a
-group is bounded by that tty and what the bound drops is a loss. A session's terminal
+They send input as it arrives, one message outstanding at a time
+([design-live.md](design-live.md#lost-input)), and `erx_console` takes it into
+a tty of its own, input alone, with a terminal's settings or a pipe's as
+`Terminal` says, which its groups read on demand as a session's console reads
+its relay, so what waits for a group is bounded by that tty. A session's terminal
 relay is the line driver of a console of the session role for output and
 size alone: that console reads its input from the tty through an open of
 the relay, as every reader of the tty does, one byte at a time and only
@@ -2766,9 +2766,9 @@ stream: a typed `Ctrl-G` opens the console's menu, where `erx_console_keys` tell
 a typed `Ctrl-G` from the BEL that ends a terminal's string reply
 ([design-live.md](design-live.md#the-console)). The rest goes into the tty that
 holds the input of the system console's groups ([design-live.md](design-live.md#lost-input)),
-whose `ISIG` makes `Ctrl-C` an `interrupt` and `Ctrl-Z` a `suspend` of the current
+whose `ISIG`, on a person's terminal, makes `Ctrl-C` an `interrupt` and `Ctrl-Z` a `suspend` of the current
 group and `Ctrl-\` a `quit` that does nothing at the prompt, as for a session's
-console below; the groups' asks are answered with UTF-8, with a character cut
+console below; on a pipe every byte is data; the groups' asks are answered with UTF-8, with a character cut
 across two reads held until its end arrives and a byte that belongs to no
 character read as latin-1, as `prim_tty`'s reader does. A console of the session
 role takes no byte out, since the master keeps `Ctrl-G`: its tty's `ISIG`

@@ -2057,6 +2057,7 @@ event carries its job:
 | `{signal, sigint}` | `interrupt` |
 | `{signal, sigtstp}` | `suspend` |
 | `{signal, sigquit}` | `quit` |
+| `flushed_loss`, before the signal whose flush dropped a loss | `lost` ([design-live.md](design-live.md#lost-input)) |
 | `info` | `info` |
 | `winch` | `winch` |
 
@@ -2068,7 +2069,9 @@ of the job ([Job control](#job-control)), `suspend` stops it, `quit` is
 deliveries of [`Ctrl-T`](#ctrl-t-status-and-the-info-request) and
 [Window size](#window-size). A job that is over has no member, so
 `interrupt`, `suspend`, `quit` and `winch` then reach no one, and `info`
-writes FreeBSD's line for an empty group and sends no request. So a key
+writes FreeBSD's line for an empty group and sends no request. A job takes
+nothing for `lost`: the flush dropped all its unread input, and it holds no
+edited line for the loss to damage. So a key
 typed for one job never reaches the job that took the terminal after it,
 as a signal from FreeBSD's terminal reaches the group that was in the
 foreground when the key arrived (`tty.c:1544-1550`).

@@ -532,8 +532,10 @@ bounds refuse. The event is designed and not built: the drivers
 put a NUL byte in the input, which the editor refuses to run.
 
 The system domain has its own command shell, the **system shell**, with
-the system domain's authority, on the console's terminal, whose line
-discipline only holds its input until the shell's editor asks for it. In the design a release build asks for a login at the
+the system domain's authority, on the console's terminal. Its input
+waits in a tty of the console's own, with a session prompt's settings on a
+terminal, which make `Ctrl-C` and `Ctrl-Z` signals and read CR as a
+newline, and none on a pipe, until the shell's editor asks for it. In the design a release build asks for a login at the
 console. Only a login at a line the manifest marks `secure` opens the
 system shell, as UNIX's `/etc/ttys` marks the terminals where root may
 log in. Being secure is a property of the line, so no route into a

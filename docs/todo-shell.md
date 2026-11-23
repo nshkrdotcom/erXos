@@ -778,14 +778,17 @@ to the corpus and follow rc
   with no bound. Build the design's event in steps, each with its rows of the design's verification table:
   1. drivers: `erx_mini_uart` places a loss after `8 - P` bytes and `erx_pl011` before the `OE` byte, both
      send `erx_console_lost` in order with `erx_console_input` and delete `erx_uart_marker.hrl`; `erx_pl011`'s
-     drain stops at 64 words; both drop `erx_console_taken`, and `erx_stdio` waits for it;
+     drain stops at 64 words; every driver keeps one input message outstanding until `erx_console_taken`, a UART
+     draining meanwhile into a one-drain store whose overflow is a loss, and serves output while it waits;
   2. `erx_tty`: held input as units, `lost/1`, a loss where `input/3` drops for room, settlement over units, one
-     consuming step for `read/3` and `read_input/2`, with `lost` in `erx_tty_modes_tests` and `erx_tty_fuzz`;
+     consuming step for `read/3` and `read_input/2`, `flushed_loss` from a flush that drops a loss, with `lost` in `erx_tty_modes_tests` and `erx_tty_fuzz`;
   3. the console interface: `{tty_input, N, Bytes}` and `{tty_lost, N}` in `abi/services/console.txt`, numbered by
      every master (`erx_tty_master`, `erx_term`, `erx_ssh_dev_channel`) and checked by `erx_tty_link`, a gap taken
      as a loss; the relay serves `{tty_read_input, Open, N}`;
-  4. `erx_console`: both roles read on demand, the system role from its own `erx_tty`, deleting `input/2` and the
-     push; a loss drops a cut character and resets `erx_console_keys`;
+  4. `erx_console`: both roles read on demand, the system role from its own `erx_tty` with a terminal's or a
+     pipe's settings as `Terminal` says, deleting `input/2` and the push; the console answers a terminal's input
+     at once and a pipe's once there is room; a loss, and the relay's `lost` event, damage the group's read, and a
+     loss drops a cut character and resets `erx_console_keys`;
   5. `group` and `edlin`: the damage in each input request's state, `edlin:edit_line/3`, `lost` as an input,
      refused bounds as losses, refusal through `finish/4` until the buffer is emptied, dumb and raw modes; delete
      the hold, the NUL scan, `edlin_key`'s NUL rule and `group`'s history rule; `test/host/edlin_marker_test.rb`

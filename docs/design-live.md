@@ -491,7 +491,8 @@ on the host:
   never split, so 4 KiB of newlines with 4 KiB of room takes 2 KiB. This is the
   only thing that ever happens to a program's output.
 * `input(Bytes, Room, Tty)` returns what to do (bytes to echo, a signal
-  for the foreground group, a report that a waiting read can go on), the
+  for the foreground group, `flushed_loss` ahead of a signal whose flush
+  dropped a loss, a report that a waiting read can go on), the
   bytes it did not take, the room left and the next state. `Room` is the
   room the owner has for the master, `{Free, Kept, Stopped}`: what is free
   of it, what it holds that a flush cannot drop, the output it has sent and
@@ -1239,8 +1240,27 @@ whole.
 A drain is finite: the mini UART's reads at most 32 bytes, four FIFO
 depths, and the PL011's at most 64 words, two FIFO depths, so a device
 that never reports its FIFO empty holds neither driver; the interrupt
-line, still raised, delivers again. One drain sends at most one message
-per byte it read and one loss more.
+line, still raised, delivers again.
+
+**One input message outstanding per driver.** A driver has at most one
+input message the console has not taken. The console answers each
+`{erx_console_input, Bytes}` and each `erx_console_lost` with
+`erx_console_taken`, as `erx_console_written` answers output, and a driver
+sends its next input message only after that answer, so the console's
+mailbox holds at most one input message from its driver, whatever the
+console's delay. A UART's line cannot wait, so its driver keeps draining
+the FIFO while it waits for the answer, into a pending store of at most
+one drain's bytes, 32 for the mini UART and 64 for the PL011, and a byte
+that finds the store full is dropped and marked: the store holds at most
+one loss between two of its bytes, kept when its bytes fill it, and sent
+in its place. On the answer it sends what the store holds, bytes and
+losses in order, one message at a time, each again after its answer. So
+the UART's FIFO is served as fast as before, and a console that falls
+behind costs input that is marked, never memory. A source that can wait,
+`erx_stdio` reading a pipe, simply reads no more until the answer. A
+driver waits for the answer without stopping its output: it serves
+`{erx_console_output, From, Bytes}` while input waits, so output never
+depends on input being taken.
 
 A driver of another line, the host link's or a Bluetooth controller's,
 makes no loss, since its protocol checks its own frames, and the host
@@ -1258,29 +1278,53 @@ the console answers it with what the bytes read for it complete, or with
 with `{tty_read_input, Open, N}`
 ([design-shell.md](design-shell.md#the-terminal-relays-protocol)). The
 system console reads a tty of its own the same way, an `erx_tty` in its
-process with the prompt's `termios` of
-[A shell's line editor](#the-tty) less `IXON` and `IMAXBEL`, so it
-neither stops nor rings the system console's output, whose writes do not
-pass through it: it takes the driver's bytes and losses as they
-arrive, makes `Ctrl-C` and `Ctrl-Z` signals at arrival as `ISIG` does,
-which the console carries out as a session's console carries out the
-relay's events, and holds everything else for the asks. So the input
-waiting for a group is bounded in both roles by one tty's bound, 4 KiB of
-bytes and at most one loss between two of them, and what the bound drops
-is a loss. A source that can wait loses nothing to the bound: the console
-answers each `{erx_console_input, Bytes}` with `erx_console_taken` once its
-tty has room for another drain, as `erx_console_written` answers output, and
-`erx_stdio`, hosted mode's driver, whose standard input can wait, reads no
-more until that answer, so a script piped into hosted mode is held back, not
-cut; a UART's driver, whose line cannot wait, drops the answer. At
-`erx_console_eof` the console answers the asks with the end once its tty is
-empty, so the end still follows every byte read before it. The system
+process that holds its groups' input and makes no output, its settings
+chosen by the driver's `Terminal`:
+
+* **A person's terminal** (`Terminal` true, both UARTs and `erx_stdio` on
+  a terminal): the prompt's `termios` of [A shell's line editor](#the-tty)
+  less `IXON` and `IMAXBEL`, so nothing stops or rings the console's
+  output, whose writes do not pass through this tty. `ISIG` makes
+  `Ctrl-C`, `Ctrl-Z` and `Ctrl-\` signals at arrival, which the console
+  carries out as a session's console carries out the relay's events, and
+  `ICRNL` reads CR as LF, as a session's prompt does: CR and LF each end a
+  line, and CRLF ends two, the second empty. The console answers each
+  input message at once, since a terminal's input must keep reaching
+  signal processing while the group reads nothing, so `Ctrl-C` reaches an
+  Erlang shell's running evaluation however much is typed ahead; what the
+  tty's bound drops is a loss.
+* **A pipe** (`Terminal` false, `erx_stdio` reading a pipe or a file): every
+  flag clear, so the bytes reach the group as the pipe gave them, CR, LF
+  and CRLF unchanged, a byte 3 is a byte, and a character read gets the
+  byte the pipe held. The console answers an input message only once its
+  tty has room for another drain, so a pipe is held back, never cut, and
+  nothing is a loss.
+
+So the input waiting for a group is bounded in both roles by one tty's
+bound, 4 KiB of bytes and at most one loss between two of them. At
+`erx_console_eof` the console hands the group `{self(), eof}` once its tty
+is empty, so the end still follows every byte read before it. The system
 console's own scan for `Ctrl-C` and `Ctrl-Z` and its push of input to its
 group are deleted.
 
 A loss also drops the bytes of a character it cut, which can never
 complete it correctly, and returns `erx_console_keys` to its ground
 state, as `CAN` does, since what the terminal was sending is damaged.
+
+**A flush keeps its loss.** A signal key flushes the unread input, and the
+unread input may hold a loss whose bytes before it are already in the
+editing group's buffer: with `rm ` read, a dropped frame holding `-i `, a
+`Ctrl-\` and then `target` and Enter, the flush would drop the loss the gap
+made, `quit` would leave the read going, and `rm target` would run. So the
+console takes the event `lost`, from its relay or from its own tty, as it
+takes a read's `lost`, for the group the event names: it answers that
+group's outstanding ask with it, or holds it for the group's next ask, so
+the read is damaged before any later key reaches it. The signal that
+follows then acts as before: `interrupt` ends the read, and with it the
+damage and what the console held for the group; `quit` and `suspend`
+leave the read going, damaged. A `lost` that arrives while the group reads
+nothing, as during an Erlang shell's evaluation, damages its next read,
+which costs the user one emptied buffer and never runs a damaged line.
 While the menu has the line a loss rings the bell, as any byte that is no
 key does; while a session has the line, `erx_tty_master` sends the
 session's tty `{tty_lost, N}`.
@@ -1330,9 +1374,12 @@ more than its bound has bytes.
   byte, drops them with the line, as `edlin` keeps a damaged line damaged
   until it is empty.
 * **Moving units.** A change of `ICANON`, `VEOF` or `VEOL` recounts what
-  is readable over units, so a cooked line's losses move with its bytes;
-  a signal's flush and a hangup drop losses with the bytes, as FreeBSD's
-  `tty_flush` drops the queue (`sys/kern/tty_ttydisc.c:1124-1133`).
+  is readable over units, so a cooked line's losses move with its bytes.
+  A signal's flush and a hangup drop losses with the bytes, as FreeBSD's
+  `tty_flush` drops the queue (`sys/kern/tty_ttydisc.c:1124-1133`), but a
+  flush never drops a loss unseen: when the input it drops holds one, it
+  returns `flushed_loss` ahead of the signal, which the relay passes on as
+  the event `lost` (below). A hangup needs none, since it ends every read.
 
 **Compatibility with FreeBSD.** A program's read of a loss the UART made
 gives the NUL FreeBSD's read gives at that place, and that byte is all the
@@ -1413,10 +1460,15 @@ after it, however the input was cut into deliveries.
   a write-only open, and `eagain` when another reader took the unit, the
   open may not read or `N` is not the relay's signal number.
 * Storage is finite at every hop: a drain reads at most 32 bytes or 64
-  words and sends at most one message per byte and one loss more; a
-  console holds at most one ask's answer for each group and a tty's
-  bound of input; a tty holds at most one loss more than its bytes; and
-  the damage is one fact of each input request. A damaged line grows only
+  words; a driver has one input message outstanding and holds at most
+  one drain's bytes, with at most one loss between two of them, while it
+  waits for `erx_console_taken`, so the console's mailbox holds at most one
+  input message from its driver however long the console is delayed; a
+  console holds at most one ask's answer, and one held loss, for each
+  group, and a tty's bound of input; a tty holds at most one loss more
+  than its bytes; a session's tty takes its master's frames, which the
+  peer bounds by the lane and drops past it, a drop being a gap and so a
+  loss; and the damage is one fact of each input request. A damaged line grows only
   with the paste that follows it, up to edit 73's bounds, whose refused
   characters keep it damaged.
 * A master that reports losses without end, or a device that does, keeps
@@ -1453,8 +1505,12 @@ obligations are these, each with one owner:
 * each input request carries its damage through suspension and every
   `edlin` call (`group`), and `edlin`'s one finishing function refuses a
   damaged read;
-* both consoles read on demand through one reader, and the console answers
-  each input message as it answers output, for the driver that can wait.
+* both consoles read on demand through one reader, and every driver has one
+  input message outstanding, answered as output is: at once for a person's
+  terminal, which overflows into a loss, and once there is room for a pipe,
+  which waits;
+* a flush never drops a loss unseen: it reports `flushed_loss`, and the
+  console damages the read the signal leaves going.
 
 A typed NUL is stock's key bound to nothing, the PL011's break is the
 byte the UART read, and the hold, the scan, the history rule, the marker
@@ -1473,7 +1529,12 @@ fail, so the case proves the code under it ran.
 | `erx_console_master_tests`, the system line through the real group and `edlin`: `ab`, a loss, `c` and Enter | no line is returned; the bell rings | the console answering an ask with the loss after the next byte |
 | the same, a loss after the first byte of a two-byte UTF-8 character | that byte is dropped and the loss answered | the cut byte answered as a character |
 | the same, a group that asks nothing while 10 KiB, then a loss, then more arrive | the console holds one tty's bound; what it dropped is one loss, which the next read meets before the later bytes | the store's drop not marked as a loss |
-| hosted mode, a 64 KiB script piped into `erx_stdio` with a group that reads slowly | every line runs and the shell halts at the end with status 0 | `erx_stdio` sending without waiting for `erx_console_taken`, so the bound drops input and a line is refused |
+| hosted mode, a 64 KiB script piped into `erx_stdio` (`Terminal` false) with a group that reads slowly | every line runs and the shell halts at the end with status 0 | the console answering a pipe at once, so the bound drops input and a line is refused |
+| hosted mode on a terminal: an Erlang shell evaluating `timer:sleep(infinity)`, 8 KiB typed ahead, then `Ctrl-C` | the evaluation is interrupted | the console answering a terminal's input only when its tty has room, so `Ctrl-C` waits upstream |
+| the same, `erx_stdio` waiting for `erx_console_taken` while the shell writes 64 KiB | all the output is written | the driver's wait for the answer not serving output |
+| the system console, a pipe giving `a` CR `b` LF `c` CR LF, read by `io:get_line/1` and by `io:get_chars/2` of one character | the bytes reach the group unchanged; the character read gets CR | the pipe given the terminal's `ICRNL` |
+| the system console on a terminal, CR, LF and CR LF each after a word | CR and LF each end the line; CR LF ends it and then an empty line | `ICRNL` cleared for a terminal |
+| `erx_mini_uart_tests` and `erx_pl011_tests`, the console stalled: no `erx_console_taken` while 200 bytes arrive | one message outstanding; the store holds one drain's bytes and one loss for the rest, sent in order after the answer | the driver sending a message per drain without waiting |
 | `erx_console_keys_tests`: a loss inside an OSC string, then `Ctrl-G` | the menu opens | the parser's state kept across the loss |
 | `erx_tty_master_tests`: a session has the line; bytes, a loss, bytes | `{tty_input, 0, _}`, `{tty_lost, 1}`, `{tty_input, 2, _}` | the loss sent without a number of the sequence |
 | `erx_tty_link_tests`: numbers 0, 1, 3; then 2; then `{tty_lost, x}`; then a loss after a hangup | 3 is taken after a loss at its place; 2 is refused and counted; the bad shape is dropped and counted; the late loss is ignored | the gap check removed, so 3 is taken with no loss |
@@ -1481,6 +1542,8 @@ fail, so the case proves the code under it ran.
 | `erx_tty_master_tests`: a tty sends `{tty_lost, 0}` | the master detaches the tty | the master taking it |
 | `erx_tty_tests`, raw: `ab`, a loss, `cd` with `VMIN` 5 | ready at the fifth unit; `read/3` of 5 gives `ab`, NUL, `cd`; `read_input/2` gives `a`, `b`, `lost`, `c`, `d` | a read that does not shift the remaining losses |
 | `erx_tty_tests`, raw: a loss alone with `VMIN` 1, with a `poll`, and with `VMIN` 2 and `VTIME` 1 | the read and the poll are ready; the timer starts | readiness counting bytes only |
+| `erx_console_master_tests`, a session: `rm ` read into the editor, frame 1 (`-i `) dropped, frame 2 `Ctrl-\`, frame 3 `target` and Enter | no line is returned; the bell rings | the flush dropping the gap's loss without `flushed_loss` |
+| the same with `Ctrl-Z` in frame 2, and with `Ctrl-C` | `Ctrl-Z`: no line is returned; `Ctrl-C`: the read ends, and the next read is undamaged | `interrupt` keeping the held loss for the next read |
 | `erx_tty_tests`, raw: 4 KiB waiting, then three bytes | one loss after the 4 KiB, kept though no byte of room is left | the drop not marked |
 | `erx_tty_tests`, cooked: `cd`, a loss, `/`, then `VERASE`, then `VKILL`; a loss then `VEOF`; `ICANON` cleared over a line with a loss | the loss stays after the erase and is gone after the kill; the second line reads as one NUL; the loss moves to the readable input in its place | an erase that removes the loss |
 | `erx_tty_modes_tests` exploration and `erx_tty_fuzz` | `lost` is in the event alphabet; every reachable state keeps losses within the held bytes, one at most between two bytes | losses not dropped by a signal's flush |
