@@ -224,27 +224,16 @@ module Erx
       raise Error, 'set ERX_CLANG to an installed LLVM clang; see README.md' if !compiler || compiler.empty?
       compiler = File.realpath(compiler)
       raise Error, 'ERX_CLANG is not an executable compiler' unless File.file?(compiler) && File.executable?(compiler)
-      path = [File.dirname(compiler), ENV.fetch('PATH', '')].join(File::PATH_SEPARATOR)
-      linker = executable_on(ENV.fetch('ERX_LLD', 'ld.lld'), path: path)
+      # ERX_LLD as an absolute path, so every later step runs the same lld whatever
+      # directory it starts in.
+      linker = HostPath.find_linker(ENV.fetch('ERX_LLD', 'ld.lld'), compiler: compiler, path: ENV.fetch('PATH', ''))
+      raise Error, 'ERX_LLD names no executable linker' unless linker
+
       resource = runner.run([compiler, '-print-resource-dir'], name: 'check-clang-resource', deadline: 30)
       ToolchainProvenance.llvm(root: ROOT, resource_dir: BoundedFile.read(resource.fetch('log'), maximum: 4096).strip)
+      path = [File.dirname(compiler), ENV.fetch('PATH', '')].join(File::PATH_SEPARATOR)
       { 'ERX_CLANG' => compiler, 'CC' => compiler, 'ERX_LLD' => linker, 'PATH' => path }
         .merge(SanitizerEnvironment.call(compiler: compiler)).freeze
-    end
-
-    # program as an absolute path: itself when it names a directory, else the
-    # first executable of that name on path, so every later step runs the
-    # same lld whatever directory it starts in.
-    def self.executable_on(program, path:)
-      found = if program.include?('/')
-                File.expand_path(program)
-              else
-                path.split(File::PATH_SEPARATOR).map { |directory| File.join(directory, program) }
-                    .find { |candidate| File.file?(candidate) && File.executable?(candidate) }
-              end
-      raise Error, "ERX_LLD names no executable linker" unless found && File.file?(found) && File.executable?(found)
-
-      found
     end
 
     def self.with_test_runtime(runner:, oracle_class: Oracle, host_environment: method(:host_environment))

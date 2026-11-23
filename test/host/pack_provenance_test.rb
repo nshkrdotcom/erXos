@@ -6,6 +6,7 @@ require 'minitest/autorun'
 require 'tmpdir'
 require_relative '../../tools/lib/erx/pack_provenance'
 require_relative '../../tools/lib/erx/serving_set'
+require_relative '../fixtures/lld_map'
 
 class PackProvenanceTest < Minitest::Test
   # Each catalog class closes over the caller's record, including instances
@@ -36,8 +37,8 @@ class PackProvenanceTest < Minitest::Test
   end
   def archive_fixture(bytes:, &on_run)
     archive = write('root.a', bytes)
-    File.write(@map, "10000 10000 4 4 root.a(root.o):(.text)\n")
-    @receipt['linker_map'] = reference(@map).merge('format' => 'lld', 'directory' => '.')
+    File.write(@map, LldMapFixture.text('root.a(root.o)'))
+    @receipt['linker_map'] = reference(@map).merge('directory' => '.')
     @receipt['archives'] = [reference(archive).merge('members' => [
       { 'name' => 'root.o', 'sha256' => reference(@object).fetch('sha256'), 'object_path' => 'root.o' }
     ])]
@@ -143,10 +144,65 @@ class PackProvenanceTest < Minitest::Test
     end
   end
 
-  def test_only_lld_link_maps_are_read
-    assert_raises(Erx::Error) do
-      Erx::PackProvenance.contributors("Linker script and memory map\n .text 0x10000 0x4 root.o\n", format: 'gnu')
+  # Only a map that opens with LLD's header row is read. Without it, an empty map, a GNU
+  # ld map or an LLD map cut off at its start would yield only the rows that happen to
+  # parse, and the license gate would pass over what the map leaves out.
+  def test_a_link_map_without_lld_header_is_refused
+    ["", "\n", "Linker script and memory map\n .text 0x10000 0x4 root.o\n",
+     "10000 10000 4 4 root.o:(.text)\n"].each do |map|
+      error = assert_raises(Erx::Error, map.inspect) { Erx::PackProvenance.contributors(map) }
+      assert_match(/LLD link map header/, error.message, map.inspect)
     end
+  end
+
+  # A map cut short or with anything appended is refused, not read for the rows that
+  # parse: a cut mid-row leaves no final newline, a cut at a line boundary loses the
+  # .shstrtab row LLD writes after every input, and junk is a line that is no LLD row.
+  def test_a_cut_or_extended_link_map_is_refused
+    map = LldMapFixture.text('root.o', 'other.o')
+    assert_equal %w[root.o other.o], Erx::PackProvenance.contributors(map)
+    rows = map.lines
+    { map.chomp => /does not end with a newline/,
+      map[0, map.index('other.o') + 3] => /does not end with a newline/,
+      rows.take(rows.size - 2).join => /no \.shstrtab row/,
+      rows.take(3).join => /no \.shstrtab row/,
+      "#{map}trailing junk\n" => /not an LLD map row/,
+      "#{map}\n" => /not an LLD map row/,
+      map.sub(' root.o', 'root.o') => /not an LLD map row/ }.each do |bytes, message|
+      error = assert_raises(Erx::Error, bytes.inspect) { Erx::PackProvenance.contributors(bytes) }
+      assert_match message, error.message, bytes.inspect
+    end
+  end
+
+  # Contributions are input sections, LLD's second level: a symbol row sixteen spaces in
+  # is passed over even when its demangled name has the input delimiter in it, and so
+  # are the script's assignments and byte commands at the input level. Any other row
+  # there, and an input name outside printable ASCII, is refused.
+  def test_only_input_section_rows_are_contributions
+    rows = LldMapFixture.text('root.o').lines
+    with = ->(*names) { [*rows.take(3), *names.map { |name| LldMapFixture.row(0x10000, 0, 1, name) }, *rows.drop(3)].join }
+    passed_over = ["#{' ' * 16}ns::(anonymous namespace)::helper", "#{' ' * 8}_stext = .",
+                   "#{' ' * 8}. += 0x10", "#{' ' * 8}QUAD(_start)", "#{' ' * 8}PROVIDE_HIDDEN (start = .)",
+                   ' ' * 8]
+    assert_equal ['root.o'], Erx::PackProvenance.contributors(with.call(*passed_over))
+    { "#{' ' * 8}hidden.o" => /neither an input section nor a script command/,
+      "#{' ' * 8}hidd\xC3\xA9n.o:(.text)".b => /unsupported link input name/ }.each do |name, message|
+      error = assert_raises(Erx::Error, name.inspect) { Erx::PackProvenance.contributors(with.call(name)) }
+      assert_match message, error.message, name.inspect
+    end
+  end
+
+  # What may follow .shstrtab: .strtab, after it in an output not stripped, and the
+  # top-level assertions of a script that names the tables, which LLD writes with no
+  # name. An input section may not, since a cut there would go unseen.
+  def test_only_tables_and_assertions_follow_the_section_names
+    map = LldMapFixture.text('root.o')
+    strtab = LldMapFixture.row(0, 0x10, 1, '.strtab') + LldMapFixture.row(0, 0x10, 1, "#{' ' * 8}<internal>:(.strtab)")
+    assertion = LldMapFixture.row(0x10004, 0, 1, '')
+    assert_equal ['root.o'], Erx::PackProvenance.contributors(map + strtab + assertion + assertion)
+    late = LldMapFixture.row(0, 4, 4, '.late') + LldMapFixture.row(0, 4, 4, "#{' ' * 8}late.o:(.late)")
+    error = assert_raises(Erx::Error) { Erx::PackProvenance.contributors(map + late) }
+    assert_match(/input section after its \.shstrtab row/, error.message)
   end
 
   def test_compiler_mp_phony_rules_only_repeat_prerequisites
@@ -190,9 +246,9 @@ class PackProvenanceTest < Minitest::Test
     @object = write('root.o', 'object bytes')
     @artifact = write('root.elf', 'linked bytes')
     @dependency = write('root.d', "root.o: root.c\n")
-    @map = write('root.map', "VMA LMA Size Align Out In Symbol\n10000 10000 4 4 root.o:(.text)\n")
+    @map = write('root.map', LldMapFixture.text('root.o'))
     @receipt = { 'version' => 1, 'kind' => 'linked', 'artifact' => reference(@artifact),
-                 'linker_map' => reference(@map).merge('format' => 'lld', 'directory' => '.'),
+                 'linker_map' => reference(@map).merge('directory' => '.'),
                  'compiles' => [{ 'object' => reference(@object), 'dependency' => reference(@dependency),
                                   'directory' => '.', 'sources' => [reference(@source)] }],
                  'archives' => [], 'inputs' => [] }
@@ -609,18 +665,16 @@ class PackProvenanceTest < Minitest::Test
   # the build reads it, in the build kinds it names, and no other build kind admits it:
   # Fiasco's debugger enters no release build.
   def test_the_closed_table_admits_each_row_in_the_build_kinds_it_names
-    Dir.mktmpdir('outside-toolchain-') do |outside|
-      table_rows.product(%w[development release]).each do |row, kind|
-        label, license, at, kinds = row.values_at(:label, :license, :at, :kinds)
-        if kinds.include?(kind)
-          record = resolve_registered_at(at, license: license, label: label, status: 'release', build_kind: kind).first
-          assert_equal [label, license, 'release'], record.values_at('path', 'declared_license', 'status')
-        else
-          error = assert_raises(Erx::Error) do
-            resolve_registered_at(at, license: license, label: label, status: 'release', build_kind: kind)
-          end
-          assert_match(/no permitted grant/, error.message, [label, kind].inspect)
+    table_rows.product(%w[development release]).each do |row, kind|
+      label, license, at, kinds = row.values_at(:label, :license, :at, :kinds)
+      if kinds.include?(kind)
+        record = resolve_registered_at(at, license: license, label: label, status: 'release', build_kind: kind).first
+        assert_equal [label, license, 'release'], record.values_at('path', 'declared_license', 'status')
+      else
+        error = assert_raises(Erx::Error) do
+          resolve_registered_at(at, license: license, label: label, status: 'release', build_kind: kind)
         end
+        assert_match(/no permitted grant/, error.message, [label, kind].inspect)
       end
     end
   end
@@ -805,17 +859,17 @@ class PackProvenanceTest < Minitest::Test
   end
 
   def test_unresolved_link_object_is_not_silently_ignored
-    File.write(@map, "10000 10000 4 4 hidden.o:(.text)\n")
-    @receipt['linker_map'] = reference(@map).merge('format' => 'lld', 'directory' => '.')
+    File.write(@map, LldMapFixture.text('hidden.o'))
+    @receipt['linker_map'] = reference(@map).merge('directory' => '.')
     error = assert_raises(Erx::Error) { resolve }
     assert_includes error.message, 'unresolved linked object'
   end
 
   def test_alternate_object_names_cannot_hide_linked_contributions
     ['hidden.obj', 'extensionless', 'odd.lib(member.obj)'].each do |name|
-      File.write(@map, "10000 10000 4 4 root.o:(.text)\n10004 10004 4 4 #{name}:(.text)\n")
-      @receipt['linker_map'] = reference(@map).merge('format' => 'lld', 'directory' => '.')
-      assert_equal ['root.o', name], Erx::PackProvenance.contributors(File.binread(@map), format: 'lld')
+      File.write(@map, LldMapFixture.text('root.o', name))
+      @receipt['linker_map'] = reference(@map).merge('directory' => '.')
+      assert_equal ['root.o', name], Erx::PackProvenance.contributors(File.binread(@map))
       assert_raises(Erx::Error) { resolve }
     end
   end

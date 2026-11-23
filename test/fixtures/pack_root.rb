@@ -52,7 +52,7 @@ module PackRootFixture
       raise Erx::Error, 'fixture sources changed during compilation'
     end
     receipt = { 'version' => 1, 'kind' => 'linked', 'artifact' => reference(artifact, root),
-                'linker_map' => reference(map, root).merge('format' => 'lld', 'directory' => '.'),
+                'linker_map' => reference(map, root).merge('directory' => '.'),
                 'compiles' => [{ 'object' => reference(object, root),
                                  'dependency' => reference(dependency, root), 'directory' => '.',
                                  'sources' => inputs }],

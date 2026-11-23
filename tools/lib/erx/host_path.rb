@@ -18,5 +18,20 @@ module Erx
       directories.map { |directory| File.join(directory, name) }
                  .find { |candidate| File.file?(candidate) && File.executable?(candidate) }
     end
+
+    # program as an absolute path, or nil when no regular executable file is there: itself,
+    # expanded, when it names a path, else the first of that name in directories.
+    def resolve_program(program, directories:)
+      return find_program(program, directories: directories) unless program.include?('/')
+
+      path = File.expand_path(program)
+      path if File.file?(path) && File.executable?(path)
+    end
+
+    # The linker ERX_LLD names, as every build finds it, or nil: linker itself when it
+    # names a path, else the first of that name beside compiler, then on path.
+    def find_linker(linker, compiler:, path:)
+      resolve_program(linker, directories: [File.dirname(compiler), *directories(path)])
+    end
   end
 end

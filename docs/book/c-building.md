@@ -47,7 +47,7 @@ x86-64 is a host too. A build needs these tools
   suites.
 
 On a Mac, Homebrew installs all of them. The build insists on LLVM,
-not Apple's clang or GCC, for its own code. It uses clang as a cross
+not Apple's clang or GCC, for its own code and for Fiasco and L4Re. It uses clang as a cross
 compiler (`--target`), links with lld and reads lld's link maps to
 learn which files went into each image, and admits into an image only
 the LLVM headers `config/provenance/llvm.json` lists. You point the

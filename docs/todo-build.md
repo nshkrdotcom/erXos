@@ -915,6 +915,14 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
 
 ## Security residuals
 
+* [Medium] build, the license gate's link-map reader (`PackProvenance.contributors` in
+  `tools/lib/erx/pack_provenance.rb`): it takes the inputs a link used from the rows of LLD's map
+  that name an input section, and passes over the `<internal>` ones. An object whose only live
+  bytes LLD merges into a synthetic section (`SHF_MERGE` string literals) or folds away (`--icf`,
+  which no build passes) shows only as `<internal>:(...)` or not at all, so its license is never
+  checked. Inferred from LLD's design, not yet shown with a link: a link of an object holding
+  only merged strings settles it, and the fix reads such inputs from the linker's own list
+  (`--trace` or `--why-extract`) instead of the map.
 * [Low] build, git started by host tooling (`tools/lib/erx/fiasco.rb`, `submodule.rb`, `source_revision.rb`):
   each site builds its own argv, so "git runs no program a repository names" holds only where someone
   remembered it. `Fiasco#import_git`'s `git archive` runs plain `git` in the Fiasco clone, applying the

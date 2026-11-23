@@ -21,6 +21,25 @@ module Erx
   # requests an image. External files require exact reviewed registry entries.
   class PackProvenance
     MAX_METADATA = 64 * 1024 * 1024
+    # The columns of the row an LLD link map (-Map) opens with.
+    LLD_MAP_HEADER = %w[VMA LMA Size Align Out In Symbol].freeze
+    # Every later row of the map: VMA, LMA and size in hex, alignment in decimal and
+    # one space, then a name indented eight spaces per level: an output section at
+    # none, an input section eight in, a symbol sixteen in (lld/ELF/MapFile.cpp,
+    # writeHeader and writeMapFile). The name may be empty.
+    LLD_MAP_ROW = /\A *[0-9a-f]+ +[0-9a-f]+ +[0-9a-f]+ +\d+ (?<indent>(?: {8}){0,2})(?<name>\S.*)?\n\z/
+    LLD_INPUT_INDENT = (' ' * 8).b.freeze
+    # The other rows at the input level: the linker script's assignments and byte
+    # commands inside an output section, as written in the script, or no name. Any
+    # other row there without an input section is refused, not passed over.
+    LLD_SCRIPT_COMMAND = /\A(?:(?:PROVIDE|PROVIDE_HIDDEN|HIDDEN|ASSERT|BYTE|SHORT|LONG|QUAD|SQUAD)[ ]?\(|
+                           [A-Za-z0-9_.$]+[ ](?:[-+*\/&|]|<<|>>)?=[ ])/x
+    # The section-name string table's row. LLD writes .shstrtab into every output
+    # (SyntheticSections.cpp) and, unless a linker script names it, places it with
+    # the other non-allocated tables it makes after every other section
+    # (Writer.cpp); a script that names it puts it last (task.ld), with at most
+    # the other tables and its top-level assertions after it.
+    LLD_SECTION_NAMES = '<internal>:(.shstrtab)'.b.freeze
     # The statuses of a package of an image: permanent, or package-local for a package of
     # a local test image (LicenseCheck::PACKAGE_LOCAL). A dependency is registered
     # under one of DependencyStatus::ALL.
@@ -183,21 +202,39 @@ module Erx
     private_class_method :dependency_rule
 
     # Input columns identify contributions; filename suffixes have no meaning
-    # to a linker. Every link the build makes is LLD's, so its map is the one format.
-    def self.contributors(bytes, format:)
+    # to a linker. Every link the build makes is LLD's, so its map is the one
+    # format, read whole: after LLD's header row every line must be one of
+    # its rows, the map must end with a newline, and every input section
+    # must come before LLD's .shstrtab row, so a map cut short (mid-row or at
+    # a line boundary) or with anything appended is refused rather than read
+    # for the rows that happen to parse. Input sections are the rows eight
+    # spaces in; output sections (no indent) and symbols (sixteen) contribute
+    # nothing.
+    def self.contributors(bytes)
       raise Error, 'link map is too large' if bytes.bytesize > MAX_METADATA
-      raise Error, 'unsupported link map format' unless format == 'lld'
-      result = bytes.lines.map do |line|
-        row = /\A\s*[0-9a-fA-F]+\s+[0-9a-fA-F]+\s+[0-9a-fA-F]+\s+\d+\s+(.+?)\s*\z/.match(line)
-        next unless row
-        # Output-section and symbol rows have no input-section delimiter.
-        next unless row[1].include?(':(')
-        input = /\A(.+):\([^()]*\)\z/.match(row[1])
+      map = bytes.b
+      header, *lines = map.lines
+      raise Error, 'link map does not open with the LLD link map header' unless header&.split == LLD_MAP_HEADER
+      raise Error, 'link map does not end with a newline' unless map.end_with?("\n")
+      rows = lines.map { |line| LLD_MAP_ROW.match(line) || raise(Error, 'link map has a line that is not an LLD map row') }
+      table = rows.rindex { |row| row[:indent] == LLD_INPUT_INDENT && row[:name] == LLD_SECTION_NAMES }
+      raise Error, 'link map has no .shstrtab row, which LLD writes after every input section' unless table
+      inputs = rows.each_with_index.filter_map do |row, index|
+        name = row[:name]
+        next unless row[:indent] == LLD_INPUT_INDENT && name
+        unless name.include?(':(')
+          next if name.match?(LLD_SCRIPT_COMMAND)
+
+          raise Error, 'link map row at the input level names neither an input section nor a script command'
+        end
+        input = /\A(.+):\([^()]*\)\z/.match(name)
         raise Error, 'unsupported LLD input contribution' unless input
-        next if input[1] == '<internal>'
-        input[1]
-      end.compact.uniq
-      unless result.all? { |input| input.match?(/\A[^\s()]+(?:\([^\s()]+\))?\z/) }
+        [index, input[1]] unless input[1] == '<internal>'
+      end
+      raise Error, 'link map has an input section after its .shstrtab row' if inputs.any? { |index, _| index > table }
+      result = inputs.map(&:last).uniq
+      # Printable ASCII, so every later message and lookup can take the name as it is.
+      unless result.all? { |input| input.match?(/\A[!-'*-~]+(?:\([!-'*-~]+\))?\z/) }
         raise Error, 'unsupported link input name'
       end
       raise Error, 'link map contains no object contributions' if result.empty?
@@ -334,10 +371,10 @@ module Erx
 
     def resolve_link(receipt, records:, build_kind:)
       map = receipt.fetch('linker_map')
-      exact_keys(map, %w[path sha256 format directory])
+      exact_keys(map, %w[path sha256 directory])
       directory = File.expand_path(path_value(map.fetch('directory')), @root)
-      map_bytes = verified_read(map.reject { |key, _| %w[format directory].include?(key) })
-      contributors = self.class.contributors(map_bytes, format: map.fetch('format'))
+      map_bytes = verified_read(map.reject { |key, _| key == 'directory' })
+      contributors = self.class.contributors(map_bytes)
       compiles = receipt.fetch('compiles')
       archives = receipt.fetch('archives')
       inputs = receipt.fetch('inputs')

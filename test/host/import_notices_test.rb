@@ -6,6 +6,7 @@ require 'minitest/autorun'
 require 'tmpdir'
 require_relative '../../tools/lib/erx/pack_provenance'
 require_relative '../../tools/lib/erx/release_files'
+require_relative '../fixtures/lld_map'
 
 class ImportNoticesTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__).freeze
@@ -24,11 +25,11 @@ class ImportNoticesTest < Minitest::Test
       dependency = File.join(directory, 'object.d')
       File.binwrite(artifact, 'fixture image')
       File.binwrite(object, 'fixture object')
-      File.write(map, "10000 10000 4 4 #{object}:(.text)\n")
+      File.write(map, LldMapFixture.text(object))
       File.write(dependency, "#{object}: #{source}\n")
       reference = lambda { |path| { 'path' => path, 'sha256' => Digest::SHA256.file(path).hexdigest } }
       receipt = { 'version' => 1, 'kind' => 'linked', 'artifact' => reference.call(artifact),
-                  'linker_map' => reference.call(map).merge('format' => 'lld', 'directory' => '.'),
+                  'linker_map' => reference.call(map).merge('directory' => '.'),
                   'compiles' => [{ 'object' => reference.call(object), 'dependency' => reference.call(dependency),
                                    'directory' => '.', 'sources' => [reference.call(source)] }],
                   'archives' => [], 'inputs' => [] }

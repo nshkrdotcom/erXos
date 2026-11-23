@@ -144,7 +144,7 @@ document's "residual risks accepted" paragraph.
 * [Website and book](docs/todo-site.md#security-residuals): the website, the book and the user guide.
   2 items (1 Medium, 1 Low).
 * [Build, tooling and tests](docs/todo-build.md#security-residuals): the build, the host tools, the test harnesses and the gates.
-  4 items (2 Medium, 2 Low).
+  5 items (3 Medium, 2 Low).
 
 ## Planned features
 

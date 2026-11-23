@@ -110,8 +110,8 @@ in its kernel, `bootstrap` and build-system directories, and, beside
 C++ library, libstdc++, under GPL-3.0 with the GCC exception. No
 build compiles them. A build check fails if any file compiled or
 linked into the kernel, `bootstrap` or `sigma0`, headers included,
-has a license that is not permissive, apart from the three GCC headers and, in a kernel with the debugger,
-`jdb_object.cpp`.
+has a license that is not permissive, apart from `jdb_object.cpp` in a
+kernel with the debugger.
 
 ### D.3.3 Storage, cryptography and small cores
 
@@ -238,14 +238,11 @@ A permissive license enters every build. A license that is not
 permissive enters only through one closed table, `LicenseCheck::TABLE`
 in `tools/lib/erx/license_check.rb`, whose every row names one input:
 its exact license, where the build reads it and which
-kinds of build take it. The table has three rows:
+kinds of build take it. The table has two rows:
 
-1. the three GCC headers Fiasco includes, in every build, since the
-   GCC Runtime Library Exception lets code compiled with them go out
-   under any terms;
-2. Doom's archive, a demo program that is never part of the system,
+1. Doom's archive, a demo program that is never part of the system,
    in development builds only;
-3. Fiasco's `jdb_object.cpp`, in development builds only.
+2. Fiasco's `jdb_object.cpp`, in development builds only.
 
 The design admits a few more files by name and place, outside every
 program and EROFS image: the Pi 4's device tree, with its source
@@ -269,7 +266,7 @@ and ctaes keep OpenSSL out of the trusted base. A changed import file
 without a change notice fails `make check`. The packer refuses a file
 of unknown origin, writes `NOTICES` from the linker's own maps, and
 admits a license that is not permissive only through one closed table
-of three rows.
+of two rows.
 
 ## Where to read next
 

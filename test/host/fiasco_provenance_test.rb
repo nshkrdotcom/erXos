@@ -6,6 +6,7 @@ require 'minitest/autorun'
 require 'tmpdir'
 require 'fileutils'
 require_relative '../../tools/lib/erx/fiasco_provenance'
+require_relative '../fixtures/lld_map'
 
 class FiascoProvenanceTest < Minitest::Test
   # The part of FiascoInputs the attribution of a captured source reads.
@@ -269,25 +270,25 @@ class FiascoProvenanceTest < Minitest::Test
     assert_includes assert_raises(Erx::Error) { auditor.check_permissive(blocked) }.message, 'fixture.c'
   end
 
-# No build takes a compiler header under GCC's terms: the toolchain is LLVM's,
-# whose headers are permissive, so GCC's exception is refused in every build
-# kind, whatever label a toolchain registration gives the header, as on a GCC
-# runtime file of l4re-core.
-def test_no_build_takes_gccs_exception
-  gcc = 'GPL-3.0-or-later WITH GCC-exception-3.1'
-  include = '/opt/cross/lib/gcc/aarch64-elf/16.2.0/include'
-  crtstuff = 'build/fiasco/inputs/fiasco/l4re-core/libgcc/contrib/gcc-16/libgcc/crtstuff.c'
-  refused = [[{ 'path' => "#{include}/stdarg.h" }, 'toolchain/gcc-16.2.0/stdarg.h'],
-             [{ 'path' => "#{include}/stdarg.h" }, nil],
-             [{ 'path' => crtstuff, 'source' => crtstuff,
-                'original_source' => 'fiasco/l4re-core/libgcc/contrib/gcc-16/libgcc/crtstuff.c' }, nil]]
-  refused.product(%w[development release]).each do |(fields, label), kind|
-    source = { 'license' => gcc, 'status' => 'release' }.merge(fields)
-    registered = label ? { source.fetch('path') => label } : {}
-    assert_equal [[source.fetch('path'), gcc]], Erx::FiascoProvenance.non_permissive([source], build_kind: kind, registered:),
-                 [source, label, kind].inspect
+  # No build takes a compiler header under GCC's terms: the toolchain is LLVM's,
+  # whose headers are permissive, so GCC's exception is refused in every build
+  # kind, whatever label a toolchain registration gives the header, as on a GCC
+  # runtime file of l4re-core.
+  def test_no_build_takes_gccs_exception
+    gcc = 'GPL-3.0-or-later WITH GCC-exception-3.1'
+    include = '/opt/cross/lib/gcc/aarch64-elf/16.2.0/include'
+    crtstuff = 'build/fiasco/inputs/fiasco/l4re-core/libgcc/contrib/gcc-16/libgcc/crtstuff.c'
+    refused = [[{ 'path' => "#{include}/stdarg.h" }, 'toolchain/gcc-16.2.0/stdarg.h'],
+               [{ 'path' => "#{include}/stdarg.h" }, nil],
+               [{ 'path' => crtstuff, 'source' => crtstuff,
+                  'original_source' => 'fiasco/l4re-core/libgcc/contrib/gcc-16/libgcc/crtstuff.c' }, nil]]
+    refused.product(%w[development release]).each do |(fields, label), kind|
+      source = { 'license' => gcc, 'status' => 'release' }.merge(fields)
+      registered = label ? { source.fetch('path') => label } : {}
+      assert_equal [[source.fetch('path'), gcc]], Erx::FiascoProvenance.non_permissive([source], build_kind: kind, registered:),
+                   [source, label, kind].inspect
+    end
   end
-end
 
   # A release kernel that passes gets the record that it passed, which names
   # its build kind and the bytes the audit read; one that fails gets none.
@@ -382,7 +383,13 @@ end
       FileUtils.mkdir_p(File.join(root, 'build/fiasco'))
       path = File.join(root, 'build/fiasco/profile.json')
       File.write(path, 'profile')
-      toolchain = Erx::FiascoToolchain.new(compiler: '/llvm/bin/clang', linker: '/lld/bin/ld.lld')
+      programs = { compiler: 'llvm/bin/clang', linker: 'lld/bin/ld.lld' }.transform_values do |relative|
+        FileUtils.mkdir_p(File.dirname(File.join(root, relative)))
+        File.write(File.join(root, relative), '')
+        File.chmod(0o755, File.join(root, relative))
+        File.join(root, relative)
+      end
+      toolchain = Erx::FiascoToolchain.new(**programs)
       auditor = Erx::FiascoProvenance.new(root: root, kind: Erx::BuildKind::DEVELOPMENT, runner: nil, toolchain: toolchain)
       auditor.define_singleton_method(:load_build_inputs) {}
       auditor.define_singleton_method(:load_generation_profiles) { @generation_profile = path }
@@ -419,7 +426,7 @@ end
         FileUtils.mkdir_p(File.dirname(map_path))
         File.binwrite(artifact_path, 'first artifact')
         File.binwrite(File.join(File.dirname(map_path), 'root.o'), 'object')
-        File.write(map_path, "10 10 4 4 root.o:(.text)\n")
+        File.write(map_path, LldMapFixture.text('root.o'))
       end
       version = File.join(build, 'version.log')
       File.write(version, 'fixture archive tool')
@@ -480,6 +487,26 @@ end
     end
   end
 
+  # An executable whose map names nothing audits nothing, so the audit refuses it rather
+  # than certify an empty contribution list: an empty map, a map that is not LLD's, or
+  # an LLD map with no input section.
+  def test_an_executable_with_no_audited_contribution_is_refused
+    Dir.mktmpdir do |root|
+      root = File.realpath(root)
+      map = File.join(root, 'build/fiasco/image.map')
+      FileUtils.mkdir_p(File.dirname(map))
+      { '' => /LLD link map header/,
+        "Linker script and memory map\n .text 0x10000 0x4 root.o\n" => /LLD link map header/,
+        LldMapFixture.text => /no object contributions/ }.each do |bytes, message|
+        File.write(map, bytes)
+        # The audit reads each input once, so each map gets an auditor of its own.
+        auditor = Erx::FiascoProvenance.new(root: root, kind: Erx::BuildKind::DEVELOPMENT, runner: nil)
+        error = assert_raises(Erx::Error, bytes.inspect) { auditor.send(:audit_executable, 'fixture', map, map) }
+        assert_match message, error.message, bytes.inspect
+      end
+    end
+  end
+
   def test_identical_archive_candidates_remain_ambiguous
     Dir.mktmpdir do |root|
       build = File.join(root, 'build/fiasco')
@@ -490,7 +517,7 @@ end
       archive = File.join(build, 'lib.a')
       File.binwrite(archive, "!<arch>\narchive")
       map = File.join(build, 'image.map')
-      File.write(map, "10 10 4 4 lib.a(member.o):(.text)\n")
+      File.write(map, LldMapFixture.text('lib.a(member.o)'))
       runner = Object.new
       extracted = File.join(build, 'one/member.o')
       listing = File.join(build, 'archive-list.log')
@@ -522,7 +549,7 @@ end
       map = File.join(build, 'image.map')
       File.binwrite(object, 'object')
       File.binwrite(archive, "!<arch>\noriginal archive")
-      File.write(map, "10 10 4 4 lib.a(member.o):(.text)\n")
+      File.write(map, LldMapFixture.text('lib.a(member.o)'))
       extracted_from = nil
       listing = File.join(build, 'archive-list.log')
       File.write(listing, "member.o\n")

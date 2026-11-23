@@ -91,7 +91,7 @@ class FiascoTest < Minitest::Test
   def setup
     @directory = Dir.mktmpdir('erx-fiasco-')
     @runner = RecordingRunner.new
-    @fiasco = FixtureBuild.new(root: @directory, runner: @runner, compiler: '/fixture/clang', linker: '/fixture/ld.lld')
+    @fiasco = FixtureBuild.new(root: @directory, runner: @runner, **fixture_toolchain('toolchain'))
     %w[kernel mk l4re-core bootstrap libfdt drivers-frst].each do |name|
       FileUtils.mkdir_p(File.join(@directory, 'fiasco', name))
     end
@@ -237,7 +237,7 @@ class FiascoTest < Minitest::Test
   # release rules and stops before the kernel make.
   def test_release_kernel_whose_resolved_configuration_has_input_stops_the_build
     runner = SelectingRunner.new
-    fiasco = FixtureBuild.new(root: @directory, runner: runner, compiler: '/fixture/clang', linker: '/fixture/ld.lld')
+    fiasco = FixtureBuild.new(root: @directory, runner: runner, **fixture_toolchain('toolchain'))
     error = assert_raises(Erx::FiascoConfig::Violation) { fiasco.build_release_kernel }
     assert_includes error.message, 'CONFIG_INPUT must be unset'
     refute(runner.commands.any? { |command| command.fetch(:options).fetch(:name) == 'fiasco-kernel-release-build' })
@@ -295,6 +295,18 @@ class FiascoTest < Minitest::Test
     def build_environment = super.merge('PATH' => [programs, *Erx::BuildMemo::SYSTEM_DIRECTORIES].join(File::PATH_SEPARATOR))
   end
 
+  # Empty executable stand-ins for clang and ld.lld under @directory/name, since the
+  # toolchain refuses a program that is not there: the keywords that name them.
+  def fixture_toolchain(name)
+    { compiler: 'llvm/bin/clang', linker: 'lld/bin/ld.lld' }.transform_values do |relative|
+      path = File.join(@directory, name, relative)
+      FileUtils.mkdir_p(File.dirname(path))
+      File.write(path, '')
+      File.chmod(0o755, path)
+      File.realpath(path)
+    end
+  end
+
   def commands_of_a_build(fiasco = @fiasco)
     before = @runner.commands.size
     fiasco.build
@@ -320,7 +332,7 @@ class FiascoTest < Minitest::Test
   end
 
   def test_every_program_on_the_build_path_is_an_input
-    fiasco = PathBuild.new(root: @directory, runner: @runner, compiler: '/fixture/clang', linker: '/fixture/ld.lld')
+    fiasco = PathBuild.new(root: @directory, runner: @runner, **fixture_toolchain('toolchain'))
     fiasco.programs = File.join(@directory, 'programs')
     FileUtils.mkdir_p(fiasco.programs)
     tool = File.join(fiasco.programs, 'tool')
@@ -349,20 +361,20 @@ class FiascoTest < Minitest::Test
     # A board's L4Re directory reads the same settings, so it goes with the main one.
     board = File.join(@directory, 'build/fiasco/users-raspi4b')
     FileUtils.mkdir_p(board)
-    fiasco = FixtureBuild.new(root: @directory, runner: @runner, compiler: '/other/llvm/bin/clang',
-                              linker: '/other/lld/bin/ld.lld')
+    fiasco = FixtureBuild.new(root: @directory, runner: @runner, **fixture_toolchain('other'))
+    other = File.realpath(File.join(@directory, 'other'))
     assert commands_of_a_build(fiasco).positive?
     kernel = File.read(File.join(@directory, 'build/fiasco/kernel/Makeconf.local'))
-    assert_includes kernel, "CC = /other/llvm/bin/clang\nCXX = /other/llvm/bin/clang++\nCPP = /other/llvm/bin/clang-cpp\n"
-    assert_includes kernel, "LD = /other/lld/bin/ld.lld\n"
-    assert_includes kernel, "OBJCOPY = /other/llvm/bin/llvm-objcopy\n"
+    assert_includes kernel, "CC = #{other}/llvm/bin/clang\nCXX = #{other}/llvm/bin/clang++\nCPP = #{other}/llvm/bin/clang-cpp\n"
+    assert_includes kernel, "LD = #{other}/lld/bin/ld.lld\n"
+    assert_includes kernel, "OBJCOPY = #{other}/llvm/bin/llvm-objcopy\n"
     # llvm-ar reads the inherited crsUT as a thin archive, which the link audit refuses.
     assert_includes kernel, "ARFLAGS = crsU\n"
     refute File.exist?(board), 'a toolchain change discards the board build directories'
     users = File.read(File.join(@directory, 'build/fiasco/source/Makeconf.local'))
     assert_includes users, "CROSS_COMPILE := #{Erx::FiascoToolchain::CROSS_COMPILE}\n"
     assert_includes users, "HOST_CC := #{Erx::HostOs::HOST_CC}\nHOST_CXX := #{Erx::HostOs::HOST_CXX}\n"
-    assert_includes users, "CLANG = /other/llvm/bin/\nLD = /other/lld/bin/ld.lld -m $(LD_EMULATION)\n"
+    assert_includes users, "CLANG = #{other}/llvm/bin/\nLD = #{other}/lld/bin/ld.lld -m $(LD_EMULATION)\n"
     refute_includes users, 'LIBGCC'
     makes = @runner.commands.select { |command| command.fetch(:argv).first == 'gmake' }
     refute(makes.any? { |command| command.fetch(:argv).any? { |argument| argument.start_with?('CC=', 'LD=', 'CLANG=') } })
@@ -374,8 +386,10 @@ class FiascoTest < Minitest::Test
     Dir.mktmpdir do |temporary|
       root = File.realpath(temporary)
       FileUtils.mkdir_p(%w[llvm/bin lld/bin links].map { |path| File.join(root, path) })
-      File.write(File.join(root, 'llvm/bin/clang-23'), "")
-      File.write(File.join(root, 'lld/bin/lld'), "")
+      %w[llvm/bin/clang-23 lld/bin/lld].each do |program|
+        File.write(File.join(root, program), '')
+        File.chmod(0o755, File.join(root, program))
+      end
       File.symlink('lld', File.join(root, 'lld/bin/ld.lld'))
       File.symlink(File.join(root, 'llvm/bin/clang-23'), File.join(root, 'links/clang'))
       File.symlink(File.join(root, 'lld/bin/ld.lld'), File.join(root, 'links/ld.lld'))
@@ -390,6 +404,52 @@ class FiascoTest < Minitest::Test
   def test_a_toolchain_needs_clang_and_lld
     error = assert_raises(Erx::Error) { Erx::FiascoToolchain.new(compiler: '/llvm/bin/clang', linker: '') }
     assert_includes error.message, 'ERX_LLD'
+  end
+
+  # A bare ERX_LLD is found as every other build finds it: beside clang, then on PATH.
+  # A program that is not there is refused by name rather than left for make to fail on.
+  def test_a_bare_linker_name_is_found_beside_clang_then_on_path
+    tools = fixture_toolchain('beside')
+    beside = File.join(File.dirname(tools.fetch(:compiler)), 'ld.lld')
+    FileUtils.cp(tools.fetch(:linker), beside, preserve: true)
+    assert_equal beside, Erx::FiascoToolchain.new(compiler: tools.fetch(:compiler), linker: 'ld.lld', path: '').linker
+    elsewhere = fixture_toolchain('elsewhere')
+    clang = File.join(@directory, 'alone/clang')
+    FileUtils.mkdir_p(File.dirname(clang))
+    FileUtils.cp(tools.fetch(:compiler), clang, preserve: true)
+    toolchain = Erx::FiascoToolchain.new(compiler: clang, linker: 'ld.lld', path: "relative:#{File.dirname(elsewhere.fetch(:linker))}")
+    assert_equal elsewhere.fetch(:linker), toolchain.linker
+    { 'ld.lld' => 'ERX_LLD', File.join(@directory, 'none/ld.lld') => 'ERX_LLD' }.each do |linker, variable|
+      error = assert_raises(Erx::Error) { Erx::FiascoToolchain.new(compiler: clang, linker: linker, path: '') }
+      assert_includes error.message, variable, linker
+    end
+    error = assert_raises(Erx::Error) { Erx::FiascoToolchain.new(compiler: File.join(@directory, 'none/clang'), linker: 'ld.lld') }
+    assert_includes error.message, 'ERX_CLANG'
+  end
+
+  # ld.lld keeps its name beside the program its link resolves to; a link that resolves
+  # to a directory holding no program of that name is refused by that name.
+  def test_a_linker_link_with_no_program_of_its_name_beside_its_target_is_refused
+    tools = fixture_toolchain('multicall')
+    lld = File.join(File.dirname(tools.fetch(:linker)), 'lld')
+    File.rename(tools.fetch(:linker), lld)
+    link = File.join(@directory, 'multicall/links/ld.lld')
+    FileUtils.mkdir_p(File.dirname(link))
+    File.symlink(lld, link)
+    error = assert_raises(Erx::Error) { Erx::FiascoToolchain.new(compiler: tools.fetch(:compiler), linker: link) }
+    assert_includes error.message, File.join(File.dirname(lld), 'ld.lld')
+  end
+
+  # Makeconf.local takes the paths as make assignments and the inherited make systems
+  # pass them on to the shell, so only characters neither treats specially are taken:
+  # anything else is refused before any settings are written.
+  def test_a_toolchain_path_make_cannot_take_is_refused
+    ['llvm 23', "llvm\n23", 'llvm#23', 'llvm$23', 'llvm;23', 'llvm`23', 'llvm"23', "llvm'23",
+     'llvm(23', 'llvm23\\'].each do |name|
+      tools = fixture_toolchain(name)
+      error = assert_raises(Erx::Error, name.inspect) { Erx::FiascoToolchain.new(**tools) }
+      assert_includes error.message, 'make cannot take', name.inspect
+    end
   end
 
   def test_the_user_headers_are_outputs_of_the_build

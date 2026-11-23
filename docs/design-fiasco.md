@@ -3839,21 +3839,31 @@ from `ERX_CLANG` and `ld.lld` from `ERX_LLD`, the two variables every other erXo
 of that prefix runs. The toolchain reaches the inherited make systems through `Makeconf.local`
 files, never the make command line: the kernel build directory's (`CC`, `CXX`, `CPP=clang-cpp`,
 `LD=ld.lld` and the `llvm-` tools) and the assembled L4Re source's (`CLANG` as clang's directory,
-`LD = ld.lld -m $(LD_EMULATION)` and the `llvm-` tools). The fork carries five small edits for it:
-the kernel's `Makeconf` drops `ASFLAGS-clang += -no-integrated-as`, so clang assembles `.S` files
-with its integrated assembler, and uses the `CPP` that `Makeconf.local` names as given, with no
-`CROSS_COMPILE` prefix; `mk/mk/Makeconf` admits clang 23 in `CC_WHITELIST-clang`; and
-`kern/arm/Makerules.KERNEL.arm` keeps `.dynsym` and `.dynstr` in the raw `bootstrap` image,
-because `llvm-objcopy` refuses to remove them while the dynamic relocation section links to them
-(they lie inside the loaded range, so only those bytes change). The fifth makes the AArch64
-`bootstrap` relocate itself under LLD as under GNU ld: `_start` takes its link address from
-`_start_link_addr`, an absolute symbol of `bootstrap.arm.ld` that no relocation touches, rather
-than from its GOT slot, a load LLD may relax into the run-time address of `_start`; LLD gets
-`--apply-dynamic-relocs`, so every relocated word holds its link-time value, which a bootstrap
-without an MMU needs because it relocates nothing; the relocator reaches `_DYNAMIC`
-through a namespace-scope hidden declaration, which clang addresses PC-relatively; and the
-relocator names the format it applies in `bootstrap_reloc_tag`, so `bootstrap.arm.ld` fails the
-link on a dynamic relocation of the format the relocator would skip without a word.
+`LD = ld.lld -m $(LD_EMULATION)` and the `llvm-` tools). The fork carries seven small edits for it:
+
+1. The kernel's `Makeconf` drops `ASFLAGS-clang += -no-integrated-as`, so clang assembles `.S`
+   files with its integrated assembler.
+2. The kernel's `Makeconf` uses the `CPP` that `Makeconf.local` names as given, with no
+   `CROSS_COMPILE` prefix.
+3. `mk/mk/Makeconf` admits clang 23 in `CC_WHITELIST-clang`.
+4. `kern/arm/Makerules.KERNEL.arm` keeps `.dynsym` and `.dynstr` in the raw `bootstrap` image,
+   because `llvm-objcopy` refuses to remove them while the dynamic relocation section links to
+   them (they lie inside the loaded range, so only those bytes change).
+5. The AArch64 `bootstrap` relocates itself under LLD as under GNU ld: `_start` takes its link
+   address from `_start_link_addr`, an absolute symbol of `bootstrap.arm.ld` that no relocation
+   touches, rather than from its GOT slot, a load LLD may relax into the run-time address of
+   `_start`; LLD gets `--apply-dynamic-relocs`, so every relocated word holds its link-time
+   value, which a bootstrap without an MMU needs because it relocates nothing; the relocator
+   reaches `_DYNAMIC` through a namespace-scope hidden declaration, which clang addresses
+   PC-relatively; and the relocator names the format it applies in `bootstrap_reloc_tag`, so
+   `bootstrap.arm.ld` fails the link on a dynamic relocation of the format the relocator would
+   skip without a word.
+6. Only whole names of the raw `bootstrap` are exported into `bootstrap.fiasco.sym`: its
+   `bootstrap_sed` pattern is anchored at the end of the name, so `_start_link_addr` is not
+   taken for `_start`.
+7. `koptions.cpp`'s initializer of the kernel options gives the two fields erXos adds to them
+   (`erx_pad`, `erx_handoff`), which clang otherwise warns are missing, so the kernel builds
+   without a warning.
 
 **Patches.** These are the changes the release's Fiasco build makes to what Fiasco's kernel does,
 each small and contained in the fork. An entry names its test where it has one, and says so where

@@ -3,6 +3,7 @@
 # frozen_string_literal: true
 
 require_relative 'error'
+require_relative 'host_path'
 
 module Erx
   # The LLVM toolchain that builds Fiasco and L4Re (docs/design-fiasco.md,
@@ -14,17 +15,29 @@ module Erx
   # the target flag they add. CROSS_COMPILE only names the target triple
   # they pass to clang; no program of that prefix runs.
   FiascoToolchain = Data.define(:compiler, :linker) do
-    def initialize(compiler:, linker:)
-      unless [compiler, linker].all? { |path| path.to_s.start_with?('/') }
-        raise Error, "the Fiasco build needs ERX_CLANG and ERX_LLD, absolute paths of LLVM's clang and ld.lld"
+    # A bare linker name is found as every other build finds ERX_LLD (HostPath.find_linker).
+    def initialize(compiler:, linker:, path: ENV.fetch('PATH', ''))
+      unless compiler.to_s.start_with?('/') && !linker.to_s.empty?
+        raise Error, "the Fiasco build needs ERX_CLANG and ERX_LLD, LLVM's clang as an absolute path and its ld.lld"
+      end
+      unless File.file?(compiler) && File.executable?(compiler)
+        raise Error, "ERX_CLANG names no executable compiler: #{compiler.inspect}"
       end
 
       # One spelling for every caller: settings, records and keys name the installed
       # programs, whichever link the environment names, so siblings come from the real
       # installation. ld.lld keeps its name, by which the multi-call lld knows its part,
       # beside the program it resolves to.
-      # A program that is not there stays as given; running it fails.
-      super(compiler: installed(compiler), linker: File.join(File.dirname(installed(linker)), File.basename(linker)))
+      compiler = File.realpath(compiler)
+      found = HostPath.find_linker(linker, compiler: compiler, path: path)
+      raise Error, "ERX_LLD names no executable linker: #{linker.inspect}" unless found
+      installed = File.realpath(found)
+      linker = File.join(File.dirname(installed), File.basename(found))
+      unless File.file?(linker) && File.executable?(linker)
+        raise Error, "ERX_LLD resolves to #{installed.inspect}, beside which is no executable #{linker.inspect}"
+      end
+      { compiler: compiler, linker: linker }.each { |variable, program| check_make_word(variable, program) }
+      super(compiler: compiler, linker: linker)
     end
 
     # LLVM's binary tool of that name, beside clang: program('nm') is llvm-nm.
@@ -51,8 +64,6 @@ module Erx
 
     private
 
-    def installed(path) = File.exist?(path) ? File.realpath(path) : path
-
     def clang(name) = File.join(File.dirname(compiler), name)
 
     def binary_tools = %w[AR NM OBJCOPY OBJDUMP RANLIB SIZE STRIP].to_h { |name| [name, program(name.downcase)] }
@@ -62,9 +73,25 @@ module Erx
     # The target the inherited make systems give clang, as their CROSS_COMPILE.
     CROSS_COMPILE = 'aarch64-none-elf-'
 
+    # The characters a toolchain path may have. Makeconf.local takes each path as
+    # written into a make assignment, and the inherited make systems hand it to the
+    # shell in their recipes, so only characters neither make nor the shell gives a
+    # meaning are taken; an allow-list, matched on the bytes, so a new special
+    # character or invalid UTF-8 is refused rather than passed on.
+    MAKE_WORD = %r{\A[A-Za-z0-9._+@/-]+\z}
+
     # The toolchain the environment names.
     def self.from_environment(environment = ENV)
       new(compiler: environment.fetch('ERX_CLANG', ''), linker: environment.fetch('ERX_LLD', ''))
+    end
+
+    private
+
+    def check_make_word(variable, program)
+      return if program.b.match?(MAKE_WORD)
+
+      raise Error, "the Fiasco #{variable} path #{program.inspect} has a character other than " \
+                   'A-Z a-z 0-9 . _ + @ / -, which make cannot take'
     end
   end
 end

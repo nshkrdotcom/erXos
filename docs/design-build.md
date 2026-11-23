@@ -74,11 +74,12 @@ path also names the helpers a driver runs from its install by path
 * **Fiasco build** is recorded in place: its key is the
   captured inputs' record (FiascoInputs), the build tools' own Ruby, the
   compiler and the environment the build runs in. Its `PATH` holds the
-  directory each package it uses really lives in (GNU make, clang, `ld.lld`
-  and LLVM's binary tools, the host compilers for its Kconfig and L4Re host tools (`gcc` and `g++` on macOS, `cc`
+  directory each package it uses really lives in (GNU make, the host compilers for its Kconfig and L4Re host tools (`gcc` and `g++` on macOS, `cc`
   and `c++` elsewhere; passed as `HOSTCC`, `HOST_CC` and `HOST_CXX`), gawk, dtc and perl) and, after them, the operating system's directories, whose cp,
   find, ln and sed the build runs in their POSIX forms, and the key names every
-  program in the former that is not a system directory. A directory the caller's `PATH` also names (the
+  program in the former that is not a system directory. The LLVM toolchain
+  is not on it: the build names clang, `ld.lld` and LLVM's binary tools by
+  absolute path in its `Makeconf.local` files. A directory the caller's `PATH` also names (the
   FreeBSD `/usr/local/bin`, shared by every package) is on the build's `PATH`
   only as such a home, so every program in it is in the key. A
   hit also needs the image, the kernel, sigma0, the libraries, the user

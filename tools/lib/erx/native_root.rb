@@ -352,7 +352,7 @@ module Erx
       compiles = sources.map { |source| compile_record(source, directory: directory) }
       linked = {
         'version' => 1, 'kind' => 'linked', 'artifact' => reference(program),
-        'linker_map' => reference(map_path(program)).merge('format' => 'lld', 'directory' => '.'),
+        'linker_map' => reference(map_path(program)).merge('directory' => '.'),
         'compiles' => compiles, 'archives' => [], 'inputs' => [reference(File.join(@root, script))]
       }
       receipt = File.join(directory, "#{File.basename(program)}.receipt.json")

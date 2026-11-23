@@ -13,6 +13,14 @@ require 'fileutils'
 
 module Erx
   module PackHostFuzz
+    # An LLD link map (lld/ELF/MapFile.cpp): header, .text with root.o's input
+    # section, and the string table LLD writes last.
+    LLD_MAP_SEED = "             VMA              LMA     Size Align Out     In      Symbol\n" \
+                   "           10000            10000        4     4 .text\n" \
+                   "           10000            10000        4     4         root.o:(.text)\n" \
+                   "               0                0       10     1 .shstrtab\n" \
+                   "               0                0       10     1         <internal>:(.shstrtab)\n"
+
     module_function
 
     def run(root:, iterations: 20_000, seed: 1)
@@ -26,7 +34,7 @@ module Erx
                 'loads' => [{ 'source_offset' => 0, 'file_offset' => 4096, 'mem_offset' => 0,
                               'file_size' => 128, 'mem_size' => 128, 'prot' => 5, 'flags' => 0 }] }
       seeds = [JSON.generate(reply).b, "root.o: source.c header.h\n".b,
-               "10000 10000 20 4 root.o:(.text)\n".b]
+               LLD_MAP_SEED.b]
       Dir.mktmpdir('erx-receipt-fuzz-') do |directory|
         receipt, artifact = receipt_seed(directory)
         seeds << JSON.generate(receipt).b
@@ -49,7 +57,7 @@ module Erx
             when 1
               PackProvenance.dependencies(bytes)
             when 2
-              PackProvenance.contributors(bytes, format: 'lld')
+              PackProvenance.contributors(bytes)
             when 3
               File.binwrite(receipt_path, bytes)
               catalog = fixed.merge(BuildInputs.capture(root: directory, paths: [receipt_path]))
@@ -69,13 +77,13 @@ module Erx
                 'root.c' => "/* SPDX-License-Identifier: BSD-2-Clause */\n",
                 'root.o' => 'object bytes', 'root.elf' => 'artifact bytes',
                 'root.d' => "root.o: root.c\n",
-                'root.map' => "10000 10000 4 4 root.o:(.text)\n" }
+                'root.map' => LLD_MAP_SEED }
       references = files.to_h do |name, bytes|
         File.binwrite(File.join(directory, name), bytes)
         [name, { 'path' => name, 'sha256' => Digest::SHA256.hexdigest(bytes) }]
       end
       receipt = { 'version' => 1, 'kind' => 'linked', 'artifact' => references.fetch('root.elf'),
-                  'linker_map' => references.fetch('root.map').merge('format' => 'lld', 'directory' => '.'),
+                  'linker_map' => references.fetch('root.map').merge('directory' => '.'),
                   'compiles' => [{ 'object' => references.fetch('root.o'),
                                    'dependency' => references.fetch('root.d'), 'directory' => '.',
                                    'sources' => [references.fetch('root.c')] }],

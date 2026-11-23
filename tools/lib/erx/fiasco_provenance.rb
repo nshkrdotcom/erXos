@@ -599,7 +599,7 @@ module Erx
 
     def audit_executable(name, artifact, map)
       directory = File.dirname(map)
-      contributions = PackProvenance.contributors(read(map), format: 'lld').map do |input|
+      contributions = PackProvenance.contributors(read(map)).map do |input|
         archive, member = input.match(/\A(.+)\(([^()]+)\)\z/)&.captures
         if archive
           archive_path = File.realpath(File.expand_path(archive, directory))
