@@ -23,20 +23,24 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   taken at a load average of 44 to 55, and find why stock OTP on the host
   is slower than the guest at the same four operations under HVF.
 * [High] benchmarks, the record and the comparison (`tools/lib/erx/bench*.rb`,
-  [design-bench.md](design-bench.md#the-construction)): build `Erx::BenchRecord`, the one writer, into
-  `ERX_BENCH_HISTORY` or `~/erxos-history/bench/<environment>/<run>/`, refusing a destination in the tree;
-  `Erx::BenchCompare`, the noise band, the verdicts and the side-by-side table; benchmark declarations in
-  `tools/lib/erx/benches/`, found by name, with the existing runners moved into them and the chain of name tests
+  [design-bench.md](design-bench.md#the-construction)): `Erx::BenchRecord` with its one writer and
+  `Erx::BenchCompare` with its band and verdicts exist; still to build are the side-by-side table, FD32's
+  predicate, the existing runners moved into declarations in `tools/lib/erx/benches/` and the chain of name tests
   in `tools/erx` deleted; `BenchMeasurement` grown into the validator of `BENCH` lines, with its fuzz target; and
   the three fixes of [Fixing the existing tools](design-bench.md#fixing-the-existing-tools) (`g3`'s TCG ratio,
   `otp-switch`'s observed switches, every runner's output under `build/bench`), with the guide's table in
-  `docs/guide/tracing.md` brought to match. Tests: the tool rows of design-bench.md's Verification, each with its
-  seed.
-* [High] benchmarks, `wake` ([design-bench.md](design-bench.md#1-wake-how-late-a-waiting-thread-runs)): the guest
-  library `test/guest/bench/` (calibration, histogram, `BENCH` lines, with host tests of the histogram), the
-  native bench guest `test/guest/native_bench/` reusing `native_irq`'s handshake and holder and `native_task`'s
-  program, the `bench` QEMU suite with no offload, `park-deadline`, the two wake handshakes, `trigger-take`, and
-  `bench/erx_wake_bench.erl`'s `erlang-timer` on the development image. Lands with its two seeded runs.
+  `docs/guide/tracing.md` brought to match. Tests: the remaining tool rows of design-bench.md's Verification,
+  each with its seed. Open review points of the first slice: a second clone of erXos (its own common git
+  directory, in no listed worktree) is accepted as a history root, which a root-commit check would refuse but
+  the design does not name; `slower` and `faster` are not yet held to a paired run; a cell's summary is
+  supplied beside its histogram rather than derived from it, and it has no sample count.
+* [High] benchmarks, `wake` ([design-bench.md](design-bench.md#1-wake-how-late-a-waiting-thread-runs)): the
+  histogram and the periodic schedule of `test/guest/bench/` and the `bench` QEMU suite, whose cells are pending,
+  exist; still to build are the library's calibration and `BENCH` lines, the native bench guest
+  `test/guest/native_bench/` reusing `native_irq`'s handshake and holder and `native_task`'s program,
+  `park-deadline`, the two wake handshakes, `trigger-take`, and `bench/erx_wake_bench.erl` with
+  `bench/erx_bench_hist.erl` for `erlang-timer` in the `xdomain` bench image, each boot given to the suite as its
+  runner. Lands with its two seeded runs.
 * [Medium] benchmarks, `sched` ([design-bench.md](design-bench.md#2-sched-how-a-cpu-is-shared)): `native_task`
   program modes for the recording spinners, `share-equal`, `share-tasks` and `band-work`; lands with the quantum
   case's seed run.
