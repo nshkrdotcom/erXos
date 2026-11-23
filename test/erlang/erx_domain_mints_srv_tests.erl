@@ -29,10 +29,11 @@ mints_test_() ->
     {setup, fun setup/0, fun cleanup/1,
      fun(_) -> {inorder, [fun installs/0, {timeout, 20, fun restart/0}, fun grantee_restart/0, fun foreign_mint/0, {timeout, 20, fun last_end/0}]} end}.
 
-%% Template 0's sessions, beside a (5) and b (6), each get a grant of their own.
+%% A session's line minted for b (lines/0).
 lines_test_() ->
     {setup, fun setup/0, fun cleanup/1, fun(_) -> {timeout, 20, fun lines/0} end}.
 
+%% Template 0's sessions, beside a (5) and b (6), each get a grant of their own.
 sessions_test_() ->
     {setup, fun() -> setup(?ERX_SERVICE_WINDOWS) end, fun cleanup/1, fun(_) -> {timeout, 20, fun sessions/0} end}.
 
@@ -132,7 +133,7 @@ session_call() ->
 %% The library's connect call for the pair of A and B, past every other call.
 connect_of(A, B) ->
     case next_connect() of
-        Call when element(2, Call) =:= A, element(3, Call) =:= B -> Call;
+        {connect, A, B, _, _} = Call -> Call;
         timeout -> timeout;
         _Other -> connect_of(A, B)
     end.

@@ -152,9 +152,10 @@ with any other term to refuse. {error, badarg} for a Name that is no atom or a M
 that is no process of this domain.
 
 A session names its lines this way, its line to the web domain as `web_line`
-(erx_web_line_app) and to the SSH domain as `ssh_line` (erx_ssh_line_app), which
-the domain service keeps for erx_domain:line/3 until the session ends and mints
-nothing for.
+(erx_web_line_app) and to the SSH domain as `ssh_line` (erx_ssh_line_app), under
+names of ?ERX_LINES, and the domain service sends a line's mint request only for
+an erx_domain:line/4 of the system domain's, naming its grantee and its opening
+(docs/design-system.md, "A session's lines").
 """.
 -spec provide(atom(), pid()) -> ok | {error, badarg | reported}.
 provide(Name, Mint) when is_atom(Name), is_pid(Mint), node(Mint) =:= node() ->
@@ -227,7 +228,8 @@ Starts a facet of Callback for Grant. Opts may name exports, the export table's
 module (erx_dist), for a host test's stand-in. {error, unchecked_operations} for a
 grant that lists operations to a callback without operation/1, {error, badarg} for
 operations that are no list or an ends_with that names anything but processes and
-ports of this node, and {error, Reason} when the callback's init fails,
+ports of this node, {error, timeout} when the facet has not started within five
+seconds, by then killed and ended, and {error, Reason} when the callback's init fails,
 when a process or port of ends_with has already ended, or when the export table refuses the
 export.
 """.
@@ -259,7 +261,8 @@ start(Callback, Grant, Operations, Exports) ->
     after ?START_TIMEOUT ->
             %% Killed, and answered only once its 'DOWN' is taken, so no facet that
             %% failed to start outlives the answer (docs/design-system.md, "A session's
-            %% lines", L4).
+            %% lines", L4). An acknowledgement sent just before the kill precedes the
+            %% 'DOWN' and is dropped, so none stays in a long-lived caller's queue.
             exit(Pid, kill),
             receive {'DOWN', Monitor, process, Pid, _Reason} -> ok end,
             receive {Tag, ok} -> ok after 0 -> ok end,
