@@ -680,7 +680,7 @@ erx_dom_lib_pci_mode(erx_dom_lib_t *lib, uint32_t index, uint32_t mode)
 	erx_dom_device_t *record;
 
 	if (index >= lib->view.ndevices || lib->view.devices[index].selector != ERX_MF_SELECTOR_PCI ||
-	    mode > ERX_PCIE_MODE_MASTERING)
+	    mode > UINT8_MAX || erx_pcie_mode_name((uint8_t)mode) == NULL)
 		return (ERX_EINVAL);
 	record = &lib->device_records[index];
 	/* A raise only for a function a living domain holds and its catalogue gives. */

@@ -1674,7 +1674,7 @@ pci_bar_in_sets(const erx_pcie_bar_t *bar, bool ready)
 {
 	const bool placed = (bar->flags & ERX_PCIE_BAR_PLACED) != 0;
 
-	if (bar->kind > ERX_PCIE_BAR_IO || (bar->flags & ~ERX_PCIE_BAR_FLAGS_KNOWN) != 0 ||
+	if (erx_pcie_bar_kind_name(bar->kind) == NULL || (bar->flags & ~ERX_PCIE_BAR_FLAGS_KNOWN) != 0 ||
 	    bar->size_log2 > ERX_PCIE_BAR_SIZE_LOG2_WIDE)
 		return (false);
 	if (!placed)
@@ -1711,7 +1711,7 @@ pci_report_well_formed(const erx_pcie_bridge_t *facts, const erx_pcie_function_t
 			    report[other].function == record->function)
 				return (pci_refuse(refusal, at, "function"));
 		}
-		if (record->state < ERX_PCIE_STATE_READY || record->state > ERX_PCIE_STATE_MALFORMED)
+		if (erx_pcie_state_name(record->state) == NULL)
 			return (pci_refuse(refusal, at, "state"));
 		for (uint32_t bar = 0; bar < PCI_BARS; bar++) {
 			const erx_pcie_bar_t *const this = &record->bars[bar];

@@ -56,7 +56,7 @@
  *   layout ROW BUS.DEVICE.FUNCTION placed=STATE state=STATE confirmed=0|1
  *   refused ROW status=STATUS field=FIELD|none
  *   given INDEX cpu=BASE+SIZE|none
- *   mode INDEX unheld=S held=S mode=MODE past=S unconfirmed=S off=S other=S
+ *   mode INDEX unheld=S held=S mode=MODE past=S wide=S unconfirmed=S off=S other=S
  *
  * numbers in hexadecimal for ranges and decimal elsewhere.
  *
@@ -272,7 +272,7 @@ print_modes(erx_dom_lib_t *lib, uint32_t index)
 	erx_dom_device_t *const record = &lib->device_records[index];
 	const erx_dom_device_t kept = *record;
 	erx_dom_pci_bridge_t *bridge = NULL;
-	int unheld, held, past, unconfirmed, off, other;
+	int unheld, held, past, wide, unconfirmed, off, other;
 	unsigned int mode;
 
 	for (uint32_t at = 0; at < lib->view.npci_bridges; at++) {
@@ -284,6 +284,8 @@ print_modes(erx_dom_lib_t *lib, uint32_t index)
 	held = (int)erx_dom_lib_pci_mode(lib, index, ERX_PCIE_MODE_MASTERING);
 	mode = record->setting.mode;
 	past = (int)erx_dom_lib_pci_mode(lib, index, ERX_PCIE_MODE_MASTERING + 1);
+	/* A mode past a byte, which cast to the setting's byte would read as off. */
+	wide = (int)erx_dom_lib_pci_mode(lib, index, UINT8_MAX + 1u);
 	unconfirmed = -2;
 	if (bridge != NULL && bridge->nlayouts > 0) {
 		const erx_dom_pci_bridge_t confirmed = *bridge;
@@ -295,8 +297,8 @@ print_modes(erx_dom_lib_t *lib, uint32_t index)
 	}
 	off = (int)erx_dom_lib_pci_mode(lib, index, ERX_PCIE_MODE_OFF);
 	other = (int)erx_dom_lib_pci_mode(lib, lib->view.devices[index].bridge, ERX_PCIE_MODE_OFF);
-	printf("mode %" PRIu32 " unheld=%d held=%d mode=%u past=%d unconfirmed=%d off=%d other=%d\n", index, unheld,
-	    held, mode, past, unconfirmed, off, other);
+	printf("mode %" PRIu32 " unheld=%d held=%d mode=%u past=%d wide=%d unconfirmed=%d off=%d other=%d\n", index,
+	    unheld, held, mode, past, wide, unconfirmed, off, other);
 	*record = kept;
 }
 

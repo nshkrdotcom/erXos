@@ -789,7 +789,7 @@ class DomPlannerTest < Minitest::Test
     assert_equal ["layout #{row} 1.0.0 placed=1 state=1 confirmed=1"], lines.grep(/\Alayout /)
     # A pci row's mode: a raise only with a holder and a confirmed layout, a mode in the set,
     # the lowering always, and no write to a row that is not a pci row.
-    assert_equal ['unheld=-1 held=0 mode=2 past=-1 unconfirmed=-1 off=0 other=-1'],
+    assert_equal ['unheld=-1 held=0 mode=2 past=-1 wide=-1 unconfirmed=-1 off=0 other=-1'],
                  lines.grep(/\Amode /).map { |line| line.split.drop(2).join(' ') }
     # The incarnation answered: written only to a bridge its domain holds, 0 never.
     assert_equal ["answered #{row} before=0 unheld=-1 none=-1 held=0 other=-1 after=9"], lines.grep(/\Aanswered /)
