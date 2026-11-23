@@ -231,6 +231,13 @@ class DomCoreTest < Minitest::Test
                     'a display name holding a NUL, or longer than a name, is refused'
     assert_includes lines, 'ctor partial_owned 0 3 0 4294967295 7',
                     'a partial-boot domain has no connection row and its id for a name'
+    # No plan sets the boot page's supervised flag until erx_code sends start loads
+    # (docs/todo-domains.md): a supervised code server would wait for one until its
+    # domain's boot timeout ended it.
+    # det is the machine's.
+    %w[request configured session partial].each do |origin|
+      assert_includes lines, "ctor boot_flags #{origin} 0 1", "#{origin}'s boot flags carry no supervised"
+    end
   end
 
   # A7: a plan that installs a foreign gate, or more rights than its grants

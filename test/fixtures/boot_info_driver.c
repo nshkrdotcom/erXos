@@ -252,7 +252,7 @@ test_nodes_and_flags(void)
 		{ "a@b", 3, true }, { "", 0, false }, { "ab", 2, false }, { "@b", 2, false }, { "a@", 2, false },
 		{ "a@b@c", 5, false }, { "a\0@b", 4, false },
 	};
-	const uint32_t known = ERX_BOOT_DET | ERX_BOOT_INSTALLED_ONLY | ERX_BOOT_ROOT;
+	const uint32_t known = ERX_BOOT_DET | ERX_BOOT_INSTALLED_ONLY | ERX_BOOT_ROOT | ERX_BOOT_SUPERVISED;
 
 	for (size_t at = 0; at < COUNT(nodes); at++) {
 		erx_boot_inputs_t inputs = good_inputs();

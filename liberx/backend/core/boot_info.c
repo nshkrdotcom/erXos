@@ -8,7 +8,6 @@
 #include "erx/boot_words.h"
 #include "liberx/backend/core/boot_info.h"
 
-#define BOOT_FLAGS_KNOWN	(ERX_BOOT_DET | ERX_BOOT_INSTALLED_ONLY | ERX_BOOT_ROOT)
 #define BOOT_PROGRAM		"beam"
 #define BOOT_FLAG_DOTTED	"-name"
 #define BOOT_FLAG_PLAIN		"-sname"
@@ -165,7 +164,7 @@ build_plan(const erx_boot_inputs_t *inputs, size_t *args_len, size_t *env_len, s
 {
 	erx_boot_info_status_t status;
 
-	if ((inputs->flags & ~(uint32_t)BOOT_FLAGS_KNOWN) != 0)
+	if ((inputs->flags & ~(uint32_t)ERX_BOOT_FLAGS_KNOWN) != 0)
 		return (ERX_BOOT_INFO_FLAGS);
 	if (inputs->limits.reserved != 0)
 		return (ERX_BOOT_INFO_RESERVED);
@@ -277,7 +276,7 @@ erx_boot_info_read(const void *page, size_t size, erx_boot_view_t *view)
 		return (ERX_BOOT_INFO_VERSION);
 	if (info->abi_version != ERX_ABI_VERSION)
 		return (ERX_BOOT_INFO_ABI_VERSION);
-	if ((info->flags & ~(uint32_t)BOOT_FLAGS_KNOWN) != 0)
+	if ((info->flags & ~(uint32_t)ERX_BOOT_FLAGS_KNOWN) != 0)
 		return (ERX_BOOT_INFO_FLAGS);
 	if (!all_zero(info->padding_0, sizeof(info->padding_0)) || !all_zero(info->padding_1, sizeof(info->padding_1)) ||
 	     info->limits.reserved != 0)

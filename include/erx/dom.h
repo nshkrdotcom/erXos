@@ -1083,6 +1083,13 @@ erx_status_t	erx_dom_plan_configured(const erx_dom_view_t *, uint32_t id,
 erx_status_t	erx_dom_plan_partial(const erx_dom_view_t *, uint32_t id,
 		    uint32_t row, erx_dom_plan_t *plan);
 /*
+ * erx_dom_plan_boot_flags gives the boot page's flags for `plan`, made against
+ * `view`: ERX_BOOT_DET when `det`. It sets no ERX_BOOT_SUPERVISED until
+ * erx_code sends start loads (docs/todo-domains.md).
+ */
+uint32_t	erx_dom_plan_boot_flags(const erx_dom_view_t *view,
+		    const erx_dom_plan_t *plan, bool det);
+/*
  * Whether origin is configured-domain row `row`'s: ERX_DOM_CONFIGURED of
  * that row. False for every other origin, and so
  * for ERX_MF_NONE, which names the system domain and no configured row.

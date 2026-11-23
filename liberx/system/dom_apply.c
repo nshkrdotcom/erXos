@@ -756,7 +756,8 @@ apply_bootinfo(apply_t *apply)
 		return (ERX_EINVAL);
 	inputs.node = node;
 	inputs.domain_id = spec->id;
-	inputs.flags = apply->lib->det ? ERX_BOOT_DET : 0;
+	inputs.flags = erx_dom_plan_boot_flags(&apply->lib->view, plan,
+	    apply->lib->det);
 	inputs.pack_flags = apply->lib->pack_flags;
 	inputs.hwcap = apply->lib->hwcap;
 	inputs.hwcap2 = apply->lib->hwcap2;

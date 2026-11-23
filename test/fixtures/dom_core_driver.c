@@ -674,6 +674,9 @@ constructors(void)
 	    plan.spec.version, plan.spec.origin.kind, plan.spec.origin.record,
 	    plan.spec.crash, plan.spec.system_lane, (unsigned)plan.parent,
 	    plan.spec.strings[5]);
+	printf("ctor boot_flags request %u %u\n",
+	    erx_dom_plan_boot_flags(&view, &plan, false),
+	    erx_dom_plan_boot_flags(&view, &plan, true));
 	printf("ctor configured_row_out %d\n",
 	    (int)erx_dom_plan_configured(&view, 6, 1, ERX_DOM_PID_NONE, &plan));
 	printf("ctor partial_row_out %d\n",
@@ -682,6 +685,9 @@ constructors(void)
 	printf("ctor configured_owned %d %u %u %u %.*s\n", (int)status,
 	    plan.spec.origin.kind, plan.spec.origin.record, (unsigned)plan.parent,
 	    (int)plan.spec.name_len, plan.spec.name);
+	printf("ctor boot_flags configured %u %u\n",
+	    erx_dom_plan_boot_flags(&view, &plan, false),
+	    erx_dom_plan_boot_flags(&view, &plan, true));
 	/* A display domain's environment is its row's words, then its display's. */
 	configured.env = "LANG=C";
 	configured.env_len = sizeof("LANG=C");
@@ -707,6 +713,9 @@ constructors(void)
 	    plan.spec.flags, plan.spec.runtime_limits.atoms,
 	    (unsigned)(plan.spec.memory / MIB), plan.spec.domain_pid.number,
 	    (int)plan.spec.name_len, plan.spec.name, plan.spec.env_len);
+	printf("ctor boot_flags session %u %u\n",
+	    erx_dom_plan_boot_flags(&view, &plan, false),
+	    erx_dom_plan_boot_flags(&view, &plan, true));
 	/*
 	 * A session's principal, then its default display, are words after the
 	 * template's environment; a display name with a NUL or longer than a
@@ -733,6 +742,9 @@ constructors(void)
 	printf("ctor partial_owned %d %u %u %u %.*s\n", (int)status,
 	    plan.spec.origin.kind, plan.connection, plan.connection_row,
 	    (int)plan.spec.name_len, plan.spec.name);
+	printf("ctor boot_flags partial %u %u\n",
+	    erx_dom_plan_boot_flags(&view, &plan, false),
+	    erx_dom_plan_boot_flags(&view, &plan, true));
 }
 
 static int

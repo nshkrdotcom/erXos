@@ -604,6 +604,22 @@ dom_spec_request(const erx_dom_view_t *view,
 	return (ERX_OK);
 }
 
+/*
+ * The boot page's flags of a plan: det when the machine runs in deterministic
+ * mode. No plan sets supervised: a supervised domain's code server waits
+ * for its start load (docs/design-live.md, "The code server"), and nothing
+ * sends start loads until erx_code's targets are built (docs/todo-domains.md,
+ * "code service, start loads to supervised domains"). Leaving it clear fails
+ * safe: the code server starts the domain at once on its release, and nothing
+ * is sent a start load it would wait for.
+ */
+uint32_t
+erx_dom_plan_boot_flags(const erx_dom_view_t *view ERX_UNUSED,
+    const erx_dom_plan_t *plan ERX_UNUSED, bool det)
+{
+	return (det ? ERX_BOOT_DET : 0);
+}
+
 bool
 erx_dom_from_row(const erx_dom_origin_t *origin, uint32_t row)
 {
