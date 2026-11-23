@@ -90,7 +90,10 @@ class Bcm2711PinsTest < Minitest::Test
     # A refused plan writes nothing.
     ["apply 24 0 0 0 00000fc0 0 0 #{UART0} 14:5", 'refused 00000000 00000000 00000000 00000fc0 00000000 00000000'],
     # Rows that change nothing write nothing, and the words read back as planned.
-    ['apply 24 0 0 0 00000fff 0 0 30:3 31:3', 'set 00000000 00000000 00000000 00000fff 00000000 00000000']
+    ['apply 24 0 0 0 00000fff 0 0 30:3 31:3', 'set 00000000 00000000 00000000 00000fff 00000000 00000000'],
+    # A 31st row refuses the whole plan and writes nothing, though the 30 before it are valid.
+    ["apply 24 0 0 0 00000fc0 0 0 #{(28..57).map { |gpio| "#{gpio}:0" }.join(' ')} 30:3",
+     'refused 00000000 00000000 00000000 00000fc0 00000000 00000000']
   ].freeze
 
   # Under a core that keeps reserved bits, GPFSEL5's write is refused and the word keeps what

@@ -8,7 +8,9 @@
  * liberx/backend/fiasco/bcm2711_pins.c, over a stand-in register block in memory, one a
  * line: "apply LEN W0 W1 W2 W3 W4 W5 G:A ..." with the window's length in bytes, the six
  * GPFSEL words the block holds in hex and each row's pin and alternate. The answer is the
- * shim's outcome, "set", "refused" or "mismatch", and the six words the block holds after.
+ * shim's outcome, "set", "refused" or "mismatch", and the six words the block holds after. It
+ * keeps one row more than the core takes and hands the shim the true count, so a request of
+ * too many rows reaches the shim whole and not as the prefix the core would accept.
  */
 
 #include <inttypes.h>
@@ -50,7 +52,7 @@ main(void)
 	char request[512];
 
 	while (fgets(request, sizeof(request), stdin) != NULL) {
-		erx_mf_onboard_pin_t rows[ERX_BCM2711_PINS_ROWS_MAX];
+		erx_mf_onboard_pin_t rows[ERX_BCM2711_PINS_ROWS_MAX + 1];
 		uint32_t block[ERX_BCM2711_PINS_REGISTERS];
 		erx_mmio_t device;
 		size_t count = 0;
@@ -66,7 +68,7 @@ main(void)
 			word = strtok(NULL, " \n");
 			block[at] = word == NULL ? 0 : (uint32_t)strtoul(word, NULL, 16);
 		}
-		while ((word = strtok(NULL, " \n")) != NULL && count < ERX_BCM2711_PINS_ROWS_MAX) {
+		while ((word = strtok(NULL, " \n")) != NULL && count < sizeof(rows) / sizeof(rows[0])) {
 			unsigned gpio, alternate;
 
 			if (sscanf(word, "%u:%u", &gpio, &alternate) != 2)
