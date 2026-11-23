@@ -8,6 +8,7 @@ require 'time'
 require_relative 'bounded_file'
 require_relative 'error'
 require_relative 'git_environment'
+require_relative 'json_input'
 require_relative 'source_revision'
 
 module Erx
@@ -235,11 +236,10 @@ module Erx
     end
 
     def parse(path)
-      value = JSON.parse(BoundedFile.read(path, maximum: FILE_BYTES))
+      value = JsonInput.parse(BoundedFile.read(path, maximum: FILE_BYTES),
+                              max_bytes: FILE_BYTES, label: "bench record #{path}")
       check(value.is_a?(Hash) && value['format'] == FORMAT, "#{path} is not of format #{FORMAT}")
       value
-    rescue JSON::ParserError
-      raise Error, "bench record: #{path} does not parse"
     end
 
     def serialized(record)
