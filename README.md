@@ -361,11 +361,13 @@ Eshell V17.1.1 (type help(). for help)
 * The USB domain's mass-storage function serves a Bulk-Only USB stick as a
   medium: it reads the capacity and hands reads, writes and flushes to the
   medium's block transport, and it logs one line when a medium is served
-  and one when it ends. Drives are numbered `disk0` upward across the
-  machine, and a medium takes its USB domain's lowest free drive. On the
-  Pi 4 a USB stick is served as a drive; host tests check the function
-  against a model stick on a fake controller. No QEMU suite runs it, and
-  no file system mounts a drive yet.
+  and one when it ends. On the Pi 4 a USB stick is served this way. On
+  QEMU `virt` the `usb` suite serves a `usb-storage` stick beside the
+  keyboard, reads its sectors, writes, reads back and flushes them through
+  the medium's transport, ejects its medium and unplugs it; host tests
+  check the function against a model stick on a fake controller. Drive
+  numbers (`disk0` upward) and the window above a medium are designed but
+  not built, so no file system mounts a USB stick yet.
 
 **Networking**
 

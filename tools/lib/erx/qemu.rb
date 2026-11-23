@@ -233,8 +233,9 @@ module Erx
         valid = functions.is_a?(Hash) && !functions.empty? &&
                 functions.all? { |slot, device| slot.is_a?(Integer) && slot.between?(1, 31) && PCIE_DEVICES.include?(device) }
         raise Error, "PCIe functions are slots 1 to 31, each one of #{PCIE_DEVICES.join(', ')}" unless valid
-        unless usb.is_a?(Array) && usb.all? { |device| USB_DEVICES.include?(device) } && (usb.empty? || functions.size == 1)
-          raise Error, "USB devices are each one of #{USB_DEVICES.join(', ')}, on a plan's one controller"
+        unless usb.is_a?(Array) && usb.all? { |device| USB_DEVICES.include?(device) || device.is_a?(Disk) } &&
+               (usb.empty? || functions.size == 1)
+          raise Error, "USB devices are each one of #{USB_DEVICES.join(', ')} or a disk, on a plan's one controller"
         end
 
         super(qmp_socket: qmp_socket.dup.freeze, functions: functions.dup.freeze, usb: usb.dup.freeze)
@@ -242,10 +243,23 @@ module Erx
 
       # One -device for each function, at its slot of the host bridge's bus, named by its slot,
       # then one for each USB device on the controller's bus, `<id>.0` in QEMU's naming
-      # (docs/system/devices/usb.rst).
+      # (docs/system/devices/usb.rst). A disk on the bus is a removable usb-storage stick over
+      # its raw image, its drive with no front end of its own; the n-th stick is named
+      # QemuPlan.usb_stick_id(n), which QMP's device_del takes, and its drive that name with
+      # `drive` after it, which QMP's eject takes.
       def arguments
         controllers = functions.sort.flat_map { |slot, device| ['-device', "#{device},addr=#{slot},id=pcie#{slot}"] }
-        controllers + usb.flat_map { |device| ['-device', "#{device},bus=pcie#{functions.keys.first}.0"] }
+        bus = "pcie#{functions.keys.first}.0"
+        numbers = usb.grep(Disk).each_with_index.to_h { |disk, number| [disk.object_id, number] }
+        controllers + usb.flat_map do |device|
+          case device
+          in Disk
+            id = QemuPlan.usb_stick_id(numbers.fetch(device.object_id))
+            ['-drive', "if=none,id=#{id}drive,file=#{device.path},format=raw",
+             '-device', "usb-storage,bus=#{bus},drive=#{id}drive,removable=on,id=#{id}"]
+          in String then ['-device', "#{device},bus=#{bus}"]
+          end
+        end
       end
     end
     # The PCIe devices a plan may attach.
@@ -286,6 +300,9 @@ module Erx
     CARD_BYTES = [1 << 31, 1 << 32].freeze
 
     module_function
+
+    # The QEMU id of a plan's stick number, the first usbstick0 (Pcie#arguments). Pure.
+    def usb_stick_id(number) = "usbstick#{number}"
 
     # The size QEMU's model is given for a card of bytes: the smallest of CARD_BYTES that
     # holds it. Pure.

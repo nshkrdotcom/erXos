@@ -6,10 +6,12 @@ require_relative '../usb_boot'
 require_relative '../qemu_gate'
 
 # The usb suite on QEMU virt under HVF (tools/lib/erx/usb_boot.rb): qemu-xhci with a usb-kbd
-# behind the PCIe domain, held by the development manifest's USB domain. Its cases are cells
-# of the boot, one per enumeration stage and one for the key typed through QMP. Its boot carries a QMP socket, which no remote host
-# serves, so it does not declare offload. check_qemu builds the kernel before any suite runs,
-# so this suite does not.
+# and a usb-storage stick behind the PCIe domain, held by the development manifest's USB
+# domain. Its cases are cells of the boot: one per enumeration stage, one for the key typed
+# through QMP, and the stick's, from its medium served to its sectors read, written, read
+# back and flushed, its unplugging and its log lines. Its boot carries a QMP socket and a
+# disk, which no remote host serves, so it does not declare offload. check_qemu builds the
+# kernel before any suite runs, so this suite does not.
 cpus = [1]
 Erx::QemuGate.declare_suite(
   cells: Erx::QemuGate.suite_cells(cpus).flat_map { |cell| [cell, *Erx::UsbBoot::SIDE_CELLS.map { |side| "#{cell}#{side}" }] },

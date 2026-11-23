@@ -12,8 +12,8 @@ module Erx
   # The harness's end of QEMU's machine protocol (QMP) on a UNIX socket QEMU listens on
   # (QemuPlan::Display): one JSON object per line, a greeting, a capabilities command, then
   # commands answered in order with a reply or an error, among events the client skips. It
-  # sends five commands: qmp_capabilities, screendump (format ppm), input-send-event,
-  # query-pci and quit.
+  # sends seven commands: qmp_capabilities, screendump (format ppm), input-send-event,
+  # query-pci, eject, device_del and quit.
   #
   # QEMU is the peer, and what it says is untrusted all the same: every read is bounded
   # (MAX_LINE_BYTES a line, MAX_SKIPPED_EVENTS events between a command and its reply, one
@@ -120,6 +120,17 @@ module Erx
     # the tablet.
     def input_events(events)
       command('input-send-event', { 'events' => events })
+    end
+
+    # Takes the medium out of the drive QEMU names drive, forced, as a hand opens a reader's
+    # tray; the device stays on its bus.
+    def eject(drive)
+      command('eject', { 'device' => drive, 'force' => true })
+    end
+
+    # Unplugs the device QEMU names id, as a hand pulls it out; the guest sees it leave.
+    def device_del(id)
+      command('device_del', { 'id' => id })
     end
 
     # One PCI function as QEMU holds it (query-pci): its place on its bus, its identity, and
