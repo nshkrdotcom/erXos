@@ -17,7 +17,9 @@
 %% See the License for the specific language governing permissions and
 %% limitations under the License.
 %%
-%% Modified by erXos: kernel_sup starts erx_watchdog right after on_load and the
+%% Modified by erXos: kernel_sup starts erx_code_agent, the domain's code server, as a
+%% permanent child right after kernel_safe_sup (docs/design-live.md, "The code server");
+%% kernel_sup starts erx_watchdog right after on_load and the
 %% system log's erx_syslog_sup right after it, before user, and
 %% kernel_safe_sup makes the domain's file version counter and starts the namespace
 %% table's writer, /tmp, /proc, the domain's inspection agent and the process behind
@@ -183,6 +185,17 @@ init([]) ->
                 modules => [?MODULE]},
 
 
+    %% erXos: the domain's code server, permanent, so its end ends the domain; in a
+    %% supervised domain its start returns once the domain's start load is in place, so
+    %% every application after kernel starts over it; ignore in the system domain
+    %% (docs/design-live.md, "The code server").
+    CodeAgent = #{id => erx_code_agent,
+                  start => {erx_code_agent, start_link, []},
+                  restart => permanent,
+                  shutdown => 2000,
+                  type => worker,
+                  modules => [erx_code_agent]},
+
     LoggerSup = #{id => logger_sup,
                   start => {logger_sup, start_link, []},
                   restart => permanent,
@@ -223,7 +236,7 @@ init([]) ->
                   [Code, StdError | EarlyFile] ++
                       [OnLoad, Watchdog, Syslog | LateFile] ++
                       [SigSrv | Peer] ++
-                      [User, LoggerSup, Config, RefC, SafeSup]}};
+                      [User, LoggerSup, Config, RefC, SafeSup, CodeAgent]}};
         _ ->
             DistChildren =
 		%% erXos: start_distribution false leaves out only the carrier's
@@ -249,7 +262,7 @@ init([]) ->
                   [Code, StdError | EarlyFile] ++
                       [OnLoad, Watchdog, Syslog, InetDb | DistChildren] ++ LateFile ++
                       [SigSrv | Peer] ++
-                      [User, LoggerSup, Config, RefC, SafeSup] ++
+                      [User, LoggerSup, Config, RefC, SafeSup, CodeAgent] ++
                       Timer ++ CompileServer}}
     end;
 init(on_load) ->

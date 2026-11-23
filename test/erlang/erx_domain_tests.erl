@@ -1446,3 +1446,30 @@ inspect_view_states_test() ->
                  Seen
          end,
     ?assertEqual([booting, booting, booting, running, ending], [Of(L) || L <- [building, built, running, ready, stopping]]).
+
+%% The code server's report (docs/design-live.md, "The code server") is taken once,
+%% before the ready report: the first is passed to the service only when the reporting
+%% incarnation owns the pid, node and creation both; a pid of another creation, one on
+%% another node, and any other value are refused and counted, and so is every report
+%% after the first.
+code_agent_report_of_another_incarnation_test() ->
+    Own = erx_domain_fake_lib:agent(<<"own">>, 16),
+    Cases = [{Own, Own, 0},
+             {erx_domain_fake_lib:agent(<<"own">>, 5), none, 1},
+             {erx_domain_fake_lib:agent(<<"a">>, 16), none, 1},
+             {undefined, none, 1}],
+    [begin
+         Ref = make_ref(),
+         Pid = erx_domain_pid:start_link(self(), 16, 'own@erxos', Ref),
+         Pid ! {erx_origin, 16, {erx_code_agent, Named}},
+         Pid ! {erx_origin, 16, {erx_code_agent, Own}},
+         Pid ! {erx_origin, 16, {erx_ready, #{connections => Own}}},
+         Got = receive {domain_code_agent, Ref, 16, Agent} -> Agent after 200 -> none end,
+         receive {domain_ready, Ref, 16, _, _} -> ok after 5000 -> error(no_ready) end,
+         Tag = make_ref(),
+         Pid ! {Ref, info, {self(), Tag}},
+         {ok, #{dropped := Dropped}} = receive {Tag, Reply} -> Reply after 5000 -> timeout end,
+         unlink(Pid),
+         exit(Pid, kill),
+         ?assertEqual({Named, Kept, Expected + 1}, {Named, Got, Dropped})
+     end || {Named, Kept, Expected} <- Cases].

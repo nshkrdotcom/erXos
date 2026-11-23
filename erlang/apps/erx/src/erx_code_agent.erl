@@ -100,26 +100,27 @@ init(Parent, Env) ->
 loop(#{env := #{system := SystemId}, core := Core} = State) ->
     Idle = erx_code_agent_core:idle(Core),
     Lifeline = erx_code_agent_core:lifeline(Core),
-    receive
+    Next = receive
         {erx_origin, SystemId, {erx_code_load, Alias, Manifest}} when Idle, is_reference(Alias) ->
-            ?MODULE:loop(take(Alias, Manifest, State));
+            take(Alias, Manifest, State);
         {erx_origin, SystemId, {erx_code_piece, Alias, Hash, Offset, Bytes}}
           when is_reference(Alias), is_binary(Hash), is_integer(Offset), is_binary(Bytes) ->
-            ?MODULE:loop(step({piece, Alias, Hash, Offset, Bytes}, State));
+            step({piece, Alias, Hash, Offset, Bytes}, State);
         {erx_origin, SystemId, {erx_code_published, Alias, Lifeline1}} when is_reference(Alias), is_pid(Lifeline1) ->
-            ?MODULE:loop(step({published, Alias, Lifeline1}, State));
+            step({published, Alias, Lifeline1}, State);
         {'DOWN', Lifeline, process, _Pid, _Reason} ->
-            ?MODULE:loop(step({down, Lifeline}, State));
+            step({down, Lifeline}, State);
         Other when Idle orelse not (is_tuple(Other) andalso tuple_size(Other) =:= 3
                                     andalso element(1, Other) =:= erx_origin
                                     andalso is_tuple(element(3, Other)) andalso tuple_size(element(3, Other)) =:= 3
                                     andalso element(1, element(3, Other)) =:= erx_code_load) ->
             %% A load waits in the mailbox while another is in flight; anything else
             %% of another origin or shape is dropped.
-            ?MODULE:loop(apply_effects([dropped], State))
+            apply_effects([dropped], State)
     after remaining(Core) ->
-        ?MODULE:loop(step(timeout, State))
-    end.
+        step(timeout, State)
+    end,
+    ?MODULE:loop(Next).
 
 %% Step 1's facts from the runtime: which modules are current and which blobs the release
 %% holds. A name with no atom yet names no loaded module, so no atom is made for it.

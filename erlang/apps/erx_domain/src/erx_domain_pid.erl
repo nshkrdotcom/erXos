@@ -23,8 +23,8 @@ it come from the service.
 The pid is also its domain's correspondent. A message from the domain arrives
 as {erx_origin, Id, Msg}, the envelope the system domain's peer puts on every
 frame of the domain's lane (edit 16 of docs/design-runtime.md), and the pid
-acts on Msg only when Id is its own domain's and Msg is init's ready report
-(edit 65) or one of the agent's three answers (docs/design-domains.md,
+acts on Msg only when Id is its own domain's and Msg is the code server's report, init's
+ready report (edit 65) or one of the agent's three answers (docs/design-domains.md,
 "Messages between the domain service and a runtime"). The first report must
 name, as the connection agent, a pid of the domain's own node; the pid keeps
 that agent, the one process of the system domain that does, and passes on
@@ -33,8 +33,13 @@ the report's provides, the mints the domain names for its services
 {domain_ready, Ref, Id, Provides, Inspect}, untouched for the service to
 authenticate, with the inspection agent the report names as `inspect`, kept
 only when the domain's incarnation owns it, and `none` otherwise, and each
-answer as {domain_answer, Ref, Id, Answer}. Every other message, a second report, the
-creator's or any other domain's included, is dropped and counted; the
+answer as {domain_answer, Ref, Id, Answer}. The code server's report,
+{erx_code_agent, Agent}, which `kernel` sends before init's ready report
+(docs/design-live.md, "The code server"), the pid takes once: the first, kept only
+when the domain's incarnation owns Agent, node and creation both, and passed on as
+{domain_code_agent, Ref, Id, Agent}; a first report naming any other value is refused,
+logged and counted, as is every later one. Every other message, a second ready report,
+the creator's or any other domain's included, is dropped and counted; the
 service reads the count with {Ref, info, From}. A process of the system
 domain can write the envelope itself, so the check keeps other domains,
 not the system domain's own trusted processes, from speaking for this one.
@@ -87,9 +92,11 @@ domain.
 
 %% What the pid knows of its domain: its service, id, node and secret, the agent and the
 %% inspection agent its ready report named (none before the report, and none for an
-%% inspection agent it refused) and how many messages it dropped.
+%% inspection agent it refused), the code server it took (none before its report, refused
+%% for a refused one) and how many messages it dropped.
 -type state() :: #{service := pid(), id := pos_integer(), node := node(), ref := reference(),
-                   agent := pid() | none, inspect := pid() | none, port := port() | none,
+                   agent := pid() | none, inspect := pid() | none, code := pid() | none | refused,
+                   port := port() | none,
                    dropped := non_neg_integer()}.
 
 -spec start_link(pid(), pos_integer(), node(), reference()) -> pid().
@@ -97,7 +104,7 @@ start_link(Service, Id, Node, Ref) ->
     %% Not proc_lib: a domain pid ends with {domain_down, Id, Info} at every
     %% end of its domain, which is no crash to report.
     State = #{service => Service, id => Id, node => Node, ref => Ref, agent => none, inspect => none,
-              port => none, dropped => 0},
+              code => none, port => none, dropped => 0},
     spawn_link(fun() -> init(State) end).
 
 init(State) ->
@@ -191,6 +198,20 @@ from_domain({erx_ready, #{connections := Agent} = Report},
     {Inspect, Checked} = inspect_agent(Report, State),
     Service ! {domain_ready, Ref, Id, maps:get(provides, Report, #{}), Inspect},
     Checked#{agent := Agent, inspect := Inspect};
+from_domain({erx_code_agent, Agent},
+            #{service := Service, id := Id, ref := Ref, code := none} = State) ->
+    case is_owned(Agent, State) of
+        true ->
+            Service ! {domain_code_agent, Ref, Id, Agent},
+            State#{code := Agent};
+        false ->
+            logger:notice("erx_domain: domain ~b's code server report named a process it does not own; refused",
+                          [Id]),
+            dropped(State#{code := refused})
+    end;
+from_domain({erx_code_agent, _Agent}, #{id := Id} = State) ->
+    logger:notice("erx_domain: domain ~b sent a second code server report; refused", [Id]),
+    dropped(State);
 from_domain(_Message, #{agent := none} = State) ->
     dropped(State);
 from_domain(Answer, #{service := Service, id := Id, ref := Ref} = State) ->
@@ -219,10 +240,10 @@ inspect_agent(Report, #{id := Id} = State) ->
             {none, dropped(State)}
     end.
 
-inspect_verdict(Report, #{id := Id, node := Node}) ->
+inspect_verdict(Report, #{node := Node} = State) ->
     case maps:find(inspect, Report) of
         {ok, Inspect} when is_pid(Inspect), node(Inspect) =:= Node ->
-            case erx_dist:owner(Inspect) =:= Id of
+            case is_owned(Inspect, State) of
                 true -> {kept, Inspect};
                 false -> refused
             end;
@@ -231,6 +252,12 @@ inspect_verdict(Report, #{id := Id, node := Node}) ->
         error ->
             absent
     end.
+
+%% Whether Name is a pid of the reporting incarnation: its node is the domain's node and
+%% its creation the domain's id, the check a provider's mint passes
+%% (erx_domain_mints:is_owned/3).
+is_owned(Name, #{id := Id, node := Node}) ->
+    is_pid(Name) andalso node(Name) =:= Node andalso erx_dist:owner(Name) =:= Id.
 
 is_answer({erx_connection_mapped, Peer}) -> is_integer(Peer);
 is_answer({erx_connection_unmapped, Peer}) -> is_integer(Peer);
