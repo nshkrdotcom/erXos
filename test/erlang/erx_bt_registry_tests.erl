@@ -58,7 +58,7 @@ attach_hears_the_live_links_test() ->
                  lists:last(Actions)).
 
 set_refusals_test() ->
-    Set = fun(Op) -> {[A], _} = steps([{facet, ?H1, Op, f}]), A end,
+    Set = fun(Op) -> {[A], _} = steps([{facet, ?H1, {attach, a}, f0}, {facet, ?H1, Op, f}]), A end,
     ?assertEqual({reply, f, ok}, Set({set, a, x, <<1, 2, 3, 4>>})),
     ?assertEqual({reply, f, {error, too_long}}, Set({set, a, x, <<1, 2, 3, 4, 5>>})),
     ?assertEqual({reply, f, {error, no_such_characteristic}}, Set({set, a, y, <<>>})),
@@ -67,11 +67,25 @@ set_refusals_test() ->
 
 notify_refusals_test() ->
     C = make_ref(),
-    Joined = [{join, ?L1, C, #{address => ?ADDRESS}, j}],
+    Joined = [{join, ?L1, C, #{address => ?ADDRESS}, j}, {facet, ?H1, {attach, a}, f0}],
     ?assertMatch({[{request, _, {notify, notify, {a, x}, <<1>>}, f}], _},
                  steps(Joined ++ [{facet, ?H1, {notify, C, a, x, <<1>>}, f}])),
     ?assertMatch({[{reply, f, {error, gone}}], _}, steps(Joined ++ [{facet, ?H1, {notify, make_ref(), a, x, <<1>>}, f}])),
     ?assertMatch({[{reply, f, {error, too_long}}], _}, steps(Joined ++ [{facet, ?H1, {indicate, C, a, x, <<1:40>>}, f}])).
+
+%% Only a service's handler sets, notifies and indicates its values (docs/design-bluetooth.md,
+%% "A service belongs to its handler"): another process, the handler of another service or
+%% of none, is refused not_attached, and nothing reaches a link.
+set_notify_and_indicate_only_from_the_handler_test() ->
+    C = make_ref(),
+    Joined = [{join, ?L1, C, #{address => ?ADDRESS}, j}, {facet, ?H1, {attach, a}, f0}, {facet, ?H2, {attach, b}, f1}],
+    Refused = {error, not_attached},
+    ?assertMatch({[{reply, f, Refused}], _}, steps(Joined ++ [{facet, ?H2, {set, a, x, <<1>>}, f}])),
+    ?assertMatch({[{reply, f, Refused}], _}, steps(Joined ++ [{facet, ?H2, {notify, C, a, x, <<1>>}, f}])),
+    ?assertMatch({[{reply, f, Refused}], _}, steps(Joined ++ [{facet, ?H2, {indicate, C, a, x, <<1>>}, f}])),
+    ?assertMatch({[{reply, f, Refused}], _}, steps([{facet, ?H1, {set, a, x, <<1>>}, f}])),
+    %% A handler's end detaches it, so its next set is refused too.
+    ?assertMatch({[{reply, f, Refused}], _}, steps(Joined ++ [{down, ?H1}, {facet, ?H1, {set, a, x, <<1>>}, f}])).
 
 write_without_a_handler_is_unlikely_error_test() ->
     {Actions, _} = steps([{join, ?L1, make_ref(), #{address => ?ADDRESS}, j}, {write, ?L1, 1, {b, y}, <<0>>, req}]),
@@ -181,6 +195,13 @@ check({facet, Caller, {attach, S}, From}, Actions, #model{handlers = H} = M) ->
             ?assertEqual(Hears, length([ok || {event, P, {connected, _, _}} <- Actions, P =:= Caller])),
             M#model{handlers = H#{S => Caller}}
     end;
+check({facet, Caller, Op, From}, Actions, #model{handlers = H} = M)
+  when element(1, Op) =:= set, map_get(element(2, Op), H) =/= Caller;
+       element(1, Op) =:= set, not is_map_key(element(2, Op), H);
+       element(1, Op) =:= notify, map_get(element(3, Op), H) =/= Caller;
+       element(1, Op) =:= notify, not is_map_key(element(3, Op), H) ->
+    ?assertEqual([{reply, From, {error, not_attached}}], Actions),
+    M;
 check({facet, _Caller, {set, S, C, V}, From}, Actions, #model{joined = J, values = Values} = M) ->
     ?assertEqual([{reply, From, ok} | [{to_link, L, {set, {S, C}, V}} || L <- lists:sort(maps:keys(J))]], Actions),
     M#model{values = Values#{{S, C} => V}};
@@ -223,17 +244,23 @@ registry_test_() ->
       fun(_) -> {"a link ending mid-notification answers gone", fun link_ends_mid_notification/0} end,
       fun(_) -> {"a notification's answer reaches the caller", fun notification_answered/0} end]}.
 
-%% A handler sets 1..200 while a link joins in the middle: the link's values, then the sets
-%% it hears, end at the last value, and the sets it hears follow the joined value without
-%% a gap.
+%% A handler sets 1..100, then 101..200 while a link joins: the link's values, then the
+%% sets it hears, end at the last value, and the sets it hears follow the joined value
+%% without a gap. The first hundred are set before the join, so a join answering no
+%% values misses them on any schedule.
 join_races_sets() ->
     Test = self(),
+    Set = fun(Ns) -> [ok = erx_gatt_srv:facet(self(), {set, a, x, <<N:16>>}, ?WAIT_MS) || N <- Ns] end,
     Setter = spawn_link(fun() ->
+                                {ok, _} = erx_gatt_srv:facet(self(), {attach, a}, ?WAIT_MS),
+                                Set(lists:seq(1, 100)),
+                                Test ! first_sets,
                                 receive go -> ok end,
-                                [ok = erx_gatt_srv:facet(self(), {set, a, x, <<N:16>>}, ?WAIT_MS) || N <- lists:seq(1, 200)],
+                                Set(lists:seq(101, 200)),
                                 Test ! set_done
                         end),
     Link = link_stand_in(Test),
+    receive first_sets -> ok after ?WAIT_MS -> error(no_sets) end,
     Setter ! go,
     Link ! join,
     #{values := Values} = receive {joined, Link, Answer} -> Answer after ?WAIT_MS -> error(no_join) end,
@@ -263,20 +290,21 @@ answer_only_from_its_handler() ->
 link_ends_mid_notification() ->
     H1 = handler_stand_in(self(), a),
     {Link, Conn} = joined_link_conn(),
-    Caller = spawn_caller({notify, Conn, a, x, <<1>>}),
+    H1 ! {do, {notify, Conn, a, x, <<1>>}},
     receive {from_link, Link, {'$gen_call', _From, {notify, notify, {a, x}, <<1>>}}} -> ok after ?WAIT_MS -> error(no_request) end,
     Link ! stop,
-    ?assertEqual({error, gone}, caller_answer(Caller)),
+    ?assertEqual({error, gone}, caller_answer(H1)),
     receive {handler, H1, {disconnected, Conn}} -> ok after ?WAIT_MS -> error(no_disconnected) end,
     ?assertEqual({error, gone}, erx_gatt_srv:facet(H1, {notify, Conn, a, x, <<1>>}, ?WAIT_MS)).
 
 notification_answered() ->
     {Link, Conn} = joined_link_conn(),
-    Caller = spawn_caller({indicate, Conn, b, y, <<2>>}),
+    H2 = handler_stand_in(self(), b),
+    H2 ! {do, {indicate, Conn, b, y, <<2>>}},
     receive {from_link, Link, {'$gen_call', From, {notify, indicate, {b, y}, <<2>>}}} -> gen_server:reply(From, ok)
     after ?WAIT_MS -> error(no_request)
     end,
-    ?assertEqual(ok, caller_answer(Caller)).
+    ?assertEqual(ok, caller_answer(H2)).
 
 %% What the advertising carries (docs/design-bluetooth.md, "Advertising"): the UUIDs of
 %% the served services abi/gatt marks `advertise`, and GAP's name and appearance. Every
@@ -342,7 +370,8 @@ joined_link_conn() ->
     Link ! {join, Conn},
     receive {joined, Link, #{table := _}} -> {Link, Conn} after ?WAIT_MS -> error(no_join) end.
 
-%% A handler of Service: attaches and passes on its events.
+%% A handler of Service: attaches, passes on its events and makes the operation of each
+%% `{do, Op}`, answering it to the test.
 handler_stand_in(Test, Service) ->
     Pid = spawn(fun() ->
                         {ok, _} = erx_gatt_srv:facet(self(), {attach, Service}, ?WAIT_MS),
@@ -352,11 +381,11 @@ handler_stand_in(Test, Service) ->
     receive {attached, Pid} -> Pid after ?WAIT_MS -> error(no_attach) end.
 
 handler_loop(Test) ->
-    receive Event -> Test ! {handler, self(), Event}, handler_loop(Test) end.
-
-spawn_caller(Op) ->
-    Test = self(),
-    spawn(fun() -> Test ! {answer, self(), erx_gatt_srv:facet(self(), Op, 10 * ?WAIT_MS)} end).
+    receive
+        {do, Op} -> Test ! {answer, self(), erx_gatt_srv:facet(self(), Op, 10 * ?WAIT_MS)};
+        Event -> Test ! {handler, self(), Event}
+    end,
+    handler_loop(Test).
 
 caller_answer(Caller) ->
     receive {answer, Caller, Answer} -> Answer after ?WAIT_MS -> error(no_answer) end.

@@ -147,13 +147,15 @@ facet({attach, Service}, Caller, From, #core{handlers = Handlers} = Core) ->
                                  <- maps:iterator(Core#core.links, ordered)],
     {[{monitor, Caller} || New] ++ [{reply, From, {ok, maps:get(Service, Core#core.limits)}} | Connected],
      Core#core{handlers = Handlers#{Service => Caller}}};
-facet({set, Service, Char, Value}, _Caller, From, Core) when is_binary(Value) ->
+facet({set, Service, Char, Value}, Caller, From, Core) when is_binary(Value) ->
+    owned(Service, Caller, Core),
     within(Service, Char, Value, Core),
     Key = {Service, Char},
     {[{reply, From, ok} | [{to_link, Link, {set, Key, Value}} || Link := _ <- maps:iterator(Core#core.links, ordered)]],
      Core#core{values = (Core#core.values)#{Key => Value}}};
-facet({Kind, Conn, Service, Char, Value}, _Caller, From, Core)
+facet({Kind, Conn, Service, Char, Value}, Caller, From, Core)
   when (Kind =:= notify orelse Kind =:= indicate), is_binary(Value) ->
+    owned(Service, Caller, Core),
     within(Service, Char, Value, Core),
     case Core#core.conns of
         #{Conn := Link} -> {[{request, Link, {notify, Kind, {Service, Char}, Value}, From}], Core};
@@ -169,6 +171,14 @@ facet({reply, Req, Answer}, Caller, From, #core{writes = Writes} = Core) ->
     end;
 facet(_Op, _Caller, _From, _Core) ->
     throw({refused, badarg}).
+
+%% Caller is Service's handler: only a service's owner changes its values or sends them to
+%% a phone (docs/design-bluetooth.md, "A service belongs to its handler").
+owned(Service, Caller, #core{handlers = Handlers}) ->
+    case Handlers of
+        #{Service := Caller} -> ok;
+        #{} -> throw({refused, not_attached})
+    end.
 
 %% A value for Service's Char: the declaration names the characteristic, and the value
 %% fits its maximum.

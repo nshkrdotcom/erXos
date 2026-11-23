@@ -22,6 +22,10 @@ class ErxBtRegistryTest < Minitest::Test
   Seed = Data.define(:fault, :path, :anchor, :replacement, :catching_case)
 
   SEEDS = [
+    Seed.new(fault: "a service's values set and sent by any process, not only its handler",
+             path: CORE, anchor: '        #{Service := Caller} -> ok;',
+             replacement: '        #{Service := _} -> ok;',
+             catching_case: 'set_notify_and_indicate_only_from_the_handler'),
     Seed.new(fault: 'an answer taken from any handler, not only the one its write went to',
              path: CORE, anchor: '        #{Req := {Caller, Link, Ref}} ->',
              replacement: '        #{Req := {_, Link, Ref}} ->',
