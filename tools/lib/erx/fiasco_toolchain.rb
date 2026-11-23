@@ -27,7 +27,8 @@ module Erx
       # One spelling for every caller: settings, records and keys name the installed
       # programs, whichever link the environment names, so siblings come from the real
       # installation. ld.lld keeps its name, by which the multi-call lld knows its part,
-      # beside the program it resolves to.
+      # beside the program it resolves to, and must be that same program, so the name
+      # never selects another one.
       compiler = File.realpath(compiler)
       found = HostPath.find_linker(linker, compiler: compiler, path: path)
       raise Error, "ERX_LLD names no executable linker: #{linker.inspect}" unless found
@@ -35,6 +36,9 @@ module Erx
       linker = File.join(File.dirname(installed), File.basename(found))
       unless File.file?(linker) && File.executable?(linker)
         raise Error, "ERX_LLD resolves to #{installed.inspect}, beside which is no executable #{linker.inspect}"
+      end
+      unless File.identical?(linker, installed)
+        raise Error, "ERX_LLD resolves to #{installed.inspect}, but #{linker.inspect} beside it is not that program"
       end
       { compiler: compiler, linker: linker }.each { |variable, program| check_make_word(variable, program) }
       super(compiler: compiler, linker: linker)

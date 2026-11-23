@@ -440,6 +440,22 @@ class FiascoTest < Minitest::Test
     assert_includes error.message, File.join(File.dirname(lld), 'ld.lld')
   end
 
+  # The ld.lld beside the program a link resolves to must be that program: one that is
+  # another executable is refused, not run in place of the linker the environment chose.
+  def test_a_linker_whose_name_beside_its_target_is_another_program_is_refused
+    tools = fixture_toolchain('impostor')
+    lld = File.join(File.dirname(tools.fetch(:linker)), 'lld')
+    File.rename(tools.fetch(:linker), lld)
+    File.write(tools.fetch(:linker), "#!/bin/sh\n")
+    File.chmod(0o755, tools.fetch(:linker))
+    link = File.join(@directory, 'impostor/links/ld.lld')
+    FileUtils.mkdir_p(File.dirname(link))
+    File.symlink(lld, link)
+    error = assert_raises(Erx::Error) { Erx::FiascoToolchain.new(compiler: tools.fetch(:compiler), linker: link) }
+    assert_includes error.message, tools.fetch(:linker)
+    assert_includes error.message, 'is not'
+  end
+
   # Makeconf.local takes the paths as make assignments and the inherited make systems
   # pass them on to the shell, so only characters neither treats specially are taken:
   # anything else is refused before any settings are written.
