@@ -1112,8 +1112,8 @@ within about 20 percent of the length, write plain code.
     decision gates.
   * [docs/style.md](docs/style.md) is the code style guide.
   * [TODO.md](TODO.md) is the index of open work outside the roadmap.
-  * [docs/guide/](docs/guide/README.md) is the user guide: how to build,
-    write, boot and use erXos.
+  * [docs/guide/](docs/guide/README.md) is the guide: how to build, write,
+    boot, use and develop erXos.
   * [docs/book/](docs/book/README.md) is the book, *The Design and
     Implementation of the erXos Operating System*: a reader's account of
     the whole system that cites the design documents and decides nothing.
