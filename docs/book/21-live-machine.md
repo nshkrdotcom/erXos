@@ -727,13 +727,15 @@ Four more parts make this safe and give it a memory:
 * **Overlays.** A **supervised** domain is one the domain service
   starts again from the same specification when it ends. The code
   service keeps an **overlay** for each such specification: the
-  manifest of the modules loaded into it from outside, with the hash of
-  the release it was loaded over. A load is a candidate overlay, a batch
-  load by the code server, and then the code service publishes the
-  candidate. A batch that is not published ends its domain, so a
-  supervised domain runs only code its published overlay names, and
-  the restarted domain loads the overlay before its applications
-  start. An overlay made over another release is dropped.
+  manifest of the modules loaded into it from outside. A load is a
+  candidate overlay, a batch load by the code server, and then the code
+  service publishes the candidate. A batch that is not published ends
+  its domain, so a supervised domain runs only code its published
+  overlay names, and the restarted domain loads the overlay before its
+  applications start. The overlay belongs to the specification the
+  domain is restarted from, which boots the same release for as long
+  as the overlay lives, so the overlay always stands over the release
+  it was loaded over.
 * **History, rollback and reset.** The code service keeps the last 16
   hashes it published for each module, and a rollback is a load of an
   older hash. The command `load -d DOMAIN -r` drops the overlay, and
