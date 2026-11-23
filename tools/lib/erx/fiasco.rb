@@ -178,8 +178,8 @@ module Erx
         # but takes a minute to find it, and the audit after it would find what it found.
         memo.in_place(MEMO_STEP, key: memo_key, outputs: memo_outputs, written_since: before_waiting) do
           cores = build_cores
-          kernel = build_kernel(jobs: jobs, cores: cores, kind: BuildKind::DEVELOPMENT,
-                                directory: self.class.kernel_directory(root: @root, kind: BuildKind::DEVELOPMENT))
+          build_kernel(jobs: jobs, cores: cores, kind: BuildKind::DEVELOPMENT,
+                       directory: self.class.kernel_directory(root: @root, kind: BuildKind::DEVELOPMENT))
           boot_cores = build_boot_cores
           users = build_users(jobs: jobs, boot_cores: boot_cores)
           build_image(users: users)

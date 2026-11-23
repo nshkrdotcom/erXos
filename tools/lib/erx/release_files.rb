@@ -495,7 +495,6 @@ module Erx
     # modules ErlangApps compiles, generated ones included. A file with none named is a
     # failure, so no file reaches the archive without its license.
     def sources_of(application, name)
-      source = File.join(@root, self.class.source_directory(application), 'src')
       base = File.basename(name, '.*')
       return [self.class.app_resource(root: @root, application: application)] if name.end_with?('.app')
 
