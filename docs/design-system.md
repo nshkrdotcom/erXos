@@ -3088,7 +3088,7 @@ looked, and each kind of fact has one place where its waiters live.
 | --- | --- | --- | --- |
 | registry wait | the domain's facet registry and the ready answer's granted names | the domain's connection agent, the one writer of both | its own deadline |
 | settlement wait | the mint core's grants and the starting rows | the domain service | the mint core's deadline and the server row's boot timeout |
-| rows held at boot | the catalogue's `answered`, the PCIe rows' ends and the `pcie` server's settlement | the device service decides; the domain service holds the rows | the PCIe row's boot timeout and 30 s more, or its end |
+| rows held at boot | the catalogue's `answered`, the PCIe rows' ends and the `pcie` server's settlement | the device service decides; the domain service holds the rows and keeps the fallback | the PCIe row's boot timeout and 30 s more, or its end |
 
 The three are kept apart because their facts differ. A facet in the
 registry says the grant was installed; it does not say that a grant
@@ -3207,8 +3207,7 @@ it, whether that start succeeds or is refused. Each request is sent,
 not waited on (`gen_server:send_request/2`), so the asker goes on taking its own
 messages. The askers are the start table, the package service and the
 device service, each asking once for each query it waits on (the start
-table once for each display, the device service once for each report
-and once for the `pcie` server at each start of its PCIe process),
+table once for each display, the device service once for each report),
 and each answer comes within the mint core's deadline and the server
 row's boot timeout, so the list stays bounded. A session's start is answered by the namespace
 rule for that session as part of the start itself, not as a query.
@@ -3221,19 +3220,22 @@ until when, is the device service's knowledge; the domain service holds
 rows on its word and names no PCIe concept. Before it starts any
 configured row, the domain service calls `erx_devices:held_at_boot(Rows)`
 with the configured rows in boot order. The device service's PCIe
-process answers with the rows it holds: each row whose units hold a
-`pci` device, never the PCIe row (the row holding a host bridge that
-some `pci` device's place names), and none on a machine with no PCIe
-row, decided by `erx_devices_pci_core:held/2` from the catalogue alone.
-The domain service starts the others in boot order, counts each held row
-as starting, and starts the held rows in boot order when the device
-service casts `erx_domain:release_held/0`; a release with nothing held
-changes nothing. A call that fails, or gets no answer within 5 s, holds
-nothing and is logged, as an unreadable catalogue holds nothing. The
-PCIe process makes no call to the domain service (its waits are sent
-requests and its release a cast), so the call cannot deadlock.
+process answers `{Held, Fallback}`: the rows it holds, each row whose
+units hold a `pci` device, never the PCIe row (the row holding a host
+bridge that some `pci` device's place names), and none on a machine
+with no PCIe row, decided by `erx_devices_pci_core:held/2` from the
+catalogue alone; and the fallback, `{settled, <<"pcie">>, 30000}`, or
+`none` when it holds nothing. The domain service starts the others in
+boot order, counts each held row as starting, and starts the held rows
+in boot order when the device service casts `erx_domain:release_held/0`,
+or when the fallback's time has passed since its server settled; a
+release with nothing held changes nothing. A call that fails, or gets
+no answer within 5 s, holds nothing and is logged, as an unreadable
+catalogue holds nothing. The PCIe process makes no call to the domain
+service (its waits are sent requests and its release a cast), so the
+call cannot deadlock.
 
-The device service releases at the first of three events:
+The rows are released at the first of three events:
 
 * the library's catalogue recording an answered report: a bridge's
   `answered` naming an incarnation, which the PCIe process writes
@@ -3245,22 +3247,28 @@ The device service releases at the first of three events:
   incarnation (`erx_devices:domain_ended(Id, Origin)`), so a PCIe row
   that ends before it reports cannot hold the rows for as long as its
   restarts last;
-* 30 s after `erx_domain:server_settled(<<"pcie">>)` answers, which the
-  PCIe process asks as it answers `held_at_boot`, and a restarted one as
-  it starts. The PCIe row is then ready, stopped for its boot timeout,
-  ended with no restart, or refused its start, and 30 s covers a walk
-  after a ready report.
+* the fallback, which the domain service keeps beside the held rows:
+  once the settlement wait finds the `pcie` server settled, at its
+  usual points ([The settlement wait](#waiting-for-a-grant)), it arms
+  one timer of 30 s, whose end releases the rows. The PCIe row is then
+  ready, stopped for its boot timeout, ended with no restart, or refused
+  its start, and 30 s covers a walk after a ready report. The fallback
+  names a server and a time, no PCIe concept, and is armed once in a
+  boot: nothing re-arms or extends it.
 
-So one rule serves the boot and every restart of the PCIe process,
-which keeps no record of whether it released: a restarted process
-releases at once when its predecessor answered a report, and otherwise
-waits for the other two as at boot. A release already made is made
-again harmlessly, since a release with nothing held changes nothing. A
-PCIe row that will never report, because its start was refused, it was
-stopped for its boot timeout, or it was ready at its start with no
-report to make, releases only through the third event, 30 s after it
-settled: one release rule for every path, at a bounded delay paid only
-when the boot has already gone wrong.
+The first two are the device service's and the third the domain
+service's, which is never restarted, so the bound holds however often
+the device service's PCIe process restarts. That process keeps no
+record of whether it released: a restarted process releases at once
+when its predecessor answered a report, and otherwise waits for a
+report's answer or a forwarded end as at boot, while the fallback runs
+on unchanged. A release already made is made again harmlessly, since a
+release with nothing held changes nothing. A PCIe row that will never
+report, because its start was refused, it was stopped for its boot
+timeout, or it was ready at its start with no report to make, releases
+only through the fallback, 30 s after it settled: one release rule for
+every path, at a bounded delay paid only when the boot has already gone
+wrong.
 
 A row the second or third event starts before a report is answered is
 given what the catalogue confirms at its start, as every give is
@@ -3313,9 +3321,10 @@ fail its case.
 | `erx_domain_mints_srv_tests` | three askers, one of each query, are each answered at the step that settles their own query; the system domain's installation is acknowledged only after the agent's answer | every asker answered when any query settles: the `{grant, ...}` asker is answered before its incarnation's installation |
 | same | a `{server, Name}` asker is answered at its row's end, before the row's restart starts | the list evaluated after the successor starts: the asker waits through the successor's boot |
 | same | a held row counts as starting: a session waiting on a `files` grant it serves is answered only after `release_held`, and a held row whose start is then refused settles at that release | held rows left out of the starting rows: the session is answered before its server starts |
-| same | `server_settled(<<"pcie">>)` is answered at the PCIe row's refused start and at its stop for its boot timeout | a refused row counted as starting: the asker is never answered and the hold never released |
+| same | the fallback releases the held rows 30 s after the PCIe row's refused start, and 30 s after its stop for its boot timeout | a refused row counted as starting: the fallback is never armed and the rows stay held |
+| same | the PCIe process restarts every 20 s, with no report and no forwarded end, and the held rows are still released 30 s after the `pcie` server settled | the fallback kept by the PCIe process and armed again at each of its starts: the release never comes within the test's deadline |
 | `erx_devices_pci_core_tests` | `held/2` holds the rows with a `pci` device, never the PCIe row, none without one | the PCIe row held: the case fails, as a boot would wait for a report that cannot come |
-| same | release once `answered` is written, at a PCIe row's forwarded end, and 30 s after the `pcie` server settled, each once | the release dropped at the forwarded end: a PCIe row that ends before reporting holds the rows until the timer |
+| same | release once `answered` is written and at a PCIe row's forwarded end, each once | the release dropped at the forwarded end: a PCIe row that ends before reporting holds the rows until the fallback |
 | `erx_devices_pci_tests` | a restarted PCIe process releases at its start when the library's `answered` names an incarnation, and otherwise not until one of the three events, with the restart before the intake, between the intake and the answer, and after the answer | the restart releasing at once: with no report taken, the held rows start and are given nothing |
 | `dom_core_test` | a function a report confirmed `ready` is given before any report is answered, and a function no report confirmed is not | the give requiring `answered`: the confirmed function is not given, against what design-pcie states |
 | `erx_input_follower_tests` | a tree is followed at the installation of its facet, and again at its server's re-grant, whether the old facet's `'DOWN'` comes before or after the new installation | the follower's `Seen` dropped: the dead facet is followed again at every installation of another name |
@@ -4154,9 +4163,11 @@ its bridges ([design-pcie.md](design-pcie.md#concurrency)).
 starts only once the device service has answered the boot's first
 report, and the rows without one start in boot order meanwhile. The
 device service decides which rows are held and when they are released:
-once the catalogue records an answered report, at a PCIe row's end, or
-30 s after the PCIe row has settled. The domain service only holds the
-rows it names, counts them as starting and starts them on its word
+once the catalogue records an answered report or at a PCIe row's end,
+and names the fallback the domain service keeps, 30 s after the PCIe
+row has settled. The domain service holds the rows it names, counts
+them as starting and starts them on the device service's word or at
+that fallback
 ([Waiting for a grant](#waiting-for-a-grant), "The rows held at
 boot"). A row started before a report is answered is given what the
 catalogue confirms, as every give is: nothing of its `pci` devices

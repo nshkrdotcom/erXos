@@ -652,12 +652,11 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
      :243), `pci_hold` (:220-221), `pci_hold/2` through `pci_held/1` (:317-398), the cast and timer clauses
      (:638-639, :666-667), the calls at :680, :1103, :1658 and :1756, and the moduledoc's paragraph (:26-31).
      `handle_continue(boot)` (:308-315) asks `erx_devices:held_at_boot/1`, which the domain service's tests
-     stand in for, and holds the rows it names; `erx_domain:pci_report_answered/0` (`erx_domain.erl:248-250`)
+     stand in for, and holds the rows its `{Held, Fallback}` names, keeping the fallback beside them: one
+     timer, armed once when the settlement list finds the fallback's server settled, never re-armed; `erx_domain:pci_report_answered/0` (`erx_domain.erl:248-250`)
      becomes `release_held/0`; the forward at :647 becomes `erx_devices:domain_ended(Id, Origin)`, the origin
      read from the core before `ended/4`. Into the device service: `erx_devices_pci_core:held/2` and the
-     release (`answered` written, read too as the PCIe process starts; a PCIe row's forwarded end; 30 s after
-     `server_settled(<<"pcie">>)`, asked as `held_at_boot` is answered and at each start of the process),
-     with `erx_devices_pci.erl:259` casting `release_held/0` as the core's action. The `erx_facet:serve/2`
+     release (`answered` written, read too as the PCIe process starts; a PCIe row's forwarded end), with `erx_devices_pci.erl:259` casting `release_held/0` as the core's action. The `erx_facet:serve/2`
      lines for `pci` and `pci_bus` (:191-192) stay. `test/host/dom_core_test.rb` gains the case that a
      function a report confirmed `ready` is given before any report is answered. Suites: `pcie`, `usb`.
   Tests while developing, the step's own: `erx_connections_tests`, `facet_registry_chokepoints_test`
