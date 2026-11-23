@@ -843,8 +843,10 @@ set_graph(ui_node_t *node)
  * The theme's type roles (abi/theme.txt, generated as erx/theme.h): each
  * role's LVGL font, which the glyph step writes from the role's typeface,
  * size and weight (Erx::Glyphs::LvglFont), and where its colour lies in a
- * palette, by its ui_role value, which ui.txt and the theme name alike. A
- * value no role has has no font.
+ * palette, by its ui_role value, which ui.txt and the theme name alike.
+ * erx_ui_read() admits only ui_role's members, and the theme's generator
+ * gives each member a role row (Erx::ABI::Theme), so every role a node
+ * takes indexes an entry with its font.
  */
 #define FONT(name, NAME) LV_FONT_DECLARE(erx_lvgl_font_##name)
 ERX_THEME_ROLES(FONT)
@@ -879,10 +881,6 @@ text_style(ui_node_t *node)
 {
 	lv_obj_t *text = node->label != NULL ? node->label : node->obj;
 
-	if (node->role >= 0 &&
-	    ((size_t)node->role >= sizeof(roles) / sizeof(roles[0]) ||
-	    roles[node->role].font == NULL))
-		fatal("role %d is not one of the theme's", node->role);
 	if (node->role < 0)
 		lv_obj_remove_local_style_prop(text, LV_STYLE_TEXT_FONT, 0);
 	else

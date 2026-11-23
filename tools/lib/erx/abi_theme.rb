@@ -40,9 +40,13 @@ module Erx
     # resolved.
     module Theme
       SOURCE = 'abi/theme.txt'
-      # Where the palettes are declared: the enum a display's manifest entry chooses from.
-      PALETTE_SOURCE = 'abi/manifest.txt'
+      # The ABI's enums the theme refers to: the palettes a display's manifest entry
+      # chooses from (abi/manifest.txt), whose value order a colour row's values follow,
+      # the default first; and the roles a widget's text takes (abi/formats/ui.txt),
+      # which name the theme's role rows one for one, since a renderer finds a role's
+      # face and colour by its value.
       PALETTE_ENUM = 'mf_display_palette'
+      ROLE_ENUM = 'ui_role'
       NAME = /\A[a-z][a-z0-9_]{0,62}\z/.freeze
       # A relative path beneath the root: no segment starts with a dot, so
       # none is `..`.
@@ -75,37 +79,25 @@ module Erx
       module_function
 
       # The theme of the tree at ROOT, for a reader of the theme alone, such as
-      # the glyph step or a test harness reading a palette's colour.
+      # the glyph step or a test harness reading a palette's colour: the ABI
+      # model's, so the enums it refers to are found as the generator finds them.
       def read(root:)
-        source = File.read(File.join(root, SOURCE))
-        declarations = Syntax.parse(source, path: SOURCE).select { |item| item.kind == 'theme' }
-        validate(declarations, palettes: palettes(root: root))
+        require_relative 'abi_model'
+        Model.validate(Sources.read(root: root)).theme || raise(SchemaError, "the sources at #{root} declare no theme")
       end
 
-      # The palettes' names of the tree at ROOT, the default first: the members
-      # of abi/manifest.txt's mf_display_palette in value order, which the ABI
-      # model validates. For a reader of the theme alone, such as the glyph step.
-      def palettes(root:)
-        manifest = Syntax.parse(File.read(File.join(root, PALETTE_SOURCE)), path: PALETTE_SOURCE)
-        enum = manifest.find { |item| item.kind == 'enum' && item.args.first == PALETTE_ENUM } or
-          raise SchemaError, "#{PALETTE_SOURCE} declares no enum #{PALETTE_ENUM}"
-        enum.members.map { |line| [line.words.fetch(1), Integer(line.words.fetch(2))] }.sort_by(&:last).map(&:first)
+      # The names of the enum NAME among the ABI model's resolved TYPES, in
+      # value order, for the theme DECLARATION, which fails if the sources do
+      # not declare it as an enum.
+      def enum_members(types, name, declaration:)
+        declaration.fail!("the theme refers to the enum #{name}, which the sources do not declare as an enum") unless
+          types[name].is_a?(EnumType)
+        types[name].members.sort_by { |_, value| value }.map(&:first)
       end
 
-      # The palettes' names among the ABI model's resolved TYPES, the default
-      # first, for the theme DECLARATION, which fails if no enum
-      # mf_display_palette is among them.
-      def palettes_of(types, declaration:)
-        enum = types[PALETTE_ENUM]
-        declaration.fail!("the theme's palettes are the enum #{PALETTE_ENUM} of #{PALETTE_SOURCE}, which the sources do not declare as an enum") unless
-          enum.is_a?(EnumType)
-        enum.members.sort_by { |_, value| value }.map(&:first)
-      end
-
-      # PALETTES are the names of the palettes, in the order a colour row
-      # gives its values, the default first: the members of the manifest's
-      # mf_display_palette in value order (ABI::Model#validate_theme).
-      def validate(declarations, palettes:)
+      # The theme of DECLARATIONS against the ABI model's resolved TYPES,
+      # which hold PALETTE_ENUM and ROLE_ENUM (ABI::Model#validate_theme).
+      def validate(declarations, types:)
         return nil if declarations.empty?
 
         declarations.drop(1).first&.fail!('exactly one theme declaration is allowed')
@@ -114,7 +106,8 @@ module Erx
         declaration.fail!('expected theme VERSION') unless declaration.line.tokens.size == 2
         version = Syntax.integer(declaration.args.first, line: declaration.line)
         declaration.fail!('theme version must be positive and fit 32 bits') unless version.between?(1, 0xffffffff)
-        Reader.new(declaration, palettes: palettes).schema(version)
+        Reader.new(declaration, palettes: enum_members(types, PALETTE_ENUM, declaration: declaration),
+                                ui_roles: enum_members(types, ROLE_ENUM, declaration: declaration)).schema(version)
       end
 
       # WCAG 2's contrast ratio of two sRGB colours, each 0xRRGGBB:
@@ -140,8 +133,10 @@ module Erx
       # the ones it refers to, failing at the first refusal with the row's
       # place.
       class Reader
-        def initialize(declaration, palettes:)
+        def initialize(declaration, palettes:, ui_roles:)
+          @declaration = declaration
           @palettes = palettes
+          @ui_roles = ui_roles
           declaration.members.each do |line|
             line.fail!('a theme member takes two-space indentation') unless line.indent == 2
             line.fail!("unknown theme member #{line.words.first}") unless MEMBERS.include?(line.words.first)
@@ -160,9 +155,11 @@ module Erx
           hairline = single_integer('hairline')
           colors = declare_each('color') { |line| color(line) }
           fonts = fonts_with_ranges
+          roles = declare_each('role') { |line| role(line, fonts: fonts, colors: colors, unit: unit) }
+          check_roles
           ThemeSchema.new(
             version: version, unit: unit, hairline: hairline, palettes: @palettes, fonts: fonts,
-            roles: declare_each('role') { |line| role(line, fonts: fonts, colors: colors, unit: unit) },
+            roles: roles,
             spaces: scale(single('space'), 1..(PIXELS.max / unit), 'space'),
             radii: radii, shadows: declare_each('shadow') { |line| shadow(line) },
             colors: colors, contrasts: rows('contrast').map { |line| contrast(line, colors) }.freeze,
@@ -171,6 +168,17 @@ module Erx
         end
 
         private
+
+        # The role rows name the members of ROLE_ENUM one for one: a row of
+        # another name is a role no widget can take, and a member with no row
+        # a role whose text would have no face.
+        def check_roles
+          rows('role').each do |line|
+            line.fail!("role #{line.words[1]} is not a member of #{ROLE_ENUM}") unless @ui_roles.include?(line.words[1])
+          end
+          missing = @ui_roles - rows('role').map { |line| line.words[1] }
+          @declaration.fail!("#{ROLE_ENUM} member #{missing.first} has no role row") unless missing.empty?
+        end
 
         def rows(member) = @rows.fetch(member, [])
         def single(member) = rows(member).first

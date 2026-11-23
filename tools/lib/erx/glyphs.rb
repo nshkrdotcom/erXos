@@ -163,7 +163,8 @@ module Erx
                                    runner: runner)
         subfont(role, requests: asked, result: result)
       end
-      menu_role = theme.roles[Menu::ROLE] || raise(Refused, "the theme has no #{Menu::ROLE} role, which the window menu takes")
+      # Every theme has the menu's role: ui_role names it, and the theme names ui_role (ABI::Theme).
+      menu_role = theme.roles.fetch(Menu::ROLE)
       menu = Menu.erlang(subfonts.fetch(Menu::ROLE), code_points: code_points(theme.fonts.fetch(menu_role.font)),
                          sources: [ABI::Theme::SOURCE, font_file(theme, menu_role)],
                          notice: notices.fetch(Menu::ROLE))

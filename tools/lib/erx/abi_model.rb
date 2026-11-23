@@ -1424,15 +1424,15 @@ module Erx
       end
 
       # The desktop's theme refers to nothing outside its declaration but
-      # the palettes, which a display's manifest entry chooses among
-      # (docs/design-abi.md, "Theme"). Sources without a theme, such as a
-      # test's fixture, need no palettes.
+      # the palettes, which a display's manifest entry chooses among, and the
+      # roles a widget's text takes (docs/design-abi.md, "Theme"). Sources
+      # without a theme, such as a test's fixture, need neither.
       def validate_theme(by_kind, types)
         declarations = by_kind.fetch('theme', [])
         return nil if declarations.empty?
 
         require_relative 'abi_theme'
-        Theme.validate(declarations, palettes: Theme.palettes_of(types, declaration: declarations.first))
+        Theme.validate(declarations, types: types)
       end
 
       def validate_projections(declarations, types)

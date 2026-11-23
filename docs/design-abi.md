@@ -1030,7 +1030,7 @@ the window's scale.
 | `hairline PIXELS` | a separator's width |
 | `font NAME DIRECTORY WEIGHT FILE...` | a font: its directory beneath the root, and the TrueType file of each weight it has, `regular`, `medium` or `semibold`, each at most once |
 | `range FONT LOW-HIGH...` | the code points the glyph step rasterises from FONT, in upper-case hexadecimal, ascending and disjoint; each font has exactly one |
-| `role NAME KEY VALUE...` | a type role: `font`, a declared font; `size` and `line`, pixels; `weight`, one the font has; optionally `figures`, `tabular` or `proportional` (the default), and `color`, a declared colour (`text` by default) |
+| `role NAME KEY VALUE...` | a type role, exactly one for each member of `ui_role` (`formats/ui.txt`), so every role a widget's text takes has a face and no row names one it cannot take: `font`, a declared font; `size` and `line`, pixels; `weight`, one the font has; optionally `figures`, `tabular` or `proportional` (the default), and `color`, a declared colour (`text` by default) |
 | `space NAME UNITS...` | the spacing scale, in whole units, none wider than 4,096 pixels |
 | `radius NAME PIXELS...` | corner radii; `window` is declared and 0 |
 | `shadow NAME X Y BLUR PERCENT` | a shadow: its offset and blur in pixels and the opacity of its black in percent |

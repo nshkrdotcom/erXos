@@ -433,16 +433,6 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   glyph step"): width 0 is how a subfont marks a missing glyph, so a glyph whose advance rounds to 0 reads as
   missing too. Inter has U+200B (zero width space) at advance 0, inside the theme's range `2000-206F`, so the
   renderer would draw a replacement box for it. Take the format controls out of the ranges, or decide another mark.
-* [Medium] desktop, the palettes have two readers (`tools/lib/erx/abi_theme.rb` `Theme.palettes` and
-  `Theme.palettes_of`): the ABI model takes `mf_display_palette` from whichever included file declares it, while the
-  glyph step's `Theme.palettes(root:)` parses `abi/manifest.txt` alone and re-reads the enum's members by hand, so
-  moving the enum to another file passes `tools/gen_abi.rb` and fails only in `tools/erx build glyphs`. Give the
-  glyph step the palettes through the model's own parse.
-* [Medium] desktop, the window menu's role (`tools/lib/erx/glyphs_menu.rb` `ROLE`, `abi_theme.rb`): only the glyph step
-  requires the theme to have a `body` role, so a theme without one passes `tools/gen_abi.rb` and fails only in
-  `tools/erx build glyphs`, after every role is rasterised. Require the role in `ABI::Theme.validate` and the
-  design-abi theme table. The generated `erx_menu_glyphs:role/0` gives the menu its role, so `erx_wm_menu` never
-  names it.
 * [Medium] desktop, the glyph step's output enters no runtime build (`build/glyphs`, `tools/lib/erx/erlang_apps.rb`):
   `erx_menu_glyphs.erl` is written beside the subfonts, and nothing compiles it into `erx_display`; the build would
   then need erx-raster and the FreeType pin. Decide how with `erx_wm_menu` (plan 8.15). Its outputs declare

@@ -27,6 +27,8 @@ require_relative '../../tools/lib/erx/memdraw_build'
 class GlyphsTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
   THEME = File.read(File.join(ROOT, 'abi/theme.txt')).freeze
+  # The ABI's resolved types, which hold the palettes and ui_role the theme refers to.
+  TYPES = Erx::ABI::Model.validate(Erx::ABI::Sources.read(root: ROOT)).types
   # The one-pixel shift: every glyph's top one row higher than FreeType put it.
   SHIFT = ['put_u32((uint32_t)(int32_t)slot->bitmap_top);', 'put_u32((uint32_t)(int32_t)slot->bitmap_top + 1);'].freeze
   DEADLINE_SECONDS = '300'
@@ -97,7 +99,8 @@ class GlyphsTest < Minitest::Test
     File.binwrite(File.join(fonts, 'Inter-Medium.ttf'), medium.sub(name, "\x06one.tx".b))
     import(fonts, rules: { '*' => 'OFL-1.1' }, copyright: 'Copyright (c) 2016 The Inter Project Authors')
     theme = theme_of(THEME.gsub(/^  role .*\n/, '')
-                          .sub("  # The spacing scale", "  role numeric font ui size 13 line 20 weight medium figures tabular\n  # The spacing scale"))
+                          .sub("  # The spacing scale", "  role numeric font ui size 13 line 20 weight medium figures tabular\n  # The spacing scale"),
+                     roles: %w[numeric])
     error = assert_raises(Erx::Glyphs::Refused) { write(root: @work, theme: theme, program: :tree) }
     assert_equal 'role numeric: its font has no tabular figure one.tf', error.message
   end
@@ -106,7 +109,7 @@ class GlyphsTest < Minitest::Test
   # and bar leave it at 48 pixels.
   def test_glyph_whose_ink_leaves_the_line_is_refused
     display = THEME[/^  role display .*\n/].sub(/ line \d+ /, ' line 56 ')
-    theme = theme_of(THEME.gsub(/^  role .*\n/, '').sub('  # The spacing scale', "#{display}  # The spacing scale"))
+    theme = theme_of(THEME.gsub(/^  role .*\n/, '').sub('  # The spacing scale', "#{display}  # The spacing scale"), roles: %w[display])
     error = assert_raises(Erx::Glyphs::Refused) { write(root: ROOT, theme: theme, program: :tree, output_root: @work) }
     assert_match(/\Arole display: U\+[0-9A-F]{4} leaves the line, rows -?\d+ to \d+ of 56\z/, error.message)
   end
@@ -236,12 +239,13 @@ class GlyphsTest < Minitest::Test
   end
 
   def square_theme
-    theme_of(THEME.gsub(/^  (?:font|range|role) .*\n/, '').sub("  # The spacing scale", <<~ROWS.gsub(/^/, '  ').chomp))
+    rows = <<~ROWS.gsub(/^/, '  ').chomp
       font square fonts regular Square.ttf
       range square 0041-0043
       role body font square size 16 line 20 weight regular
       # The spacing scale
     ROWS
+    theme_of(THEME.gsub(/^  (?:font|range|role) .*\n/, '').sub('  # The spacing scale', rows), roles: %w[body])
   end
 
   # DIRECTORY's files as an import at release v1.0 with a LICENSE.txt whose
@@ -286,8 +290,17 @@ class GlyphsTest < Minitest::Test
                       output_root: output_root)
   end
 
-  def theme_of(text)
+  # The theme of TEXT. A case that cuts the theme down to a few role rows
+  # names them as ROLES, and the theme reads against a ui_role of those
+  # members alone, so its rows still name ui_role's members one for one.
+  def theme_of(text, roles: nil)
+    types = roles ? TYPES.merge(Erx::ABI::Theme::ROLE_ENUM => ui_role_of(roles)) : TYPES
     Erx::ABI::Theme.validate(Erx::ABI::Syntax.parse(text, path: 'abi/theme.txt').select { |item| item.kind == 'theme' },
-                             palettes: Erx::ABI::Theme.palettes(root: ROOT))
+                             types: types)
+  end
+
+  # The tree's ui_role with ROLES as its members, valued in order.
+  def ui_role_of(roles)
+    Erx::ABI::EnumType.new(**TYPES.fetch(Erx::ABI::Theme::ROLE_ENUM).to_h, members: roles.each_with_index.to_h.freeze).freeze
   end
 end

@@ -20,6 +20,8 @@ require_relative '../../tools/lib/erx/web_stage'
 class ErxThemeTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
   SOURCE = File.read(File.join(ROOT, 'abi/theme.txt')).freeze
+  # The resolved types of the ABI the theme refers to: its palettes and roles.
+  TYPES = Erx::ABI::Model.validate(Erx::ABI::Sources.read(root: ROOT)).types
   GENERATED = File.join(ROOT, Erx::Generated::OUTPUT)
   OUTPUTS = [Erx::ABI::ThemeEmitter::ERLANG_PATH, Erx::ABI::ThemeEmitter::C_HEADER_PATH,
              Erx::ABI::ThemeEmitter::TS_PATH].freeze
@@ -66,6 +68,9 @@ class ErxThemeTest < Minitest::Test
     [{ 'role title    font ui size 20 line 28 weight semibold' => 'role title    font ui size 20 weight semibold' },
      /role needs line/],
     [{ 'role title    font ui' => 'role title    font uj' }, /role names an undeclared font uj/],
+    # The role rows and ui_role, both ways.
+    [{ '  role caption' => "  role subhead  font ui size 12 line 16 weight regular\n  role caption" }, /role subhead is not a member of ui_role/],
+    [{ "  role headline font ui size 26 line 36 weight semibold\n" => '' }, /ui_role member headline has no role row/],
     [{ ' semibold Inter-SemiBold.ttf' => '' }, /font ui has no weight semibold/],
     [{ 'size 15 line 20' => 'size 15 line 18' }, /line 18 is not a multiple of the unit 4/],
     [{ 'size 13 line 20 weight regular' => 'size 13 line 20 weight regular figures oldstyle' },
@@ -147,14 +152,15 @@ class ErxThemeTest < Minitest::Test
 
   def test_the_theme_belongs_in_its_own_file
     declarations = Erx::ABI::Syntax.parse(SOURCE, path: 'abi/formats/theme.txt').select { |item| item.kind == 'theme' }
-    error = assert_raises(Erx::ABI::SchemaError) { Erx::ABI::Theme.validate(declarations, palettes: Erx::ABI::Theme.palettes(root: ROOT)) }
+    error = assert_raises(Erx::ABI::SchemaError) { Erx::ABI::Theme.validate(declarations, types: TYPES) }
     assert_match(/belongs in abi\/theme\.txt/, error.message)
   end
 
   # The model asks for the palettes only when the sources declare a theme, so
   # a source set without one, such as the inspection forms of
   # erx_schema_test.rb, validates without abi/manifest.txt; a theme without
-  # the palettes' enum fails with a diagnostic.
+  # the palettes' enum, or with them but without ui_role, fails with a
+  # diagnostic.
   def test_the_palettes_are_needed_only_by_a_theme
     forms = File.join(ROOT, 'test/fixtures/inspection_forms/abi')
     Dir.mktmpdir('erx-theme-test') do |work|
@@ -166,6 +172,11 @@ class ErxThemeTest < Minitest::Test
       File.write(File.join(work, 'abi/erx_abi.txt'), "#{File.read(File.join(forms, 'erx_abi.txt'))}include theme.txt\n")
       error = assert_raises(Erx::ABI::SchemaError) { Erx::ABI::Model.validate(Erx::ABI::Sources.read(root: work, architecture: nil)) }
       assert_match(/abi\/theme\.txt:\d+: .*mf_display_palette/, error.message)
+      palettes = File.read(File.join(ROOT, 'abi/manifest.txt'))[/^enum mf_display_palette .*\n(?:  .*\n)+/]
+      File.write(File.join(work, 'abi/palettes.txt'), palettes)
+      File.write(File.join(work, 'abi/erx_abi.txt'), "#{File.read(File.join(forms, 'erx_abi.txt'))}include palettes.txt\ninclude theme.txt\n")
+      error = assert_raises(Erx::ABI::SchemaError) { Erx::ABI::Model.validate(Erx::ABI::Sources.read(root: work, architecture: nil)) }
+      assert_match(/abi\/theme\.txt:\d+: .*enum ui_role/, error.message)
     end
   end
 
@@ -270,7 +281,7 @@ class ErxThemeTest < Minitest::Test
 
   def theme_of(text)
     declarations = Erx::ABI::Syntax.parse(text, path: 'abi/theme.txt').select { |item| item.kind == 'theme' }
-    Erx::ABI::Theme.validate(declarations, palettes: Erx::ABI::Theme.palettes(root: ROOT))
+    Erx::ABI::Theme.validate(declarations, types: TYPES)
   end
 
   # abi/theme.txt with the one occurrence of each key of REPLACEMENTS
