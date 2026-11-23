@@ -597,6 +597,18 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
 
 ## Planned features
 
+* [Low] code service, overlays across reboots and `erx_code` restarts
+  (`erlang/apps/erx_code/src/erx_code.erl`): design-live.md keeps every overlay, hot store and history in
+  `erx_code`'s memory, so a reboot returns every domain to its release and an `erx_code` restart ends the
+  supervised domains that run a published module, which restart on their releases
+  ([design-live.md](design-live.md#the-code-server), "When `erx_code` ends"). Both fail safe: the domain
+  ends or boots its release, the end is logged, no domain runs code its published overlay does not name, and
+  the host reloads (`erx watch` at its next change). If a consumer needs loads to outlive them, add a snapshot
+  of each principal's overlays that `erx_code` writes after it publishes, one file per revision so the newest
+  whole file wins whatever order writes land in, and reads only when it starts; it never decides a load. Its
+  reader of the data partition is untrusted input with a fuzz target. M10's scope and exit criteria in
+  plan.md still name persisted overlays and that decoder, an open decision of design-live.md ("Overlays
+  across reboots").
 * [Low] domain service, `served_kind/2` (`erlang/apps/erx_domain/src/erx_domain_srv.erl`, `init`): `Trees` lists the
   tree services of every server but is asked only about the system domain's, by name, so a configured domain's tree
   service named `log` or `inspect` makes the system's message service of that name minted as a tree grant, which
@@ -650,12 +662,11 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   stores in memory objects from the principal's budget, the scoped code facet
   (a `code` service of `abi/services/code.txt`, `erx_domain_core:code_scope/3`)
   and with it `load -d`, which answers `no code facet`, one load at a time for
-  each target with the 30 s deadline that stops a silent domain, atomic
-  batches in every ERTS runtime, the log record of each load, and the code
-  server's fetch
-  of pieces into other domains, overlays per supervised specification with
-  their revisions and release hash, overlays persisted on the data partition
-  and the bounded decoder of what is read back, with its fuzz target, are not
+  each target with its 30 s deadline, atomic batches in every ERTS runtime,
+  the log record of each load, the code server's fetch of pieces into other
+  domains and its keep step, `erx_code`'s lifeline, and overlays per
+  supervised specification, in memory, with their revisions and release
+  hash, are not
   built ([design-live.md](design-live.md#code-from-the-host)). The host
   link and `root`'s session share the one store, so one holder's uploads can
   drop or free the other's.

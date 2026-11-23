@@ -569,15 +569,12 @@ exchange:
   library is BSD-2-Clause, would join the per-byte primitives if they do
   not.
 * The **data partition** holds what changes: the files of principals and
-  services, in a read-write file system, and in each principal's own
-  directory that principal's hot-loaded blobs and the overlays of its
-  supervised specifications, so code loaded into a domain survives a
-  reboot until a system update changes the release beneath it
-  ([design-live.md](design-live.md#the-code-store)). The code of the
-  system domain and of every specification of the system manifest
-  becomes durable only inside a release, through a system update, and
-  neither ever loads code from the data partition
-  ([design-live.md](design-live.md#invariants) V5). A user
+  services, in a read-write file system, and installed apps' signed
+  packages ([design-packaging.md](design-packaging.md#where-a-package-lies)).
+  The code service writes nothing to it: code loaded into a running
+  domain lives in the code service's memory until a reboot, and becomes
+  durable only inside a system update or an app's package
+  ([design-live.md](design-live.md#the-code-store)). A user
   domain may load code it reads from its own files, with its own
   authority and nobody else's.
 * The **vault's partition** holds the vault's files, each principal's

@@ -721,7 +721,7 @@ that the kernel never dereferences a user address is a fact of its types
 | The host-link peer, development build | everything (it holds every facet but the system-shell facet, and the system shell at its `console` line, where `root` is logged in) | nothing more: development builds are for trusted code only |
 | The host-link peer, release build | what the configured facets of its session allow | anything else; every byte it sends is checked with the host grammar and decoded safely |
 | A device writing shared memory | write the rings and buffers it was given | make a driver, the kernel or a runtime trust what it wrote; every ring entry is validated by its consumer |
-| Whoever wrote a storage medium's data partition, or an update image | choose every byte a file system reads from that partition, and what a development build installs through the host link; through a file-system domain that a crafted partition compromises, read and write every principal's files on that partition, and so rewrite those principals' persisted overlays and run code in their supervised domains at their next start | make that domain reach any other partition, the vault's partition and its key files included; persist an overlay into a domain of the system configuration or into the system domain, whose overlays are never persisted; change an EROFS image without its hash tree noticing; make a build install an update that its trusted key did not sign, an older one, or, in a release build, a development one |
+| Whoever wrote a storage medium's data partition, or an update image | choose every byte a file system reads from that partition, and what a development build installs through the host link; through a file-system domain that a crafted partition compromises, read and write every principal's files on that partition | make that domain reach any other partition, the vault's partition and its key files included; make the code service load code into any domain, since it writes nothing to a data partition and reads no code from one; change an EROFS image without its hash tree noticing; make a build install an update that its trusted key did not sign, an older one, or, in a release build, a development one |
 | Whoever can write the boot medium | where nothing checks the boot image before the kernel runs, as on QEMU `virt`, whose trust root is the host, and on a board without secure boot: anything, the console's prompts included, so a passphrase typed there may be recorded; on a board with secure boot: put into a slot any boot image the board's key signed, an older one included | on a board with secure boot, run code the board's key did not sign; learn a secret from the boot image, which holds none ([design-platforms.md](design-platforms.md#trust-in-the-boot)) |
 | Whoever can read a storage medium | read every file on it, the vault's sealed files included; under the vault's `none` backend, guess a principal's passphrase offline against its file, at one Argon2id derivation for each guess, and read the machine keys | under the `device` or `tpm` backend, open any slot away from the board, the machine's included; read a passphrase or a private key without guessing a passphrase; learn a secret from the boot image, which holds none |
 | A network peer | send any packet to the network domain; once TCP distribution, TLS or SSH has authenticated it, act with the authority of the service or domain that accepted it | make the network domain do more than fail or drop traffic; reach any domain before it is authenticated, or beyond what the accepting service grants |
@@ -801,8 +801,7 @@ the trusted base in three ways:
   trees that services serve, with the line service's one-word `ctl`, which
   moves the bytes of a line's `data` and parses none of them
   ([design-bluetooth.md](design-bluetooth.md#the-controllers-line)), and the 9P2000.L codec at the host link and
-  on the network; the code service's decoder of the overlays and stores it
-  reads back from a data partition; the update service's manifest decoder,
+  on the network; the update service's manifest decoder,
   which runs only on bytes whose signature it has checked, in a
   development build against the development key the build embeds; the
   slot writer's record check.
@@ -1113,15 +1112,11 @@ another domain.
   the Pi 5's documents describe none, and erXos's security version guards
   only what an update installs
   ([design-storage.md](design-storage.md#system-updates)).
-* **A persisted overlay** is only as trustworthy as the data partition: a
-  file-system domain that a crafted partition compromises can rewrite the
-  overlays and stores of every principal whose directory it serves, and so
-  run code in those principals' supervised domains at their next start.
-  No domain of the system configuration, and not the system domain, ever
-  loads code from the data partition by itself: their overlays and
-  installs are never persisted, so code reaches them only through a
-  facet's explicit load, whose bytes may have been read from a file
-  anywhere and are checked by hash, or through a system update
+* **No domain loads code from a data partition by itself.** The code
+  service keeps overlays, hot stores and installs in memory only, so code
+  reaches a domain only through a facet's explicit load, whose bytes may
+  have been read from a file anywhere and are checked by hash, or through
+  a system update
   ([design-live.md](design-live.md#the-code-store)).
 * **Key facets and tokens.** A key facet authorizes at the level of its
   purpose's protocol role: it signs its purpose's input for its grantee
@@ -1566,7 +1561,7 @@ not offered, since a socket acts for its grant's domain alone
 | Host-link frames and sessions, with stream 4 carrying files, one 9P2000.L message per frame within an `msize` of 4,096 | 2 | [design-live.md](design-live.md#host-link-frames) | the deframer and the host grammar; another version is refused |
 | The file protocol: 9P2000.L's operations, as terms in frames on connections inside the machine, and as 9P2000.L bytes at the edges, the host link's files stream, QEMU's virtio-9p and the network | 9P2000.L, agreed by its `version` operation; the frame profile is part of the ABI's version | [design-files.md](design-files.md#the-file-protocol) | inside the machine, the funnel's grammar, then `erx_fs` and `liberx`'s client, both generated from the profile; at the edges, the generated codec `erx_9p`, bounded by `msize` and fuzzed |
 | A program's startup message and the channel protocol between a program and its handler | 1 | [design-programs.md](design-programs.md#the-channel) | `liberx`'s channel decoder, before `main` and at every reply; the handler's decoder, bounded, in the session |
-| Code blobs, manifests and overlays | manifests and overlays 1; a blob is its bytes, named by their SHA-256 | [design-live.md](design-live.md#the-code-store) | the code server's hash check; manifests and overlays by the code service's decoder |
+| Code blobs and manifests | manifests 1; a blob is its bytes, named by their SHA-256 | [design-live.md](design-live.md#the-code-store) | the code server's hash check; manifests by the code service's request reader |
 | `/proc` and `/dev` files | the inspection schema's | [design-live.md](design-live.md#the-proc-tree) | their servers, which encode entry names injectively and frame values with `\t`, `\n` and `\\` |
 | `grep`'s patterns: POSIX basic and extended regular expressions | POSIX.1-2024's | [design-shell.md](design-shell.md#text-commands) | `erx_grep_re`, bounded and fuzzed |
 | System identifiers | the rule `[a-z0-9][a-z0-9_-]*`, 1 to 63 bytes | [design-system.md](design-system.md#identifiers) | `erx_ident:new/1` |

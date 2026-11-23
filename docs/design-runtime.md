@@ -4370,7 +4370,7 @@ instead, and is no node.
 | `user` | `user_sup`, then `erx_console` and the group it registers |
 | `rex`, `global_name_server`, `global_group` | stock, with or without a carrier, as on a stock node that is not distributed: a name `global` registers without a carrier is known on this node alone (edit 41) |
 | `net_sup` | with a carrier only: `net_sup` holds `auth` and `net_kernel` over `erx_dist`, with no `erl_epmd`; `-kernel start_distribution false` leaves it and `dist_ac` out (edit 41) |
-| `erx_code_agent` | the domain's code server, `permanent`, after `kernel_safe_sup`: it checks its runtime's limits against the `code` protocol's floors, reports itself to the domain pid, and returns from its start at once, or, in a domain whose boot information carries `supervised`, once it has loaded the domain's start load; `ignore` in the system domain ([design-live.md](design-live.md#the-code-server), edit 41) |
+| `erx_code_agent` | the domain's code server, `permanent`, after `kernel_safe_sup`: it checks its runtime's limits against the `code` protocol's floors, reports itself to the domain pid, and returns from its start at once, or, in a domain whose boot information carries `supervised`, once it has loaded the domain's start load and the code service has confirmed it; `ignore` in the system domain ([design-live.md](design-live.md#the-code-server), edit 41) |
 
 The adapter's defaults and limits follow, in `erl`'s familiar spelling; a
 specification writes each `+` as `-`:

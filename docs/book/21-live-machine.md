@@ -578,8 +578,8 @@ restarts ([design-live.md, The code store](../design-live.md#the-code-store)):
   it from outside, which the restarted domain loads before its
   applications start. An overlay made over another release is dropped.
 * **Per-principal stores.** Each principal's blobs live in a store of
-  its own, charged to its budget on the data partition, so no principal
-  learns what another loaded.
+  its own, in memory charged to its budget, so no principal learns what
+  another loaded.
 * **Installed storage.** The system domain's runtime refuses any
   module outside its release and the code service's arena with
   `{error, not_installed}`
