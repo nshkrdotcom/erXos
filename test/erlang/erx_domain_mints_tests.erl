@@ -937,18 +937,24 @@ line_mints_and_answers_test() ->
 %% ?ERX_LINES the map whole, and a refused line answers no_line.
 session_line_providers_test() ->
     Foreign = (line_mints())#{ssh_line := forged(?SESSION)},
-    {[Refused], One} = run([line_ready(Foreign)], new()),
+    {[_, Refused], One} = run([ready(?G, ?PEER, #{}), line_ready(Foreign)], new()),
     ?assertEqual([{refused, foreign_mint, {session, ?SESSION, ssh_line}}], Refused),
     ?assertMatch({[[{arm, 1, _}, _]], _}, run([line_request(asker)], One)),
     ?assertEqual([{error, no_line}],
                  answers(element(1, run([{line, asker, ssh_line, ?SESSION, ?PEER, ?OPENING}], One)))),
-    {[Whole], None} = run([line_ready((line_mints())#{data => mint(?SESSION)})], new()),
+    {[_, Whole], None} = run([ready(?G, ?PEER, #{}), line_ready((line_mints())#{data => mint(?SESSION)})], new()),
     ?assertEqual([{refused, undeclared, {session, ?SESSION}}], Whole),
     ?assertEqual([{error, no_line}], answers(element(1, run([line_request(asker)], None)))),
     ?assertEqual([{error, no_line}],
                  answers(element(1, run([{line, asker, data, ?SESSION, ?PEER, ?OPENING}], lines_started())))).
 
 %% A second request while one is pending answers busy and sends no second mint request.
+line_peer_not_live_test() ->
+    {Actions, State} = run([{ended, ?G, ?PEER}, line_request(asker), {line, asker, web_line, ?SESSION, 55, ?OPENING}],
+                           lines_started()),
+    ?assertEqual([{error, ended}, {error, ended}], answers(Actions)),
+    ?assertEqual(#{}, maps:get(line_ops, State)).
+
 line_busy_test() ->
     {Actions, _} = run([line_request(first), line_request(second), {introduced, 1, ok}], lines_started()),
     ?assertEqual([[{answer, second, {error, busy}}],

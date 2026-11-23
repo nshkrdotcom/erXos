@@ -37,7 +37,7 @@ decided once, by the service, when the session is planned: a template's
 session holds every row granted to its template, and an app's session the
 app template's packages row and the rows its admission kept, and no other
 (docs/design-packaging.md, "An app's session"). Its ready report,
-{session_ready, Rows, Id, Marked}, carries them and adds a grant keyed by
+{session_ready, Rows, Id, Node, Marked, Provides}, carries them and adds a grant keyed by
 {session, Id} for each, so no session holds a row its plan did not give
 it, whatever else its template is granted; its end,
 {session_ended, Id}, cancels their operations and deletes them, so the
@@ -144,8 +144,8 @@ session and line name it was asked for and has not answered:
 Pair is {SessionId, PeerId}, fixed when the request makes the operation and
 never reconciled. A request {line, Asker, Name, Session, Peer, Opening} is
 answered at once with no_line when the session is not ready or has no accepted
-mint under Name, and with busy while an operation for the session's Name is
-pending; otherwise it arms the deadline and introduces the two domains, which
+mint under Name, with busy while an operation for the session's Name is
+pending, and with ended when the peer is no domain whose end the core hears; otherwise it arms the deadline and introduces the two domains, which
 is skipped for the system domain as peer, as for a grant. Once introduced, the
 mint request goes to the session's mint of Name with the quantities ?ERX_LINES
 gives Name and the opening, so no facet row can set either. A mint reply
@@ -155,7 +155,8 @@ any other reply refused. The session's end answers no_line, the peer's end,
 as a configured row's or a session's, ended, a refused introduction its
 reason and the deadline unavailable. Each answer is the action {answer,
 Asker, Reply}, its deadline disarmed unless the deadline answered, and nothing
-of the operation is kept after it.
+of the operation is kept after it. Grants and line operations take their tags
+from one counter, so a tag names one of them at most.
 """.
 
 -export([new/1, step/2, grants/1, granted/3, granted_names/2, granted_services/2, in_place/3, settled/3,
@@ -522,28 +523,45 @@ on_event({deadline, Tag}, State) ->
     end.
 
 %% A request for session Session's line Name with Peer its grantee, within the life of
-%% Opening: answered at once when the session has no such line or one is pending,
-%% started otherwise.
-request_line(Asker, Name, Session, Peer, Opening,
-             #{lines := Lines, line_ops := Ops, next_tag := Tag, deadline := Deadline} = State) ->
+%% Opening: answered at once when the session has no such line, when one is pending, or
+%% when Peer is no domain whose end the core hears (live_peer/2), started otherwise.
+request_line(Asker, Name, Session, Peer, Opening, #{lines := Lines, line_ops := Ops} = State) ->
     Key = {Session, Name},
     case {Lines, Ops} of
         {_, #{Key := _}} ->
             {[{answer, Asker, {error, busy}}], State};
         {#{Session := {_Node, #{Name := _}}}, _} ->
-            Pair = {Session, Peer},
-            Armed = State#{next_tag := Tag + 1},
-            Op = #{asker => Asker, opening => Opening},
-            case Peer of
-                ?SYSTEM_ID ->
-                    {[{arm, Tag, Deadline}, line_mint(Key, Peer, Tag, Opening, State)],
-                     Armed#{line_ops := Ops#{Key => Op#{state => {minting, Pair, Tag}}}}};
-                _ ->
-                    {[{arm, Tag, Deadline}, {introduce, Tag, Session, Peer}],
-                     Armed#{line_ops := Ops#{Key => Op#{state => {introducing, Pair, Tag}}}}}
+            case live_peer(Peer, State) of
+                true -> start_line(Asker, Key, Peer, Opening, State);
+                false -> {[{answer, Asker, {error, ended}}], State}
             end;
         _ ->
             {[{answer, Asker, {error, no_line}}], State}
+    end.
+
+%% Whether Peer is a domain whose end the core hears, so no line operation outlives it:
+%% the system domain, a ready session, or a configured row's ready incarnation.
+live_peer(?SYSTEM_ID, _State) ->
+    true;
+live_peer(Peer, #{sessions := Sessions, rows := Rows}) ->
+    sets:is_element(Peer, Sessions)
+        orelse lists:any(fun({Id, ready, _Node, _Providers}) -> Id =:= Peer; (_Ended) -> false end,
+                         maps:values(Rows)).
+
+%% The operation for Key, its deadline armed: minting at once for the system domain as
+%% peer, which every domain is connected to, and introducing the two domains otherwise.
+start_line(Asker, {Session, _Name} = Key, Peer, Opening,
+           #{line_ops := Ops, next_tag := Tag, deadline := Deadline} = State) ->
+    Pair = {Session, Peer},
+    Armed = State#{next_tag := Tag + 1},
+    Op = #{asker => Asker, opening => Opening},
+    case Peer of
+        ?SYSTEM_ID ->
+            {[{arm, Tag, Deadline}, line_mint(Key, Peer, Tag, Opening, State)],
+             Armed#{line_ops := Ops#{Key => Op#{state => {minting, Pair, Tag}}}}};
+        _ ->
+            {[{arm, Tag, Deadline}, {introduce, Tag, Session, Peer}],
+             Armed#{line_ops := Ops#{Key => Op#{state => {introducing, Pair, Tag}}}}}
     end.
 
 %% The mint request for session Session's line Name, to its accepted mint, with the
