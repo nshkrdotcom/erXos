@@ -190,6 +190,34 @@ exit_record_is(const erx_fault_t *record, uint64_t label, uint64_t got_label, in
 	    record->thread == UINT64_MAX && got_label == label);
 }
 
+/*
+ * Blocks the calling thread for ns, on a futex word no one wakes. A root loop that polls
+ * for a task's progress, rather than waiting in an IPC or a join, blocks through this
+ * between looks: the root's threads run in the root band, above the app band of the tasks
+ * it makes, and a task's threads stay on the CPU the root service made them on, so a root
+ * that polls without blocking keeps its tasks from ever running (docs/design-fiasco.md,
+ * "Bands").
+ */
+static void
+root_sleep(uint64_t ns)
+{
+	static _Atomic uint32_t never_woken;
+
+	(void)erx_umtx_wait((uint64_t)(uintptr_t)&never_woken, 0, erx_fiasco_clock_ns() + ns);
+}
+
+/* Whether a task sets the signal word at addr before the deadline. */
+static bool
+signal_wait(uint64_t addr, uint64_t deadline)
+{
+	while (atomic_load_explicit((_Atomic uint64_t *)(uintptr_t)addr, memory_order_acquire) == 0) {
+		if (erx_fiasco_clock_ns() >= deadline)
+			return (false);
+		root_sleep(SHORT_NS);
+	}
+	return (true);
+}
+
 /* Writes value plus the page's number at the head of each of mem's pages, through a mapping of the root's own. */
 static bool
 object_fill(uint64_t mem, uint64_t pages, uint64_t value)
@@ -302,16 +330,14 @@ case_revoke(void)
 		    erx_fiasco_launch_start(spaces[slot], program_pc, MODE_REVOKED | slot << SLOT_SHIFT) == ERX_OK;
 	deadline = erx_fiasco_clock_ns() + WAIT_NS;
 	for (uint64_t slot = 0; slot < 2 && passed; slot++)
-		while (atomic_load_explicit((_Atomic uint64_t *)(uintptr_t)(signal_addr + slot * sizeof(uint64_t)),
-		    memory_order_acquire) == 0 && passed)
-			passed = erx_fiasco_clock_ns() < deadline;
+		passed = signal_wait(signal_addr + slot * sizeof(uint64_t), deadline);
 	passed = passed && erx_object_destroy(mem) == ERX_OK;
 	/*
 	 * Both tasks fault at once; the second is stopped before any record is read, and its
 	 * fault record outlives the stop, ahead of its exit record. The faults come in either
 	 * order, each naming its space under its label.
 	 */
-	(void)erx_umtx_wait(signal_addr + PAGE - sizeof(uint32_t), 0, erx_fiasco_clock_ns() + SETTLE_NS);
+	root_sleep(SETTLE_NS);
 	passed = passed && erx_space_stop(spaces[1], REVOKE_STATUS) == ERX_OK;
 	for (uint64_t taken = 0; taken < 2 && passed; taken++) {
 		erx_fault_t record;
@@ -650,7 +676,7 @@ static void
 case_budget_destroy(void)
 {
 	const uint64_t before = erx_fiasco_vm_free_pages();
-	uint64_t own, outer, link, deep, gate, space, shared, side, deep_side, signal, signal_addr, pc, deadline;
+	uint64_t own, outer, link, deep, gate, space, shared, side, deep_side, signal, signal_addr, pc;
 	bool passed = erx_budget_create(ERX_CAP_SELF, ERX_BUDGET_WALL, 64, 64, &own) == ERX_OK &&
 	    erx_budget_create(ERX_CAP_SELF, ERX_BUDGET_ELASTIC, 8, 16, &outer) == ERX_OK &&
 	    erx_budget_create(outer, ERX_BUDGET_WALL, 2, 2, &link) == ERX_OK && erx_gate_create(own, &gate) == ERX_OK &&
@@ -668,9 +694,7 @@ case_budget_destroy(void)
 	    erx_fiasco_launch_start(space, program_pc, MODE_REVOKED) == ERX_OK;
 
 	/* The task has read the object, so it runs when its budget goes. */
-	deadline = erx_fiasco_clock_ns() + WAIT_NS;
-	while (passed && atomic_load_explicit((_Atomic uint64_t *)(uintptr_t)signal_addr, memory_order_acquire) == 0)
-		passed = erx_fiasco_clock_ns() < deadline;
+	passed = passed && signal_wait(signal_addr, erx_fiasco_clock_ns() + WAIT_NS);
 	passed = passed && erx_object_destroy(own) == ERX_OK && erx_object_destroy(outer) == ERX_OK;
 	passed = passed && erx_object_destroy(space) == ERX_ESTALE && erx_object_destroy(gate) == ERX_ESTALE &&
 	    erx_object_destroy(shared) == ERX_ESTALE && erx_object_destroy(side) == ERX_ESTALE &&
@@ -927,8 +951,11 @@ case_budget_held(void)
 
 	/* The space's stop and the budget's end are one request, so the object stays until both are done. */
 	deadline = erx_fiasco_clock_ns() + WAIT_NS;
-	while (passed && erx_cap_dup(mem, &copy) == ERX_OK)
+	while (passed && erx_cap_dup(mem, &copy) == ERX_OK) {
 		passed = handle_close(copy) == ERX_OK && erx_fiasco_clock_ns() < deadline;
+		if (passed)
+			root_sleep(SHORT_NS);
+	}
 	passed = passed && erx_object_destroy(mem) == ERX_ESTALE && erx_object_destroy(space) == ERX_ESTALE &&
 	    !record_wait(erx_fiasco_clock_ns() + SETTLE_NS, &record, &label);
 	passed = handle_close(mem) == ERX_OK && handle_close(space) == ERX_OK && handle_close(gate) == ERX_OK && passed;
