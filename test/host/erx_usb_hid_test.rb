@@ -28,9 +28,10 @@ class ErxUsbHidTest < Minitest::Test
     test/erlang/stand_in/erx_usb_pipe.erl
   ].freeze
   DEADLINE_SECONDS = '300'
-  # EUnit's per-case timeout scaled from 5 s to 60 s, above the cases' own waits
-  # (WAIT_MS), so a loaded host fails no case that would pass and a seeded fault's case
-  # fails on its own error.
+  # Every EUnit timeout scaled by 12: the default per-case timeout from 5 s to 60 s, above
+  # the cases' own waits (WAIT_MS and the storm case's 30 s), and any explicit {timeout, N,
+  # ...} to 12 N s, so a loaded host fails no case that would pass and a seeded fault's
+  # case fails on its own error.
   EUNIT_OPTIONS = '[verbose, {scale_timeouts, 12}]'
   HID = 'erlang/apps/erx_usb/src/erx_usb_hid.erl'
   CORE = 'erlang/apps/erx_usb/src/erx_hid_core.erl'

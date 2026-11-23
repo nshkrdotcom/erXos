@@ -341,8 +341,8 @@ wait_connect(Domain) ->
 wait_refused(Domain) ->
     connect_until(Domain, fun(Answer) -> Answer =:= {error, refused} end).
 
-%% connect/1's first answer that Done takes, or its last once WAIT_MS has passed: the
-%% tty's message reaches the console through the facet, so nothing answers when it has.
+%% connect/1's first answer that Done takes, or its last once WAIT_MS has passed: no
+%% message tells the test when the tty's naming has reached the console, so it asks.
 connect_until(Domain, Done) ->
     connect_until(Domain, Done, erlang:monotonic_time(millisecond) + ?WAIT_MS).
 

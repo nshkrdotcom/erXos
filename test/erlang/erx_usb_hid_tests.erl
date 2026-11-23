@@ -330,10 +330,7 @@ malformed_reports_are_dropped_test() ->
 %% A report storm with no reader fills the stream and then stops the function: no
 %% transfer stays posted and the device keeps every report past one read's worth and
 %% the four transfers, one report a record here; reading drains them all.
-a_report_storm_waits_for_the_reader_test_() ->
-    {timeout, 60, fun a_report_storm_waits_for_the_reader/0}.
-
-a_report_storm_waits_for_the_reader() ->
+a_report_storm_waits_for_the_reader_test() ->
     P = places(),
     F = keyboard(P),
     Pairs = ?ERX_P9_IO_MAX div ?RECORD,

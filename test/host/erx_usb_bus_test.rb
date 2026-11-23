@@ -32,6 +32,8 @@ class ErxUsbBusTest < Minitest::Test
     test/erlang/erx_pcie_log_capture.erl
   ].freeze
   DEADLINE_SECONDS = '300'
+  # Every EUnit timeout scaled by 12: the default per-case timeout from 5 s to 60 s, above
+  # the cases' own waits (WAIT_MS), and any explicit {timeout, N, ...} to 12 N s.
   EUNIT_OPTIONS = '[verbose, {scale_timeouts, 12}]'
   BUS = 'erlang/apps/erx_usb/src/erx_usb_bus.erl'
   CORE = 'erlang/apps/erx_usb/src/erx_usb_bus_core.erl'

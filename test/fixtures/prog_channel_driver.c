@@ -317,12 +317,15 @@ big_sender(void *unused)
 	return (NULL);
 }
 
+/*
+ * The smaller sender; its argument is the delay in microseconds after each of its wakes. A
+ * delay lets it reach the lock after the larger sender, woken with it, has slept again; none
+ * lets it send at once.
+ */
 static void *
-small_sender(void *unused)
+small_sender(void *delay_us)
 {
-	(void)unused;
-	/* Woken with the larger sender, it reaches the lock after that one has slept again. */
-	wake_delay_us = 100000;
+	wake_delay_us = (unsigned)(uintptr_t)delay_us;
 	if (send_one(3, 1, SMALL_FRAME) != ERX_OK)
 		fail("the smaller send failed");
 	atomic_store(&small_done, true);
@@ -380,7 +383,7 @@ case_waiters(void)
 	}
 	pthread_create(&big, NULL, big_sender, NULL);
 	sleeps_reach(1);
-	pthread_create(&small, NULL, small_sender, NULL);
+	pthread_create(&small, NULL, small_sender, (void *)(uintptr_t)100000);
 	sleeps_reach(2);
 	/* Frees room only up to the first announcement, the smaller need's crossing, and lets the smaller send leave. */
 	while (announced == 0) {
@@ -419,18 +422,6 @@ case_waiters(void)
 	pthread_join(small, NULL);
 }
 
-static _Atomic bool cutter_done;
-
-static void *
-cutting_sender(void *unused)
-{
-	(void)unused;
-	if (send_one(3, 1, SMALL_FRAME) != ERX_OK)
-		fail("the smaller send failed");
-	atomic_store(&cutter_done, true);
-	return (NULL);
-}
-
 static void
 case_cut(void)
 {
@@ -456,8 +447,8 @@ case_cut(void)
 		fail("a written frame is missing");
 	check_frame(buf, len, 1, 1, WAIT_FRAME);
 	/* The smaller frame fits beside a sleeping sender, which must have left nothing of its own frame behind. */
-	pthread_create(&small, NULL, cutting_sender, NULL);
-	for (unsigned tries = 0; !atomic_load(&cutter_done); tries++) {
+	pthread_create(&small, NULL, small_sender, (void *)(uintptr_t)0);
+	for (unsigned tries = 0; !atomic_load(&small_done); tries++) {
 		if (tries == 50000)
 			fail("the smaller send never finished");
 		pause_briefly();

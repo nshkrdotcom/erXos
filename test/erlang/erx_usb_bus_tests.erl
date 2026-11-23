@@ -263,8 +263,8 @@ a_transport_crash_ends_only_its_medium_test() ->
         exit(Crashing, kill),
         ?assertEqual({ok, Other}, erx_blk:read(Serving, 3, 1)),
         ?assert(is_process_alive(Function)),
-        wait(fun() -> length(transports()) =:= 2 end,
-             erlang:monotonic_time(millisecond) + ?ERX_USB_BOT_POLL_MS + ?WAIT_MS),
+        wait_until(fun() -> length(transports()) =:= 2 end,
+                   erlang:monotonic_time(millisecond) + ?ERX_USB_BOT_POLL_MS + ?WAIT_MS),
         [Found] = transports() -- [Serving],
         ?assertEqual({ok, Written}, erx_blk:read(Found, 3, 1)),
         ?assertEqual({ok, Other}, erx_blk:read(Serving, 3, 1)),
@@ -473,6 +473,9 @@ flush() ->
     receive _ -> flush() after 0 -> ok end.
 
 %% The fake's starts, each told before it failed, so all are in once the group is given up.
+%% On one node a message is in the receiver's mailbox once its sender has sent it, so
+%% `after 0` sees every start told before the event the case waited for; a lower count
+%% fails the case, never passes it wrongly.
 fake_starts(Count) ->
     receive {fake_started, _} -> fake_starts(Count + 1) after 0 -> Count end.
 
@@ -573,15 +576,19 @@ pipe_resets(Ref, Address) ->
 class_resets() ->
     length([S || {control, _, S = <<16#21, ?ERX_USB_BOT_REQUEST_RESET, _/binary>>, _, _} <- log()]).
 
-wait(Condition) -> wait(Condition, erlang:monotonic_time(millisecond) + ?WAIT_MS).
+wait(Condition) -> wait_until(Condition, erlang:monotonic_time(millisecond) + ?WAIT_MS).
 
-wait(Condition, Deadline) ->
+%% The fake's log for a timeout's error, or no_fake when the fake is not registered.
+fake_log() ->
+    try log() catch error:{no_fake, _} -> no_fake end.
+
+wait_until(Condition, Deadline) ->
     case Condition() of
         true -> ok;
         false ->
             case erlang:monotonic_time(millisecond) < Deadline of
-                true -> timer:sleep(20), wait(Condition, Deadline);
-                false -> error({timeout, log()})
+                true -> timer:sleep(20), wait_until(Condition, Deadline);
+                false -> error({timeout, fake_log()})
             end
     end.
 
