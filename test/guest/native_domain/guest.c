@@ -752,7 +752,10 @@ static const char refs_eval[] =
     "P!{e,Tb},receive {erx_origin,4,{e,T2}}->H(T2==Tb andalso E(T2),17) end,P!z,"
     "receive after infinity->ok end";
 
-/* How long the party waits for the domain's first frame, and for each later one. */
+/*
+ * How long the party waits for each of the domain's two boot reports, the code server's
+ * and init's, which comes once every application has started, and for each later frame.
+ */
 #define FIRST_NS	UINT64_C(60000000000)
 #define NEXT_NS		UINT64_C(10000000000)
 /* How long it leaves the lane unread, so the burst fills it. */
@@ -1242,11 +1245,12 @@ static bool
 party_pid_read(const lane_party_t *party, const uint8_t *at, size_t len, erx_etf_pid_t *pid)
 {
 	static const uint8_t head[] = { 88, 119, sizeof(DOMAIN_NODE) - 1 };
-	const uint8_t *numbers = at + sizeof(head) + sizeof(DOMAIN_NODE) - 1;
+	const uint8_t *numbers;
 
 	if (len < PARTY_PID_LEN || memcmp(at, head, sizeof(head)) != 0 ||
 	    memcmp(at + sizeof(head), DOMAIN_NODE, sizeof(DOMAIN_NODE) - 1) != 0)
 		return (false);
+	numbers = at + sizeof(head) + sizeof(DOMAIN_NODE) - 1;
 	*pid = party_domain_pid(party, party_be32(numbers));
 	pid->serial = party_be32(numbers + 4);
 	return (party_be32(numbers + 8) == party->id);
@@ -1270,18 +1274,29 @@ party_from(const lane_party_t *party, const uint8_t *record, size_t len, const c
 	    memcmp(frame.payload + 2, message, message_len) == 0);
 }
 
-/* Whether a frame record is a SEND_SENDER of {Tag, Q}, Tag a one-letter atom and Q a domain pid; reads Q into q. */
+/* Whether a frame's payload is {Tag, Q}, Tag the atom tag and Q a domain pid; reads Q into q. */
 static bool
-party_handed(const lane_party_t *party, const uint8_t *record, size_t len, char tag, erx_etf_pid_t *q)
+party_tagged(const lane_party_t *party, const party_frame_t *frame, const char *tag, erx_etf_pid_t *q)
+{
+	/* SMALL_TUPLE_EXT of 2, SMALL_ATOM_UTF8_EXT; the tag's bytes and Q follow */
+	static const uint8_t head[] = { 104, 2, 119 };
+	const size_t tag_len = strlen(tag);
+	const size_t at = sizeof(head) + 1 + tag_len;
+
+	return (frame->payload_len == at + PARTY_PID_LEN && memcmp(frame->payload, head, sizeof(head)) == 0 &&
+	    frame->payload[sizeof(head)] == tag_len && memcmp(frame->payload + sizeof(head) + 1, tag, tag_len) == 0 &&
+	    party_pid_read(party, frame->payload + at, PARTY_PID_LEN, q));
+}
+
+/* Whether a frame record is a SEND_SENDER of {Tag, Q}, Tag the atom tag and Q a domain pid; reads Q into q. */
+static bool
+party_handed(const lane_party_t *party, const uint8_t *record, size_t len, const char *tag, erx_etf_pid_t *q)
 {
 	static const uint8_t ctl_head[] = { 104, 3, 97, DOP_SEND_SENDER };
-	/* SMALL_TUPLE_EXT of 2, SMALL_ATOM_UTF8_EXT of one letter; Q follows */
-	static const uint8_t head[] = { 104, 2, 119, 1 };
 	party_frame_t frame;
 
 	return (party_frame_split(record, len, &frame) && party_ctl_starts(&frame, ctl_head, sizeof(ctl_head)) &&
-	    frame.payload_len == sizeof(head) + 1 + PARTY_PID_LEN && memcmp(frame.payload, head, sizeof(head)) == 0 &&
-	    frame.payload[sizeof(head)] == (uint8_t)tag && party_pid_read(party, frame.payload + sizeof(head) + 1, PARTY_PID_LEN, q));
+	    party_tagged(party, &frame, tag, q));
 }
 
 /*
@@ -1478,10 +1493,55 @@ party_ready_pair(const lane_party_t *party, const uint8_t *payload, size_t len, 
 }
 
 /*
- * Whether a frame record is init's ready report (edit 65 of docs/design-runtime.md): a
- * SEND_SENDER {22, From, To} from a domain pid to the domain pid the root wrote on the
- * boot page, a pid of the system node of words BOOT_PID_NUMBER and BOOT_PID_SERIAL and
- * creation 4, of {erx_ready, #{connections => Agent, inspect => Inspect, provides =>
+ * Whether a frame record is a SEND_SENDER {22, From, To} from a domain pid to the domain
+ * pid the root wrote on the boot page, a pid of the system node of words BOOT_PID_NUMBER
+ * and BOOT_PID_SERIAL and creation 4; splits it into frame and reads From into from,
+ * each meaningful only when it is.
+ */
+static bool
+party_to_domain_pid(const lane_party_t *party, const uint8_t *record, size_t len, party_frame_t *frame,
+    erx_etf_pid_t *from)
+{
+	/* SMALL_TUPLE_EXT of 3, SMALL_INTEGER_EXT DOP_SEND_SENDER */
+	static const uint8_t ctl_head[] = { 104, 3, 97, DOP_SEND_SENDER };
+	/* NEW_PID_EXT, SMALL_ATOM_UTF8_EXT of the system node; ID, Serial and Creation follow */
+	static const uint8_t to_head[] = { 88, 119, sizeof(SYSTEM_NODE) - 1 };
+	const size_t to_len = sizeof(to_head) + sizeof(SYSTEM_NODE) - 1 + 12;
+	const uint8_t *to, *numbers;
+
+	if (!party_frame_split(record, len, frame) || !party_ctl_starts(frame, ctl_head, sizeof(ctl_head)) ||
+	    frame->ctl_len != sizeof(ctl_head) + PARTY_PID_LEN + to_len ||
+	    !party_pid_read(party, frame->ctl + sizeof(ctl_head), PARTY_PID_LEN, from))
+		return (false);
+	to = frame->ctl + sizeof(ctl_head) + PARTY_PID_LEN;
+	numbers = to + sizeof(to_head) + sizeof(SYSTEM_NODE) - 1;
+	return (memcmp(to, to_head, sizeof(to_head)) == 0 &&
+	    memcmp(to + sizeof(to_head), SYSTEM_NODE, sizeof(SYSTEM_NODE) - 1) == 0 &&
+	    party_be32(numbers) == BOOT_PID_NUMBER && party_be32(numbers + 4) == BOOT_PID_SERIAL &&
+	    party_be32(numbers + 8) == 4);
+}
+
+/*
+ * Whether a frame record is the code server's report to the domain pid,
+ * {erx_code_agent, Agent} from Agent itself, a pid of the domain, which kernel's start
+ * sends before init's ready report (docs/design-live.md, "The code server"). The root
+ * marks no domain supervised, so the code server starts with no start load to wait
+ * for, and the root sends no answer.
+ */
+static bool
+party_code_agent(const lane_party_t *party, const uint8_t *record, size_t len)
+{
+	party_frame_t frame;
+	erx_etf_pid_t from, agent;
+
+	return (party_to_domain_pid(party, record, len, &frame, &from) &&
+	    party_tagged(party, &frame, "erx_code_agent", &agent) && agent.id == from.id &&
+	    agent.serial == from.serial);
+}
+
+/*
+ * Whether a frame record is init's ready report (edit 65 of docs/design-runtime.md) to
+ * the domain pid, {erx_ready, #{connections => Agent, inspect => Inspect, provides =>
  * #{}}}, Agent and Inspect pids of the domain: nothing in the test release calls
  * erx_facet:provide/2, so provides is the empty map. ERTS writes a small map's atom keys
  * in atom-table order, which this test does not know, so the pairs are read by key. The
@@ -1490,29 +1550,14 @@ party_ready_pair(const lane_party_t *party, const uint8_t *payload, size_t len, 
 static bool
 party_ready(const lane_party_t *party, const uint8_t *record, size_t len)
 {
-	/* SMALL_TUPLE_EXT of 3, SMALL_INTEGER_EXT DOP_SEND_SENDER */
-	static const uint8_t ctl_head[] = { 104, 3, 97, DOP_SEND_SENDER };
-	/* NEW_PID_EXT, SMALL_ATOM_UTF8_EXT of the system node; ID, Serial and Creation follow */
-	static const uint8_t to_head[] = { 88, 119, sizeof(SYSTEM_NODE) - 1 };
-	const size_t to_len = sizeof(to_head) + sizeof(SYSTEM_NODE) - 1 + 12;
 	/* SMALL_TUPLE_EXT of 2, the atom erx_ready, MAP_EXT of three pairs */
 	static const uint8_t head[] = { 104, 2, 119, 9, 'e', 'r', 'x', '_', 'r', 'e', 'a', 'd', 'y', 116, 0, 0, 0, 3 };
 	party_frame_t frame;
 	erx_etf_pid_t from;
-	const uint8_t *to, *numbers;
 	size_t at;
 	unsigned pair, seen;
 
-	if (!party_frame_split(record, len, &frame) || !party_ctl_starts(&frame, ctl_head, sizeof(ctl_head)) ||
-	    frame.ctl_len != sizeof(ctl_head) + PARTY_PID_LEN + to_len ||
-	    !party_pid_read(party, frame.ctl + sizeof(ctl_head), PARTY_PID_LEN, &from))
-		return (false);
-	to = frame.ctl + sizeof(ctl_head) + PARTY_PID_LEN;
-	numbers = to + sizeof(to_head) + sizeof(SYSTEM_NODE) - 1;
-	if (memcmp(to, to_head, sizeof(to_head)) != 0 ||
-	    memcmp(to + sizeof(to_head), SYSTEM_NODE, sizeof(SYSTEM_NODE) - 1) != 0 ||
-	    party_be32(numbers) != BOOT_PID_NUMBER || party_be32(numbers + 4) != BOOT_PID_SERIAL ||
-	    party_be32(numbers + 8) != 4 || frame.payload_len < sizeof(head) ||
+	if (!party_to_domain_pid(party, record, len, &frame, &from) || frame.payload_len < sizeof(head) ||
 	    memcmp(frame.payload, head, sizeof(head)) != 0)
 		return (false);
 	at = sizeof(head);
@@ -1526,8 +1571,9 @@ party_ready(const lane_party_t *party, const uint8_t *record, size_t len)
 
 /*
  * Maps both sides of domain id's system connection into the root as the system domain's
- * runtime would, opens party on them and takes the domain's first frame, its init's ready
- * report. False on any failure; party_close releases what it mapped either way.
+ * runtime would, opens party on them and takes the domain's first two frames, its code
+ * server's report and its init's ready report, in the order the runtime sends them. False
+ * on any failure; party_close releases what it mapped either way.
  */
 static bool
 party_open(uint32_t id, lane_party_t *party)
@@ -1558,7 +1604,8 @@ party_open(uint32_t id, lane_party_t *party)
 	    erx_lane_writer_init(&party->writer, (void *)(uintptr_t)party->own, (const void *)(uintptr_t)party->peer_side,
 	    sys.in_size) &&
 	    erx_lane_reader_init(&party->reader, (const void *)(uintptr_t)party->peer_side, (void *)(uintptr_t)party->own,
-	    sys.out_size) && party_take(party, record, FIRST_NS, &len) && party_ready(party, record, len));
+	    sys.out_size) && party_take(party, record, FIRST_NS, &len) && party_code_agent(party, record, len) &&
+	    party_take(party, record, FIRST_NS, &len) && party_ready(party, record, len));
 }
 
 /* Releases what party_open mapped. False when a release fails. */
@@ -1814,7 +1861,7 @@ exports_party(uint32_t id)
 	say_count("exports_spawned", passed);
 	passed = passed && party_take(&party, record, NEXT_NS, &len) && party_from(&party, record, len, "d", &eval) &&
 	    party_forged(&party, &eval);
-	passed = passed && party_take(&party, record, NEXT_NS, &len) && party_handed(&party, record, len, 'n', &nk) &&
+	passed = passed && party_take(&party, record, NEXT_NS, &len) && party_handed(&party, record, len, "n", &nk) &&
 	    party_nk_spawn(&party, &nk, &eval) && party_signal(&party, DOP_SEND_SENDER, &eval, "m5");
 	say_count("exports_net_kernel", passed);
 	passed = passed && party_take(&party, record, NEXT_NS, &len) &&
@@ -1823,7 +1870,7 @@ exports_party(uint32_t id)
 	    party_signal(&party, DOP_SEND_SENDER, &eval, "m2") && party_signal(&party, DOP_LINK, &eval, NULL) &&
 	    party_signal(&party, DOP_PAYLOAD_EXIT, &eval, "r7");
 	say_count("exports_narrowed", passed);
-	passed = passed && party_take(&party, record, NEXT_NS, &len) && party_handed(&party, record, len, 'c', &q) &&
+	passed = passed && party_take(&party, record, NEXT_NS, &len) && party_handed(&party, record, len, "c", &q) &&
 	    party_take(&party, record, NEXT_NS, &len) && party_from(&party, record, len, "c2", &eval) &&
 	    party_monitor(&party, &q) && party_take(&party, record, NEXT_NS, &len) && party_down_noproc(record, len) &&
 	    party_signal(&party, DOP_SEND_SENDER, &eval, "m6");
@@ -1908,11 +1955,11 @@ origins_party(uint32_t id)
 	passed = party_open(id, &party);
 	passed = passed && party_serve_call(&party, record, FIRST_NS, &eval);
 	say_count("origins_call_answered", passed);
-	passed = passed && party_take(&party, record, NEXT_NS, &len) && party_handed(&party, record, len, 's', &q) &&
+	passed = passed && party_take(&party, record, NEXT_NS, &len) && party_handed(&party, record, len, "s", &q) &&
 	    party_sys_terminate(&party, &q) && party_signal(&party, DOP_SEND_SENDER, &eval, "m1");
 	say_count("origins_sys_terminate", passed);
-	passed = passed && party_take(&party, record, NEXT_NS, &len) && party_handed(&party, record, len, 'n', &nk) &&
-	    party_take(&party, record, NEXT_NS, &len) && party_handed(&party, record, len, 'k', &q) &&
+	passed = passed && party_take(&party, record, NEXT_NS, &len) && party_handed(&party, record, len, "n", &nk) &&
+	    party_take(&party, record, NEXT_NS, &len) && party_handed(&party, record, len, "k", &q) &&
 	    party_disconnects(&party, &nk, &q) && party_signal(&party, DOP_SEND_SENDER, &eval, "m2");
 	say_count("origins_disconnects", passed);
 	return (party_close(&party) && passed);
