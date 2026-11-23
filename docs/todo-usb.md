@@ -170,8 +170,7 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   the VL805's line against the bridge's `interrupt-map` is not checked at boot (see "a closed place's line against
   the tree" in [todo-liberx.md](todo-liberx.md)); the controller's level-line handling is host-tested
   (`a_level_line_neither_storms_nor_loses_an_event_test`) and not yet seen under load on the board; the
-  mass-storage function ran on the board with a stick plugged in and no fault, but no board run has shown a medium
-  served (the `medium LUN L ready` line), so the stick, and the board checklist of design-usb.md's
+  stick's check (the `medium LUN L ready` line, which the board shows), and the board checklist of design-usb.md's
   [QEMU suites](design-usb.md#qemu-suites) section, its non-coherent DMA steps among them, are still to be
   added to the guide's Pi 4 checks ([raspberry-pi-4.md](guide/raspberry-pi-4.md)).
 * [Low] USB, SuperSpeed hubs ([design-usb.md](design-usb.md#outside-this-design)): the bus core gives up a

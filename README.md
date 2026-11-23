@@ -361,11 +361,11 @@ Eshell V17.1.1 (type help(). for help)
 * The USB domain's mass-storage function serves a Bulk-Only USB stick as a
   medium: it reads the capacity and hands reads, writes and flushes to the
   medium's block transport, and it logs one line when a medium is served
-  and one when it ends. A USB controller's drives are named `disk0` to
-  `disk3`. Host tests check it against a model stick on a fake controller;
-  on the Pi 4 it ran with a stick plugged in and no fault, but no board
-  check has shown a medium served yet, no QEMU suite runs it, and no file
-  system mounts a drive.
+  and one when it ends. Drives are numbered `disk0` upward across the
+  machine, and a medium takes its USB domain's lowest free drive. On the
+  Pi 4 a USB stick is served as a drive; host tests check the function
+  against a model stick on a fake controller. No QEMU suite runs it, and
+  no file system mounts a drive yet.
 
 **Networking**
 
