@@ -492,9 +492,8 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   row is heard at a higher id, which may never happen; the device service asks once for
   each report, keyed by the envelope's domain, so a PCIe domain that keeps reporting
   while the grant is idle grows the domain service's `settling` list without bound,
-  against the design's bound ([design-system.md](design-system.md#waiting-for-a-grant),
-  "each answer comes within the mint core's deadline and the server row's boot
-  timeout"). The entries of dead callers stay too, since the list sets no monitor.
+  against the design's bound of the mint core's deadline and the server row's
+  boot timeout ([design-system.md](design-system.md#waiting-for-a-grant)). The entries of dead callers stay too, since the list sets no monitor.
   Answer `{error, ended}` for an id past a row ended with no restart, and refuse an id
   the core never issued for that row.
 
