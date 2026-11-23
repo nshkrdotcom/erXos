@@ -6,6 +6,8 @@ is in [design-live.md](../design-live.md#code-from-the-host); the book
 explains the model from the ground up in
 [chapter 21, section 21.4](../book/21-live-machine.md#214-how-code-gets-into-a-domain).
 
+This page is a step of [the developer's guide](developing.md#4-change-erlang-code-and-load-it).
+
 Loading code is for development builds, which run trusted code only.
 Whoever can load code into the system domain controls the machine.
 

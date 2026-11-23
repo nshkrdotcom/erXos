@@ -487,6 +487,10 @@ trusted code only` at boot and must run trusted code only. It runs on
 QEMU `virt` and on a Raspberry Pi 4. Read the release notes' known
 limitations before you put it on a network.
 
+To work on erXos, start with the
+[developer's guide](docs/guide/developing.md): the loop from setup to a
+landed change, with pages on loading code, debugging, tracing and testing.
+
 **Raspberry Pi 4.** You need a Pi 4, a microSD card of at least 1 GB,
 an Ethernet cable and, for the kiosk, a screen on the HDMI0 port. A 3.3 V
 USB-serial adapter gives you the console
