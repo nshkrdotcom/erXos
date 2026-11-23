@@ -1120,6 +1120,10 @@ within about 20 percent of the length, write plain code.
     Each chapter's status box says what is built and what is designed;
     the boxes are re-checked at each milestone, in the same commit as
     README's "Current status".
+    A change to a design document updates the book chapters that
+    describe it in the same branch, so the book never describes a
+    design the design documents have replaced; a design agent's brief
+    says so, and its reviewer checks the book against the change.
   * Research records (`docs/research-*.md`, measurement and conformance
     reports) are point-in-time reports.
 * **For every major feature, write `docs/design-<feature>.md` first** and
