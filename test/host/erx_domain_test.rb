@@ -172,6 +172,13 @@ class ErxDomainTest < Minitest::Test
               from: 'loop(replied(Monitor, {error, failed}, State));',
               to: 'loop(State#{forwards := maps:remove(Monitor, Forwards)});',
               tests: 'erx_facet_tests', caught_by: 'a_forwards_service_that_ends_answers_failed_test'),
+    # A timed-out start answered before its facet has ended: the line's next mint could
+    # start a facet beside the old one (docs/design-system.md, "A session's lines", L4).
+    Fault.new(name: 'a timed-out facet start answered before its end',
+              file: 'erlang/apps/erx/src/erx_facet.erl',
+              from: "receive {'DOWN', Monitor, process, Pid, _Reason} -> ok end,",
+              to: 'ok,',
+              tests: 'erx_facet_tests', caught_by: 'a_timed_out_start_has_ended_before_it_answers_test_'),
     # A facet that ends only with processes outlives its grantee's connection, a port, so
     # each grantee restart leaves an old facet and its grant behind.
     Fault.new(name: 'a facet that ignores the end of a port it ends with',

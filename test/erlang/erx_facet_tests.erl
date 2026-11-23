@@ -54,6 +54,9 @@ facet(Behind, Ends, Grant) ->
         unregister(erx_facet_tests)
     end.
 
+init(#{hang := Watcher}) ->
+    Watcher ! {watch, self()},
+    receive after infinity -> {ok, Watcher} end;
 init(#{behind := Behind}) ->
     {ok, Behind}.
 
@@ -261,3 +264,26 @@ a_grant_s_operations_need_a_checking_callback_test() ->
     ?assertEqual({error, badarg}, erx_facet:start(?MODULE, Grant#{operations => read}, #{exports => ?MODULE})),
     Facet = facet(echo(), domain_pid(), #{operations => []}),
     ?assertEqual({echo, {write, 1}}, call(Facet, {write, 1})).
+
+%% A facet whose init never reports is killed at start/3's timeout, and start/3 answers
+%% {error, timeout} only once it has ended (docs/design-system.md, "A session's lines",
+%% the replacement test): a watcher that monitors the facet from its init on has its
+%% 'DOWN' before the refusal reaches the test, so no failed start overlaps the next.
+a_timed_out_start_has_ended_before_it_answers_test_() ->
+    {timeout, 30, fun() ->
+        Watcher = spawn(fun watcher/0),
+        Grant = #{grantee => ?GRANTEE, ends_with => [domain_pid()], hang => Watcher},
+        ?assertEqual({error, timeout}, erx_facet:start(?MODULE, Grant, #{exports => ?MODULE})),
+        Watcher ! {seen, self()},
+        ?assertEqual({down, killed}, receive {Watcher, Seen} -> Seen after 1000 -> none end)
+    end}.
+
+%% Monitors the process that names itself with {watch, Pid}, and answers {seen, From}
+%% with that monitor's 'DOWN' if it has arrived, without waiting for it.
+watcher() ->
+    receive {watch, Pid} -> watched(Pid, monitor(process, Pid)) end.
+
+watched(Pid, Monitor) ->
+    receive {seen, From} ->
+        From ! {self(), receive {'DOWN', Monitor, process, Pid, Reason} -> {down, Reason} after 0 -> alive end}
+    end.

@@ -257,8 +257,12 @@ start(Callback, Grant, Operations, Exports) ->
         {'DOWN', Monitor, process, Pid, Reason} ->
             {error, Reason}
     after ?START_TIMEOUT ->
-            demonitor(Monitor, [flush]),
+            %% Killed, and answered only once its 'DOWN' is taken, so no facet that
+            %% failed to start outlives the answer (docs/design-system.md, "A session's
+            %% lines", L4).
             exit(Pid, kill),
+            receive {'DOWN', Monitor, process, Pid, _Reason} -> ok end,
+            receive {Tag, ok} -> ok after 0 -> ok end,
             {error, timeout}
     end.
 
