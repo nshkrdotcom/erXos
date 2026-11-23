@@ -4,8 +4,8 @@
 
 require_relative '../bench_suite'
 
-# How late a waiting thread runs (docs/design-bench.md, "1. wake"). A lost wake, a wake
-# that waits behind other work at its level, whether a timed wait ends only at a tick
+# How late a waiting thread runs (docs/design-bench.md,
+# "1. `wake`: how late a waiting thread runs"). A lost wake, a wake that waits behind other work at its level, whether a timed wait ends only at a tick
 # (the phase sweep shows it), and a doorbell path that grows a request to the root.
 # gpio-edge, on the Raspberry Pi 4 only, is declared with its responders.
 operation = Erx::BenchSuite::Operation
