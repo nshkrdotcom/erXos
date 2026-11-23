@@ -17,7 +17,7 @@
 > on the host.
 > **Designed:** the slot writer, updates with a trial boot and a
 > commit, the reset count, the vault's storage domain, drives, whose
-> FAT, EROFS and littlefs volumes the media domain serves at `/media`,
+> FAT and EROFS volumes the media domain serves at `/media`,
 > and erXos's F2FS as a mounted file system with its power-cut harness.
 
 **Background needed.** [Chapter 1](01-operating-systems.md) (block
@@ -473,9 +473,8 @@ handed. This reader and its fuzz target are built.
 
 The design adds the **FAT server**, `erx_fat`, which serves one FAT
 volume of a drive as files ([design-storage.md, Removable media:
-FAT](../design-storage.md#removable-media-fat)). It reads FAT12, FAT16
-and FAT32 with long names, writes FAT16 and FAT32 and mounts FAT12
-read-only, matches names without regard to case as Windows does, and
+FAT](../design-storage.md#removable-media-fat)). It reads and writes
+FAT16 and FAT32 with long names, refuses FAT12 by name, matches names without regard to case as Windows does, and
 reports files as mode `0644`, since FAT has no owners. The FAT server
 is designed and not built.
 
@@ -490,17 +489,18 @@ turns any such medium into files by one path
 The domain that drives the medium's transport, the USB domain for a
 stick, serves the medium **whole**, as one window, and parses none of
 it, so nothing a stranger wrote is read in a domain that holds a
-device. A drive's grant hands that window to the **media domain**,
-which holds no device and nothing but the drives. There the medium
-passes through four steps. A pure reader takes its partition table
+device. A drive's grant hands that window, once, to the **media
+domain**, which holds no device and nothing but the drives. There the
+medium passes through a few steps. A pure reader takes its partition table
 apart, an MBR, a GPT or none at all, by FreeBSD's tests, and refuses
-the whole table when one entry runs past the medium or overlaps
-another. A probe that follows FreeBSD's `fstyp` names each
-partition's file system from its own bytes, so a stick formatted
-as exFAT or ext4 is refused by that name. Each **volume** a served
-format holds gets one process: FAT behind the FAT server, EROFS
-behind the same reader the system uses, littlefs behind its owner and
-a sub-space of its own for littlefs's C. Sessions that hold the
+the whole table when one entry runs past the medium, overlaps another
+or covers the table's own sectors. Each partition, a **volume**, gets
+one process, in which a probe that follows FreeBSD's `fstyp` names its
+file system from its own bytes, so a stick formatted as exFAT or ext4
+is refused by that name, and the volume is then mounted: FAT behind
+the FAT server, EROFS behind the same decoder the system uses, and, in
+development builds only, littlefs behind its owner and a sub-space of
+its own for littlefs's C. Sessions that hold the
 `media` facet see the drives at `/media/disk0/s1` and so on, beside
 each drive's `status`, which names every volume's format, label and
 mount, and its `ctl`, to which `eject` is written before a stick is
@@ -509,21 +509,29 @@ pulled.
 The rule that keeps the design safe is that everything a medium's
 bytes reach belongs to that medium. The reader, the volume processes
 and littlefs's sub-spaces are children of one supervisor per medium,
-which ends when the medium's window does. A crafted volume therefore
-ends at most its own mount; a pulled stick ends its volumes, and an
-open file on it answers `eio`; and the next stick in the same drive
-meets nothing the last one left. A volume is written only when one
+which ends when the medium's window does, and each runs under a memory
+bound the media domain's budget covers. A crafted volume therefore
+ends at most its own mount, and a crafted table its own stick's; a
+pulled stick ends its volumes, and an open file on it answers `eio`;
+the next stick in the same drive meets nothing the last one left; and
+since the grant hands each window out once, no stick is mounted twice.
+`eject`, and the machine's orderly shutdown, give each volume a last
+request that closes it to anything later, writes what it holds and
+flushes, so nothing it acknowledged is lost on a stick that flushes. A volume is written only when one
 format alone claims it, the medium can flush and the format allows
 it, so a stick formatted twice is never written as the wrong format.
 
 An EROFS image on a stick has no hash tree the boot image vouches
-for, so the media domain reads it unauthenticated, through an entry
-of the reader that lives only in the media domain's own application;
-no domain that mounts a package or serves the `system` tree can make
-one, and the rule of section 16.2.2 holds for the system's own images
-unchanged. Compressed EROFS images are refused by name. littlefs on a
-stick runs only in its sub-space form, never as the NIF of section
-16.3, so a memory error in it reaches its own volume and no runtime
+for, so the media domain reads it unauthenticated. The EROFS decoder
+is shared, but the block source a drive's image is read through, and
+the code that mounts it, live only in the media domain's own
+application, and a build check keeps every other runtime's mounts on
+the hash-checked path, so the rule of section 16.2.2 holds for the
+system's own images unchanged. Compressed EROFS images are refused by
+name. No release serves littlefs from a stick: development builds do,
+for tests, and only in its sub-space form, never as the NIF of section
+16.3, so a memory error in it reaches its own volume, the kernel's
+calls and the CPU, and no runtime
 ([design-stopgap.md, littlefs on a
 drive](../design-stopgap.md#littlefs-on-a-drive)). Drives are designed
 and not built; the USB stick's transport and its medium's lifetime
@@ -688,7 +696,7 @@ domain. The reset count is designed and not built.
 | A block driver crash | the storage domain, then restarted | the same; files synced before it are kept |
 | A crafted data partition | the storage domain, at every restart | `/data` stays unavailable; the partition is never formatted |
 | A changed block of a system partition | the one read | `eio` on that file; the machine boots, since nothing at boot reads the partition |
-| A crafted stick | that volume's mount, in the design | `eio` in that volume; the stick's other volumes and every other drive go on |
+| A crafted stick | that volume's mount, or the stick's for a crafted table, in the design | `eio` in that volume; every other drive goes on |
 | A stick pulled out | its volumes, in the design | open files on it answer `eio`; the next stick mounts afresh |
 
 In the design, a trial that faults or hangs ends only the trial boot,

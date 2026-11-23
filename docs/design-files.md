@@ -2114,7 +2114,10 @@ writes in Erlang form the `erx_files` application
               {ok, [dirent()]} | {error, file:posix()}.
 -callback readlink(Node :: term(), Fs :: term()) ->
               {ok, binary()} | {error, file:posix()}.
--callback statfs(Fs :: term()) -> {ok, statfs()}.
+%% Node is the fid's node, as Tstatfs names a fid; a tree whose every node
+%% lies in one file system ignores it, and the media tree answers each
+%% volume's own (design-drives.md, "Mounting it").
+-callback statfs(Node :: term(), Fs :: term()) -> {ok, statfs()}.
 %% ok, or the errno of what the close could not complete; the fid ends
 %% either way.
 -callback clunk(Handle :: term(), Fs :: term()) -> ok | {error, file:posix()}.

@@ -2073,8 +2073,8 @@ does not answer cannot prevent the end, but its failure prevents a trial:
    `unavailable`, has the backend stop as its row of the `erx_seal`
    behaviour says, which under `tpm` sends `TPM2_Shutdown`, and answers,
    within 2 s ([The vault](#the-vault)).
-2. **Every storage service freezes**: the system domain asks each, on its
-   durability facet, for a checkpoint that freezes it, which answers once
+2. **Every storage service, and the media service, freezes**: the
+   system domain asks each, on its durability facet, for a checkpoint that freezes it, which answers once
    a completed checkpoint holds every write the service acknowledged and
    then answers every later write `{error, erofs}`, as a trial's mount
    does, waiting at most 5 s for them all
@@ -2083,7 +2083,9 @@ does not answer cannot prevent the end, but its failure prevents a trial:
    the coordinator records each service's outcome.
 3. **The coordinator selects the end from the outcomes.** `trial` is
    selected only when the vault and every storage service acknowledged
-   preparation. Otherwise a requested trial becomes `reset`, which sets no
+   preparation; the media service's outcome is recorded and logged and
+   selects nothing, since a trial reads no drive
+   ([design-drives.md](design-drives.md#finishing-a-volume)). Otherwise a requested trial becomes `reset`, which sets no
    one-shot trial flag and boots the committed slot; the log names the
    failed preparation and marks durability incomplete. Ordinary `off` and
    `reset` proceed after a failed preparation with that diagnostic, and

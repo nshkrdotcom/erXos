@@ -2898,7 +2898,7 @@ part (c) runs beside 1b-I's board work, and part (e) follows (b). Part
 `virt` and on the Raspberry Pi 4, along [design-usb.md](design-usb.md):
 both controllers are xHCI behind a PCIe domain, the controller's domain
 holds every USB device, HID reaches the display's input router through
-input numbers, and a stick's FAT, EROFS and littlefs volumes are served at
+input numbers, and a stick's FAT and EROFS volumes are served at
 `/media` through drives ([design-drives.md](design-drives.md)).
 
 **Demo.** On QEMU `virt`, keys typed with QMP into a USB keyboard on
@@ -2956,13 +2956,15 @@ the VL805's internal hub types into the kiosk.
 * **(e) Drives' volumes, on QEMU `virt`, on Fiasco.** The media domain
   of [design-drives.md](design-drives.md): the whole-medium window and
   drive grant, the table reader and the probe with their fuzz targets,
-  the media tree with `status` and `ctl`, the FAT server, EROFS through
-  its unauthenticated entry, and littlefs through its port once the
-  port exists; a block device of the drive role. Its QEMU cases are the
+  the media tree with `status` and `ctl`, the finish that `eject` and
+  the ordered end share, the FAT server for FAT16 and FAT32, EROFS
+  through the media domain's own source, and, for development builds and
+  test images, littlefs through its port once the port exists; a block
+  device of the drive role. Its QEMU cases are the
   design's: a stick of each served format, on each table, listed and read
   against the harness's hashes, refused formats named, ejected and put
-  back. It needs (b)'s mass storage and the program port driver for
-  littlefs's part.
+  back, and a stick written before an ordered `off`. It needs (b)'s
+  mass storage, and the program port driver for littlefs's part.
 
 DWC2 on QEMU `raspi4b` is not a part of the track; it is planned work
 in `TODO.md` ([design-usb.md](design-usb.md#dwc2)).

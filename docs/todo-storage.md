@@ -5,34 +5,46 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
 
 ## Major initiatives
 
-* [High] storage and USB, drives: every medium's FAT, EROFS and littlefs volumes at `/media`
-  ([design-drives.md](design-drives.md), [plan.md](plan.md#track-u-usb), part (e)). Steps, each with
-  the host tests and fuzz target its section names, landing in this order:
+* [High] storage and USB, drives: every medium's FAT16, FAT32 and EROFS volumes at `/media`, and littlefs
+  volumes in development builds and test images ([design-drives.md](design-drives.md),
+  [plan.md](plan.md#track-u-usb), part (e)). Steps, each with the host tests and fuzz target its section
+  names, landing in this order:
   1. `abi/manifest.txt` and the manifest check: the window role `fat` becomes `drive`, which names no
      partition and is held only by the media domain; the rules of design-drives.md's "Manifest rows",
-     each with a seeded manifest; `media_volumes_max` and `media_volume_heap_max` as limits; the 9P
-     statfs types `msdosfs` and `media` in `abi/protocols/9p.txt`; the `media` service and its mount
-     point in `erx_ns`.
+     each with a seeded manifest, the media domain's budget rule among them; `media_volumes_max` and
+     `media_volume_bytes` as limits; the 9P statfs types `msdosfs` and `media` in
+     `abi/protocols/9p.txt`; the `media` service, its mount point in `erx_ns`, and its durability facet
+     to the system domain in the facet table.
   2. The whole-medium window: `erx_usb_bot`'s block service with one window over the medium and
-     `erx_blk_drive`, the drive grant; `erx_blk` serving a `block` device's medium as a drive. Its
-     moduledoc's "not started yet" goes.
-  3. `erx_media_table` (MBR, GPT, none, whole-table refusal, `place/3`) and `erx_media_probe` with
-     `abi/formats/probe.txt`, pure, with their fuzz targets and seeds; littlefs's signature offset
-     pinned by an `lfs-format` seed.
-  4. The `erx_media` application: the drive process, the medium supervisor and reader, the volume
-     process, the media tree with `status` and `ctl`, the writable rule; the release check that
-     `erx_media` lies only in the media domain's release, which names no `erx_storage` or `erx_blk`;
-     the resolver's no-follow rule extended to the `media` facet.
-  5. The FAT server, `erx_fat`, over a volume: its read path, then its batches, dirty flag and eject.
-  6. EROFS: `erx_media_blocks`, `erx_erofs:mount_unauthenticated/2`, `erx_erofs_tree` factored out of
-     `erx_storage_system`, the compression refusal by name, `Erx::ErofsReads` extended, and
-     `erx_verity`'s `unchecked` form deleted, its tests and fuzz target moved to `erx_media_blocks`.
-  7. littlefs through its port, once the port exists (the port item under "Stopgap replacements"):
-     the owner's placement of the port's block requests and the port's channel decoders with their
-     fuzz targets.
-  8. The harness: stick images from a declared tree with their files' SHA-256 (fsimg's FAT16, FAT32
-     and EROFS; a host tool that writes a littlefs volume's files with `erx_lfs_config`; an MBR and a
-     GPT writer; signature-only images of the refused formats), and the QEMU cases of design-drives.md
+     `erx_blk_drive`, the drive grant, which answers each window once and `taken` after; `erx_blk`
+     serving a `block` device's medium as a drive. Its moduledoc's "not started yet" goes.
+  3. `erx_media_table` (MBR, GPT with both copies and the metadata rule, none, whole-table refusal,
+     `place/3`) and `erx_media_probe` with `abi/formats/probe.txt`, pure, with their fuzz targets and
+     seeds; FAT's row through the FAT server's boot-sector decoder, FAT12 refused by name.
+  4. `erx_fs`'s `statfs` callback takes the node: every tree's `statfs/1` becomes `statfs/2`, ignoring it,
+     and the grant passes the fid's node.
+  5. The `erx_media` application: the drive process, the medium supervisor and reader, the volume
+     process with its probe and memory bound, the media tree with `status`, `ctl`, the two-volume `exdev`
+     rule and per-volume statfs, the writable rule, the finish shared by `eject` and the freezing
+     checkpoint; the release check that `erx_media` lies only in the media domain's release, which names
+     no `erx_storage` or `erx_blk`, and in a release build no `erx_lfs`; the resolver's no-follow rule
+     extended to the `media` facet; the ordered end's step 2 freezing the media service.
+  6. The FAT server, `erx_fat`, over a FAT16 or FAT32 volume: its read path, then its batches, dirty flag
+     and finish.
+  7. EROFS: `erx_erofs` reading through its mount's source function, with `mount_source/2` beside
+     `mount/2`; `erx_media_blocks` and `erx_media_erofs`; `erx_erofs_tree` factored out of
+     `erx_storage_system`; the compression refusal by name; `Erx::ErofsReads` extended to the two callers
+     of `mount_source/2`; and `erx_verity`'s `unchecked` form deleted, its tests and fuzz target moved to
+     `erx_media_blocks`.
+  8. littlefs for development builds and test images, through its port once the port exists (the port
+     item under "Stopgap replacements"): the owner's placement and write admission of the port's block
+     requests, the port's budget, and the port's channel decoders with their fuzz targets. A steerable
+     memory error in littlefs on a crafted stick reaches the port's sub-space, its own volume through
+     its owner's checks, the kernel's calls and the CPU: a residual of development builds, which run only
+     trusted code, and of no release, since none serves littlefs volumes.
+  9. The harness: stick images from a declared tree with their files' SHA-256 (fsimg's FAT12, FAT16,
+     FAT32 and EROFS; a host tool that writes a littlefs volume's files with `erx_lfs_config`; an MBR and
+     a GPT writer; signature-only images of the refused formats), and the QEMU cases of design-drives.md
      in the `usb` suite, over its stick plumbing.
 * [High] storage and apps, the system partition and the `system` tree
   ([docs/todo-system-partition.md](todo-system-partition.md),
@@ -57,9 +69,9 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   NIF form's published downside. It waits for track S's port driver (1b-B). With it: the confinement case,
   the port's space read through `/proc` holding no handle but its channel and no mapping but its data area,
   with a port given the storage domain's window as its seeded failure, and the production image's check
-  refusing a release manifest that runs the NIF form. Drives need it too: a drive's littlefs volume runs only in
-  the port ([design-drives.md](design-drives.md#littlefs-through-its-port)), so only a release that serves
-  littlefs volumes on drives waits for it.
+  refusing a release manifest that runs the NIF form. Drives' tests need it too: a drive's littlefs volume,
+  which only development builds and test images serve, runs only in the port
+  ([design-drives.md](design-drives.md#littlefs-through-its-port)); no release waits for it.
 * [Medium] storage: replace littlefs, which runs as a NIF in the storage domains of
   the data partition and of the vault's partition, with erXos's F2FS, written in Erlang, at parity over the file-semantics
   corpus, by gate G13. Nothing written under littlefs is converted: erXos's
