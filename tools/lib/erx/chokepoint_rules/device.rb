@@ -86,24 +86,27 @@ module Erx
     # registers, names its generated header and accessors alone; a pure core beside a shim
     # names the header, its field functions and its field values, never an accessor, so no
     # register is read or written outside the shim. Both peripheral rules read this one list.
-    ROOT_BOARD = lambda do
-      shim = lambda do |path, device, accessors: '\w+'|
-        Chokepoints::Site.new(glob: path, permits: %r{\A(?:#\s*include\s*"erx/hw/#{device}\.h"|erx_#{device}_#{accessors})\z})
-      end
-      core = lambda do |path, device, fields: 'set'|
-        Chokepoints::Site.new(glob: path,
-                              permits: %r{\A(?:#\s*include\s*"erx/hw/#{device}\.h"|erx_#{device}_\w+_#{fields}|ERX_#{device.upcase}_\w+)\z})
-      end
-      [shim.call('liberx/backend/fiasco/rng200.c', 'rng200'),
-       shim.call('liberx/backend/fiasco/pm_wdt.c', 'pm_wdt'),
-       core.call('kernel/core/pm_wdt.c', 'pm_wdt'),
-       shim.call('liberx/backend/fiasco/vc_mbox.c', 'vc_mbox'),
-       # The mailbox routine also reads the status it is fed through the field getters.
-       core.call('kernel/core/vc_mailbox.c', 'vc_mbox', fields: '(?:get|set)'),
-       # The pins' shim reaches the function-select registers alone.
-       shim.call('liberx/backend/fiasco/bcm2711_pins.c', 'bcm2711_gpio', accessors: 'gpfsel[0-5]_(?:read|write)'),
-       core.call('kernel/core/bcm2711_pins.c', 'bcm2711_gpio')]
-    end.call.freeze
+    # A shim's site, from its file and its device's generated header name.
+    ROOT_BOARD_SHIM = lambda do |path, device, accessors: '\w+'|
+      Chokepoints::Site.new(glob: path, permits: %r{\A(?:#\s*include\s*"erx/hw/#{device}\.h"|erx_#{device}_#{accessors})\z})
+    end
+    # A pure core's site: the header, its field functions and its field values.
+    ROOT_BOARD_CORE = lambda do |path, device, fields: 'set'|
+      Chokepoints::Site.new(glob: path,
+                            permits: %r{\A(?:#\s*include\s*"erx/hw/#{device}\.h"|erx_#{device}_\w+_#{fields}|ERX_#{device.upcase}_\w+)\z})
+    end
+    ROOT_BOARD = [
+      ROOT_BOARD_SHIM.call('liberx/backend/fiasco/rng200.c', 'rng200'),
+      ROOT_BOARD_SHIM.call('liberx/backend/fiasco/pm_wdt.c', 'pm_wdt'),
+      ROOT_BOARD_CORE.call('kernel/core/pm_wdt.c', 'pm_wdt'),
+      ROOT_BOARD_SHIM.call('liberx/backend/fiasco/vc_mbox.c', 'vc_mbox'),
+      # The mailbox routine also reads the status it is fed through the field getters.
+      ROOT_BOARD_CORE.call('kernel/core/vc_mailbox.c', 'vc_mbox', fields: '(?:get|set)'),
+      # The pins' shim reaches the function-select registers alone.
+      ROOT_BOARD_SHIM.call('liberx/backend/fiasco/bcm2711_pins.c', 'bcm2711_gpio',
+                           accessors: 'gpfsel[0-5]_(?:read|write)'),
+      ROOT_BOARD_CORE.call('kernel/core/bcm2711_pins.c', 'bcm2711_gpio')
+    ].freeze
     ROOT_BOARD_TEXT = "the root's board device shims and cores on Fiasco"
     # The xHCI harness's stand-in controller answers the device NIF's register accesses and
     # reads the registers it wrote through the generated xHCI header, as GENET's harness does

@@ -31,7 +31,7 @@ erx_fiasco_program_board(const erx_dt_t *tree, const erx_manifest_view_t *manife
 	(void)tree;
 	(void)manifest;
 	*board = (erx_fiasco_board_t){ .watchdog = { .armed = false }, .watchdog_found = ERX_FIASCO_FOUND_ABSENT,
-	    .mailbox = ERX_FIASCO_FOUND_ABSENT, .pins = ERX_FIASCO_BOARD_PINS_NONE };
+	    .mailbox_found = ERX_FIASCO_FOUND_ABSENT, .pins = ERX_FIASCO_BOARD_PINS_NONE };
 	return (NULL);
 }
 

@@ -378,14 +378,16 @@ board_seed(const erx_dt_t *tree, const erx_manifest_view_t *manifest, erx_fiasco
 
 /*
  * The row of the unit of compatible that manifest gives the system domain
- * (erx_boot_held_row), with its path put in tree_path and its window in *window, and
- * whether tree places the device there (erx_dt_registers). *found is ABSENT when the
- * manifest gives none, UNCONFIRMED when the tree does not confirm the row, and READY when
- * it does, for the caller to map *window, or to set UNCONFIRMED when it cannot. Returns
- * NULL, or unnamed, why the root cannot boot, when the row's path is not a node path.
+ * (erx_boot_held_row), with its path put in tree_path, and whether tree places the device
+ * there (erx_dt_registers). *found is ABSENT when the manifest gives none, UNCONFIRMED
+ * when the tree does not confirm the row, and READY when it does: the caller then opens
+ * the device at *window, the row's window, and sets UNCONFIRMED when it cannot, so READY
+ * is final only once the device is open. *window is written only with READY or
+ * UNCONFIRMED. Returns NULL, or bad_path, why the root cannot boot, when the row's path
+ * is not a node path; *found is then ABSENT.
  */
 static const char *
-board_row(const erx_dt_t *tree, const erx_manifest_view_t *manifest, const char *compatible, const char *unnamed,
+board_row(const erx_dt_t *tree, const erx_manifest_view_t *manifest, const char *compatible, const char *bad_path,
     erx_dt_window_t *window, erx_fiasco_found_t *found)
 {
 	erx_boot_row_t row;
@@ -394,7 +396,7 @@ board_row(const erx_dt_t *tree, const erx_manifest_view_t *manifest, const char 
 	if (!erx_boot_held_row(manifest, compatible, &row))
 		return (NULL);
 	if (!tree_path_set(row.path))
-		return (unnamed);
+		return (bad_path);
 	*window = row.window;
 	*found = erx_dt_registers(tree, tree_path, compatible, row.window) == ERX_DT_REGS_OK ? ERX_FIASCO_FOUND_READY :
 	    ERX_FIASCO_FOUND_UNCONFIRMED;
@@ -458,6 +460,7 @@ board_pins(const erx_dt_t *tree, const erx_manifest_view_t *manifest, erx_fiasco
 		*found = ERX_FIASCO_BOARD_PINS_UNCONFIRMED;
 		return (NULL);
 	case ERX_FIASCO_FOUND_READY:
+		/* The tree confirms the controller's row: the plan decides the rest. */
 		break;
 	}
 	*found = ERX_FIASCO_BOARD_PINS_REFUSED;
@@ -476,8 +479,9 @@ erx_fiasco_program_board(const erx_dt_t *tree, const erx_manifest_view_t *manife
 {
 	const char *reason;
 
-	if ((reason = board_watchdog(tree, manifest, &board->watchdog, &board->watchdog_found)) != NULL ||
-	    (reason = board_mailbox(tree, manifest, &board->mailbox)) != NULL)
+	if ((reason = board_watchdog(tree, manifest, &board->watchdog, &board->watchdog_found)) != NULL)
+		return (reason);
+	if ((reason = board_mailbox(tree, manifest, &board->mailbox_found)) != NULL)
 		return (reason);
 	return (board_pins(tree, manifest, &board->pins));
 }

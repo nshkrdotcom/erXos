@@ -145,7 +145,7 @@ root_boot(erx_boot_handoff_view_t *handoff, erx_manifest_view_t *manifest, erx_b
 	root_report(handoff, root_pack.header.nentries);
 	root_report_manifest(manifest, free_pages);
 	root_report_watchdog(&config, mode, board.watchdog_found);
-	root_report_mailbox(board.mailbox);
+	root_report_mailbox(board.mailbox_found);
 	root_report_pins(board.pins, manifest->header.onboard_pins.count);
 	return (NULL);
 }
@@ -255,7 +255,7 @@ root_report_manifest(const erx_manifest_view_t *manifest, uint64_t free_pages)
  * the board has none.
  */
 static void
-root_report_watchdog(const erx_watchdog_config_t *config, erx_watchdog_mode_t mode, erx_fiasco_found_t board)
+root_report_watchdog(const erx_watchdog_config_t *config, erx_watchdog_mode_t mode, erx_fiasco_found_t found)
 {
 	char line[ERX_ROOT_LINE_MAX];
 	size_t used = 0;
@@ -272,13 +272,13 @@ root_report_watchdog(const erx_watchdog_config_t *config, erx_watchdog_mode_t mo
 	}
 	root_append(line, &used, "\n");
 	erx_fiasco_console_write(line, used);
-	if (board == ERX_FIASCO_FOUND_ABSENT)
+	if (found == ERX_FIASCO_FOUND_ABSENT)
 		return;
 	used = 0;
 	root_append(line, &used, "erx: root task: board watchdog ");
 	if (mode == ERX_WATCHDOG_MODE_DETERMINISTIC)
 		root_append(line, &used, "off");
-	else if (board == ERX_FIASCO_FOUND_READY)
+	else if (found == ERX_FIASCO_FOUND_READY)
 		root_append_decimal(line, &used, ERX_PM_WDT_TIMEOUT_S);
 	else
 		root_append(line, &used, "none: the tree does not confirm its record");

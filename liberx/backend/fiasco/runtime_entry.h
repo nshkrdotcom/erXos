@@ -37,7 +37,7 @@ const char	*erx_fiasco_program_tree(erx_dt_t *tree, const erx_manifest_view_t *m
 typedef enum erx_fiasco_found {
 	/* The manifest gives the system domain none, as on QEMU virt. */
 	ERX_FIASCO_FOUND_ABSENT = 1,
-	/* Its row is confirmed by the tree and its registers are mapped. */
+	/* Its row is confirmed by the tree, and the root opened it: its registers are mapped. */
 	ERX_FIASCO_FOUND_READY,
 	/* The tree does not confirm its row, or its page cannot be mapped: the board has none. */
 	ERX_FIASCO_FOUND_UNCONFIRMED
@@ -48,12 +48,13 @@ typedef struct erx_fiasco_board {
 	/* The hardware watchdog, for the watchdog thread: no device unless watchdog_found is READY. */
 	erx_fiasco_pm_wdt_t	watchdog;
 	erx_fiasco_found_t	watchdog_found;
-	erx_fiasco_found_t	mailbox;
+	erx_fiasco_found_t	mailbox_found;
 	erx_fiasco_board_pins_t	pins;
 } erx_fiasco_board_t;
 
 /*
- * The board devices the root drives itself, in the platform layer's place, each through
+ * The board devices the root drives itself, in the platform layer's place, but the RNG200,
+ * which erx_fiasco_program_tree reads only when /chosen carries no seed; each through
  * the unit of its compatible string that manifest gives the system domain
  * (erx_boot_held_row) once tree, the one erx_fiasco_program_tree accepted, confirms its
  * row; *board says what was found and done:
