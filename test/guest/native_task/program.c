@@ -19,6 +19,7 @@
 #include "liberx/backend/api.h"
 #include "liberx/backend/fiasco/cache.h"
 #include "liberx/backend/fiasco/console.h"
+#include "liberx/backend/fiasco/log.h"
 #include "liberx/backend/fiasco/root_layout.h"
 #include "liberx/backend/fiasco/service.h"
 #include "liberx/backend/fiasco/task_start.h"
@@ -33,6 +34,9 @@
 #define CPUS_TRIED	4u
 #define REWRITE_ROUNDS	2000u
 #define YIELD_ROUNDS	1000u
+/* MODE_TURNS: the turns it takes the median of, and how long it tries. */
+#define TURNS		15u
+#define TURNS_DEADLINE_NS	UINT64_C(2000000000)
 /* QEMU virt's fw_cfg and RAM (hw/arm/virt.c), as test/guest/function_api/device_cases.c uses them. */
 #define FW_CFG_PHYS	UINT64_C(0x9020000)
 #define RAM_PHYS	UINT64_C(0x40000000)
@@ -273,12 +277,12 @@ mode_service(void)
 	return (0);
 }
 
-/* Spins until the machine's end or the task's: it never stops by itself. */
+/* Spins, counting in spin_counts[index], until the machine's end or the task's: it never stops by itself. */
 static void
-spin_helper(uint64_t cpu)
+spin_helper(uint64_t index)
 {
 	for (;;)
-		atomic_fetch_add_explicit(&spin_counts[cpu], 1, memory_order_relaxed);
+		atomic_fetch_add_explicit(&spin_counts[index], 1, memory_order_relaxed);
 }
 
 static int64_t
@@ -295,6 +299,85 @@ mode_spin_stop(void)
 			erx_yield();
 	}
 	return (STATUS_SPIN_STOP);
+}
+
+_Static_assert(SPIN_THREADS <= CPUS_TRIED, "each spinner has its own count");
+
+/*
+ * The band case's load: spinners at the app level on CPU 0, the root's, until the root stops
+ * the task. Only CPU 0 has the root's thread, so spinners elsewhere would only change the
+ * host's load between the case's two windows. Each spinner has run, its count moved, before the
+ * next starts and before the task's first thread sleeps.
+ */
+static int64_t
+mode_spin(void)
+{
+	uint64_t thread;
+
+	for (uint32_t spinner = 0; spinner < SPIN_THREADS; spinner++) {
+		const int64_t step = thread_spawn(spin_helper, spinner, UINT64_C(1), NULL, &thread);
+
+		if (step != 0)
+			return (step);
+		while (atomic_load_explicit(&spin_counts[spinner], memory_order_relaxed) == 0)
+			erx_yield();
+	}
+	erx_fiasco_sleep_forever();
+}
+
+/*
+ * The quantum case's load (docs/design-fiasco.md, "Bands"): this thread and one spinner, both
+ * at the task's level on CPU 0, alone there while the root waits in its join, take the CPU a
+ * quantum each in turn. A sample is the clock read between two reads of the spinner's count
+ * that agree; a sample whose count differs from the last sample's follows a turn of the
+ * spinner, so one turn of this thread runs from a sample after the spinner to the last sample
+ * before it ran again. Interrupts and a host holding the vCPU back move no count, so they do
+ * not end a turn. It skips its first turn, which began before it measured, and ends with the
+ * median of the next TURNS, in microseconds, or a negative status (modes.h).
+ */
+static int64_t
+mode_turns(void)
+{
+	_Atomic uint32_t *const spun = &spin_counts[0];
+	uint64_t turns[TURNS], thread, start, last, now;
+	uint32_t taken = 0, seen;
+	bool started = false;
+	int64_t step;
+
+	if (erx_thread_set_affinity(erx_fiasco_thread_self()->index, UINT64_C(1)) != ERX_OK)
+		return (TURNS_PINNED);
+	step = thread_spawn(spin_helper, 0, UINT64_C(1), NULL, &thread);
+	if (step != 0)
+		return (-step);
+	seen = atomic_load_explicit(spun, memory_order_relaxed);
+	start = last = now = erx_fiasco_clock_ns();
+	for (const uint64_t deadline = now + TURNS_DEADLINE_NS; taken < TURNS && now < deadline;) {
+		const uint32_t count = atomic_load_explicit(spun, memory_order_relaxed);
+
+		now = erx_fiasco_clock_ns();
+
+		if (atomic_load_explicit(spun, memory_order_relaxed) != count)
+			continue;
+		if (count != seen) {
+			if (started)
+				turns[taken++] = last - start;
+			started = true;
+			start = now;
+			seen = count;
+		}
+		last = now;
+	}
+	if (taken < TURNS)
+		return (TURNS_NONE);
+	/* An insertion sort: TURNS is small. */
+	for (uint32_t at = 1; at < TURNS; at++)
+		for (uint32_t before = at; before > 0 && turns[before - 1] > turns[before]; before--) {
+			const uint64_t swap = turns[before];
+
+			turns[before] = turns[before - 1];
+			turns[before - 1] = swap;
+		}
+	return ((int64_t)(turns[TURNS / 2] / 1000));
 }
 
 /* Requests until the task ends under it. */
@@ -465,7 +548,7 @@ mode_write_refused(void)
 	const erx_fiasco_space_create_request_t create = { .caller = erx_fiasco_thread_self()->index,
 	    .parent = ERX_CAP_SELF, .cap_limit = 16 };
 	const erx_fiasco_domain_space_create_request_t domain = { .space = create, .band = ERX_BAND_DRIVER,
-	    .space_band = ERX_BAND_DRIVER, .cpuset = 1 };
+	    .space_band = ERX_BAND_DRIVER, .cpuset = 1, .slice_us = ERX_SLICE_MIN_US };
 	const erx_fiasco_task_write_request_t request = { .caller = erx_fiasco_thread_self()->index,
 	    .len = sizeof(text) - 1 };
 	erx_fiasco_reply_t reply;
@@ -534,6 +617,10 @@ erx_task_main(const uint64_t args[ERX_FIASCO_START_ARGS])
 	}
 	case MODE_SPIN_STOP:
 		return (mode_spin_stop());
+	case MODE_SPIN:
+		return (mode_spin());
+	case MODE_TURNS:
+		return (mode_turns());
 	case MODE_RACE:
 		return (mode_race());
 	case MODE_LOG:

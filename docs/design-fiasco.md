@@ -2355,8 +2355,9 @@ place of Fiasco's default of 10 ms (`CONFIG_SCHED_DEF_TIME_SLICE`, `src/Kconfig:
 ready thread waits for each thread ahead of it at its level ([Bands](#bands)), and for each thread that a wake puts
 ahead of it meanwhile, so it sets the step, not the bound, of what the base level's round robin costs a runtime whose
 executor is awake but not running ([Urgency](#urgency)). A slice ends at a timer interrupt, which with a periodic tick comes every
-1 ms (`CONFIG_SCHED_GRANULARITY`, `src/Kconfig:353-359`); whether erXos's build ticks or runs its timer one-shot
-is unverified, and the band case measures the slice it gets ([Verification](#verification)).
+1 ms (`CONFIG_SCHED_GRANULARITY`, `src/Kconfig:353-359`). erXos's build ticks: `config/fiasco/kernel.defconfig`
+chooses no timer mode, so Kconfig takes its choice's first, periodic (`src/Kconfig:258-265`), and a slice ends at the
+first tick after it runs out. The quantum case measures the turn a thread gets ([Verification](#verification)).
 
 **Where ERTS puts its schedulers.** Since Fiasco never moves a thread, the adapter places them, as it does under
 erXos's kernel ([design-runtime.md](design-runtime.md#scheduling)): online normal scheduler `i` is pinned with
@@ -4070,6 +4071,7 @@ Each test below names the seeded failure that proves it ran:
 | no task capability | a probe of every slot of a domain finds no task, factory, thread or scheduler | a placement of the domain's own task capability, kept as a build that must fail |
 | direct doorbell | a ring and its wake make no request to the root (the root's request count is unchanged) | the trigger stub sends a request |
 | band | a fixed piece of a configured domain's ordinary work takes no longer, within a tenth, while an app-band domain spins every thread on its CPU | the spinning domain placed at the base level: the work takes its turns among the spinner's threads and several times as long |
+| quantum | two threads of a task the root launched, alone on one CPU, take turns whose median of 15 lies within 250..4000 us around the root's 1000 us slice | the root giving a thread the slice of its task's own row, which holds none, in place of its domain row's: the threads take Fiasco's 10 ms default |
 | base sharing | the `system_domain` suite's load on one CPU, `LOADERS` processes calling each party without pause: the system domain's own facet, the session's and that of a peer whose limits record names `interactive` each answer within `LOAD_MS` | the root band's base one priority above the base level: the session and the peer answer nothing |
 | urgent thread | at one CPU and at four, a thread of a driver-band task that set its urgency above its group's base finishes a fixed piece of work in the same time, within a tenth, while a base-level thread of another task on its CPU is woken every 100 us | the service's body answering without its `l4_scheduler_run_thread`: the wakes preempt the thread and the work takes longer |
 | urgency ceiling | a thread of an app-band task and one of an interactive-band task each call `erx_thread_set_urgency` with `ERX_URGENCY_MAX`: a base-level thread's fixed piece of work beside each takes no longer | the root's table giving every band the urgent level as its ceiling: the app thread runs above the base and the work waits |

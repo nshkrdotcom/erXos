@@ -80,8 +80,8 @@ flags mf_limits_flags u32
   bit spaces 0
 # The band a domain's threads run at, a domain-limits record's band and the band
 # the domain library hands the Fiasco root service in domain_space_create
-# (docs/design-fiasco.md, "Bands"): only the bands a domain may run at, from the
-# highest; the root task's own bands above them have no name here.
+# (docs/design-fiasco.md, "Bands"): only the bands a domain may run at; the root
+# task's own two, the root's and the watchdog's, have no name here.
 enum band u32
   value driver 1
   value interactive 2
@@ -231,6 +231,9 @@ layout erx_mf_span wire_le 4 8
 layout erx_mf_str wire_le 4 8
   field offset u32 0
   field length u32 4
+# A CPU share. Its slice becomes a thread quantum as read (on Fiasco, the system share's
+# is the root's own: docs/design-fiasco.md, "Bands"), so the reader holds every share's
+# slice to slice_min_us .. slice_max_us.
 layout erx_share wire_le 8 48
   field quota_ns u64 0
   field period_ns u64 8
@@ -592,6 +595,8 @@ reader manifest erx_manifest @manifest_bytes_max
   range root.boot_timeout_s 1 @boot_timeout_max_s
   range root.msi_frame.first 0 @msi_frame_lines_max
   range root.msi_frame.count 0 @msi_frame_lines_max
+  range root.system_share.slice_us @slice_min_us @slice_max_us
+  range root.users_share.slice_us @slice_min_us @slice_max_us
   choice root.flags manifest_mode root.domains.count,root.sessions.count,root.services.count,root.facets.count,root.introductions.count,root.boot_order.count,root.liveness.count,root.starts.count,root.displays.count,root.apps.count,root.app_services.count,root.packages.count,root.signers.count,root.development_key.count,root.system_image.count,root.partial_boot.count
     case release root.domains.count,root.sessions.count,root.services.count,root.facets.count,root.introductions.count,root.boot_order.count,root.liveness.count,root.starts.count,root.displays.count,root.apps.count,root.app_services.count,root.packages.count,root.signers.count,root.system_image.count
     case development root.domains.count,root.sessions.count,root.services.count,root.facets.count,root.introductions.count,root.boot_order.count,root.liveness.count,root.starts.count,root.displays.count,root.apps.count,root.app_services.count,root.packages.count,root.signers.count,root.development_key.count,root.system_image.count
@@ -640,6 +645,7 @@ reader manifest erx_manifest @manifest_bytes_max
   string principals[].name.offset principals[].name.length strings identifier 63 empty no
   index principals[].default_limits limits
   index principals[].ceiling_limits limits
+  range principals[].grant.slice_us @slice_min_us @slice_max_us
   string domains[].name.offset domains[].name.length strings identifier 63 empty no
   string domains[].args.offset domains[].args.length strings args 2048 empty yes
   string domains[].env.offset domains[].env.length strings env 2048 empty yes
@@ -652,6 +658,8 @@ reader manifest erx_manifest @manifest_bytes_max
   string limits[].name.offset limits[].name.length strings identifier 63 empty no
   index limits[].runtime_limits runtime_limits
   optional limits[].spaces limits[].flags spaces
+  range limits[].grant.slice_us @slice_min_us @slice_max_us
+  range limits[].spaces.slice_us @slice_min_us @slice_max_us
   string runtime_limits[].name.offset runtime_limits[].name.length strings identifier 63 empty no
   string lane_classes[].name.offset lane_classes[].name.length strings identifier 63 empty no
   string units[].name.offset units[].name.length strings identifier 63 empty no

@@ -30,7 +30,7 @@ erx_fiasco_root_main(void)
 	reason = erx_fiasco_root_handoff(&handoff);
 	if (reason == NULL) {
 		features = erx_cpu_features(handoff.cpu_id);
-		reason = erx_fiasco_root_up(NULL, 0, 0, NULL);
+		reason = erx_fiasco_root_up(NULL, 0, 0, NULL, ERX_FIASCO_ROOT_SLICE_US);
 	}
 
 	if (reason != NULL)

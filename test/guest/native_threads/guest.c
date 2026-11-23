@@ -528,7 +528,7 @@ hog_helper(uint64_t cpu)
 	for (uint32_t index = 0; index < cpu_count; index++)
 		hog_delta[index] = atomic_load_explicit(&probe_count[index], memory_order_relaxed) - before[index];
 	/* Back to the root task's own band: what follows takes locks a thread of this CPU may hold. */
-	(void)erx_fiasco_test_thread_priority(erx_fiasco_thread_self()->index, erx_fiasco_band_priority(ERX_FIASCO_BAND_SYSTEM),
+	(void)erx_fiasco_test_thread_priority(erx_fiasco_thread_self()->index, erx_fiasco_band_levels(ERX_FIASCO_BAND_ROOT).base,
 	    UINT64_C(1) << cpu);
 	atomic_store_explicit(&hog_done, 1, memory_order_release);
 	(void)erx_umtx_wake(word_addr(&hog_done), 1);
@@ -977,7 +977,7 @@ case_indices_run_out(void)
 void
 erx_fiasco_root_main(void)
 {
-	const char *reason = erx_fiasco_root_up(NULL, 0, 0, NULL);
+	const char *reason = erx_fiasco_root_up(NULL, 0, 0, NULL, ERX_FIASCO_ROOT_SLICE_US);
 
 	if (reason != NULL) {
 		say(reason);

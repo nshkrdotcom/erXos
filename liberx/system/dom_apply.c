@@ -271,7 +271,8 @@ apply_step(apply_t *apply, const erx_dom_step_t *step)
 		status = erx_space_create_domain(budget, apply_object(apply, step->target),
 		    apply_object(apply, step->aux), step->label, step->flags,
 		    apply->lib->cap_limit, &(erx_space_domain_t){ .band = apply->plan->spec.band,
-		    .space_band = apply->plan->spec.space_band, .cpuset = apply->plan->spec.grant.cpuset }, &handle);
+		    .space_band = apply->plan->spec.space_band, .cpuset = apply->plan->spec.grant.cpuset,
+		    .slice_us = apply->plan->spec.grant.slice_us }, &handle);
 		break;
 	case ERX_DOM_STEP_GROUP:
 		return (apply_group(apply, step));

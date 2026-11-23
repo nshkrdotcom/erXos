@@ -71,6 +71,13 @@
 /* Creates and destroys of one register window: more than the device window ever held pages for at once. */
 #define WINDOW_ROUNDS	5000u
 #define REPEATS		3u
+/*
+ * How long a wait for another thread sleeps between looks. A wait blocks and never yields
+ * in a loop (docs/design-fiasco.md, "A wait blocks"): a yield reaches only threads of the
+ * root's own level, so a looping root would keep the holder task, at the app level, off a
+ * one-CPU machine.
+ */
+#define POLL_US		UINT64_C(100)
 #define STACK_BYTES	16384u
 #define WALL_NS		(UINT64_C(1800000000) * UINT64_C(1000000000))
 #define HOLDER_PROGRAM	"boot/native-irq-holder"
@@ -261,7 +268,7 @@ trigger_and_see(uint64_t irq)
 
 	trigger(irq);
 	while (group_epoch() == before)
-		erx_yield();
+		erx_fiasco_test_ipc_sleep_us(POLL_US);
 }
 
 static void
@@ -416,7 +423,7 @@ case_pending_bind(void)
 		fail("erx: irq: the line was not unbound FAILED\n");
 	say("erx: irq: type a character\n");
 	while (uart_read_field("fr", "rxfe") != 0)
-		erx_yield();
+		erx_fiasco_test_ipc_sleep_us(POLL_US);
 	group = group_epoch();
 	slot = slot_epoch();
 	if (erx_irq_bind(irq_uart, ERX_CAP_SELF, LABEL_UART) != ERX_OK)
@@ -744,7 +751,7 @@ ring_when_parked(void)
 			atomic_store_explicit(&ring_wanted, 0, memory_order_release);
 			trigger(irq_soft);
 		}
-		erx_yield();
+		erx_fiasco_test_ipc_sleep_us(POLL_US);
 	}
 }
 
@@ -938,7 +945,7 @@ erx_fiasco_root_main(void)
 	const char *reason = erx_fiasco_root_open(&handoff, &pack);
 
 	if (reason == NULL)
-		reason = erx_fiasco_root_up((const void *)(uintptr_t)handoff.image.start, (size_t)handoff.image.size, 0, NULL);
+		reason = erx_fiasco_root_up((const void *)(uintptr_t)handoff.image.start, (size_t)handoff.image.size, 0, NULL, ERX_FIASCO_ROOT_SLICE_US);
 	if (reason != NULL) {
 		say(reason);
 		erx_fiasco_end(ERX_FIASCO_END_ASKED_OFF, NULL);
@@ -954,6 +961,5 @@ erx_fiasco_root_main(void)
 	start_executor();
 	ring_when_parked();
 	/* The executor ends the machine: this thread leaves its CPU to it. */
-	for (;;)
-		erx_yield();
+	erx_fiasco_sleep_forever();
 }

@@ -9,9 +9,9 @@ require 'tmpdir'
 require_relative '../fixtures/generated_tree'
 
 # The Fiasco backend's bands, on the host (docs/design-fiasco.md, "Bands"): the
-# driver test/fixtures/fiasco_band_driver.c prints the priority table, the bands
-# a domain's space and a sub-space take, and the decoder's word count of
-# domain_space_create, and each seed below must change what it prints.
+# driver test/fixtures/fiasco_band_driver.c prints each band's base and ceiling,
+# the bands a domain's space and a sub-space take, and the decoder's word count
+# of domain_space_create, and each seed below must change what it prints.
 class FiascoBandTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
   BAND = 'liberx/backend/fiasco/band.c'
@@ -19,15 +19,18 @@ class FiascoBandTest < Minitest::Test
   DRIVER = 'test/fixtures/fiasco_band_driver.c'
   EINVAL = -1
 
-  # The bands: none 0, driver 1, interactive 2, app 3, and the root's system 4 and watchdog 5.
-  REFUSED = "#{EINVAL} domain=0 band=0 space_band=0 cpuset=0".freeze
+  # The bands: none 0, driver 1, interactive 2, app 3, and the root's own root 4 and watchdog 5;
+  # the levels: app 1, base 2, urgent 3, watchdog 255. A band past the table has no level.
+  REFUSED = "#{EINVAL} domain=0 band=0 space_band=0 slice_us=0 cpuset=0".freeze
   EXPECTED = [
-    'priorities 255 4 3 2 1 0',
-    'domain driver 0 domain=0 band=1 space_band=1 cpuset=0xc',
-    'domain session 0 domain=0 band=2 space_band=3 cpuset=0xc',
-    'domain app 0 domain=0 band=3 space_band=3 cpuset=0xc',
-    *%w[band_zero band_past space_band_zero space_band_past].map { |name| "domain #{name} #{REFUSED}" },
-    'space of_session 0 domain=7 band=3 space_band=0 cpuset=0',
+    'levels 255..255 2..3 2..3 2..2 1..1 0..0 0..0',
+    'domain driver 0 domain=0 band=1 space_band=1 slice_us=1000 cpuset=0xc',
+    'domain session 0 domain=0 band=2 space_band=3 slice_us=500 cpuset=0xc',
+    'domain app 0 domain=0 band=3 space_band=3 slice_us=50000 cpuset=0xc',
+    *%w[band_zero band_past space_band_zero space_band_past slice_short slice_long].map do |name|
+      "domain #{name} #{REFUSED}"
+    end,
+    'space of_session 0 domain=7 band=3 space_band=0 slice_us=0 cpuset=0',
     'wire exact kind=3 status=0',
     "wire short kind=2 status=#{EINVAL}",
     "wire long kind=2 status=#{EINVAL}"
@@ -40,6 +43,13 @@ class FiascoBandTest < Minitest::Test
 'a space names its own domain row' => [BAND, '.domain = creator_domain', '.domain = 0'],
 'a band outside the enum is taken' => [BAND, 'erx_band_name(request->band) == NULL || ', ''],
 'a sub-space band outside the enum is taken' => [BAND, ' || erx_band_name(request->space_band) == NULL', ''],
+'a slice below the least is taken' => [BAND, "\n\t    request->slice_us < ERX_SLICE_MIN_US ||", ''],
+'a slice above the most is taken' => [BAND, ' || request->slice_us > ERX_SLICE_MAX_US', ''],
+'a domain row drops its slice' => [BAND, '.slice_us = request->slice_us, ', ''],
+'the root band is ranked above the base' => [BAND, '[ERX_FIASCO_BAND_ROOT] = { .base = LEVEL_BASE,',
+                                             '[ERX_FIASCO_BAND_ROOT] = { .base = LEVEL_URGENT,'],
+'the interactive band reaches the urgent level' => [BAND, '.base = LEVEL_BASE, .ceiling = LEVEL_BASE }',
+                                                    '.base = LEVEL_BASE, .ceiling = LEVEL_URGENT }'],
 'the domain create has no word count' => [WIRE, "\tcase ERX_FIASCO_CALL_DOMAIN_SPACE_CREATE:\n", ''],
 'a request longer than its layout is taken' => [WIRE, 'input->words != expected', 'input->words < expected']
   }.freeze

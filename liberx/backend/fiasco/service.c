@@ -152,7 +152,7 @@ erx_fiasco_service_boot(const erx_boot_handoff_view_t *handoff)
 
 const char *
 erx_fiasco_root_up(const void *archive, size_t archive_bytes, uint64_t dma_bytes,
-    const erx_fiasco_seeds_t *seeds)
+    const erx_fiasco_seeds_t *seeds, uint32_t slice_us)
 {
 	const char *reason;
 
@@ -175,7 +175,7 @@ erx_fiasco_root_up(const void *archive, size_t archive_bytes, uint64_t dma_bytes
 	if (reason != NULL)
 		return (reason);
 	erx_fiasco_entropy_init(seeds);
-	reason = erx_fiasco_task_table_init();
+	reason = erx_fiasco_task_table_init(slice_us);
 	if (reason != NULL)
 		return (reason);
 	reason = erx_fiasco_time_init();
@@ -222,8 +222,8 @@ service_failed(l4_msgtag_t tag)
 static const char *
 service_start(void)
 {
-	/* The system band: it takes the locks the system domain's threads take, which is safe only at one priority. */
-	const l4_sched_param_t param = l4_sched_param(erx_fiasco_band_priority(ERX_FIASCO_BAND_SYSTEM), 0);
+	/* At the root's row's level and quantum, the base: it takes the locks every configured domain's threads take. */
+	const l4_sched_param_t param = service_sched_param(ERX_FIASCO_TASK_ROOT, 0);
 
 	if (service_failed(l4_factory_create_thread(L4_BASE_FACTORY_CAP, erx_fiasco_service_thread())))
 		return ("service: the kernel refused its thread");
@@ -251,7 +251,7 @@ service_start(void)
 		return ("service: the kernel would not run it");
 	/* The root's first thread, which Fiasco started at its default priority, joins the service's band. */
 	if (service_failed(l4_scheduler_run_thread(L4_BASE_SCHEDULER_CAP, L4_BASE_THREAD_CAP, &param)))
-		return ("service: the kernel would not move the first thread to the system band");
+		return ("service: the kernel would not move the first thread to the root band");
 	return (NULL);
 }
 
@@ -264,9 +264,9 @@ service_start(void)
  * in, and receives the next into that slot; a fault's slot waits for its task's stop
  * (reply_slots.h), so no receive fills a slot that still holds a caller. While a
  * teardown is pending every receive has a zero timeout, and one that finds no message
- * first gives the CPU to the ready threads of the service's priority, the system
- * band's, so the root's threads it answered run before the next piece; a domain's
- * threads, in lower bands, wait for the service to block.
+ * first gives the CPU to the ready threads of the service's level, the base, so the
+ * threads it answered, the root's and every configured domain's, run before the next
+ * piece; app-level threads wait for the service to block.
  */
 static void
 service_main(void)
@@ -830,13 +830,16 @@ service_thread_steps(uint32_t task, uint32_t index, uint64_t ip)
 }
 
 /*
- * A thread of the task runs at its task's band, at its start and at every move. A mask of 0
- * leaves the kernel's own: a thread stays on the CPU it was created on.
+ * A thread of the task runs at its band's base level, with its domain row's slice as its quantum,
+ * at its start and at every move. A mask of 0 leaves the kernel's own: a thread stays on the
+ * CPU it was created on.
  */
 static l4_sched_param_t
 service_sched_param(uint32_t task, uint64_t mask)
 {
-	l4_sched_param_t param = l4_sched_param(erx_fiasco_band_priority(erx_fiasco_task(task)->bands.band), 0);
+	const erx_fiasco_task_band_t *bands = &erx_fiasco_task(task)->bands;
+	l4_sched_param_t param = l4_sched_param(erx_fiasco_band_levels(bands->band).base,
+	    erx_fiasco_task(bands->domain)->bands.slice_us);
 
 	if (mask != 0)
 		param.affinity = l4_sched_cpu_set(0, 0, mask);
@@ -950,11 +953,11 @@ erx_fiasco_test_cpu_count(void)
 	return ((uint32_t)__builtin_popcountll(service_cpus_online()));
 }
 
-/* Raises a thread above its CPU's others, which is how the suite sees where it runs. */
+/* Raises a root thread above its CPU's others, at the root's quantum, which is how the suite sees where it runs. */
 int
 erx_fiasco_test_thread_priority(uint32_t index, uint32_t priority, uint64_t mask)
 {
-	l4_sched_param_t param = l4_sched_param(priority, 0);
+	l4_sched_param_t param = l4_sched_param(priority, erx_fiasco_task(ERX_FIASCO_TASK_ROOT)->bands.slice_us);
 
 	param.affinity = l4_sched_cpu_set(0, 0, mask);
 	return (service_failed(l4_scheduler_run_thread(L4_BASE_SCHEDULER_CAP, erx_fiasco_thread_cap(index), &param)) ?

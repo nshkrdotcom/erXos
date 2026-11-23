@@ -153,7 +153,7 @@ erx_fiasco_root_main(void)
 	uint64_t before;
 
 	if (reason == NULL)
-		reason = erx_fiasco_root_up((const void *)(uintptr_t)handoff.image.start, (size_t)handoff.image.size, 0, NULL);
+		reason = erx_fiasco_root_up((const void *)(uintptr_t)handoff.image.start, (size_t)handoff.image.size, 0, NULL, ERX_FIASCO_ROOT_SLICE_US);
 	if (reason != NULL) {
 		say(reason);
 		erx_fiasco_end(ERX_FIASCO_END_ASKED_OFF, NULL);

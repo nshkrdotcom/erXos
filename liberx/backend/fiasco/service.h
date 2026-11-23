@@ -27,6 +27,14 @@
  */
 
 /*
+ * The quantum of a root that reads no manifest: a slice the manifest reader would take, one of
+ * Fiasco's 1 ms scheduler ticks.
+ */
+#define ERX_FIASCO_ROOT_SLICE_US 1000
+_Static_assert(ERX_FIASCO_ROOT_SLICE_US >= ERX_SLICE_MIN_US && ERX_FIASCO_ROOT_SLICE_US <= ERX_SLICE_MAX_US,
+    "a root that reads no manifest takes a slice the manifest reader would take");
+
+/*
  * The root's first steps, on its first thread: maps its image, touches each page
  * of the archive so it maps read-only, builds the pool and thread table, starts
  * the service and makes it this thread's pager. From its return every fault of a
@@ -34,11 +42,14 @@
  * make, which sizes the contiguous pool (erx_fiasco_vm_init): the manifest's total
  * for the program root, a test's own figure for a native test root. seeds are
  * what the tree gave (erx_fiasco_program_tree), which the generator mixes in, or NULL
- * for a root that reads no tree; they stay the caller's to erase. Returns NULL, or why the
- * boot cannot go on.
+ * for a root that reads no tree; they stay the caller's to erase. slice_us is the quantum of
+ * the root's own threads, the service's included: the manifest's system share's slice for the
+ * program root, which the manifest reader holds to ERX_SLICE_MIN_US .. ERX_SLICE_MAX_US, and
+ * ERX_FIASCO_ROOT_SLICE_US for a root that reads no manifest. Returns NULL, or why the boot
+ * cannot go on.
  */
 const char	*erx_fiasco_root_up(const void *archive, size_t archive_bytes, uint64_t dma_bytes,
-	    const erx_fiasco_seeds_t *seeds);
+	    const erx_fiasco_seeds_t *seeds, uint32_t slice_us);
 /*
  * Keeps what bootstrap's handoff said of the machine, its build identifier and boot
  * value, for erx_object_info's machine report. It runs once, before

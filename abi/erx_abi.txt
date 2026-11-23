@@ -1048,12 +1048,15 @@ layout erx_fiasco_space_create_request wire_le 8 56
 
 # A domain's space create (docs/design-fiasco.md, "Bands"): space_create's request,
 # then the band the domain's threads run at, the band of every space below the
-# domain and the CPU set of the domain's grant.
-layout erx_fiasco_domain_space_create_request wire_le 8 72
+# domain, and the CPU set and the slice of the domain's grant, which is the quantum
+# of every thread of the domain.
+layout erx_fiasco_domain_space_create_request wire_le 8 80
   field space erx_fiasco_space_create_request 0
   field band band 56
   field space_band band 60
   field cpuset u64 64
+  field slice_us u32 72
+  padding 76 4
 
 layout erx_fiasco_image_map_request wire_le 8 32
   field caller u64 0

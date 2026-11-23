@@ -4,9 +4,9 @@
  */
 
 /*
- * The Fiasco backend's bands on the host (test/host/fiasco_band_test.rb): the
- * priority table, the bands a new task takes and the decoder's word count of
- * domain_space_create. Each check prints one line, which the test compares whole.
+ * The Fiasco backend's bands on the host (test/host/fiasco_band_test.rb): each
+ * band's base and ceiling, the bands a new task takes and the decoder's word count
+ * of domain_space_create. Each check prints one line, which the test compares whole.
  */
 
 #include <stdbool.h>
@@ -20,21 +20,21 @@
 
 /* A domain row of an interactive domain, task 7, whose sub-spaces run in the app band. */
 static const erx_fiasco_task_band_t session_row = { .domain = 7, .band = ERX_BAND_INTERACTIVE,
-    .space_band = ERX_BAND_APP, .cpuset = 0x3 };
+    .space_band = ERX_BAND_APP, .slice_us = 1000, .cpuset = 0x3 };
 
 static void
 print_bands(const char *name, int status, const erx_fiasco_task_band_t *bands)
 {
-	printf("%s %d domain=%u band=%u space_band=%u cpuset=%#llx\n", name, status, bands->domain, bands->band,
-	    bands->space_band, (unsigned long long)bands->cpuset);
+	printf("%s %d domain=%u band=%u space_band=%u slice_us=%u cpuset=%#llx\n", name, status, bands->domain,
+	    bands->band, bands->space_band, bands->slice_us, (unsigned long long)bands->cpuset);
 }
 
 /* The domain row a domain create asks for; a refused one leaves the row zeroed. */
 static void
-domain_create(const char *name, uint32_t band, uint32_t space_band)
+domain_create(const char *name, uint32_t band, uint32_t space_band, uint32_t slice_us)
 {
 	const erx_fiasco_domain_space_create_request_t request = { .band = band, .space_band = space_band,
-	    .cpuset = 0xc };
+	    .cpuset = 0xc, .slice_us = slice_us };
 	erx_fiasco_task_band_t bands = { 0 };
 
 	print_bands(name, erx_fiasco_band_domain(&request, &bands), &bands);
@@ -60,22 +60,25 @@ wire(const char *name, uint32_t words)
 int
 main(void)
 {
-	const erx_band_t bands[] = { ERX_FIASCO_BAND_WATCHDOG, ERX_FIASCO_BAND_SYSTEM, ERX_BAND_DRIVER,
-	    ERX_BAND_INTERACTIVE, ERX_BAND_APP, ERX_FIASCO_BAND_NONE };
+	const erx_band_t bands[] = { ERX_FIASCO_BAND_WATCHDOG, ERX_FIASCO_BAND_ROOT, ERX_BAND_DRIVER,
+	    ERX_BAND_INTERACTIVE, ERX_BAND_APP, ERX_FIASCO_BAND_NONE, ERX_FIASCO_BAND_WATCHDOG + 1 };
 	const erx_fiasco_task_band_t inherited = erx_fiasco_band_inherit(&session_row, 7);
 
-	printf("priorities");
+	/* Each band's levels, base..ceiling. */
+	printf("levels");
 	for (size_t at = 0; at < sizeof(bands) / sizeof(bands[0]); at++)
-		printf(" %u", erx_fiasco_band_priority(bands[at]));
+		printf(" %u..%u", erx_fiasco_band_levels(bands[at]).base, erx_fiasco_band_levels(bands[at]).ceiling);
 	printf("\n");
 
-	domain_create("domain driver", ERX_BAND_DRIVER, ERX_BAND_DRIVER);
-	domain_create("domain session", ERX_BAND_INTERACTIVE, ERX_BAND_APP);
-	domain_create("domain app", ERX_BAND_APP, ERX_BAND_APP);
-	domain_create("domain band_zero", 0, ERX_BAND_APP);
-	domain_create("domain band_past", ERX_BAND_APP + 1, ERX_BAND_APP);
-	domain_create("domain space_band_zero", ERX_BAND_DRIVER, 0);
-	domain_create("domain space_band_past", ERX_BAND_DRIVER, UINT32_MAX);
+	domain_create("domain driver", ERX_BAND_DRIVER, ERX_BAND_DRIVER, 1000);
+	domain_create("domain session", ERX_BAND_INTERACTIVE, ERX_BAND_APP, ERX_SLICE_MIN_US);
+	domain_create("domain app", ERX_BAND_APP, ERX_BAND_APP, ERX_SLICE_MAX_US);
+	domain_create("domain band_zero", 0, ERX_BAND_APP, 1000);
+	domain_create("domain band_past", ERX_BAND_APP + 1, ERX_BAND_APP, 1000);
+	domain_create("domain space_band_zero", ERX_BAND_DRIVER, 0, 1000);
+	domain_create("domain space_band_past", ERX_BAND_DRIVER, UINT32_MAX, 1000);
+	domain_create("domain slice_short", ERX_BAND_DRIVER, ERX_BAND_DRIVER, ERX_SLICE_MIN_US - 1);
+	domain_create("domain slice_long", ERX_BAND_DRIVER, ERX_BAND_DRIVER, ERX_SLICE_MAX_US + 1);
 
 	/* A program of the session, which a task of the session's domain makes. */
 	print_bands("space of_session", 0, &inherited);

@@ -58,7 +58,8 @@ module Erx
        case_point('pool_rounds', seconds: POOL_ROUNDS_SECONDS),
        case_point('log', seconds: 30),
        case_point('write', seconds: 30), case_point('write_refused', seconds: 30),
-       case_point('spin_stop', seconds: 60), case_point('root_stops', seconds: 30),
+       case_point('spin_stop', seconds: 60), case_point('band', seconds: 30),
+       case_point('quantum', seconds: 30), case_point('root_stops', seconds: 30),
        case_point('request_against_exit', seconds: RACE_SECONDS),
        { name: 'task-done', pattern: /\Aerx: task: done/n, seconds: 30 }.freeze].freeze
     end

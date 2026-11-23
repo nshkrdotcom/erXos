@@ -334,7 +334,8 @@ erx_space_create_domain(uint64_t budget, uint64_t parent, uint64_t fault, uint64
 {
 	const erx_fiasco_domain_space_create_request_t request = { .space = { .caller = erx_fiasco_thread_self()->index,
 	    .budget = budget, .parent = parent, .fault = fault, .label = label, .flags = flags, .cap_limit = cap_limit },
-	    .band = domain->band, .space_band = domain->space_band, .cpuset = domain->cpuset };
+	    .band = domain->band, .space_band = domain->space_band, .cpuset = domain->cpuset,
+	    .slice_us = domain->slice_us };
 	erx_fiasco_reply_t reply;
 	const int status = erx_fiasco_service_call(ERX_FIASCO_CALL_DOMAIN_SPACE_CREATE, &request, sizeof(request), &reply);
 

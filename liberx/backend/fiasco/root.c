@@ -122,7 +122,7 @@ root_boot(erx_boot_handoff_view_t *handoff, erx_manifest_view_t *manifest, erx_b
 	reason = erx_fiasco_program_tree(&root_tree, manifest, &seeds);
 	if (reason == NULL)
 		reason = erx_fiasco_root_up((const void *)(uintptr_t)handoff->image.start,
-		    (size_t)handoff->image.size, dma_bytes, &seeds);
+		    (size_t)handoff->image.size, dma_bytes, &seeds, manifest->header.system_share.slice_us);
 	erx_explicit_bzero(&seeds, sizeof(seeds));
 	if (reason != NULL)
 		return (reason);

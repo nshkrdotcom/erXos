@@ -20,6 +20,7 @@
 #include "liberx/backend/fiasco/band.h"
 #include "liberx/backend/fiasco/root_layout.h"
 #include "liberx/backend/fiasco/service.h"
+#include "liberx/backend/fiasco/service_task.h"
 #include "liberx/backend/fiasco/thread.h"
 #include "liberx/backend/fiasco/watchdog_thread.h"
 
@@ -80,7 +81,8 @@ const char *
 erx_fiasco_watchdog_start(const erx_watchdog_config_t *config, erx_watchdog_mode_t mode, const erx_fiasco_pm_wdt_t *board)
 {
 	const l4_cap_idx_t thread = (l4_cap_idx_t)erx_fiasco_root_slot_cap(ERX_FIASCO_SLOT_WATCHDOG);
-	const l4_sched_param_t param = l4_sched_param(erx_fiasco_band_priority(ERX_FIASCO_BAND_WATCHDOG), 0);
+	const l4_sched_param_t param = l4_sched_param(erx_fiasco_band_levels(ERX_FIASCO_BAND_WATCHDOG).base,
+	    erx_fiasco_task(ERX_FIASCO_TASK_ROOT)->bands.slice_us);
 
 	watchdog_config = *config;
 	watchdog_mode = mode;

@@ -84,7 +84,7 @@ class ManifestReaderTest < Minitest::Test
   end
 
   # The boot view takes a limits record's band as read (docs/design-fiasco.md, "Bands"), so the
-  # reader refuses one outside the band enum: none, and the root task's own system band.
+  # reader refuses one outside the band enum: none, and the root task's own root band.
   def test_limits_band_outside_the_enum_is_refused
     [0, 4].each do |band|
       bytes = AbiManifestFixture.valid
@@ -92,6 +92,36 @@ class ManifestReaderTest < Minitest::Test
       status, output = decode(bytes)
       assert_equal 1, status, output
       assert_match(/error tag limits\[\].band/, output)
+    end
+  end
+
+  # Every share's slice becomes a thread quantum as read: the system share's is the root's own
+  # (docs/design-fiasco.md, "Bands"), so the reader refuses one outside slice_min_us..slice_max_us
+  # in each of the five shares, and takes the bounds themselves.
+  SHARES = { 'root.system_share' => 72, 'root.users_share' => 120,
+             'principals[].grant' => AbiManifestFixture::HEADER + 16,
+             'limits[].grant' => AbiManifestFixture::LIMITS_AT + 24,
+             'limits[].spaces' => AbiManifestFixture::LIMITS_AT + 72 }.freeze
+
+  def share_slice(field, slice)
+    bytes = AbiManifestFixture.valid
+    at = SHARES.fetch(field)
+    if field == 'limits[].spaces'
+      bytes[at, 48] = bytes.byteslice(AbiManifestFixture::LIMITS_AT + 24, 48)
+      AbiManifestFixture.integer(bytes, AbiManifestFixture::LIMITS_AT + 132, 1)
+    end
+    AbiManifestFixture.integer(bytes, at + 32, slice)
+    decode(bytes)
+  end
+
+  def test_share_slice_outside_the_bounds_is_refused
+    SHARES.each_key do |field|
+      [0, 499, 50_001, 0xffffffff].each do |slice|
+        status, output = share_slice(field, slice)
+        assert_equal 1, status, "#{field} slice #{slice}: #{output}"
+        assert_equal "error range #{field}.slice_us", output.split[0, 3].join(' '), "#{field} slice #{slice}"
+      end
+      [500, 50_000].each { |slice| assert_equal 0, share_slice(field, slice).first, "#{field} slice #{slice}" }
     end
   end
 

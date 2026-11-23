@@ -17,6 +17,7 @@
 #include "liberx/backend/api.h"
 #include "liberx/backend/fiasco/console.h"
 #include "liberx/backend/fiasco/launcher.h"
+#include "liberx/backend/fiasco/log.h"
 #include "liberx/backend/fiasco/root_open.h"
 #include "liberx/backend/fiasco/service.h"
 #include "erx/pack.h"
@@ -28,12 +29,24 @@
 #define PROGRAM		"boot/native-task"
 #define RACE_ROUNDS	1000u
 /*
- * How many milliseconds the root waits, blocked, for a task's threads to be live before it
- * stops the task. The root runs in the system band, above the task's, so a yield would give
+ * How many milliseconds the root waits, blocked, for a task's threads to be live (task_live).
+ * The root runs at the base level, above the app level of its tasks, so a yield would give
  * the CPU only to the root's own threads and the task would never run on one CPU.
  */
-#define ROOT_STOPS_WAITS	10000u
-#define ROOT_STOPS_WAIT_US	UINT64_C(1000)
+#define LIVE_WAITS	10000u
+#define LIVE_WAIT_US	UINT64_C(1000)
+/* The band case's window, in which the root counts its work, and how many windows it takes the best of. */
+#define BAND_WINDOW_NS		UINT64_C(50000000)
+#define BAND_WINDOWS		3u
+/*
+ * The quantum case's bounds on the median turn, in us, around the root's 1000 us slice. With
+ * config/fiasco/kernel.defconfig choosing no one-shot timer, Fiasco ticks every 1 ms (its Kconfig's
+ * SCHED_GRANULARITY), so a turn is one to two ticks; one-shot would give 1 ms. The bounds leave
+ * room for HVF and still refuse Fiasco's own 10 ms quantum, which a task takes whose threads read
+ * the slice from their own row rather than their domain's.
+ */
+#define QUANTUM_MIN_US		250
+#define QUANTUM_MAX_US		4000
 
 void erx_fiasco_root_main(void);
 
@@ -173,6 +186,18 @@ case_irq_refused(void)
 }
 
 /*
+ * Whether a launched task's threads came up within LIVE_WAITS: the slot pool is down to live
+ * free pairs, the task's two and one for each of its threads taken.
+ */
+static bool
+task_live(uint32_t live)
+{
+	for (uint32_t wait = 0; wait < LIVE_WAITS && erx_fiasco_test_pool_free() != live; wait++)
+		erx_fiasco_test_ipc_sleep_us(LIVE_WAIT_US);
+	return (erx_fiasco_test_pool_free() == live);
+}
+
+/*
  * The root stops a task that has not stopped itself, with the root's own status, once its
  * threads are live: the task's two pairs of the slot pool and one for each thread are
  * taken, and all of them are free again after the join.
@@ -185,13 +210,76 @@ case_root_stops(void)
 	const uint32_t live = pairs - 2 - (TASK_OWN_THREADS + WAIT_THREADS);
 	uint64_t space;
 	int64_t status = 0;
-	bool passed = erx_fiasco_launch(program_entry, 0, MODE_WAIT, &space) == ERX_OK;
+	const bool launched = erx_fiasco_launch(program_entry, 0, MODE_WAIT, &space) == ERX_OK;
+	bool live_seen, passed;
 
-	for (uint32_t wait = 0; passed && wait < ROOT_STOPS_WAITS && erx_fiasco_test_pool_free() != live; wait++)
-		erx_fiasco_test_ipc_sleep_us(ROOT_STOPS_WAIT_US);
-	passed = passed && erx_fiasco_test_pool_free() == live && erx_space_stop(space, 33) == ERX_OK &&
-	    erx_fiasco_task_join(space, &status) == ERX_OK && status == 33;
+	live_seen = launched && task_live(live);
+	/* Stopped and joined even when its threads never came up, so a failure leaves nothing running. */
+	passed = launched && erx_space_stop(space, 33) == ERX_OK &&
+	    erx_fiasco_task_join(space, &status) == ERX_OK && status == 33 && live_seen;
 	say_case("root_stops", passed && erx_fiasco_vm_free_pages() == before && erx_fiasco_test_pool_free() == pairs);
+}
+
+/* The most work the root's thread does in one window of BAND_WINDOWS. */
+static uint64_t
+band_work(void)
+{
+	uint64_t best = 0;
+
+	for (uint32_t window = 0; window < BAND_WINDOWS; window++) {
+		const uint64_t deadline = erx_fiasco_clock_ns() + BAND_WINDOW_NS;
+		uint64_t done = 0;
+
+		while (erx_fiasco_clock_ns() < deadline)
+			done++;
+		if (done > best)
+			best = done;
+	}
+	return (best);
+}
+
+/*
+ * The band case (docs/design-fiasco.md, "Verification", band): the root's thread, at the base
+ * level, does no less work, within a tenth, while a launched task, at the app level, spins
+ * SPIN_THREADS threads on the root's CPU. Were the task at the base level, the spinners would
+ * share that CPU with the root's thread, a quantum each in turn.
+ */
+static void
+case_band(void)
+{
+	const uint32_t pairs = erx_fiasco_test_pool_free();
+	const uint32_t live = pairs - 2 - (TASK_OWN_THREADS + SPIN_THREADS);
+	const uint64_t alone = band_work();
+	uint64_t beside = 0, space;
+	int64_t status = 0;
+	const bool launched = erx_fiasco_launch(program_entry, 0, MODE_SPIN, &space) == ERX_OK;
+	bool live_seen, passed;
+
+	live_seen = launched && task_live(live);
+	if (live_seen)
+		beside = band_work();
+	/* Stopped and joined even when its threads never came up, so a failure leaves nothing running. */
+	passed = launched && erx_space_stop(space, 33) == ERX_OK &&
+	    erx_fiasco_task_join(space, &status) == ERX_OK && status == 33 && live_seen;
+	say_case("band", passed && beside >= alone - alone / 10 && erx_fiasco_test_pool_free() == pairs);
+}
+
+/*
+ * The quantum case (docs/design-fiasco.md, "Bands"): a launched task's threads take their
+ * domain row's slice as their quantum, here the root's ERX_FIASCO_ROOT_SLICE_US. The task's own
+ * row is not a domain row and holds no slice, so a thread that read the slice there would
+ * take Fiasco's 10 ms default.
+ */
+_Static_assert(ERX_FIASCO_ROOT_SLICE_US == 1000, "the quantum case's bounds are around a 1000 us slice");
+
+static void
+case_quantum(void)
+{
+	uint64_t space;
+	const int64_t turn = task_run(0, MODE_TURNS, &space);
+
+	say_status(turn);
+	say_case("quantum", turn >= QUANTUM_MIN_US && turn <= QUANTUM_MAX_US);
 }
 
 /* A thread requesting while another faults, and the label reused at once each time. */
@@ -218,7 +306,7 @@ erx_fiasco_root_main(void)
 	const char *reason = erx_fiasco_root_open(&handoff, &pack);
 
 	if (reason == NULL)
-		reason = erx_fiasco_root_up((const void *)(uintptr_t)handoff.image.start, (size_t)handoff.image.size, 0, NULL);
+		reason = erx_fiasco_root_up((const void *)(uintptr_t)handoff.image.start, (size_t)handoff.image.size, 0, NULL, ERX_FIASCO_ROOT_SLICE_US);
 	if (reason != NULL) {
 		say(reason);
 		erx_fiasco_end(ERX_FIASCO_END_ASKED_OFF, NULL);
@@ -244,6 +332,8 @@ erx_fiasco_root_main(void)
 	case_ends("write", 0, MODE_WRITE, 0);
 	case_write_refused();
 	case_ends("spin_stop", 0, MODE_SPIN_STOP, STATUS_SPIN_STOP);
+	case_band();
+	case_quantum();
 	case_root_stops();
 	case_race();
 	say("erx: task: done\n");

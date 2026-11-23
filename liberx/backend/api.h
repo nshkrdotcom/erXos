@@ -218,8 +218,9 @@ int	erx_firmware_request_row(erx_firmware_row_t row, uint8_t answer[ERX_VC_WINDO
  * A domain's space, the Fiasco backend's root-only form of erx_space_create, which only the
  * domain library calls and erXos's kernel does not have (docs/design-fiasco.md, "Bands"): the
  * space erx_space_create would make, with the band its threads run at, the band of every space
- * made below it, and its grant's CPU set. The root records them in the new task's row, which
- * is the domain's domain row. A band outside erx_band_t is ERX_EINVAL; a call from a task, not
+ * made below it, and its grant's CPU set and slice. The root records them in the new task's
+ * row, which is the domain's domain row. A band outside erx_band_t, or a slice outside
+ * ERX_SLICE_MIN_US..ERX_SLICE_MAX_US, is ERX_EINVAL; a call from a task, not
  * the root, ERX_ENOTSUP, and hosted, which makes no spaces, refuses it as it refuses
  * erx_space_create.
  */
@@ -227,6 +228,7 @@ typedef struct erx_space_domain {
 	erx_band_t	band;
 	erx_band_t	space_band;
 	uint64_t	cpuset;
+	uint32_t	slice_us;	/* its grant's, its threads' quantum */
 } erx_space_domain_t;
 
 int	erx_space_create_domain(uint64_t budget, uint64_t parent, uint64_t fault, uint64_t label, uint32_t flags,

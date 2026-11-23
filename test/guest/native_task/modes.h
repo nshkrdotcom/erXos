@@ -24,9 +24,19 @@
 #define MODE_MACHINE_END	13	/* erx_machine_end from a task, refused with ERX_ENOTSUP: ends with 0 */
 #define MODE_POOL_ROUNDS	14	/* more thread creates, starts and exits than the root's slot pool holds pairs: ends with 0 */
 #define MODE_WRITE_REFUSED	15	/* from a task the launcher did not make: the launcher's create and a raw write refused: ends with 0 */
+#define MODE_SPIN	16	/* SPIN_THREADS threads spinning on CPU 0 until the root stops the task */
+#define MODE_TURNS	17	/* two threads spin on CPU 0: ends with the median turn of one, in us, or a negative status */
 
 /* The threads MODE_WAIT starts before it sleeps, each asleep for good. */
 #define WAIT_THREADS	2u
+#define SPIN_THREADS	4u
+/*
+ * MODE_TURNS's statuses when it measures nothing, negative so that none reads as a turn: its
+ * thread not moved to CPU 0, too few turns before its deadline, and the negated status of a
+ * spinner it could not start.
+ */
+#define TURNS_PINNED	(-80)
+#define TURNS_NONE	(-90)
 /* The threads every task runs before its main: its first, its reaper and its dispatcher (task_start.c). */
 #define TASK_OWN_THREADS	3u
 

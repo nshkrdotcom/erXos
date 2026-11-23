@@ -101,8 +101,11 @@ erx_fiasco_task_t	*erx_fiasco_task(uint32_t task);
 bool		erx_fiasco_task_group_home(uint32_t record, uint32_t *task);
 /* Whether the index names a live task: what the decoder asks about a gate's label. */
 bool		erx_fiasco_task_live(uint32_t task);
-/* Marks the root live, once its window is up; NULL, or why the boot cannot go on. */
-const char	*erx_fiasco_task_table_init(void);
+/*
+ * Marks the root live, once its window is up, with its row the system domain's domain row,
+ * whose threads take slice_us as their quantum; NULL, or why the boot cannot go on.
+ */
+const char	*erx_fiasco_task_table_init(uint32_t slice_us);
 
 /*
  * A thread's pair of the slot pool, which its capabilities in the root name (docs/design-fiasco.md,

@@ -150,7 +150,7 @@ erx_fiasco_task_group_home(uint32_t record, uint32_t *task)
 }
 
 const char *
-erx_fiasco_task_table_init(void)
+erx_fiasco_task_table_init(uint32_t slice_us)
 {
 	const char *reason;
 
@@ -170,9 +170,9 @@ erx_fiasco_task_table_init(void)
 	if (reason != NULL)
 		return (reason);
 	erx_fiasco_task(ERX_FIASCO_TASK_ROOT)->state = ERX_FIASCO_TASK_LIVE;
-	/* The root's row is the system domain's domain row: its own threads in the system band, the spaces it makes in the app band. */
+	/* The root's row is the system domain's domain row: its own threads in the root band, the spaces it makes in the app band. */
 	erx_fiasco_task(ERX_FIASCO_TASK_ROOT)->bands = (erx_fiasco_task_band_t){ .domain = ERX_FIASCO_TASK_ROOT,
-	    .band = ERX_FIASCO_BAND_SYSTEM, .space_band = ERX_BAND_APP };
+	    .band = ERX_FIASCO_BAND_ROOT, .space_band = ERX_BAND_APP, .slice_us = slice_us };
 	erx_fiasco_task(ERX_FIASCO_TASK_ROOT)->threads[0] = ERX_FIASCO_TASK_THREAD_STARTED;
 	return (NULL);
 }
