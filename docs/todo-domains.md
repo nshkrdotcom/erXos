@@ -610,7 +610,11 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   all of these land, a domain does not check the floors (it logs that its limits are
   unknown), no domain waits for a start load, and a blob only the release holds is asked
   of `erx_code`, which ends the load as `invalid`; all fail safe, and none matters before
-  `erx_code` sends loads to domains, which needs all of them first.
+  `erx_code` sends loads to domains, which needs all of them first. Until the flag lands,
+  `erx_code_target` makes a supervised target with `supervised_flag` false, which refuses
+  every load `enotsup` and sends no start load, so a code server that does not know its
+  domain is supervised is never sent a batch it would keep unpublished; the change that
+  sets the flag passes `supervised_flag` true.
 * [Low] code service, overlays across reboots and `erx_code` restarts
   (`erlang/apps/erx_code/src/erx_code.erl`): design-live.md keeps every overlay, hot store and history in
   `erx_code`'s memory, so a reboot returns every domain to its release and an `erx_code` restart ends the

@@ -21,7 +21,17 @@ class ErxCodeTargetTest < Minitest::Test
   MODEL = 'test/erlang/erx_code_target_tests.erl'
   EXPLORATION = 'explore_test_'
 
-  Seed = Data.define(:fault, :module_path, :anchor, :replacement, :property)
+  # A seed fails the exploration with the property it breaks, or, for a refusal that keeps
+  # the exploration out of the paths it explores, the scenario that pins the refusal.
+  Seed = Data.define(:fault, :module_path, :anchor, :replacement, :property, :scenario) do
+    def initialize(property: nil, scenario: nil, **fields) = super
+
+    def failure
+      return /#{Regexp.escape(scenario)}[^\n]*\*failed\*/ if scenario
+
+      /#{EXPLORATION}[^\n]*\*failed\*.*\{violation,#{property},/m
+    end
+  end
 
   SEEDS = [
     Seed.new(fault: 'an answer accepted from any envelope',
@@ -53,7 +63,17 @@ class ErxCodeTargetTest < Minitest::Test
                      "    next_piece(Hash, Offset, Load);\n",
              replacement: "read({erx_code_get, _, Hash, Offset}, #load{cursor = Cursor, stored = Stored}) ->\n" \
                           "    piece(Hash, maps:get(Hash, Stored), Offset, Cursor);\n",
-             property: 'piece_once')
+             property: 'piece_once'),
+    Seed.new(fault: 'a supervised target without the supervised flag sent loads',
+             module_path: TARGET,
+             anchor: "admit(_, #target{overlay = #overlay{}, supervised_flag = false}) ->\n    {error, enotsup};\n",
+             replacement: '',
+             scenario: 'a_supervised_target_without_the_flag_is_sent_nothing_test'),
+    Seed.new(fault: "the charge's verdict ignored",
+             module_path: TARGET,
+             anchor: "        Charge =:= no_memory -> {error, no_memory};\n",
+             replacement: '',
+             scenario: 'the_verdicts_refuse_in_order_before_anything_is_sent_test')
   ].freeze
 
   def test_the_cases_pass
@@ -69,8 +89,7 @@ class ErxCodeTargetTest < Minitest::Test
       assert_equal 1, source.scan(seed.anchor).size, "seed anchor for #{seed.fault} is not unique"
       output, status = run_cases({ seed.module_path => source.sub(seed.anchor) { seed.replacement } })
       refute status.success?, "#{seed.fault}: the cases passed"
-      assert_match(/#{EXPLORATION}[^\n]*\*failed\*/, output, seed.fault)
-      assert_match(/\{violation,#{seed.property},/, output, seed.fault)
+      assert_match(seed.failure, output, seed.fault)
     end
   end
 

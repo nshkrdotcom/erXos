@@ -91,15 +91,24 @@ a_load_into_a_domain_not_ready_or_busy_is_refused_busy_test() ->
                  erx_code_target:load(f2, Alias, request(?F2_MANIFEST), T2)),
     ?assertEqual({T2, [{reply, r, {error, busy}}]}, erx_code_target:reset(r, ?D1, T2)).
 
-missing_blobs_and_a_full_overlay_refuse_before_anything_is_sent_test() ->
+%% The verdicts refuse in the order missing, overlay_full, no_memory, before anything is
+%% sent; a domain no specification restarts has no candidate, so its charge is not read.
+the_verdicts_refuse_in_order_before_anything_is_sent_test() ->
     T1 = confirmed(supervised()),
     Alias = make_ref(),
-    Missing = (request(?F1_MANIFEST))#{missing := [?HASH_A]},
-    ?assertEqual({T1, [{unalias, Alias}, {reply, f1, {error, {missing, [?HASH_A]}}}]},
-                 erx_code_target:load(f1, Alias, Missing, T1)),
-    Small = confirmed(erx_code_target:new(#{lifeline => lifeline(0), overlay_limit => 65536})),
-    ?assertEqual({Small, [{unalias, Alias}, {reply, f1, {error, overlay_full}}]},
-                 erx_code_target:load(f1, Alias, request(?F1_MANIFEST), Small)).
+    Refused = fun(Why, Request, T) ->
+                      ?assertEqual({T, [{unalias, Alias}, {reply, f1, {error, Why}}]},
+                                   erx_code_target:load(f1, Alias, Request, T))
+              end,
+    Short = (request(?F1_MANIFEST))#{charge := no_memory},
+    Refused({missing, [?HASH_A]}, Short#{missing := [?HASH_A]}, T1),
+    Small = confirmed(erx_code_target:new(#{lifeline => lifeline(0), overlay_limit => 65536,
+                                                supervised_flag => true})),
+    Refused(overlay_full, Short, Small),
+    Refused(no_memory, Short, T1),
+    Free = erx_code_target:new(#{lifeline => lifeline(0), overlay_limit => none}),
+    ?assertMatch({_, [{begin_load, Alias, _, _}, {send, _, {erx_code_load, Alias, _}}]},
+                 erx_code_target:load(f1, Alias, Short, Free)).
 
 a_load_into_a_domain_no_specification_restarts_answers_ok_none_test() ->
     T0 = erx_code_target:new(#{lifeline => lifeline(0), overlay_limit => none}),
@@ -140,7 +149,8 @@ messages_the_load_does_not_expect_end_it_invalid_test() ->
     ?assertEqual({ok, Alias}, erx_code_target:alias({junk, Alias})),
     ?assertEqual(error, erx_code_target:alias({junk, 1})).
 
-%% A piece is cut to the blob erx_code holds, whatever size the manifest states, and a
+%% A piece is cut to the blob erx_code holds, whatever size the manifest states: a request
+%% past its stored end, which an overstated Size leads to, ends the load invalid, and a
 %% blob the store does not hold, such as one only the release holds, is never served.
 pieces_come_only_from_stored_blobs_test() ->
     T1 = confirmed(supervised()),
@@ -183,8 +193,20 @@ a_failed_start_load_closes_the_domain_and_keeps_the_overlay_test() ->
     ?assertEqual([{unalias, f}, {reply, f1, {error, busy}}],
                  element(2, erx_code_target:load(f1, f, request(?F2_MANIFEST), T2))).
 
+%% Until a supervised specification's domains carry the supervised flag, their code
+%% servers would run a batch whether or not it is published, so a supervised target made
+%% without the flag is sent nothing: no load, and no start load.
+a_supervised_target_without_the_flag_is_sent_nothing_test() ->
+    T0 = erx_code_target:new(#{lifeline => lifeline(0), overlay_limit => ?LIMIT}),
+    Start = make_ref(),
+    ?assertEqual({T0, [{unalias, Start}]}, erx_code_target:started(Start, domain(?D1), ?STORED, T0)),
+    Alias = make_ref(),
+    ?assertEqual({T0, [{unalias, Alias}, {reply, f1, {error, enotsup}}]},
+                 erx_code_target:load(f1, Alias, request(?F1_MANIFEST), T0)),
+    ?assertEqual({T0, [{reply, r, {error, enotsup}}]}, erx_code_target:reset(r, ?D1, T0)).
+
 supervised() ->
-    erx_code_target:new(#{lifeline => lifeline(0), overlay_limit => ?LIMIT}).
+    erx_code_target:new(#{lifeline => lifeline(0), overlay_limit => ?LIMIT, supervised_flag => true}).
 
 %% D1 started, with its empty start load confirmed.
 confirmed(T0) ->
@@ -206,7 +228,7 @@ serves(T0, Alias, Pieces) ->
                 end, T0, Pieces).
 
 request(Manifest) ->
-    #{domain => domain(?D1), manifest => Manifest, missing => [], stored => ?STORED}.
+    #{domain => domain(?D1), manifest => Manifest, missing => [], stored => ?STORED, charge => ok}.
 
 domain(Id) ->
     #{id => Id, pid => pid(Id, domain), agent => pid(Id, agent), ready => true, release => ?RELEASE}.
@@ -313,7 +335,8 @@ witnessed(M) ->
         ++ [{served, H, O} || {H, O} <- pieces(), lists:member({H, O}, Served)].
 
 new_core(Incarnation) ->
-    erx_code_target:new(#{lifeline => lifeline(Incarnation), overlay_limit => ?LIMIT}).
+    erx_code_target:new(#{lifeline => lifeline(Incarnation), overlay_limit => ?LIMIT,
+                          supervised_flag => true}).
 
 %% The steps the model allows from M: events, which cost one, and the connection's
 %% deliveries and drops, which cost nothing.
@@ -383,7 +406,7 @@ event(Request, M, Aliases) when Request =:= f1; Request =:= f2 ->
         #cs{ready = Ready} ->
             Manifest = case Request of f1 -> ?F1_MANIFEST; f2 -> ?F2_MANIFEST end,
             Resolved = #{domain => (domain(?D1))#{ready := Ready}, manifest => Manifest,
-                         missing => [], stored => ?STORED},
+                         missing => [], stored => ?STORED, charge => ok},
             core(erx_code_target:load(Request, maps:get(Request, Aliases), Resolved, M#m.core), Asked);
         _ ->
             {Asked, [{reply, Request, {error, scope}}]}
