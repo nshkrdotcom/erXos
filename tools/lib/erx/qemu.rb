@@ -593,8 +593,10 @@ module Erx
   # The matcher consumes complete serial lines exactly once. It retains a
   # bounded unfinished line so serial splits cannot lose a checkpoint. A
   # checkpoint may also name a verifier, called with the matching line, which
-  # raises Erx::Error when that line's content must fail the boot, and bytes the
-  # harness types into the guest's serial line once that line has come.
+  # raises Erx::Error when that line's content must fail the boot, with, as
+  # verify_seconds, the longest it may spend, which the run's deadline adds
+  # since no checkpoint's own time counts it; and bytes the harness types into
+  # the guest's serial line once that line has come.
   #
   # The console writes a log line whole wherever it lands, in the middle of a
   # program's line too (docs/design-live.md, "Log lines and program output"). So
@@ -610,7 +612,7 @@ module Erx
     # "SECONDS.MICROSECONDS LEVEL domain ID principal P NAME: TEXT" (erx_syslog_core).
     LOG_LINE_END = /(?:\#[0-9]+ [0-9]+\.[0-9]{6} [a-z]+ |[0-9]+\.[0-9]{6} [a-z]+ domain [0-9]+ principal )[^\n]*\n\z/n
     REQUIRED_KEYS = %i[name pattern seconds].freeze
-    OPTIONAL_KEYS = %i[verify type].freeze
+    OPTIONAL_KEYS = %i[verify verify_seconds type].freeze
     attr_reader :observed
 
     def initialize(checkpoints:)
@@ -681,7 +683,8 @@ module Erx
         point.fetch(:pattern).is_a?(Regexp) &&
         point.fetch(:seconds).is_a?(Integer) && point.fetch(:seconds).positive? &&
         point.fetch(:verify, -> {}).respond_to?(:call) &&
-        point.fetch(:type, '').is_a?(String)
+        point.fetch(:type, '').is_a?(String) &&
+        point.fetch(:verify_seconds, 1).is_a?(Integer) && point.fetch(:verify_seconds, 1).positive?
     end
 
     # The log line that line ends in, with its head put back in front of @pending, or
@@ -758,6 +761,10 @@ module Erx
       [BootstrapMemory.checkpoint(ram_bytes: memory_mib << 20), *BANNER, *(test_image ? [TEST_IMAGE_BANNER] : [])].freeze
     end
 
+    # The serial log of a boot run in directory, which a checkpoint's verify may read while
+    # the guest runs.
+    def self.serial_log(directory) = File.join(directory, 'serial.log')
+
     # remote_clock is the clock a remote boot waits on (QemuRemote::Clock).
     def initialize(root:, runner: Runner.new(owner_root: root, log_dir: File.join(root, 'build/logs')),
                    program: 'qemu-system-aarch64', initrd: nil, remote_clock: QemuRemote::Clock)
@@ -824,10 +831,10 @@ module Erx
       image = File.expand_path(image)
       raise Error, "guest image does not exist: #{image}" unless File.file?(image)
       matcher = Transcript.new(checkpoints: checkpoints)
-      deadline = checkpoints.sum { |point| point.fetch(:seconds) } + link_seconds + 5
+      deadline = checkpoints.sum { |point| point.fetch(:seconds) + point.fetch(:verify_seconds, 0) } + link_seconds + 5
       directory ||= File.join(@root, 'build/qemu', "#{accel}-#{Process.pid}-#{Random.bytes(8).unpack1('H*')}")
       directory = OutputDirectory.prepare(root: @root, path: directory, mode: 0o700)
-      serial = File.join(directory, 'serial.log')
+      serial = Qemu.serial_log(directory)
       # Emptied before QEMU starts, so the transcript reads this boot's lines alone, never
       # an earlier run's in a directory the caller reuses.
       File.write(serial, '', perm: 0o600)

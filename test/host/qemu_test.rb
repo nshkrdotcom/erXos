@@ -594,6 +594,14 @@ class QemuTest < Minitest::Test
     assert_raises(Erx::Error) { Erx::Transcript.new(checkpoints: [point]) }
   end
 
+  def test_checkpoint_verify_seconds_must_be_a_positive_integer
+    point = { name: 'first', pattern: /^first\n/n, seconds: 1, verify: ->(_line) {} }
+    [0, 1.5, '2'].each do |bound|
+      assert_raises(Erx::Error) { Erx::Transcript.new(checkpoints: [point.merge(verify_seconds: bound)]) }
+    end
+    Erx::Transcript.new(checkpoints: [point.merge(verify_seconds: 2)])
+  end
+
   def test_malformed_checkpoint_is_a_domain_error
     assert_raises(Erx::Error) { Erx::Transcript.new(checkpoints: [nil]) }
   end

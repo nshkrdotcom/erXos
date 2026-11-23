@@ -261,11 +261,6 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   construct for rows of constants (`abi/manifest.txt`'s `table` locates records in a binary manifest, and
   `translation` maps one enum to another, with no numbers), so one would be needed: one row per line with its pin
   and its state for each phase. Cost not judged.
-* [Medium] QEMU harness, the raspi4b suite's configured lines (`tools/lib/erx/raspi4b_shell.rb`, `check_configured`):
-  each configured domain's line is matched only after the run halts, and the Bluetooth domain's (`bt`), its line
-  writer's first end, arrives about 2 s before the halt on a TCG boot of about 25 s, so a slower host fails the run
-  with "left no line matching" though the domain behaved. Wait for each configured domain's line, bounded, before
-  the step that halts.
 * [Medium] `test/host/book_test.rb`: the design's tool tests "The whole book builds" and "Same bytes" are missing; no test runs cmark-gfm (two builds of the whole book were compared by hand and were identical).
 * [Low] `tools/build_book.rb`: `--out build/site` replaces a built site with a book-only tree (both write the site's marker); two concurrent builds into one directory can fail with a bare `Errno` rather than `Erx::Error`.
 * [Low] build, the native-jit copy's stamp (`tools/lib/erx/native_jit_runtime.rb`, `otp/erts/emulator/Makefile.in`

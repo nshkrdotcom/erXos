@@ -164,6 +164,12 @@ module Erx
     # how often it is read until then.
     SCREEN_SECONDS = 120
     SCREEN_POLL_SECONDS = 2
+    # How long the system's Erlang shell waits, before it halts the machine, for each
+    # configured domain's line (CONFIGURED_LINES), and how often it reads the serial log
+    # until then: the Bluetooth domain's line comes about 1.5 s after the domain starts,
+    # which on a TCG boot can be after the shell is up.
+    CONFIGURED_SECONDS = 20
+    CONFIGURED_POLL_SECONDS = 1
     # The head of the line the domain service logs when configured domain NAME ends, up to
     # what ended it and what the service does next (erx_domain_srv's log_end). Interpolated
     # as a Regexp into an /x pattern, it keeps its own flags, so its spaces stay literal.
@@ -227,6 +233,17 @@ module Erx
     # domain waits for the host controller the PCIe domain gives it, which the model, having
     # no PCIe, never gives (docs/design-usb.md).
     IDLE = %w[usb].freeze
+
+    # Configured domain NAME's line of CONFIGURED_LINES; raises for a name with no line
+    # there, so a manifest row the suite does not know fails the run rather than pass
+    # unchecked. A domain of IDLE has none.
+    def self.expected_line(name)
+      CONFIGURED_LINES.fetch(name) { raise Error, "raspi4b: configured domain #{name} has no expected line" }
+    end
+
+    # The domains of names, which hold no domain of IDLE, whose expected line serial does
+    # not hold.
+    def self.missing_lines(serial, names:) = names.reject { |name| serial.match?(expected_line(name)) }
 
     def initialize(root:, runner: Runner.new(owner_root: root, log_dir: File.join(root, 'build/logs')),
                    compiler: ENV.fetch('ERX_CLANG', ''), linker: ENV.fetch('ERX_LLD', ''), qemu: 'qemu-system-aarch64')
@@ -301,13 +318,13 @@ module Erx
 
     private
 
-    # Raises unless the serial log holds CONFIGURED_LINES' line for each configured domain
-    # the Pi's manifest names, so a domain that never started, or a manifest row without
-    # its expected line here, fails the run; unless each domain of STARTED_ONCE logged its
-    # line once and never ended, so one that restarts fails it too; and unless no domain of
-    # IDLE ended. The domain service logs a start only when it fails (erx_domain_srv's
-    # "did not start"), so a domain of IDLE is known to have started only by that line's
-    # absence.
+    # Raises if a configured domain the Pi's manifest names did not start; unless the
+    # serial log holds its expected line for each one outside IDLE (expected_line), so
+    # a manifest row without its expected line here fails the run; unless each domain of
+    # STARTED_ONCE logged its line once and never ended, so one that restarts fails it too;
+    # and unless no domain of IDLE ended. The domain service logs a start only when it fails
+    # (erx_domain_srv's "did not start"), so a domain of IDLE is known to have started only
+    # by that line's absence.
     def check_configured(serial)
       configured_domains.each do |name|
         raise Error, "raspi4b: configured domain #{name} did not start" if
@@ -317,7 +334,7 @@ module Erx
 
           next
         end
-        pattern = CONFIGURED_LINES.fetch(name) { raise Error, "raspi4b: configured domain #{name} has no expected line" }
+        pattern = self.class.expected_line(name)
         raise Error, "raspi4b: configured domain #{name} left no line matching #{pattern.source}" unless serial.match?(pattern)
         next unless STARTED_ONCE.include?(name)
 
@@ -329,18 +346,33 @@ module Erx
 
     def configured_domains = Manifest::Frontend.read(@platform.manifest_source(@root)).records.fetch('domain', []).map(&:name)
 
+    # Reads the serial log at path until it holds each configured domain's line
+    # (missing_lines), or raises naming the domains still missing once CONFIGURED_SECONDS
+    # have passed.
+    def await_configured(path)
+      names = configured_domains - IDLE
+      deadline = Qmp.monotonic + CONFIGURED_SECONDS
+      until (missing = self.class.missing_lines(File.binread(path), names: names)).empty?
+        raise Error, "raspi4b: configured domains #{missing.join(', ')} logged no expected line within #{CONFIGURED_SECONDS} s" if
+          Qmp.monotonic > deadline
+
+        sleep CONFIGURED_POLL_SECONDS
+      end
+    end
+
     # tcg-4cpu: the shell's boot with the stand-in for the firmware's framebuffer setup
     # (Raspi4bFirmwareFb) and QMP on a socket in the boot's own owner-only directory. Once the
-    # system's command shell is up the screen must show the empty layout's background; after
-    # the run the serial log must hold the root's framebuffer line and each configured
-    # domain's line, the display domain's being its driver's framebuffer line.
+    # system's command shell is up the screen must show the empty layout's background; before
+    # the machine halts the serial log must hold each configured domain's line, the display
+    # domain's being its driver's framebuffer line; after the run it must hold the root's
+    # framebuffer line, and the configured domains must pass check_configured.
     def screen_boot(inputs)
       path = ProductionImage.clear_directory(root: @root, path: File.join(@root, STUB_DIRECTORY, 'tcg-4cpu'))
       directory = OutputDirectory.prepare(root: @root, path: path, mode: 0o700)
       built = FB.build(root: @root, runner: @runner, compiler: @compiler, linker: @linker, model: inputs.fetch(:dtb),
                        directory: directory)
       socket = File.join(directory, 'qmp.sock')
-      report = boot(inputs, dtb: built.tree, points: screen_checkpoints(socket), machine_end: true, firmware: built.program,
+      report = boot(inputs, dtb: built.tree, points: screen_checkpoints(directory), machine_end: true, firmware: built.program,
                             display: QemuPlan::Display.new(qmp_socket: socket), directory: directory)
       serial = File.binread(report.fetch(:serial))
       raise Error, "raspi4b: the serial log holds no root line #{ROOT_LINE.inspect}" unless serial.match?(/(?:^|: )#{Regexp.escape(ROOT_LINE)}\r*$/n)
@@ -349,13 +381,17 @@ module Erx
       report
     end
 
-    # shell_checkpoints with the screen's check when the system's command shell is up; the
-    # next row's time grows by the check's, which its verify spends before that row starts.
-    def screen_checkpoints(socket)
+    # shell_checkpoints, in the boot's directory, with the screen's check when the system's
+    # command shell is up and the wait for each configured domain's line before its Erlang
+    # shell halts the machine; each verify's bound is its verify_seconds, which the run's
+    # deadline adds.
+    def screen_checkpoints(directory)
       shell_checkpoints.map do |point|
         case point.fetch(:name)
-        when 'system-shell' then point.merge(verify: ->(_text) { await_splash(socket) }).freeze
-        when 'system-erlang-shell' then point.merge(seconds: point.fetch(:seconds) + SCREEN_SECONDS).freeze
+        when 'system-shell'
+          point.merge(verify: ->(_text) { await_splash(File.join(directory, 'qmp.sock')) }, verify_seconds: SCREEN_SECONDS).freeze
+        when 'system-erlang-shell'
+          point.merge(verify: ->(_text) { await_configured(Qemu.serial_log(directory)) }, verify_seconds: CONFIGURED_SECONDS).freeze
         else point
         end
       end.freeze
