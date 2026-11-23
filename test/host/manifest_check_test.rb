@@ -579,11 +579,21 @@ class ManifestCheckTest < Minitest::Test
     end
   end
 
-  def test_a_controller_naming_more_than_usb_drives_max_drives_is_refused
+  # The cap is the USB domain's, over the drives all its controllers' rows name: the media
+  # it serves at once. USB_HOLDERS gives the stick's and the xhci function's units to one domain.
+  def test_a_usb_domain_naming_more_than_usb_drives_max_drives_is_refused
     drives = @codec.constant('usb_drives_max')
-    rows = (0..drives).map { |number| drive_window("disk#{number * 2}", name: "stick#{number}") }
+    function = "#{BRIDGE}:0:2:0"
+    rows = (0..drives).map do |number|
+      drive_window("disk#{number * 2}", name: "stick#{number}", device: number.even? ? STICK : function)
+    end
     usb_admit(usb_source + rows.take(drives).join)
-    usb_refused('window.drive', /a USB controller's windows name more than #{drives} drives/, usb_source + rows.join)
+    usb_refused('window.drive', /a USB domain's controllers name more than #{drives} drives/, usb_source + rows.join)
+    holders = USB_HOLDERS.merge('xhci' => '@domain.storage')
+    apart = (0...drives * 2).map do |number|
+      drive_window("disk#{number}", name: "stick#{number}", device: number < drives ? STICK : function)
+    end
+    usb_admit(usb_source(holders) + apart.join, usb_platform)
   end
 
   # Drive numbers are one namespace across the machine, so two controllers never name one drive.

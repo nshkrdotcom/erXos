@@ -267,8 +267,8 @@ manifest holds:
   ([design-platforms.md](design-platforms.md#what-the-manifest-says)), a
   USB host controller's role being `usb`; its
   partition windows, by role in the medium layout, and on a `usb`
-  device's row a `fat` window whose `drive` field names one of that
-  controller's drives, `diskN`, numbered across the machine, and whose partition is the
+  device's row a `fat` window whose `drive` field names one of its
+  USB domain's drives, `diskN`, numbered across the machine, and whose partition is the
   primary entry to serve on whatever medium the drive holds
   ([design-usb.md](design-usb.md#mass-storage-reaches-the-file-servers));
   its **facets**, each
@@ -401,8 +401,8 @@ violation fails the build with the property, the record and the field:
    record and the reset count; only storage domains hold windows on data,
    FAT and vault's partitions; a window names a drive exactly when it
    lies on a `usb` device's row, no two windows name one partition of
-   one drive, no drive lies on two controllers' rows, and no controller's
-   rows name more than `usb_drives_max` drives ([design-usb.md](design-usb.md#refusals-and-error-results));
+   one drive, no drive lies on two controllers' rows, and the rows on one
+   domain's controllers name at most `usb_drives_max` drives ([design-usb.md](design-usb.md#refusals-and-error-results));
    the units of the UARTs that `console` and
    `hostlink` name and of the device each grant of the `line` interface
    names by its `device` parameter, a device of role `uart` or `serial`

@@ -385,6 +385,14 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
 
 ## Planned features
 
+* [Medium] storage, one drive allocator for the machine
+  ([design-usb.md](design-usb.md#mass-storage-reaches-the-file-servers)): a medium takes the lowest
+  free drive among those the manifest names for its USB domain's controllers, which is the machine's
+  lowest free drive number only while USB is the one transport serving media as drives and its
+  manifest names `disk0` upward without a gap. When a second transport serves media as drives (an SD
+  card's removable partitions), or a second domain holds USB controllers, design the one allocator
+  they share, so a medium takes the lowest free number on the machine, and the bound on drives across
+  the machine with it.
 * [Medium] storage, stable names for media
   ([design-usb.md](design-usb.md#mass-storage-reaches-the-file-servers)): a drive's number names a
   place, so the same stick may come back as another `diskN`. Scripts and mounts need a name taken

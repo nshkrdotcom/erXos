@@ -385,8 +385,8 @@ are configured and lasting as long as the controller's domain:
   domain's input tree, which the manifest grants a display domain read
   only ([design-display.md](design-display.md#the-display-device));
 * a **drive**, `diskN`, one of at most `usb_drives_max` (four) that the
-  manifest's window rows name on the controller's device, numbered
-  across the machine
+  manifest's window rows name on the domain's controllers' devices,
+  numbered across the machine
   ([Mass storage reaches the file servers](#mass-storage-reaches-the-file-servers)),
   through whose **drive grants** a FAT server's
   domain asks for the window of one partition of whatever medium the
@@ -395,7 +395,7 @@ are configured and lasting as long as the controller's domain:
 A device's function **occupies** a place: a HID interface takes the
 lowest free input number when its function starts, and a mass-storage
 logical unit's medium takes the lowest free drive the manifest names
-when it becomes ready. When the function or the medium ends, the place is
+on any of the domain's controllers when it becomes ready. When the function or the medium ends, the place is
 free again. Places are the only thing a reader outside the domain holds,
 so the reader's grants are made once, at its domain's creation, by the
 mechanisms that already make them, and no run-time device addition, no
@@ -621,10 +621,12 @@ that reads the medium's table under the removable-media rule, and a
 window process for each partition a client was granted
 ([design-storage.md](design-storage.md#data-model)). The USB domain runs
 one such block service for each ready medium. What the manifest names is
-a **drive** of the controller: a window row whose device is the
-controller's device row, whose role is `fat`, whose partition is the
-primary entry to serve, and whose new `drive` field is the drive's
-number. The device service introduces the row's holder to the USB domain
+a **drive** of the USB domain: a window row whose device is the device
+row of one of the domain's controllers, whose role is `fat`, whose
+partition is the primary entry to serve, and whose `drive` field is the
+drive's number. The row's device picks only the domain: a drive is
+written against one of the domain's controllers, any one, and serves media
+on all of them. The device service introduces the row's holder to the USB domain
 as it introduces any window's holder, and the grant it hands over is a
 **drive grant**: a process of the USB domain, `erx_blk_drive`, made for
 that one row and living as long as the USB domain.
@@ -651,12 +653,20 @@ again at the next walk ([A medium that cannot flush](#the-scsi-subset)).
 
 Drive numbers name drives across the machine, as macOS's `diskN` does:
 one number is one drive wherever its medium sits, and the manifest
-check refuses a number that two controllers' rows name. What is bounded
-is how many drives there are, not their names: a controller's rows name
-at most `usb_drives_max` drives, the media its domain serves at once,
-under any numbers. A logical unit whose medium becomes ready when every
-drive its controller's rows name is occupied is not served, and the bus
-process shows it as `no drive`.
+check refuses a number that two controllers' rows name. A drive belongs
+to the USB domain, not to the controller whose row names it: a medium on
+any of the domain's controllers takes the lowest free number among all
+the drives the manifest names for the domain's controllers, and its
+number is free again when the medium ends, to be reused by the next
+medium. The number is lowest free within the drives the manifest names,
+so a manifest that names `disk0` upward without a gap, on a machine
+whose drives are all one USB domain's, gives each medium the lowest free
+drive number on the machine. What is bounded is how many
+drives there are, not their names: the rows on all of a USB domain's
+controllers name at most `usb_drives_max` drives, the media that domain
+serves at once, under any numbers. A logical unit whose medium becomes
+ready when every drive of its domain is occupied is not served, and the
+bus process shows it as `no drive`.
 
 A drive's number names a place, not a medium: the same stick may come
 back as another number. Scripts and mounts that must find one medium
@@ -3192,7 +3202,7 @@ reference, its capacity and whether it flushes.
 * **Ready**: TEST UNIT READY succeeds, READ CAPACITY answers a capacity
   and 512-byte blocks, and the readiness SYNCHRONIZE CACHE answers. The
   medium takes a fresh reference and the lowest free drive the manifest
-  names for the controller, and a block service starts for it under the
+  names for the domain's controllers, and a block service starts for it under the
   function: the transport, which carries the medium's reference, the
   partition process, which reads the table under the removable-media
   rule, serving only primary entries inside the medium that overlap no
@@ -3460,7 +3470,7 @@ sink shows it.
 | `erx_firmware_request` | `ERX_ENOTSUP`; `ERX_EPROTO`; `ERX_ERIGHTS`; `ERX_ETIMEDOUT`; `ERX_EBUSY`; `ERX_EWOULDBLOCK` | a resource of a device without notifications or a platform without one, an index past the device's list, or a tag the firmware ignored; an answer outside the interface; a resource without `CARVE`; no answer within 1 s, and every call after one in the boot; another mailbox request in flight; a call from an executor |
 | the Pi 4's PCIe unit at boot | given to no domain, with the device service's diagnostic | the tree the firmware hands over routes the VL805's position to one of the bridge's lines, so one unit spans the PCIe domain and the USB domain |
 | a function | not started, with `no input number`, `no drive`, `not direct access`, `block length`, `max lun`; or ended unusable, with `no usable report` | its place, its layout, its unit |
-| the manifest check | the build fails | a window on a `usb` device with no drive, or a drive on another device; a drive named twice for one partition; one drive named on two controllers; more drives on one controller than `usb_drives_max`; a release manifest whose USB domain holds another unit or a file server; a second holder of a bridge's unit, or a `pcie` domain holding another unit; the Pi 4's INTx line given apart from its function |
+| the manifest check | the build fails | a window on a `usb` device with no drive, or a drive on another device; a drive named twice for one partition; one drive named on two controllers; more drives on one USB domain's controllers than `usb_drives_max`; a release manifest whose USB domain holds another unit or a file server; a second holder of a bridge's unit, or a `pcie` domain holding another unit; the Pi 4's INTx line given apart from its function |
 
 ## Verification
 
