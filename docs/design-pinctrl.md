@@ -315,7 +315,8 @@ The record reader checks the table and refuses, naming the row:
 
 * a pin on two rows, a pin the kind's table does not list, an owner
   that is not a device or part of the record, or a controller name that
-  is not an identifier or is used twice;
+  is not an identifier or is used twice; two controller entries of one
+  kind, since a chip has one pin table;
 * a function the pin does not carry, or that is a signal of another
   device than the row's owner, so no row but the console's own carries
   a signal of the console;
@@ -379,7 +380,17 @@ The manifest check adds, naming the unit or the row:
 
 1. **The manifest's `pins` table** (`abi/manifest.txt`): the rows of
    every controller, each state's setting spelled out, in pin order. It
-   replaces `onboard_pins`.
+   replaces `onboard_pins`. The packer adds two columns to each row,
+   computed from the manifest and never written by hand: the
+   controller's **device**, the row of the entry's first device, whose
+   unit's holder applies the row; and **`uses`**, which configurations
+   use the row's device, `rescue` (and so the normal one too), `normal`
+   alone, or `none`, which is every `gpio` row's and every row of a
+   device with a state other than `default`
+   ([At start](#at-start)). It derives `uses` from the manifest's
+   holders, `line` grants and rescue marks. A device the manifest does
+   not place is used by no one and gives no row, so its pins stay as
+   the firmware left them.
 2. **The pin driver's record.** For the holder of each controller the
    domain library writes one `pins` record
    ([design-fiasco.md](design-fiasco.md#device-records)): the
@@ -387,10 +398,12 @@ The manifest check adds, naming the unit or the row:
    and its rows in a packed layout that `abi/erx_abi.txt` declares, each
    a pin, its owner (a device row's index, or the mark for `gpio`), a
    state, a function number of the kind, a pull and a level. The
-   firmware's rows and `reserved` rows are left out. The record is the
+   firmware's rows and `reserved` rows are left out; the host link's
+   rows are a device's rows like any other, which the pin driver sets.
+   The record is the
    driver's whole table, so it has no setting for a pin it must not
    write. For each device with `default` alone it also carries which
-   configurations use the device, which the generator derives from the
+   configurations use the device, the `uses` column, which the generator derives from the
    manifest's holders, `line` grants and rescue marks
    ([At start](#at-start)). It is a word of the holder's boot page, which
    `boot_strings_max` bounds. A table that does not fit must fail the
@@ -490,7 +503,9 @@ The function is total and writes nothing itself:
 order and reads the configuration and level registers again, and the
 driver calls `plan/2` again with the same `Wanted`. The check covers
 what persists and can be read: a pin's function and pull as its
-configuration registers hold them and, for a pin that is now an output,
+configuration registers hold them, its detect enables on a kind that
+has them (all six on the BCM2711, so a pin that differs from its
+setting only in an enable differs), and, for a pin that is now an output,
 its level as the level register shows it. That last reading is how a
 level command's completion is seen, since the command register itself
 tells nothing. A pin the second plan names in no step is `set`; a pin
@@ -517,10 +532,11 @@ bit in each of the six detect enables (register `pin div 32`) as field
 writes, and GPSET or GPCLR as level commands. The six are GPREN and
 GPFEN for a rising and a falling edge, GPHEN and GPLEN for a high and
 a low level, and GPAREN and GPAFEN for an asynchronous rising and
-falling edge. A pin's edge setting gives all six bits, and a setting
-without one leaves them as read: `rising` sets
-GPREN's, `falling` GPFEN's, `both` the two, and every other bit is
-clear, so a pin detects the edges its setting names and nothing else.
+falling edge. Every setting gives all six bits. A device's setting
+names no edge, which is the edge `none` and clears all six; a GPIO
+pin's edge setting is `none`, `rising`, which sets GPREN's, `falling`,
+GPFEN's, or `both`, the two, with every other bit clear. So a pin
+detects the edges its setting names and nothing else.
 The `rp1` kind plans each pin's `CTRL` and its pad together, all field
 writes ([design-rp1.md](design-rp1.md#pins)). The `bcm2712` kind waits
 for a facts record of its registers.
@@ -586,7 +602,9 @@ system release's two configurations, normal and rescue
   ([design-bluetooth.md](design-bluetooth.md#the-controllers-line)), or
   the system release itself where no grant names it, as the host link's
   UART;
-* no one, where no domain holds the device.
+* no one, where the manifest places the device in no unit: such a
+  device has no row in the record
+  ([What is generated from it](#what-is-generated-from-it)).
 
 A configuration **uses** a device that is for the system release or for
 a domain the configuration starts. The rescue configuration starts the
@@ -597,10 +615,9 @@ each device
 ([What is generated from it](#what-is-generated-from-it)).
 
 **A start is for a configuration, and it fails when it leaves unset a
-device that configuration uses.** A device for no one that is left
-unset, and a `gpio` pin that does not read idle, are in the log line
-and cost nothing more: no one uses the first, and the second is refused
-when a grant would take it ([Plain GPIO](#plain-gpio)).
+device that configuration uses.** A `gpio` pin that does not read idle
+is in the log line and costs nothing more: it is refused when a grant
+would take it ([Plain GPIO](#plain-gpio)).
 
 * **In the system domain the release boots the larger configuration
   whose devices are set.** It starts its pin drivers for the normal
@@ -1007,7 +1024,7 @@ afterwards is what the registers then hold.
 | --- | --- |
 | a request is refused: a state the table lacks, a pin another holds, a plan the kind refuses | nothing is written; the request answers its error |
 | a pin differs after a select | `eio`, and the pin is named in the log; the device then reads as whatever its registers hold, its old state, the new one or `unset`; its driver does not use the device until a select answers `ok` ([States at run time](#states-at-run-time)) |
-| a device with `default` alone is left unset by a start plan: a field that did not take its write, or an output whose wire is held at the other level | the start logs the controller and each pin, and fails when its configuration uses the device ([At start](#at-start)). In the system domain at boot, a device that the normal configuration alone uses makes the boot a rescue boot, and a device that rescue uses stops it: the machine ends by `erx.panic` at every boot, uncounted by the reset count, until the board or its card is repaired. At a restart that keeps failing the machine ends, and the next boot meets the pin at its start. In a unit the unit fails. A device for no one costs the log line alone |
+| a device with `default` alone is left unset by a start plan: a field that did not take its write, or an output whose wire is held at the other level | the start logs the controller and each pin, and fails when its configuration uses the device ([At start](#at-start)). In the system domain at boot, a device that the normal configuration alone uses makes the boot a rescue boot, and a device that rescue uses stops it: the machine ends by `erx.panic` at every boot, uncounted by the reset count, until the board or its card is repaired. At a restart that keeps failing the machine ends, and the next boot meets the pin at its start. In a unit the unit fails |
 | a GPIO pin differs after a `ctl` or `value` write | `eio`; the hold stands |
 | a GPIO pin does not read idle when its hold ends, or after a start plan | the hold ends, or the start goes on with the pin in its log line; the next grant to take the pin plans idle again and gets it only if it then reads idle |
 | a register reads a value no row gives: a code with no name, or all ones from a device that has left its bus | the plan is total over it; the pins differ; no pin without a row is written |

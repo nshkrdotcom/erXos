@@ -52,7 +52,7 @@ main(void)
 	char request[512];
 
 	while (fgets(request, sizeof(request), stdin) != NULL) {
-		erx_mf_onboard_pin_t rows[ERX_BCM2711_PINS_ROWS_MAX + 1];
+		erx_mf_pin_t rows[ERX_BCM2711_PINS_ROWS_MAX + 1];
 		uint32_t block[ERX_BCM2711_PINS_REGISTERS];
 		erx_mmio_t device;
 		size_t count = 0;
@@ -73,7 +73,7 @@ main(void)
 
 			if (sscanf(word, "%u:%u", &gpio, &alternate) != 2)
 				break;
-			rows[count++] = (erx_mf_onboard_pin_t){ .gpio = gpio, .alternate = alternate };
+			rows[count++] = (erx_mf_pin_t){ .pin = gpio, .function = ERX_PIN_FUNCTION_ALTERNATE, .alternate = alternate };
 		}
 		fputs(outcome_name(erx_fiasco_bcm2711_pins_apply(device, rows, count)), stdout);
 		for (uint32_t at = 0; at < ERX_BCM2711_PINS_REGISTERS; at++)

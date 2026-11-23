@@ -41,7 +41,7 @@
 # firmware requests it sends (docs/design-fiasco.md, "The call table", erx_firmware_request;
 # docs/design-kernel.md, "Firmware requests"); and gpio, the pin controller, which no runtime
 # drives either and the root writes once at boot, before any domain starts, setting the
-# functions of the on-board pins the manifest's onboard_pins rows name, UART0's to the
+# functions of the on-board pins the manifest's pins rows name, UART0's to the
 # Bluetooth controller, at the window its row states and only when the firmware's tree names
 # that window (docs/design-header-io.md, "On-board pins"); property 8 lets the system
 # domain hold it, since its registers set the console's pins. The console's driver is

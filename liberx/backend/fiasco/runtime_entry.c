@@ -434,19 +434,54 @@ board_mailbox(const erx_dt_t *tree, const erx_manifest_view_t *manifest, erx_fia
 }
 
 /*
+ * Whether the root's write takes a pins row: an on-board pin, bank 1 or 2, set to a signal
+ * in a device's default state. Header pins are config.txt's gpio= lines', and a device's
+ * other states and plain GPIO pins are the pin driver's (docs/design-pinctrl.md).
+ */
+static bool
+board_pin_taken(const erx_manifest_view_t *manifest, const erx_mf_pin_t *row)
+{
+	static const uint8_t state[ERX_PIN_STATE_DEFAULT_SIZE] = ERX_PIN_STATE_DEFAULT_BYTES;
+	/* erx_manifest_open checked every string against the table, so the reads stay inside it. */
+	const uint8_t *const name = manifest->bytes + manifest->header.strings.offset + row->state.offset;
+
+	if (row->pin < ERX_BCM2711_PINS_FIRST || row->owner == ERX_MF_NONE ||
+	    row->function != ERX_PIN_FUNCTION_ALTERNATE || row->state.length != sizeof(state))
+		return (false);
+	for (size_t at = 0; at < sizeof(state); at++)
+		if (name[at] != state[at])
+			return (false);
+	return (true);
+}
+
+/*
  * Sets the board's on-board pins (erx_fiasco_program_board), at the pin controller's row as the
- * mailbox is mapped. The rows are copied out of the manifest first, so the plan is taken
- * whole: more rows than the plan takes, or a row that cannot be read, writes nothing.
+ * mailbox is mapped. The rows it takes (board_pin_taken) are copied out of the manifest first,
+ * so the plan is taken whole: more rows than the plan takes, or a row that cannot be read,
+ * writes nothing. *taken is how many it took.
  */
 static const char *
-board_pins(const erx_dt_t *tree, const erx_manifest_view_t *manifest, erx_fiasco_board_pins_t *found)
+board_pins(const erx_dt_t *tree, const erx_manifest_view_t *manifest, erx_fiasco_board_pins_t *found, uint32_t *taken)
 {
-	erx_mf_onboard_pin_t rows[ERX_BCM2711_PINS_ROWS_MAX];
-	const uint32_t count = manifest->header.onboard_pins.count;
+	erx_mf_pin_t rows[ERX_BCM2711_PINS_ROWS_MAX];
+	erx_mf_pin_t row;
+	uint32_t count = 0;
 	erx_dt_window_t window;
 	erx_fiasco_found_t controller;
 	const char *reason;
 
+	*found = ERX_FIASCO_BOARD_PINS_REFUSED;
+	*taken = 0;
+	for (uint32_t at = 0; at < manifest->header.pins.count; at++) {
+		if (!erx_manifest_pins_at(manifest, at, &row))
+			return (NULL);
+		if (!board_pin_taken(manifest, &row))
+			continue;
+		if (count == ERX_BCM2711_PINS_ROWS_MAX)
+			return (NULL);
+		rows[count++] = row;
+	}
+	*taken = count;
 	*found = ERX_FIASCO_BOARD_PINS_NONE;
 	if (count == 0)
 		return (NULL);
@@ -463,12 +498,6 @@ board_pins(const erx_dt_t *tree, const erx_manifest_view_t *manifest, erx_fiasco
 		/* The tree confirms the controller's row: the plan decides the rest. */
 		break;
 	}
-	*found = ERX_FIASCO_BOARD_PINS_REFUSED;
-	if (count > ERX_BCM2711_PINS_ROWS_MAX)
-		return (NULL);
-	for (uint32_t at = 0; at < count; at++)
-		if (!erx_manifest_onboard_pins_at(manifest, at, &rows[at]))
-			return (NULL);
 	*found = erx_fiasco_bcm2711_pins_set(window, rows, count);
 	return (NULL);
 }
@@ -483,7 +512,7 @@ erx_fiasco_program_board(const erx_dt_t *tree, const erx_manifest_view_t *manife
 		return (reason);
 	if ((reason = board_mailbox(tree, manifest, &board->mailbox_found)) != NULL)
 		return (reason);
-	return (board_pins(tree, manifest, &board->pins));
+	return (board_pins(tree, manifest, &board->pins, &board->pins_rows));
 }
 
 /* Accepts the tree and reads its seeds (runtime_entry.h); a refusal names the reader's fixed reason. */

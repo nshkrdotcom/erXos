@@ -129,10 +129,24 @@ every_detect_enable_test() ->
                                                                 Register =/= gpren0]},
                  ?K:plan(Read, [{20, #{function => in, edge => rising}}])).
 
+%% A setting that names no edge is edge none: a device's pin detects nothing, whatever
+%% enable the firmware or an earlier holder left set.
+no_edge_is_none_test() ->
+    Read = (base())#{gpfsel2 => 0, gphen0 => 1 bsl 20, gpren0 => 1 bsl 20},
+    {ok, Steps} = ?K:plan(Read, [{20, alt(4)}]),
+    ?assertEqual([{field, [20], gphen0, 1 bsl 20, 0}, {field, [20], gpren0, 1 bsl 20, 0}],
+                 [Step || {field, _, Register, _, _} = Step <- Steps, Register =/= gpfsel2]).
+
+%% A reading names the edge its six enables give, the enables set where no edge gives
+%% them, and unknown where the reading lacks one of them.
 setting_test() ->
     Read = (base())#{gpfsel1 => 16#12000, pup_pdn0 => 3 bsl 28, gplev0 => 1 bsl 14},
-    ?assertEqual({ok, #{function => 5, pull => 3, level => 1}}, ?K:setting(Read, 14)),
-    ?assertEqual({ok, #{function => in, pull => none, level => unknown}}, ?K:setting(maps:remove(gplev0, Read), 12)).
+    ?assertEqual({ok, #{function => 5, pull => 3, level => 1, edge => none}}, ?K:setting(Read, 14)),
+    ?assertEqual({ok, #{function => in, pull => none, level => unknown, edge => none}},
+                 ?K:setting(maps:remove(gplev0, Read), 12)),
+    ?assertMatch({ok, #{edge := both}}, ?K:setting(Read#{gpren0 => 1 bsl 14, gpfen0 => 1 bsl 14}, 14)),
+    ?assertMatch({ok, #{edge := [gplen]}}, ?K:setting(Read#{gplen0 => 1 bsl 14}, 14)),
+    ?assertMatch({ok, #{edge := unknown}}, ?K:setting(maps:remove(gpafen0, Read), 14)).
 
 %% A pin past 57, or a setting key the kind does not know, is refused by every entry the
 %% way a plan refuses, never raised on or ignored.

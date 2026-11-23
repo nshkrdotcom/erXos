@@ -1244,10 +1244,12 @@ module Erx
       # no such line, or one this boot does not judge.
       def self.onboard_pins_points(root, manifest)
         platform = Platform.load(root: root, name: manifest.machine.string('platform'))
-        return [] if platform.pins.nil? || platform.pins.onboard.empty?
+        entry = platform.pins&.controllers&.first
+        rows = entry.nil? ? 0 : entry.boot_written_rows.size
+        return [] if rows.zero?
 
         controller = platform.record.fetch('units').find do |unit|
-          unit.fetch('devices').any? { |device| device.fetch('path') == platform.pins.controller }
+          unit.fetch('devices').any? { |device| entry.devices.include?(device.fetch('path')) }
         end
         held = manifest.records.fetch('unit', []).any? do |unit|
           unit.reference('holder') == 'system' && unit.string('placement') == controller&.fetch('key')
@@ -1255,7 +1257,7 @@ module Erx
         return [] unless held
 
         [point('root-pins', /\Aerx: root task: on-board pins /n,
-               /\Aerx: root task: on-board pins set: #{platform.pins.onboard.size} rows\r?\n\z/n)]
+               /\Aerx: root task: on-board pins set: #{rows} rows\r?\n\z/n)]
       end
 
       # Schedulers are one per CPU of the system's share on this machine.

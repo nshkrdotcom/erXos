@@ -6,7 +6,7 @@ require 'digest'
 require_relative 'abi_binary'
 require_relative 'build_kind'
 require_relative 'device_kinds'
-require_relative 'header_map'
+require_relative 'pin_table'
 require_relative 'generated_abi'
 require_relative 'manifest_frontend'
 require_relative 'package_key'
@@ -578,7 +578,6 @@ module Erx
         end
         normalize_units(rows)
         rows['firmware_requests'] = firmware_requests(rows.fetch('devices'))
-        rows['onboard_pins'] = onboard_pins
         device_memory = rows.fetch('devices').sum { |device| device.fetch('dma_memory') }
         # The Fiasco backend's contiguous pool holds every device's memory at once (RootStartup.contiguous_pool_bytes).
         if device_memory > RootStartup::CONTIGUOUS_POOL_MAX_BYTES
@@ -717,6 +716,7 @@ module Erx
         app_services = check_apps(rows)
         rows['facets'], rows['facet_operations'], rows['facet_parameters'], facet_values =
           normalize_facets(services.map(&:first), rows, app_services)
+        rows['pins'] = pins(rows, facet_values)
         rows['starts'] = normalize_starts(services.map(&:first), rows)
         rows['apps'], rows['app_services'] = apps_rows(app_services, rows)
         check_app_start_rows
@@ -1210,14 +1210,73 @@ module Erx
         end
       end
 
-      # The header map's on-board rows (docs/design-header-io.md, "On-board pins"), each its pin
-      # and its function's alternate number, in the map's increasing GPIO order, which the root
-      # sets at boot when the manifest gives the system domain the pin controller. HeaderMap
-      # refuses a header pin, so no row names the console's pins, and reads the on-board rows
-      # alone, so a test record whose header rows another check judges still packs them. A
-      # record without a map has none.
-      def onboard_pins
-        HeaderMap.read_onboard(@context.platform).map { |row| { 'gpio' => row.gpio, 'alternate' => row.alternate } }
+      # The pin table's rows (abi/manifest.txt, erx_mf_pin; docs/design-pinctrl.md, "What is
+      # generated from it"): for each controller entry, each row of a device the manifest
+      # places in each of its device's states, spelled out, and each gpio row, in pin order.
+      # The firmware's rows and reserved rows give none, so no row names the console's or
+      # JTAG's pins, and nor does a device the manifest does not place, which no one uses.
+      # An entry with rows to give needs its controller placed, since its holder applies
+      # them. A record without a table has none.
+      def pins(tables, facet_values)
+        table = PinTable.read(@context.platform)
+        return [] if table.nil?
+
+        devices = tables.fetch('devices')
+        placed = ->(path) { devices.index { |device| device.fetch('path') == path } }
+        uses = pin_uses(tables, facet_values)
+        table.controllers.flat_map do |entry|
+          rows = entry.rows.select { |row| row.owner == :gpio || (row.device? && placed.call(row.use)) }
+          next [] if rows.empty?
+
+          controller = placed.call(entry.devices.first) ||
+                       invalid("pin controller #{entry.name}'s device #{entry.devices.first} is not placed, so no one " \
+                               'would apply its rows', 'context.platform.pins')
+          rows.flat_map do |row|
+            owner = row.device? ? placed.call(row.use) : @codec.constant('mf_none')
+            states = row.device? ? entry.states_of(row.use) : [PinTable::DEFAULT]
+            states.map do |state|
+              pin_row(entry: entry, row: row, state: state, owner: owner, controller: controller,
+                      uses: states.size == 1 && row.device? ? uses.call(owner) : 'none')
+            end
+          end
+        end
+      end
+
+      def pin_row(entry:, row:, state:, owner:, controller:, uses:)
+        setting = row.setting_in(state) if row.device?
+        { 'controller' => entry.name, 'state' => state, 'pin' => row.gpio, 'owner' => owner, 'device' => controller,
+          'function' => @codec.member('pin_function', pin_function(setting)), 'alternate' => setting&.alternate || 0,
+          'pull' => @codec.member('pin_pull', setting&.pull&.to_s || 'keep'), 'level' => setting&.level || 0,
+          'uses' => @codec.member('pin_uses', uses) }
+      end
+
+      # Which configurations use a placed device with default alone (docs/design-pinctrl.md,
+      # "At start"), by its row: the device is for the configured domain that holds it, for
+      # the domain a line grant names it for when the system domain holds it, or else for
+      # the system release itself. The system release and the domains marked for rescue run
+      # in both configurations, so their devices are rescue's; the others' are normal's.
+      def pin_uses(tables, facet_values)
+        system = @codec.constant('mf_none')
+        rescue_flag = @codec.member('mf_domain_flags', 'rescue')
+        line_grantee = tables.fetch('facets').zip(facet_values).filter_map do |facet, given|
+          service = tables.fetch('services').fetch(facet.fetch('service'))
+          [given.fetch('device'), facet.fetch('grantee')] if grant_checker(service.fetch('interface')) == 'line_grant'
+        end.to_h
+        lambda do |device|
+          holder = unit_holder(tables, tables.fetch('devices').fetch(device).fetch('path'))
+          domain = holder == system ? line_grantee.fetch(device, system) : holder
+          rescued = domain == system || (tables.fetch('domains').fetch(domain).fetch('flags') & rescue_flag) != 0
+          rescued ? 'rescue' : 'normal'
+        end
+      end
+
+      def pin_function(setting)
+        case setting&.function
+        in nil then 'plain'
+        in 'in' then 'input'
+        in 'out' then 'output'
+        in String then 'alternate'
+        end
       end
 
       # The words of a tag's request (abi/formats/vc_property.txt).
@@ -1387,13 +1446,17 @@ module Erx
       # (check_uarts). It runs once every row is placed, so it sees each one that names the
       # holder.
       def check_pin_controller(rows, console, hostlink)
-        pins = @context.platform['pins']
-        return if pins.nil?
-
         uarts = [console, hostlink].reject(&:empty?)
-        return unless pins.fetch('rows').any? { |row| uarts.include?(row['use']) }
+        Array(@context.platform['pins']).each do |entry|
+          next unless (entry.fetch('rows') + entry.fetch('onboard')).any? { |row| uarts.include?(row['use']) }
 
-        controller = pins.fetch('controller')
+          entry.fetch('controller').each { |controller| check_pin_controller_unit(rows, controller) }
+        end
+      end
+
+      # The clause for one device of a controller entry whose rows name the console or the
+      # host link.
+      def check_pin_controller_unit(rows, controller)
         device_tree = @codec.member('mf_selector', 'dt')
         row = platform_device(record_device(controller))
         invalid("pin controller #{controller.inspect} is no device-tree row", 'context.platform.pins') unless

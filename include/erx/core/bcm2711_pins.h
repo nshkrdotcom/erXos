@@ -14,8 +14,9 @@
 
 /*
  * The functions of the BCM2711's on-board pins, which the root sets once at boot, before
- * any domain starts (docs/design-header-io.md, "On-board pins"): the manifest's
- * onboard_pins rows, each a pin and the alternate number of its function, written into
+ * any domain starts (docs/design-header-io.md, "On-board pins"): the manifest's pins
+ * rows the root takes (liberx/backend/fiasco/runtime_entry.c, board_pins), each a pin and
+ * the alternate number of its function, written into
  * the six function-select registers GPFSEL0 to GPFSEL5. This is the pure part: the new
  * register words, from the words as read. The caller's device shim reads the registers,
  * writes the words that change and reads them back. The register facts are
@@ -31,6 +32,8 @@
 #define ERX_BCM2711_PINS_COMPATIBLE	"brcm,bcm2711-gpio"
 /* GPFSEL0 to GPFSEL5. */
 #define ERX_BCM2711_PINS_REGISTERS	6u
+/* The first pin of bank 1, the first this core can set. */
+#define ERX_BCM2711_PINS_FIRST	28u
 /* The most rows a plan takes: one for each pin of banks 1 and 2. */
 #define ERX_BCM2711_PINS_ROWS_MAX	30u
 
@@ -47,6 +50,6 @@ typedef struct erx_bcm2711_fsel {
  * and 2 or an alternate past 5, or count is past ERX_BCM2711_PINS_ROWS_MAX: the plan is taken
  * whole or not at all.
  */
-bool	erx_bcm2711_pins_plan(const erx_mf_onboard_pin_t *rows, size_t count, erx_bcm2711_fsel_t *fsel);
+bool	erx_bcm2711_pins_plan(const erx_mf_pin_t *rows, size_t count, erx_bcm2711_fsel_t *fsel);
 
 #endif /* ERX_CORE_BCM2711_PINS_H */

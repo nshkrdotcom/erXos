@@ -661,7 +661,13 @@ applies the plan, reads the registers again and plans again: a pin
 the second plan would still write is reported as not set. A pin that
 is already right costs no write. The driver of a device with one
 setting never asks for its pins: the pin driver's start has set them,
-or the boot starts nothing that would use the device. The system then
+or the boot starts nothing that would use the device. Which
+configuration uses each device the build derives from the manifest's
+holders, grants and rescue marks and writes beside its rows; a device
+the manifest gives to no one has no rows, and its pins stay as the
+firmware left them. A device's setting also clears its pins' edge
+and level detection, which only a plain GPIO pin's holder asks for.
+The system then
 boots its rescue configuration, and does not boot when rescue needs
 the device too. A device with more settings is set by its own
 driver's first select.

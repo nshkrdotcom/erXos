@@ -28,17 +28,16 @@ class BoardTreeTest < Minitest::Test
   end
 
   # Seeded fault: a console the card's tree does not name serial0, such as the PL011
-  # UART0 that Linux's tree names so, is refused before anything is built. The header map
-  # gives UART0 the console's GPIO 14 and 15, and no on-board rows, which would give it TXD0
-  # and RXD0 twice, so the record itself is one the reader takes.
+  # UART0 that Linux's tree names so, is refused before anything is built. With the Pi 4's
+  # pin table the record reader refuses it first, at GPIO 14: enable_uart, the one setting
+  # that puts a console on pins, carries the mini UART's signals, and the mini UART is then no
+  # device a driver drives. Without a pin table the board tree's own check refuses it.
   def test_a_console_other_than_serial0_is_refused
     assert_equal '/soc/serial@7e215040', Erx::BoardTree.console_board(PI).aliases.fetch('serial0')
     uart0 = '/soc/serial@7e201000'
-    rows = PI.record.fetch('pins').fetch('rows').map do |row|
-      function = { 14 => 'TXD0', 15 => 'RXD0' }[row.fetch('gpio')]
-      function ? row.merge('use' => uart0, 'function' => function) : row
-    end
-    pl011 = record(console: uart0, pins: PI.record.fetch('pins').merge('rows' => rows, 'onboard' => []))
+    error = assert_raises(Erx::Error) { record(console: uart0) }
+    assert_match(/pins: GPIO 14: /, error.message)
+    pl011 = Erx::Platform.new(name: 'raspi4b', record: PI.record.merge('console' => uart0).except('pins'))
     assert_raises(Erx::Error) { Erx::BoardTree.console_board(pl011) }
     runner = Erx::Runner.new(owner_root: ROOT, log_dir: File.join(ROOT, 'build/logs'))
     assert_raises(Erx::Error) { Erx::BoardTree.build(root: ROOT, runner: runner, platform: pl011, compiler: 'clang', revision: REVISION) }

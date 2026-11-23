@@ -41,7 +41,7 @@ fsel_read(erx_mmio_t device, erx_bcm2711_fsel_t *fsel)
  * clears the reserved bits of each word it changes, so every write is taken.
  */
 erx_fiasco_board_pins_t
-erx_fiasco_bcm2711_pins_apply(erx_mmio_t device, const erx_mf_onboard_pin_t *rows, size_t count)
+erx_fiasco_bcm2711_pins_apply(erx_mmio_t device, const erx_mf_pin_t *rows, size_t count)
 {
 	erx_bcm2711_fsel_t read, planned, after;
 
@@ -62,7 +62,7 @@ erx_fiasco_bcm2711_pins_apply(erx_mmio_t device, const erx_mf_onboard_pin_t *row
 }
 
 erx_fiasco_board_pins_t
-erx_fiasco_bcm2711_pins_set(erx_dt_window_t window, const erx_mf_onboard_pin_t *rows, size_t count)
+erx_fiasco_bcm2711_pins_set(erx_dt_window_t window, const erx_mf_pin_t *rows, size_t count)
 {
 	const uint64_t offset = window.base & (ERX_PAGE_SIZE - 1);
 	erx_mmio_t device;

@@ -82,7 +82,7 @@ Raspberry Pi's documentation:
 
 | Block | Registers | Interrupt | Notes |
 | --- | --- | --- | --- |
-| GPIO | `0x7e200000`, one page: GPFSEL0-5 (3 bits a pin: `000` input, `001` output, the rest alternate functions), GPSET, GPCLR, GPLEV, event status GPEDS, rising and falling edge enables, and four pull registers GPIO_PUP_PDN_CNTRL_REG0-3, 2 bits a pin (DS 5.2); no lock or protection register | four lines, one per bank and one for all (DS 5.1); VC IRQs 49 to 52 (DS 6.2.4, Table 102), record lines 145 to 148 | bank 0 is GPIO 0 to 27, all on the header (DS 5.1; schematics, J8) |
+| GPIO | `0x7e200000`, one page: GPFSEL0-5 (3 bits a pin: `000` input, `001` output, the rest alternate functions), GPSET, GPCLR, GPLEV, event status GPEDS, six detect enables (rising and falling edge GPREN and GPFEN, high and low level GPHEN and GPLEN, asynchronous rising and falling edge GPAREN and GPAFEN), and four pull registers GPIO_PUP_PDN_CNTRL_REG0-3, 2 bits a pin (DS 5.2); no lock or protection register | four lines, one per bank and one for all (DS 5.1); VC IRQs 49 to 52 (DS 6.2.4, Table 102), record lines 145 to 148 | bank 0 is GPIO 0 to 27, all on the header (DS 5.1; schematics, J8) |
 | I2C (BSC) | BSC0 `0x7e205000`, BSC1 `0x7e804000`, BSC3 `0x7e205600`, BSC4 `0x7e205800`, BSC5 `0x7e205a80`, BSC6 `0x7e205c00`; eight registers C, S, DLEN, A, FIFO, DIV, DEL, CLKT; a 16-byte FIFO; DLEN 16 bits (DS 3.2) | VC IRQ 53, "OR of all I2C", record line 149; the OR takes I2C0 to I2C7, the HDMI masters BSC2 and BSC7 included (DS 6.2.4, Figure 6) | BSC2 and BSC7 "are dedicated for use by the HDMI interfaces and should not be accessed" (DS 3.2); SCL = core clock / CDIV, CDIV rounded down to even (DS 3.2, Table 30) |
 | SPI | SPI0 `0x7e204000`, SPI3 `0x7e204600`, SPI4 `0x7e204800`, SPI5 `0x7e204a00`, SPI6 `0x7e204c00`; CS, FIFO, CLK, DLEN, LTOH, DC (DS 9.5, Table 159) | VC IRQ 54, "OR of all SPI", record line 150 (DS 6.2.4) | SCLK = core clock / CDIV, CDIV even (DS 9.5); the polled procedure is DS 9.6.1; the FIFO takes 64 bytes (DS 9.6.2). PACTL_CS, which says which I2C or SPI master raised its line, lies in this page at `0x7e204e00` (DS 6.2.4) |
 | PWM | PWM0 `0x7e20c000`, PWM1 `0x7e20c800`, one page; two channels each; in M/S mode a channel is high for DAT of every RNG cycles of `clk_pwm` (DS 8.1, 8.4, 8.6) | none (DS Table 102) | `clk_pwm` is "nominally 100MHz, but can be varied by the clock manager" (DS 8.1) |
@@ -311,8 +311,9 @@ Every rule about pins follows from the map instead of from a list:
   name pins of bank 1 as devices' pins, so no pin of banks
   1 and 2 can be served. Their fields are not all in other registers,
   though: GPFSEL2 holds GPIO 20 to 29 (DS Table 66), PUP_PDN_CNTRL_REG1
-  GPIO 16 to 31 (DS Table 91), and the edge enables GPREN0 and GPFEN0
-  GPIO 0 to 31 (DS Tables 78 and 80), so a
+  GPIO 16 to 31 (DS Table 91), and the six detect enables of bank 0,
+  GPREN0 to GPAFEN0, GPIO 0 to 31 (DS 5.2; Tables 78 and 80 for GPREN0
+  and GPFEN0), so a
   read-modify-write of those registers for a header pin carries bank
   1's GPIO 28 to 31 through unchanged. One process, the pin driver,
   writes all of them, so no such write meets another writer's. That is
@@ -715,7 +716,7 @@ module that reads and writes the registers by name, and the tree module.
 | Core | Decides |
 | --- | --- |
 | `erx_hold` | the holder of each pin, chip select and channel, and whether an operation's handle is live, as above |
-| `erx_pins_core`, `erx_pins_bcm2711` ([design-pinctrl.md](design-pinctrl.md#the-plan)) | the `ctl` grammar; from a pin of a `gpio` row and a request, the register writes: the GPFSEL field (register `pin div 10`, shift `3 * (pin rem 10)`), the pull field (register `pin div 16`, shift `2 * (pin rem 16)`), and the edge enables, each a field write that changes only the pin's field, and GPSET or GPCLR, a command that carries the pin's bit alone; from a GPEDS0 value, the served pins that fired and the bits to clear |
+| `erx_pins_core`, `erx_pins_bcm2711` ([design-pinctrl.md](design-pinctrl.md#the-plan)) | the `ctl` grammar; from a pin of a `gpio` row and a request, the register writes: the GPFSEL field (register `pin div 10`, shift `3 * (pin rem 10)`), the pull field (register `pin div 16`, shift `2 * (pin rem 16)`), and the pin's bit in all six detect enables, each a field write that changes only the pin's field, and GPSET or GPCLR, a command that carries the pin's bit alone; from a GPEDS0 value, the served pins that fired and the bits to clear |
 | `erx_bsc_core` | a transfer as a state machine: from the request and each status read, the next action (fill or drain the FIFO, start, set up the repeated start, finish) and its result; the service interval and the stall limit |
 | `erx_spi_core` | the `ctl` grammar, the divisor, and the held transfer: from the CS flags, what to write to and read from the FIFO next, chunk by chunk; the service interval and the stall limit |
 | `erx_pwm_core` | the `ctl` grammar and RNG and DAT from period, duty and clock |
@@ -1001,8 +1002,8 @@ under `/proc/domains/D/pins/`
 * A stalled transfer costs at most its stall limit and a controller
   reset. A device that holds the bus low keeps failing transfers until
   it lets go; the stall limit bounds each request, not the device.
-* The pin driver's read-modify-writes of GPFSEL2, PUP_PDN_CNTRL_REG1,
-  GPREN0 and GPFEN0 carry bank 1's fields through, which is sound only
+* The pin driver's read-modify-writes of GPFSEL2, PUP_PDN_CNTRL_REG1
+  and bank 0's six detect enables carry bank 1's fields through, which is sound only
   while the firmware does not write those registers after hand-over
   ([the map](#the-construction-one-map-of-the-header)).
 

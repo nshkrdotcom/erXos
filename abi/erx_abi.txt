@@ -119,6 +119,12 @@ limit lane_side_data u32 8192
 limit lane_ctl_slot u32 928
 limit label_split u32 2147483648
 limit boot_version u32 1
+# The most states one device of a pin table has, default among them
+# (docs/design-pinctrl.md, "What the build refuses").
+limit pin_states_max u32 8
+# The name of a device's state that its plain setting gives, which a device of a pin
+# table always has (docs/design-pinctrl.md, "The pin table").
+bytes pin_state_default 7 value 64656661756c74
 limit boot_strings_max u32 2048
 # The longest node path of /chosen/stdout-path the handoff record carries.
 limit boot_stdout_path_max u32 256

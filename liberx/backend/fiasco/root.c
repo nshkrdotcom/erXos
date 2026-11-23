@@ -146,7 +146,7 @@ root_boot(erx_boot_handoff_view_t *handoff, erx_manifest_view_t *manifest, erx_b
 	root_report_manifest(manifest, free_pages);
 	root_report_watchdog(&config, mode, board.watchdog_found);
 	root_report_mailbox(board.mailbox_found);
-	root_report_pins(board.pins, manifest->header.onboard_pins.count);
+	root_report_pins(board.pins, board.pins_rows);
 	return (NULL);
 }
 

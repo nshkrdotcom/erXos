@@ -23,7 +23,7 @@ main(void)
 	char request[512];
 
 	while (fgets(request, sizeof(request), stdin) != NULL) {
-		erx_mf_onboard_pin_t rows[ERX_BCM2711_PINS_ROWS_MAX + 2];
+		erx_mf_pin_t rows[ERX_BCM2711_PINS_ROWS_MAX + 2];
 		erx_bcm2711_fsel_t fsel;
 		size_t count = 0;
 		char *word = strtok(request, " \n");
@@ -41,7 +41,7 @@ main(void)
 
 			if (sscanf(word, "%u:%u", &gpio, &alternate) != 2)
 				break;
-			rows[count++] = (erx_mf_onboard_pin_t){ .gpio = gpio, .alternate = alternate };
+			rows[count++] = (erx_mf_pin_t){ .pin = gpio, .function = ERX_PIN_FUNCTION_ALTERNATE, .alternate = alternate };
 		}
 		fputs(erx_bcm2711_pins_plan(rows, count, &fsel) ? "plan" : "refused", stdout);
 		for (uint32_t at = 0; at < ERX_BCM2711_PINS_REGISTERS; at++)

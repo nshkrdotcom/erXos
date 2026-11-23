@@ -112,14 +112,14 @@ field_set(erx_bcm2711_fsel_t *fsel, uint32_t gpio, uint32_t code)
  * rows leave as read is not written, so it keeps whatever its reserved bits read.
  */
 bool
-erx_bcm2711_pins_plan(const erx_mf_onboard_pin_t *rows, size_t count, erx_bcm2711_fsel_t *fsel)
+erx_bcm2711_pins_plan(const erx_mf_pin_t *rows, size_t count, erx_bcm2711_fsel_t *fsel)
 {
 	erx_bcm2711_fsel_t next = *fsel;
 
 	if (count > ERX_BCM2711_PINS_ROWS_MAX)
 		return (false);
 	for (size_t at = 0; at < count; at++)
-		if (rows[at].alternate >= nitems(functions) || !field_set(&next, rows[at].gpio, functions[rows[at].alternate]))
+		if (rows[at].alternate >= nitems(functions) || !field_set(&next, rows[at].pin, functions[rows[at].alternate]))
 			return (false);
 	for (uint32_t reg = 0; reg < ERX_BCM2711_PINS_REGISTERS; reg++)
 		if (next.word[reg] != fsel->word[reg])

@@ -74,10 +74,12 @@ pin_registers(Pin) ->
     [function_register(Pin), pull_register(Pin), bank(gplev, Pin) |
      [bank(Family, Pin) || {Family, _} <- edge_codes(none)]].
 
-%% A pin's function, pull and level as a reading holds them, each unknown where the
-%% reading lacks its register. A function or pull code with no name stays a number.
+%% A pin's function, pull, level and edge as a reading holds them, each unknown where the
+%% reading lacks a register of it. A function or pull code with no name stays a number,
+%% and six enables that no edge gives stay the list of those set.
 -spec setting(reading(), pin()) ->
-          {ok, #{function := term(), pull := term(), level := term()}} | {error, {term(), refusal()}}.
+          {ok, #{function := term(), pull := term(), level := term(), edge := term()}}
+        | {error, {term(), refusal()}}.
 setting(Read, Pin) ->
     refusing(fun() -> {ok, read_setting(Read, pin(Pin))} end).
 
@@ -85,7 +87,18 @@ read_setting(Read, Pin) ->
     #{function => read_code(Read, function_register(Pin), function_shift(Pin), ?FUNCTION_WIDTH,
                             fun function_name/1),
       pull => read_code(Read, pull_register(Pin), pull_shift(Pin), ?PULL_WIDTH, fun pull_name/1),
-      level => read_code(Read, bank(gplev, Pin), Pin rem 32, 1, fun(Level) -> Level end)}.
+      level => read_code(Read, bank(gplev, Pin), Pin rem 32, 1, fun(Level) -> Level end),
+      edge => read_edge(Read, Pin)}.
+
+read_edge(Read, Pin) ->
+    Bits = [{Family, read_code(Read, bank(Family, Pin), Pin rem 32, 1, fun(Bit) -> Bit end)}
+            || {Family, _} <- edge_codes(none)],
+    Named = [Edge || Edge <- [none, rising, falling, both], edge_codes(Edge) =:= Bits],
+    case {lists:keymember(unknown, 2, Bits), Named} of
+        {true, _} -> unknown;
+        {false, [Edge]} -> Edge;
+        {false, []} -> [Family || {Family, 1} <- Bits]
+    end.
 
 %% The driver's own pins that fired, by GPEDS0 and GPEDS1, and the command that clears
 %% exactly those bits; an event of a pin not among them is neither reported nor cleared.
@@ -162,9 +175,9 @@ pull_fields(Settings) ->
             width = ?PULL_WIDTH, code = pull_code(Pull)}
      || {Pin, #{pull := Pull}} <- Settings].
 
-%% A pin whose setting names no edge keeps the detect enables it has.
+%% A setting that names no edge is edge none, so every setting gives all six enables.
 edge_fields(Settings) ->
-    lists:append([edge_bits(Pin, Edge) || {Pin, #{edge := Edge}} <- Settings]).
+    lists:append([edge_bits(Pin, maps:get(edge, Setting, none)) || {Pin, Setting} <- Settings]).
 
 edge_bits(Pin, Edge) ->
     [#field{pin = Pin, register = bank(Family, Pin), shift = Pin rem 32, width = 1, code = Code}

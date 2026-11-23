@@ -322,7 +322,7 @@ layout erx_manifest wire_le 8 496
   field msi_frame erx_mf_msi_frame 456
   field places erx_mf_span 472
   field firmware_requests erx_mf_span 480
-  field onboard_pins erx_mf_span 488
+  field pins erx_mf_span 488
 # A firmware request row (docs/design-abi.md, "Devices and partition windows"): a row of the
 # platform record's firmware_requests whose device the manifest places, in the record's
 # order, so a row's index is its position among its device's rows. device is that device's
@@ -335,14 +335,48 @@ layout erx_mf_firmware_request wire_le 4 24
   field device u32 8
   field tag fw_tag 12
   field arguments u32 16 count @vc_row_words
-# An on-board pin row (docs/design-header-io.md, "On-board pins"): a row of the platform
-# record's pins.onboard, in its increasing GPIO order, the pin and the alternate number
-# of its function in the SoC's pin table (hw/pins/<soc>.txt). The root sets each row's
-# function once at boot, before any domain starts, when the manifest gives the system
-# domain the pin controller (docs/design-fiasco.md, "The Raspberry Pi 4").
-layout erx_mf_onboard_pin wire_le 4 8
-  field gpio u32 0
-  field alternate u32 4
+# What a pin table row sets a pin to: a signal at an alternate number of the SoC's pin
+# table, an input, or an output at a level; plain, a gpio row, whose setting is the pin
+# driver's idle state and not the table's.
+enum pin_function u32
+  value plain 0
+  value alternate 1
+  value input 2
+  value output 3
+# A row's pull: keep, a row that names none, whose pull is never written.
+enum pin_pull u32
+  value keep 0
+  value none 1
+  value up 2
+  value down 3
+# Which configurations use a pin table row's device (docs/design-pinctrl.md, "At start"):
+# rescue, which the normal configuration uses too, normal alone, or none, which is every
+# gpio row's and every row of a device with a state other than default.
+enum pin_uses u32
+  value none 0
+  value normal 1
+  value rescue 2
+# A pin table row (docs/design-pinctrl.md, "What is generated from it"): one for each pin
+# of a device the manifest places in each of its states, spelled out whole, and one for
+# each plain GPIO pin, in the platform record's controller order, then pin order, then
+# state order (default first, the others by name). The firmware's rows, reserved rows and
+# the rows of a device the manifest does not place have none, so no row names the
+# console's or JTAG's pins. controller is the entry's name and device its first device's
+# row, whose unit's holder applies the row; owner the device's row, mf_none for a gpio row;
+# alternate the signal's number in the SoC's pin table (hw/pins/<soc>.txt) for an
+# alternate and 0 otherwise; level an output's and 0 otherwise. The packer derives uses
+# from the manifest's holders, line grants and rescue marks.
+layout erx_mf_pin wire_le 4 48
+  field controller erx_mf_str 0
+  field state erx_mf_str 8
+  field pin u32 16
+  field owner u32 20
+  field device u32 24
+  field function pin_function 28
+  field alternate u32 32
+  field pull pin_pull 36
+  field level u32 40
+  field uses pin_uses 44
 layout erx_mf_principal wire_le 8 80
   field name erx_mf_str 0
   field memory u64 8
@@ -633,13 +667,13 @@ reader manifest erx_manifest @manifest_bytes_max
   table app_services erx_mf_app_service root.app_services.offset root.app_services.count @manifest_records_max 4
   table places erx_pcie_place root.places.offset root.places.count @manifest_records_max 4
   table firmware_requests erx_mf_firmware_request root.firmware_requests.offset root.firmware_requests.count @manifest_records_max 4
-  table onboard_pins erx_mf_onboard_pin root.onboard_pins.offset root.onboard_pins.count @manifest_records_max 4
+  table pins erx_mf_pin root.pins.offset root.pins.count @manifest_records_max 4
   table packages erx_mf_package root.packages.offset root.packages.count @apps_max_limit 4
   table signers erx_mf_signer root.signers.offset root.signers.count @manifest_records_max 4
   table development_key erx_mf_development_key root.development_key.offset root.development_key.count 1 1
   table system_image erx_mf_system_image root.system_image.offset root.system_image.count 1 8
   string_table strings root.strings.offset root.strings.count @manifest_strings_max
-  order principals domains sessions limits runtime_limits lane_classes units devices places firmware_requests onboard_pins windows services facets facet_operations facet_parameters introductions images extents boot_order liveness shell_principals partial_boot starts displays apps app_services packages signers development_key system_image strings
+  order principals domains sessions limits runtime_limits lane_classes units devices places firmware_requests pins windows services facets facet_operations facet_parameters introductions images extents boot_order liveness shell_principals partial_boot starts displays apps app_services packages signers development_key system_image strings
   index root.system_principal principals
   index root.system_runtime_limits runtime_limits
   index root.native_limits limits
@@ -693,7 +727,12 @@ reader manifest erx_manifest @manifest_bytes_max
   range places[].pin 1 @pcie_pin_max
   string firmware_requests[].name.offset firmware_requests[].name.length strings identifier 63 empty no
   index firmware_requests[].device devices absent 0xffffffff
-  range onboard_pins[].alternate 0 5
+  string pins[].controller.offset pins[].controller.length strings identifier 63 empty no
+  string pins[].state.offset pins[].state.length strings identifier 63 empty no
+  index pins[].owner devices absent 0xffffffff
+  index pins[].device devices
+  range pins[].alternate 0 5
+  range pins[].level 0 1
   index windows[].holder domains absent 0xffffffff
   index windows[].device devices
   index windows[].image images absent 0xffffffff

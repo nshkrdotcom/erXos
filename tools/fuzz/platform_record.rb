@@ -9,14 +9,14 @@ require 'optparse'
 require_relative '../lib/erx/json_input'
 require_relative '../lib/erx/platform'
 
-# The platform record's reader (Erx::Platform, with its header map, Erx::HeaderMap) over
+# The platform record's reader (Erx::Platform, with its pin table, Erx::PinTable) over
 # mutations of the Raspberry Pi 4's record: values of every row and field replaced by
 # others of each JSON type, rows dropped, repeated and swapped, and the record's text
 # changed byte by byte. Each input is either refused with Erx::Error and nothing else, or
 # read into a map of one row for each of GPIO 0 to 27 whose PINS mask has no bit above 27,
 # whose device rows each carry an alternate of 0 to 5, and whose on-board rows are off the
 # header, with an alternate of 0 to 5 and their pull kept. Whether the reader's answers
-# are right is test/host/header_map_test.rb's.
+# are right is test/host/pin_table_test.rb's.
 module Erx
   module PlatformRecordFuzz
     ROOT = File.expand_path('../..', __dir__)
@@ -78,15 +78,16 @@ module Erx
     end
 
     def exercise(record)
-      map = Platform.new(name: NAME, record: record).pins
-      return if map.nil?
+      table = Platform.new(name: NAME, record: record).pins
+      return if table.nil?
 
-      rows = map.rows
-      raise "a map of #{rows.size} rows" unless rows.map(&:gpio) == (0..27).to_a
-      raise "PINS #{map.gpio_mask} past GPIO 27" unless map.gpio_mask < (1 << 28)
-      raise 'a device row without an alternate' unless map.device_rows.all? { |row| (0..5).cover?(row.alternate) }
-      raise 'an on-board row on a header pin or with a pull' unless
-        map.onboard.all? { |row| row.gpio >= 28 && (0..5).cover?(row.alternate) && row.pull.nil? }
+      table.controllers.each do |entry|
+        raise 'a table without its header rows' unless entry.rows.map(&:gpio).take(28) == (0..27).to_a
+        raise 'a firmware row with a pull or states' unless
+          entry.rows.select { |row| row.owner == :firmware }.all? { |row| row.setting.pull.nil? && row.states.empty? }
+        raise 'a signal without its alternate' unless
+          entry.rows.select(&:device?).all? { |row| %w[in out].include?(row.setting.function) || (0..5).cover?(row.setting.alternate) }
+      end
     rescue Erx::Error
       nil
     end

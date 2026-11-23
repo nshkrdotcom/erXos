@@ -548,7 +548,8 @@ class ProductionImageTest < Minitest::Test
   # QEMU's virt machine has no header map, so its boots name no such line.
   def test_a_pi4_boot_checks_the_root_set_its_on_board_pins
     raspi4b = Erx::Platform.load(root: ROOT, name: 'raspi4b')
-    rows = raspi4b.pins.onboard.size
+    rows = raspi4b.pins.controllers.first.boot_written_rows.size
+    assert_equal 4, rows
     verify = checkpoint_verifier('root-pins', manifest_source: raspi4b.manifest_source(ROOT))
     verify.call("erx: root task: on-board pins set: #{rows} rows\r\n")
     ["set: #{rows + 1} rows", 'mismatch: written, but the function-select words read back otherwise',

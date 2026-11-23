@@ -436,17 +436,51 @@ end
                   ['bt_on', '/soc/serial@7e201000', 0x0003_8041, 128, 1]], firmware_rows(admitted(pi, platform: 'raspi4b'))
   end
 
-  # The header's onboard_pins span (offset 488: offset u32, count u32) names the platform
-  # record's on-board rows in their order, each the GPIO u32 and its function's alternate
-  # number u32 (abi/manifest.txt, erx_mf_onboard_pin); QEMU virt's record has no pins. The
-  # Pi 4's are UART0's four pins to the Bluetooth controller, GPIO 30 to 33 in ALT3
-  # (docs/design-header-io.md, "On-board pins").
-  def test_the_onboard_pins_are_the_platform_record_s_onboard_rows
+  # The header's pins span (offset 488: offset u32, count u32) names the pin table's rows
+  # (abi/manifest.txt, erx_mf_pin, 48 bytes): each pin's rows in pin order, with its pin,
+  # owner (mf_none for plain GPIO), the controller's device row, function (plain 0,
+  # alternate 1), alternate, pull (keep 0, none 1, up 2), level and uses (none 0, normal 1,
+  # rescue 2). QEMU virt's record has no pins. The Pi 4's firmware rows, the console's GPIO
+  # 14 and 15 and JTAG's 22 to 27, and its reserved GPIO 0 and 1 have none, and nor have
+  # BSC1's GPIO 2 and 3 or SPI0's 7 to 11, whose units the manifest does not place
+  # (docs/design-pinctrl.md, "What is generated from it"). UART3, the host link, is the
+  # system release's, so rescue uses it; UART0 is the Bluetooth domain's by its line grant,
+  # and that domain is not marked for rescue.
+  def test_the_pins_rows_are_the_pin_table_s
     assert_equal 0, admitted.byteslice(488, 8).unpack1('x4L<')
-    pi = Erx::Platform.load(root: ROOT, name: 'raspi4b').manifest_source(ROOT)
-    bytes = admitted(pi, platform: 'raspi4b')
+    gpio = ->(pin) { [pin, 0xffff_ffff, :controller, 0, 0, 0, 0, 0] }
+    device = ->(pin, alternate, pull, uses) { [pin, :device, :controller, 1, alternate, pull, 0, uses] }
+    expected = [device.(4, 4, 1, 2), device.(5, 4, 2, 2), gpio.(6), gpio.(12), gpio.(13), *(16..21).map(&gpio),
+                *(30..33).map { |pin| device.(pin, 3, 0, 1) }]
+    assert_equal expected, pi_pin_rows
+  end
+
+  # Seeded faults for the uses column, which the packer derives from the manifest's
+  # holders, line grants and rescue marks and nothing writes by hand: marking the
+  # Bluetooth domain for rescue makes UART0's rows rescue's, and without the line grant
+  # UART0 is the system release's own, which rescue uses too.
+  def test_the_uses_column_follows_the_holders_grants_and_rescue_marks
+    uart0_uses = ->(source) { pi_pin_rows(source).select { |row| row.first >= 30 }.map(&:last).uniq }
+    assert_equal [1], uart0_uses.(pi_source)
+    rescued = pi_source.sub(/^(domain bt\n(?:  .*\n)*?)  flags none\n/) { "#{Regexp.last_match(1)}  flags rescue\n" }
+    refute_equal pi_source, rescued
+    assert_equal [2], uart0_uses.(rescued)
+    ungranted = pi_source.sub(/^facet line\n(?:  .*\n)*/, '')
+    refute_equal pi_source, ungranted
+    assert_equal [2], uart0_uses.(ungranted)
+  end
+
+  def pi_source = Erx::Platform.load(root: ROOT, name: 'raspi4b').manifest_source(ROOT)
+
+  # The Pi 4 manifest's pins rows from the pin field on, each its pin, owner, controller
+  # device, function, alternate, pull, level and uses, with a device row's owner as :device
+  # and the controller's device row, the gpio unit's one device, as :controller.
+  def pi_pin_rows(source = pi_source)
+    bytes = admitted(source, platform: 'raspi4b')
     offset, count = bytes.byteslice(488, 8).unpack('L<L<')
-    assert_equal [[30, 3], [31, 3], [32, 3], [33, 3]], Array.new(count) { |row| bytes.byteslice(offset + (8 * row), 8).unpack('L<L<') }
+    rows = Array.new(count) { |row| bytes.byteslice(offset + (48 * row) + 16, 32).unpack('L<8') }
+    assert_equal 1, rows.map { |row| row[2] }.uniq.size
+    rows.map { |pin, owner, _controller, *rest| [pin, owner == 0xffff_ffff ? owner : :device, :controller, *rest] }
   end
 
   def test_a_firmware_request_of_an_unknown_tag_or_device_is_refused_at_the_packer

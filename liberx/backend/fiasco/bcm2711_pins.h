@@ -22,7 +22,7 @@
 
 /* What the root did with the manifest's on-board pins (erx_fiasco_program_board). */
 typedef enum erx_fiasco_board_pins {
-	/* The manifest has no onboard_pins rows: nothing to set, and no line. */
+	/* The manifest has no pins row the root sets: nothing to set, and no line. */
 	ERX_FIASCO_BOARD_PINS_NONE = 1,
 	/* The manifest gives the system domain no pin controller: nothing is written. */
 	ERX_FIASCO_BOARD_PINS_ABSENT,
@@ -42,7 +42,7 @@ typedef enum erx_fiasco_board_pins {
  * having written nothing, when a register lies past device or the plan is refused;
  * MISMATCH when, after the writes, a word reads back otherwise.
  */
-erx_fiasco_board_pins_t	erx_fiasco_bcm2711_pins_apply(erx_mmio_t device, const erx_mf_onboard_pin_t *rows,
+erx_fiasco_board_pins_t	erx_fiasco_bcm2711_pins_apply(erx_mmio_t device, const erx_mf_pin_t *rows,
 			    size_t count);
 
 /*
@@ -50,7 +50,7 @@ erx_fiasco_board_pins_t	erx_fiasco_bcm2711_pins_apply(erx_mmio_t device, const e
  * it (erx_fiasco_bcm2711_pins_apply); REFUSED, having written nothing, when the page cannot
  * be mapped.
  */
-erx_fiasco_board_pins_t	erx_fiasco_bcm2711_pins_set(erx_dt_window_t window, const erx_mf_onboard_pin_t *rows,
+erx_fiasco_board_pins_t	erx_fiasco_bcm2711_pins_set(erx_dt_window_t window, const erx_mf_pin_t *rows,
 			    size_t count);
 
 #endif /* ERX_FIASCO_BCM2711_PINS_H */

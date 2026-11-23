@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 require_relative 'error'
-require_relative 'header_map'
+require_relative 'pin_table'
 require_relative 'json_input'
 require_relative 'manifest_edit'
 
@@ -19,7 +19,7 @@ module Erx
   # numbers, with a RAM number that is not a whole number of MiB, with a root_withheld that
   # is not a positive number of bytes, or with a site_leaves_out that is not a list of
   # domain names, is refused when it is loaded, before any tool uses it. A board's header
-  # map, the record's pins, is checked as the record loads too (HeaderMap); pins is the
+  # map, the record's pins, is checked as the record loads too (PinTable); pins is the
   # checked map, nil for a board without one.
   Platform = Data.define(:name, :record, :pins)
   class Platform
@@ -92,7 +92,7 @@ module Erx
          leaves_out.all? { |domain| domain.is_a?(String) && domain.match?(/\A[a-z0-9][a-z0-9_-]{0,62}\z/) })
 
       pins = begin
-        HeaderMap.read(record)
+        PinTable.read(record)
       rescue Error => e
         raise Error, "#{self.class.record_path(name)}: pins: #{e.message}"
       end

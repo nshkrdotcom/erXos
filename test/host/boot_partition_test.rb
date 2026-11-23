@@ -16,18 +16,19 @@ class BootPartitionTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
   PI = Erx::Platform.load(root: ROOT, name: 'raspi4b')
 
-  # The Pi 4's card (docs/design-header-io.md, "Verification"): BSC1's, UART3's, SPI0's and
-  # the console's pins from the header map, none for the gpio rows (GPIO 18 and 19, PWM0's,
+  # The Pi 4's card (docs/design-header-io.md, "Verification"): the firmware's settings of
+  # the boot description's table first, enable_uart on every card and the ARM's JTAG on a
+  # development card; BSC1's, UART3's and SPI0's pins from the header map, none for the
+  # console's pins, which enable_uart sets, none for the gpio rows (GPIO 18 and 19, PWM0's,
   # among them), none for UART0's on-board pins to the Bluetooth controller, which the root
-  # sets at boot, the core clock fixed at the map's 500 MHz, and the ARM's JTAG on a
-  # development card.
+  # sets at boot; and the core clock fixed at the map's 500 MHz.
   def test_config_txt_comes_from_the_record
     assert_equal %w[arm_64bit=1 kernel=kernel8.img kernel_address=0x200000 armstub=bl31.bin enable_uart=1
-                    init_uart_clock=48000000 total_mem=1024 gpu_mem=76 framebuffer_depth=32
+                    enable_jtag_gpio=1 init_uart_clock=48000000 total_mem=1024 gpu_mem=76 framebuffer_depth=32
                     framebuffer_ignore_alpha=1 max_framebuffers=1 disable_overscan=1
                     core_freq=500 core_freq_fixed=1
-                    uart_2ndstage=1 enable_jtag_gpio=1 dtoverlay=uart3
-                    gpio=2-3=a0,pn gpio=4=a4,pn gpio=5=a4,pu gpio=7-11=a0,pn gpio=14-15=a5,pn],
+                    uart_2ndstage=1 dtoverlay=uart3
+                    gpio=2-3=a0,pn gpio=4=a4,pn gpio=5=a4,pu gpio=7-11=a0,pn],
                  settings('development')
   end
 
@@ -42,9 +43,9 @@ class BootPartitionTest < Minitest::Test
 
   # A map without jtag rows asks for no JTAG, even on a development card.
   def test_a_map_without_jtag_rows_gives_no_jtag
-    given = PI.record.fetch('pins')
-    rows = given.fetch('rows').map { |row| row['use'] == 'jtag' ? { 'gpio' => row.fetch('gpio'), 'use' => 'reserved' } : row }
-    platform = record(pins: given.merge('rows' => rows))
+    entry, *others = PI.record.fetch('pins')
+    rows = entry.fetch('rows').map { |row| row['use'] == 'jtag' ? { 'gpio' => row.fetch('gpio'), 'use' => 'reserved' } : row }
+    platform = record(pins: [entry.merge('rows' => rows), *others])
     lines = Erx::BootPartition.config_txt(platform, overlays: [], build_kind: 'development').lines(chomp: true)
     assert_includes lines, 'uart_2ndstage=1'
     refute_includes lines, 'enable_jtag_gpio=1'
@@ -56,8 +57,8 @@ class BootPartitionTest < Minitest::Test
   # rows at boot (docs/design-header-io.md, "On-board pins").
   def test_the_pin_lines_are_the_maps_header_device_rows
     pins = set_pins(settings('development'))
-    assert_equal PI.pins.device_rows.map(&:gpio), pins
-    assert_empty pins & PI.pins.onboard.map(&:gpio)
+    assert_equal PI.pins.controllers.first.header_device_rows.map(&:gpio), pins
+    assert_empty pins & [14, 15, *28..57]
   end
 
   # The pins each gpio= line sets, in order; a line may name one pin or a range

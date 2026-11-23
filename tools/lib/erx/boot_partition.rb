@@ -12,6 +12,7 @@ require_relative 'data_volume'
 require_relative 'pi_medium'
 require_relative 'bl31'
 require_relative 'board_tree'
+require_relative 'boot_partition_settings'
 require_relative 'build_kind'
 require_relative 'bounded_file'
 require_relative 'build_path'
@@ -131,17 +132,16 @@ module Erx
     #   no line: the firmware leaves GPIO 30 and 31 inputs whatever a line asks, so the root
     #   sets every on-board row at boot (docs/design-header-io.md, "On-board pins").
     def config_txt(platform, overlays:, build_kind:)
-      map = platform.pins
-      raise Error, "#{platform.record_path}: the boot partition needs the record's pins" if map.nil?
+      table = platform.pins
+      raise Error, "#{platform.record_path}: the boot partition needs the record's pins" if table.nil?
 
-      <<~CONFIG + core_lines(map) + development_lines(build_kind, map) + overlays.map { |name| "dtoverlay=#{name}\n" }.join + pin_lines(map)
+      <<~CONFIG + core_lines(table) + development_lines(build_kind) + overlays.map { |name| "dtoverlay=#{name}\n" }.join + pin_lines(table)
         # erXos boot partition for #{platform.name}, written by tools/lib/erx/boot_partition.rb.
         arm_64bit=1
         kernel=#{KERNEL}
         kernel_address=0x#{QemuPlan::MACHINES.fetch(platform.name).loads.image.to_s(16)}
         armstub=#{ARMSTUB}
-        enable_uart=1
-        init_uart_clock=#{pl011_clock(platform)}
+        #{setting_lines(table, build_kind)}init_uart_clock=#{pl011_clock(platform)}
         total_mem=#{total_mem_mib(platform)}
         gpu_mem=#{GPU_MEM_MIB}
         framebuffer_depth=32
@@ -177,37 +177,47 @@ module Erx
       TOTAL_MEM_MIB
     end
 
-    # The firmware's own boot log on the console (uart_2ndstage), and the ARM's JTAG on the
-    # map's jtag rows (enable_jtag_gpio, which sets GPIO 22 to 27 to ALT4), for a probe
-    # when the serial log cannot locate a hang. A release card keeps both off its header,
-    # and its jtag rows give no line at all.
-    def development_lines(build_kind, map)
-      return '' unless BuildKind.development?(build_kind)
+    # The firmware's own boot log on the console (uart_2ndstage), on a development card only.
+    def development_lines(build_kind) = BuildKind.development?(build_kind) ? "uart_2ndstage=1\n" : ''
 
-      "uart_2ndstage=1\n#{"enable_jtag_gpio=1\n" if map.jtag?}"
+    # The settings of the boot description's table (FIRMWARE_SETTINGS) whose pins are rows
+    # of the pin table, each on the kinds of card it lists: on the Raspberry Pi 4 enable_uart
+    # on every card, and enable_jtag_gpio, the ARM's JTAG for a probe when the serial log
+    # cannot locate a hang, on a development card alone, so a release card's jtag rows are
+    # pins nobody sets.
+    def setting_lines(table, build_kind)
+      kind = BuildKind.fetch(build_kind)
+      table.settings.select { |setting| setting.kinds.include?(kind) }.map { |setting| "#{setting.name}=1\n" }.join
     end
 
-    # core_freq in MHz, the unit config.txt takes, and core_freq_fixed, for a map whose
-    # devices divide the core clock (HeaderMap::Map#core_clock, whole MHz).
-    def core_lines(map)
-      clock = map.core_clock
+    # core_freq in MHz, the unit config.txt takes, and core_freq_fixed, for a table whose
+    # devices divide the core clock (PinTable::Table#core_clock, whole MHz).
+    def core_lines(table)
+      clock = table.core_clock
       return '' if clock.nil?
 
       "core_freq=#{clock / 1_000_000}\ncore_freq_fixed=1\n"
     end
 
-    # The pull attribute of a gpio= line.
-    PULL_ATTRIBUTES = { none: ',pn', up: ',pu', down: ',pd' }.freeze
+    # The pull attribute of a gpio= line; none for a row that names no pull.
+    PULL_ATTRIBUTES = { nil => '', none: ',pn', up: ',pu', down: ',pd' }.freeze
 
     # One gpio=N=aK,pX line for each run of consecutive device rows of one alternate and
-    # pull, written gpio=N-M=... for a run of more than one pin.
-    def pin_lines(map)
-      runs = map.device_rows.slice_when do |left, right|
-        right.gpio != left.gpio + 1 || [right.alternate, right.pull] != [left.alternate, left.pull]
+    # pull, written gpio=N-M=... for a run of more than one pin: the header device rows'
+    # default settings. A gpio= line sets an alternate, so a header device row of in or out
+    # is refused.
+    def pin_lines(table)
+      rows = table.controllers.flat_map(&:header_device_rows).map { |row| [row.gpio, row.setting] }
+      gpio, plain = rows.find { |_gpio, setting| setting.alternate.nil? }
+      raise Error, "GPIO #{gpio}: config.txt's gpio= lines set a signal, not #{plain.function}" if plain
+
+      runs = rows.slice_when do |(left, left_setting), (right, right_setting)|
+        right != left + 1 || [right_setting.alternate, right_setting.pull] != [left_setting.alternate, left_setting.pull]
       end
       runs.map do |run|
-        pins = run.size == 1 ? run.first.gpio.to_s : "#{run.first.gpio}-#{run.last.gpio}"
-        "gpio=#{pins}=a#{run.first.alternate}#{PULL_ATTRIBUTES.fetch(run.first.pull)}\n"
+        pins = run.size == 1 ? run.first[0].to_s : "#{run.first[0]}-#{run.last[0]}"
+        setting = run.first[1]
+        "gpio=#{pins}=a#{setting.alternate}#{PULL_ATTRIBUTES.fetch(setting.pull)}\n"
       end.join
     end
 

@@ -3,174 +3,177 @@
   "cpuset": 15,
   "console": "/soc/serial@7e215040",
   "hostlink": "/soc/serial@7e201600",
-  "pins": {
-    "soc": "bcm2711",
-    "controller": "/soc/gpio@7e200000",
-    "rows": [
-      {
-        "gpio": 0,
-        "use": "reserved"
-      },
-      {
-        "gpio": 1,
-        "use": "reserved"
-      },
-      {
-        "gpio": 2,
-        "use": "/soc/i2c@7e804000",
-        "function": "SDA1",
-        "pull": "none"
-      },
-      {
-        "gpio": 3,
-        "use": "/soc/i2c@7e804000",
-        "function": "SCL1",
-        "pull": "none"
-      },
-      {
-        "gpio": 4,
-        "use": "/soc/serial@7e201600",
-        "function": "TXD3",
-        "pull": "none"
-      },
-      {
-        "gpio": 5,
-        "use": "/soc/serial@7e201600",
-        "function": "RXD3",
-        "pull": "up"
-      },
-      {
-        "gpio": 6,
-        "use": "gpio"
-      },
-      {
-        "gpio": 7,
-        "use": "/soc/spi@7e204000",
-        "function": "SPI0_CE1_N",
-        "pull": "none"
-      },
-      {
-        "gpio": 8,
-        "use": "/soc/spi@7e204000",
-        "function": "SPI0_CE0_N",
-        "pull": "none"
-      },
-      {
-        "gpio": 9,
-        "use": "/soc/spi@7e204000",
-        "function": "SPI0_MISO",
-        "pull": "none"
-      },
-      {
-        "gpio": 10,
-        "use": "/soc/spi@7e204000",
-        "function": "SPI0_MOSI",
-        "pull": "none"
-      },
-      {
-        "gpio": 11,
-        "use": "/soc/spi@7e204000",
-        "function": "SPI0_SCLK",
-        "pull": "none"
-      },
-      {
-        "gpio": 12,
-        "use": "gpio"
-      },
-      {
-        "gpio": 13,
-        "use": "gpio"
-      },
-      {
-        "gpio": 14,
-        "use": "/soc/serial@7e215040",
-        "function": "TXD1",
-        "pull": "none"
-      },
-      {
-        "gpio": 15,
-        "use": "/soc/serial@7e215040",
-        "function": "RXD1",
-        "pull": "none"
-      },
-      {
-        "gpio": 16,
-        "use": "gpio"
-      },
-      {
-        "gpio": 17,
-        "use": "gpio"
-      },
-      {
-        "gpio": 18,
-        "use": "gpio"
-      },
-      {
-        "gpio": 19,
-        "use": "gpio"
-      },
-      {
-        "gpio": 20,
-        "use": "gpio"
-      },
-      {
-        "gpio": 21,
-        "use": "gpio"
-      },
-      {
-        "gpio": 22,
-        "use": "jtag",
-        "function": "ARM_TRST"
-      },
-      {
-        "gpio": 23,
-        "use": "jtag",
-        "function": "ARM_RTCK"
-      },
-      {
-        "gpio": 24,
-        "use": "jtag",
-        "function": "ARM_TDO"
-      },
-      {
-        "gpio": 25,
-        "use": "jtag",
-        "function": "ARM_TCK"
-      },
-      {
-        "gpio": 26,
-        "use": "jtag",
-        "function": "ARM_TDI"
-      },
-      {
-        "gpio": 27,
-        "use": "jtag",
-        "function": "ARM_TMS"
-      }
-    ],
-    "onboard": [
-      {
-        "gpio": 30,
-        "device": "/soc/serial@7e201000",
-        "function": "CTS0"
-      },
-      {
-        "gpio": 31,
-        "device": "/soc/serial@7e201000",
-        "function": "RTS0"
-      },
-      {
-        "gpio": 32,
-        "device": "/soc/serial@7e201000",
-        "function": "TXD0"
-      },
-      {
-        "gpio": 33,
-        "device": "/soc/serial@7e201000",
-        "function": "RXD0"
-      }
-    ]
-  },
+  "pins": [
+    {
+      "name": "gpio",
+      "soc": "bcm2711",
+      "controller": [
+        "/soc/gpio@7e200000"
+      ],
+      "rows": [
+        {
+          "gpio": 0,
+          "use": "reserved"
+        },
+        {
+          "gpio": 1,
+          "use": "reserved"
+        },
+        {
+          "gpio": 2,
+          "use": "/soc/i2c@7e804000",
+          "function": "SDA1",
+          "pull": "none"
+        },
+        {
+          "gpio": 3,
+          "use": "/soc/i2c@7e804000",
+          "function": "SCL1",
+          "pull": "none"
+        },
+        {
+          "gpio": 4,
+          "use": "/soc/serial@7e201600",
+          "function": "TXD3",
+          "pull": "none"
+        },
+        {
+          "gpio": 5,
+          "use": "/soc/serial@7e201600",
+          "function": "RXD3",
+          "pull": "up"
+        },
+        {
+          "gpio": 6,
+          "use": "gpio"
+        },
+        {
+          "gpio": 7,
+          "use": "/soc/spi@7e204000",
+          "function": "SPI0_CE1_N",
+          "pull": "none"
+        },
+        {
+          "gpio": 8,
+          "use": "/soc/spi@7e204000",
+          "function": "SPI0_CE0_N",
+          "pull": "none"
+        },
+        {
+          "gpio": 9,
+          "use": "/soc/spi@7e204000",
+          "function": "SPI0_MISO",
+          "pull": "none"
+        },
+        {
+          "gpio": 10,
+          "use": "/soc/spi@7e204000",
+          "function": "SPI0_MOSI",
+          "pull": "none"
+        },
+        {
+          "gpio": 11,
+          "use": "/soc/spi@7e204000",
+          "function": "SPI0_SCLK",
+          "pull": "none"
+        },
+        {
+          "gpio": 12,
+          "use": "gpio"
+        },
+        {
+          "gpio": 13,
+          "use": "gpio"
+        },
+        {
+          "gpio": 14,
+          "use": "/soc/serial@7e215040",
+          "function": "TXD1"
+        },
+        {
+          "gpio": 15,
+          "use": "/soc/serial@7e215040",
+          "function": "RXD1"
+        },
+        {
+          "gpio": 16,
+          "use": "gpio"
+        },
+        {
+          "gpio": 17,
+          "use": "gpio"
+        },
+        {
+          "gpio": 18,
+          "use": "gpio"
+        },
+        {
+          "gpio": 19,
+          "use": "gpio"
+        },
+        {
+          "gpio": 20,
+          "use": "gpio"
+        },
+        {
+          "gpio": 21,
+          "use": "gpio"
+        },
+        {
+          "gpio": 22,
+          "use": "jtag",
+          "function": "ARM_TRST"
+        },
+        {
+          "gpio": 23,
+          "use": "jtag",
+          "function": "ARM_RTCK"
+        },
+        {
+          "gpio": 24,
+          "use": "jtag",
+          "function": "ARM_TDO"
+        },
+        {
+          "gpio": 25,
+          "use": "jtag",
+          "function": "ARM_TCK"
+        },
+        {
+          "gpio": 26,
+          "use": "jtag",
+          "function": "ARM_TDI"
+        },
+        {
+          "gpio": 27,
+          "use": "jtag",
+          "function": "ARM_TMS"
+        }
+      ],
+      "onboard": [
+        {
+          "gpio": 30,
+          "use": "/soc/serial@7e201000",
+          "function": "CTS0"
+        },
+        {
+          "gpio": 31,
+          "use": "/soc/serial@7e201000",
+          "function": "RTS0"
+        },
+        {
+          "gpio": 32,
+          "use": "/soc/serial@7e201000",
+          "function": "TXD0"
+        },
+        {
+          "gpio": 33,
+          "use": "/soc/serial@7e201000",
+          "function": "RXD0"
+        }
+      ]
+    }
+  ],
   "ram_first": 0,
   "ram_bytes": 994050048,
   "fiasco_reserve": 60817408,
