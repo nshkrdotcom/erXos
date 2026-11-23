@@ -16,14 +16,9 @@ three steps, sending only what the store lacks: `missing/1` with the modules' ha
 `put_piece/4` for each piece of each missing blob, then `load/1` with the manifest.
 
 A load is planned whole before it changes anything. The plan names every module's verified
-bytes (`erx_code_store:plan_load/2`); `code:prepare_loading/1` then checks every module of
-it, its name against its bytes included, and `code:finish_loading/1`, the two halves of
-`code:atomic_load/1`, makes the batch current or refuses it whole. Its last check is that
-no module still has old code; only when every refusal is that one does the service purge
-the old code of those modules, as stock's loads purge it, and finish the batch again, so a
-load refused for any other reason, a sticky or pending module, purges nothing. Either every
-module of the manifest is current when `load/1` returns `ok` or none changed. Purging ends
-any process still running a module's old code, as `code:load_binary/3` does. Names become
+bytes (`erx_code_store:plan_load/2`), and `erx_code_batch:load/1`, which every domain's code
+server also loads through, makes the batch current or refuses it whole: either every
+module of the manifest is current when `load/1` returns `ok` or none changed. Names become
 atoms only here, after the manifest has been read, at most 1,024 of 255 bytes each per
 load; a load the loader refuses still leaves its names' atoms behind (TODO.md).
 """.
@@ -149,7 +144,7 @@ serve({put, Hash, Size, Offset, Piece}, Store) ->
 serve({load, Manifest}, Store) ->
     case erx_code_store:plan_load(Store, Manifest) of
         {ok, Plan} ->
-            case activate(Plan) of
+            case erx_code_batch:load(Plan) of
                 ok -> {ok, erx_code_store:commit(Store, Plan, erlang:system_time(millisecond))};
                 {error, _} = Failed -> {Failed, Store}
             end;
@@ -160,36 +155,3 @@ serve({history, ?SYSTEM_DOMAIN, Name}, Store) ->
     {{ok, erx_code_store:history(Store, Name)}, Store};
 serve({history, _DomainId, _Name}, Store) ->
     {{error, scope}, Store}.
-
-%% Makes the plan's modules current as one batch, or none of them. A module's file name,
-%% which code:which/1 reports, is its blob's hash in hexadecimal.
-activate(Plan) ->
-    Modules = [{binary_to_atom(Name), hex(Hash) ++ ".beam", Bytes} || {Name, Hash, Bytes} <- Plan],
-    case code:prepare_loading(Modules) of
-        {ok, Prepared} -> finish(Prepared, purge_once);
-        {error, Failed} -> not_loaded(Failed)
-    end.
-
-%% A batch refused only because some of its modules still have old code is finished again
-%% once that old code is purged; a batch refused for anything else purges nothing.
-finish(Prepared, Purge) ->
-    case {code:finish_loading(Prepared), Purge} of
-        {ok, _} ->
-            ok;
-        {{error, Failed}, purge_once} ->
-            case lists:all(fun({_Module, What}) -> What =:= not_purged end, Failed) of
-                true ->
-                    lists:foreach(fun({Module, not_purged}) -> code:purge(Module) end, Failed),
-                    finish(Prepared, purged);
-                false ->
-                    not_loaded(Failed)
-            end;
-        {{error, Failed}, purged} ->
-            not_loaded(Failed)
-    end.
-
-not_loaded(Failed) ->
-    {error, {not_loaded, [{atom_to_binary(Module), What} || {Module, What} <- Failed]}}.
-
-hex(Hash) ->
-    binary_to_list(binary:encode_hex(Hash, lowercase)).

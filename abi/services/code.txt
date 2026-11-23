@@ -12,6 +12,9 @@
 # encoding with its call envelope, as a facet measures it against its row's max_request:
 # code_modules_max entries of a 255-byte name and a 32-byte hash, about 300 KiB, fit, and
 # load refuses a manifest past it before sending it, so no request is dropped unanswered.
+# code_load_wait is the 30 s, in milliseconds, within which erx_code ends a load into
+# another domain and that domain's code server, erx_code_agent, finishes it from when it
+# took it (docs/design-live.md, "The code server").
 service code 19
   served_as message
   operation missing 1
@@ -21,3 +24,4 @@ limit code_piece_max u32 65536
 limit code_modules_max u32 1024
 limit code_load_bytes_max u32 16777216
 limit code_request_max u32 327680
+limit code_load_wait u32 30000
