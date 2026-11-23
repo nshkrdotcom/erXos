@@ -61,6 +61,7 @@ signal librt 33 reserved
 reserved_signal 34
 realtime 65 126 terminate
 # The signals a tty's shell may end by, as its master hears it (erx_console:shell_ending/1)
-# and the SSH domain's channel sends it (abi/services/ssh.txt, signaled): Ctrl-C alone
+# and the SSH domain's channel sends it ({signaled, Signal} of the table in docs/design-ssh.md,
+# "Sessions, ttys and shells"): Ctrl-C alone
 # ends an exec on a tty (docs/design-ssh.md).
 signal_set tty_master int

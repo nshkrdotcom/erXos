@@ -126,16 +126,23 @@ class FacetNamesTest < Minitest::Test
                                                  "service other 10\n  served_as message\n")
   end
 
-  # A session's line is provided under its name, which is no facet: the check passes it
-  # in any file, and a manifest service of that name is refused.
+  # A session's line is provided under its name, which no manifest row names: the check
+  # passes a name abi/services declares served_by session in any file, fails one no row
+  # and no such interface declares, and refuses a manifest service of a line's name.
+  # Without served_by session the name is no line, so the same provide fails.
   def test_a_line_is_no_facet
-    assert_empty found("f() -> erx_facet:provide(ssh_line, self()).\ng() -> erx_facet:provide(web_line, self()).\n")
-    files, = table
+    line = "service mint_line 10\n  served_as message\n  served_by session\n"
+    interface = "# The seeded interface (#{DOC}, \"The `seeded` service\").\nservice seeded 9\n  served_as message\n#{line}"
+    source = "f() -> erx_facet:provide(mint_line, self()).\n"
+    assert_empty found(source, interface: interface)
+    assert_equal [[MODULE, 1]], found("f() -> erx_facet:provide(other_line, self()).\n", interface: interface)
+    assert_equal [[MODULE, 1]], found(source, interface: interface.sub("  served_by session\n", ''))
+    files, = table(interface: interface)
     Dir.mktmpdir do |root|
       write(root, files.merge(MANIFEST => files.fetch(MANIFEST).sub("  interface seeded\n",
-                                                                    "  interface seeded\n  name \"ssh_line\"\n")))
+                                                                    "  interface seeded\n  name \"mint_line\"\n")))
       error = assert_raises(Erx::Error) { Erx::FacetNames.generation(root: root) }
-      assert_match 'both declared and exempt or lines: ssh_line', error.message
+      assert_match 'both declared and exempt or lines: mint_line', error.message
     end
   end
 
@@ -174,7 +181,7 @@ class FacetNamesTest < Minitest::Test
       write(root, files.merge(MANIFEST => files.fetch(MANIFEST).sub("facet seeded\n", "facet seeded\n  name \"other\"\n")))
       plan = Erx::FacetNames.generation(root: root)
       header = plan.files.fetch(Erx::FacetNames::HEADER)
-      assert_equal ["-define(ERX_FACET_NAMES, ['seeded']).", "-define(ERX_LINES, ['ssh_line', 'web_line'])."],
+      assert_equal ["-define(ERX_FACET_NAMES, ['seeded'])."],
                    header.lines(chomp: true).grep(/^-define\(ERX_/).grep_v(/_HRL,/)
       assert_equal({ 'abi/services/*.txt' => [INTERFACE], 'config/manifest/*.txt' => [MANIFEST] }, plan.globs)
     end

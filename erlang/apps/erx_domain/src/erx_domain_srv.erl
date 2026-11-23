@@ -1197,7 +1197,7 @@ keep_lines(_Id, _Node, Provides, State) when not is_map(Provides) ->
     State;
 keep_lines(Id, Node, Provides, #{lines := Lines} = State) ->
     case maps:filter(fun(_Name, Line) -> is_pid(Line) andalso node(Line) =:= Node end,
-                     maps:with(?ERX_LINES, Provides)) of
+                     maps:with(maps:keys(?ERX_LINES), Provides)) of
         Kept when map_size(Kept) =:= 0 -> State;
         Kept -> State#{lines := Lines#{Id => Kept}}
     end.

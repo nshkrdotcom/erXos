@@ -548,6 +548,41 @@ class AbiSchemaTest < Minitest::Test
     assert_equal %w[files input line windows], services.select { |service| service.fetch(:served_as) == 'tree' }.map { |service| service.fetch(:name) }.sort
   end
 
+# served_by session marks a session's line (docs/design-system.md, "A session's lines"):
+# it is served as message and states all five quantities a facet row carries, since no
+# row states its grant, and ?ERX_LINES maps each such interface's name to them.
+QUANTITY_ROW = "layout erx_mf_facet wire_le 8 40\n  field max_request u64 0\n  field in_flight u64 8\n" \
+               "  field reductions u64 16\n  field period_ns u64 24\n  field max_heap_size u64 32\n"
+QUANTITIES = "  quantity max_request 64\n  quantity in_flight 2\n  quantity reductions 10\n" \
+             "  quantity period_ns 100\n  quantity max_heap_size 1000\n"
+
+def test_served_by_session_states_every_quantity_and_is_listed_as_a_line
+  parsed = schema("#{QUANTITY_ROW}service mint 4\n  served_as message\n  served_by session\n  operation open 1\n" \
+                  "#{QUANTITIES}service plain 5\n  served_as message\n")
+  assert_equal({ 'mint' => 'session', 'plain' => nil },
+               parsed.services.to_h { |service| [service.fetch(:name), service.fetch(:served_by)] })
+  assert_includes Erx::ABI::ErlangEmitter.header(parsed),
+                  "-define(ERX_LINES, \#{\n    'mint' =>\n        \#{in_flight => 2, max_heap_size => 1000, " \
+                  "max_request => 64, period_ns => 100, reductions => 10}\n}).\n"
+  without = QUANTITIES.lines.reject { |line| line.include?('in_flight') }.join
+  ["  served_as message\n  served_by session\n#{without}", "  served_as tree\n  served_by session\n#{QUANTITIES}",
+   "  served_as message\n  served_by host\n#{QUANTITIES}",
+   "  served_as message\n  served_by session\n  served_by session\n#{QUANTITIES}"].each do |members|
+    assert_raises(Erx::ABI::SchemaError, members) { schema("#{QUANTITY_ROW}service mint 4\n#{members}") }
+  end
+end
+
+# The checked-in lines are ssh_line and web_line, each with the grant design-system.md gives it.
+def test_the_checked_in_lines_are_ssh_line_and_web_line
+  root = File.expand_path('../..', __dir__)
+  services = Erx::ABI::Model.validate(Erx::ABI::Sources.read(root: root)).services
+  lines = services.select { |service| service.fetch(:served_by) == 'session' }
+                  .to_h { |service| [service.fetch(:name), service.fetch(:quantities)] }
+  common = { 'reductions' => 100_000, 'period_ns' => 1_000_000_000, 'max_heap_size' => 65_536 }
+  assert_equal({ 'ssh_line' => common.merge('max_request' => 65_536, 'in_flight' => 4),
+                 'web_line' => common.merge('max_request' => 8192, 'in_flight' => 16) }, lines)
+end
+
   # The table the boot view checks a facet's parameter rows against (erx_service_parameters):
   # a declaration's row, its most 1, a set's with its MAX_COUNT, of u64 or of identifier, and
   # the declarations no facet can carry: a name a facet row's limit field takes in the grant's

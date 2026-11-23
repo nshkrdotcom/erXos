@@ -1,29 +1,33 @@
 # Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
 # SPDX-License-Identifier: BSD-2-Clause
-# A session's line to the SSH domain (docs/design-ssh.md, "Sessions, ttys and
-# shells"): the messages a channel process of the SSH domain and the session's
-# erx_ssh_line exchange, each heard through the other's domain envelope and checked
-# by its receiver as that section says. A channel sends open_tty and open_job, each a
-# call the line answers, and for a job job_input, job_eof, job_sent and job_hangup;
-# the line sends a job's channel job_written and job_output, and every channel exited,
-# or signaled for an exec on a tty that Ctrl-C ended, once what it started has ended
-# and its last output has been taken. A channel with a tty exchanges the console
-# messages (console.txt) with the tty itself.
+# A session's line to the SSH domain (docs/design-system.md, "A session's lines";
+# docs/design-ssh.md, "Sessions, ttys and shells"): a facet the session mints for the
+# SSH domain when a login succeeds, which no manifest row grants. A channel process of
+# the SSH domain calls open_tty through it, and the line answers. What the session
+# sends a channel, the console messages (console.txt) and a tty's ending, exited or
+# signaled as design-ssh.md's table gives them, comes from the tty's relay and is no
+# operation of this interface. A job's open_job and its messages enter it with the
+# answer to design-ssh.md's open question "How a job's messages reach their job".
+# The grant's quantities (docs/design-system.md, "A session's lines"): max_request is
+# the smallest power of two not below both measures of the largest request, an
+# open_tty of {exec, Command} with a 32 KiB command and a 64-byte TERM, its caller's
+# pid and alias of a 255-character node name: erlang:external_size/1 of
+# {'$gen_call', From, Request}, the envelope left out, and the term's heap words times
+# the word size plus the bytes of the binaries it references, each about 33 KiB.
+# in_flight is 4, since a channel's open_tty is answered at once.
 service ssh_line 12
   served_as message
+  served_by session
   operation open_tty 1
-  operation open_job 2
-  operation job_input 3
-  operation job_written 4
-  operation job_eof 5
-  operation job_output 6
-  operation job_sent 7
-  operation job_hangup 8
-  operation exited 9
-  operation signaled 10
-# The signals a signaled names are abi/signals.txt's signal set tty_master, each by its name
-# with sig before it, as a program's end names it (docs/design-programs.md, "A program's
-# end"); the channel sends it as SSH's exit-signal, by the name without sig in capitals.
+  quantity max_request 65536
+  quantity in_flight 4
+  quantity reductions 100000
+  quantity period_ns 1000000000
+  quantity max_heap_size 65536
+# The signals a tty's ending {signaled, Signal} names are abi/signals.txt's signal set
+# tty_master, each by its name with sig before it, as a program's end names it
+# (docs/design-programs.md, "A program's end"); the channel sends it as SSH's
+# exit-signal, by the name without sig in capitals.
 # The line's bounds (docs/design-ssh.md, "Sessions, ttys and shells" and "Limits and who
 # pays"): a connection holds at most ssh_line_max_channels channels open, FreeBSD's
 # MaxSessions, and the line answers limited past them; an exec's command is 1 to

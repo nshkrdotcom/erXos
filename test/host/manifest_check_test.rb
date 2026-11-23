@@ -1452,6 +1452,17 @@ class ManifestCheckTest < Minitest::Test
     refused(Erx::Manifest::Invalid, 'service.interface', source, message: /of the files interface/)
   end
 
+  # A session's line is minted only for the grantee the system domain names, so a service
+  # row of a served_by session interface is refused, and with it any facet row of it.
+  def test_a_service_or_facet_of_a_line_is_refused
+    service = "service rogue_line\n  server @domain.network\n  interface ssh_line\n"
+    refused(Erx::Manifest::Invalid, 'service.interface', @source + service, message: /of ssh_line, a session's line/)
+    facet = "facet rogue_line\n  grantee system\n  service @service.rogue_line\n  operations none\n  max_request 256\n" \
+            "  in_flight 1\n  reductions 100000\n  period_ns 1000000000\n  max_heap_size 65536\n"
+    refused(Erx::Manifest::Invalid, 'service.interface', @source + service.sub('ssh_line', 'web_line') + facet,
+            message: /of web_line, a session's line/)
+  end
+
   # A second service record whose public name is system, under another label, on
   # another server, since property 5 refuses two names alike on one server first.
   def test_a_second_system_service_is_refused

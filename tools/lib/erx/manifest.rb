@@ -2236,6 +2236,7 @@ module Erx
         invalid("no facet row grants #{CODE_OBJECTS}, which the domain service grants every session", 'facet.service') unless
           facets_of(rows, CODE_OBJECTS, tables).empty?
         check_code_objects_service(service_rows)
+        check_no_line_services(service_rows)
         check_network_grants(rows, packed.map(&:first), tables)
         check_files_grants(rows, tables)
         check_inspect_grants(rows, tables)
@@ -2870,6 +2871,20 @@ module Erx
         return if found.size == 1 && found.first.fetch('name') == CODE_OBJECTS.b && found.first.fetch('server') == system
 
         invalid("the manifest serves #{CODE_OBJECTS} once, by that name, from the system domain", 'service.interface')
+      end
+
+      # No service row is of an interface abi/services declares served_by session, a
+      # session's line, whose grant the domain service mints only for the grantee the system
+      # domain names (docs/design-system.md, "A session's lines"), so no facet row grants
+      # one either: a facet row names a service row.
+      def check_no_line_services(service_rows)
+        lines = @codec.schema.services.select { |service| service.fetch(:served_by) == 'session' }
+                      .to_h { |service| [service.fetch(:number), service.fetch(:name)] }
+        service_rows.each do |row|
+          line = lines[row.fetch('interface')] or next
+          invalid("service #{row.fetch('name')} is of #{line}, a session's line, which no manifest row grants",
+                  'service.interface')
+        end
       end
 
       # The facet rows of the interface abi/services declares as NAME, compared by number.

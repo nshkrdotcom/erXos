@@ -155,6 +155,7 @@ module Erx
         end
         schema.signals.sets.sort.each { |name, signals| lines << signal_set_members(schema, name, signals) }
         lines << tree_services(schema)
+        lines << session_lines(schema)
         (lines + ['', '-endif.', '']).join("\n")
       end
 
@@ -179,6 +180,22 @@ module Erx
         numbers = schema.services.select { |service| service.fetch(:served_as) == 'tree' }
                         .map { |service| service.fetch(:number) }.sort
         "-define(ERX_TREE_SERVICES, [#{numbers.join(', ')}])."
+      end
+
+      # ?ERX_LINES: each abi/services interface declared served_by session, a session's
+      # line, by its name, to its grant's quantities (docs/design-system.md, "A session's
+      # lines"), so the domain service mints a line within the limits its interface states.
+      def session_lines(schema)
+        raise SchemaError, 'lines collides with a constant' if schema.constants.key?('lines')
+
+        entries = schema.services.select { |service| service.fetch(:served_by) == 'session' }
+                        .sort_by { |service| service.fetch(:name) }.map do |service|
+          quantities = service.fetch(:quantities).sort.map { |key, value| "#{key} => #{value}" }
+          "#{literal(atom(service.fetch(:name)))} =>\n        \#{#{quantities.join(', ')}}"
+        end
+        return '-define(ERX_LINES, #{}).' if entries.empty?
+
+        "-define(ERX_LINES, \#{\n    #{entries.join(",\n    ")}\n})."
       end
 
       # ?ERX_<ENUM>_MEMBERS: an enum's members as {Name, Value} in value order,

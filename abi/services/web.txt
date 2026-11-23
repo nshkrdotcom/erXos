@@ -10,3 +10,30 @@ service web 6
   operation connect 1
   operation data 2
   operation close 3
+# A session's line to the web domain (docs/design-system.md, "A session's lines";
+# docs/design-web.md, "Views on the line"): a facet the session mints for the web domain
+# when the host link's web facet opens or a login through erx_web_login succeeds, which
+# no manifest row grants. A connection of the web domain calls open through it, and the
+# line answers with a view, which sends its own updates. The grant's quantities:
+# max_request is the smallest power of two not below both measures of the largest
+# request, an open of a path of 16 segments of 256 bytes, its caller's pid and alias of a
+# 255-character node name: erlang:external_size/1 of {'$gen_call', From, Request}, the
+# envelope left out, and the term's heap words times the word size plus the bytes of
+# the binaries it references, each about 5 KiB. in_flight is 16, one per view a
+# connection may open together.
+service web_line 21
+  served_as message
+  served_by session
+  operation open 1
+  quantity max_request 8192
+  quantity in_flight 16
+  quantity reductions 100000
+  quantity period_ns 1000000000
+  quantity max_heap_size 65536
+# A view's heap limit in words (docs/design-system.md, "A session's lines", "Views and
+# ttys"): a view runs with max_heap_size at this limit, killing at it and counting the
+# binaries it references, and its message queue on its heap, so what waits unread
+# counts toward it. It holds a view's last projection, at most one 64 KiB update,
+# beside the inspector's largest record before projection, a listing page of 1,000
+# children; chosen, not measured.
+limit web_line_view_heap_max u32 262144

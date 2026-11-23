@@ -576,6 +576,11 @@ module Erx
       # in front of the service's process, or tree, an erx_fs grant of one tree
       # (docs/design-abi.md, "Services, facets and their parameter schemas").
       SERVED_AS = %w[message tree].freeze
+      # Who serves an interface's grants when not the holder a manifest service row names:
+      # session, a session's line to a front end, which the domain service grants only on a
+      # request naming its grantee, so its interface states every quantity a facet row
+      # carries (docs/design-system.md, "A session's lines").
+      SERVED_BY = %w[session].freeze
 
       def services(declarations, types:)
         seen_numbers = {}
@@ -594,6 +599,7 @@ module Erx
           quantities = {}
           liveness = nil
           served_as = nil
+          served_by = nil
           declaration.members.each do |line|
             keyword, *words = line.words
             case keyword
@@ -612,6 +618,11 @@ module Erx
               line.fail!('duplicate served_as') if served_as
               line.fail!("served_as must be #{SERVED_AS.join(' or ')}") unless SERVED_AS.include?(words[0])
               served_as = words[0]
+            when 'served_by'
+              Model.arity(line, 2)
+              line.fail!('duplicate served_by') if served_by
+              line.fail!("served_by must be #{SERVED_BY.join(' or ')}") unless SERVED_BY.include?(words[0])
+              served_by = words[0]
             when 'parameter'
               key, id, kind, cardinality, *bound = words
               allowed = %w[u64 i64 boolean identifier namespace_path domain principal device bytes member]
@@ -649,13 +660,19 @@ module Erx
           # A tree's operations are its protocol's own messages, which no facet row names
           # (abi/services/files.txt), so the boot view never checks a tree grant's.
           declaration.fail!('a service served as a tree declares no operation') if served_as == 'tree' && operations.any?
+          if served_by
+            declaration.fail!('a service served by a session is served as message') unless served_as == 'message'
+            missing = FACET_QUANTITIES - quantities.keys
+            declaration.fail!("a service served by a session lacks the quantities #{missing.join(', ')}") unless
+              missing.empty?
+          end
           checkers = parameters.values.map { |parameter| parameter.fetch(:helper) }.uniq
           declaration.fail!('a service\'s parameters name one checked_by helper') if checkers.size > 1
           Model.unique_values(operations, label: 'operation', line: declaration.line)
           Model.unique_values(parameters.transform_values { |value| value.fetch(:number) }, label: 'parameter', line: declaration.line)
           { name: name, number: number,
             operations: operations.freeze, parameters: parameters.freeze, quantities: quantities.freeze,
-            liveness: liveness, served_as: served_as, checked_by: checkers.first }.freeze
+            liveness: liveness, served_as: served_as, served_by: served_by, checked_by: checkers.first }.freeze
         end.freeze
       end
 
