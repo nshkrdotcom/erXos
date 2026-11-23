@@ -11,13 +11,16 @@
 > request check, which has a fuzz target; the GATT server, its
 > attribute table and its access gate, with the registry that
 > attaches a handler to a service and delivers each write to it; the
-> serial service's declaration and its table; and pairing and bonding
+> serial service's declaration and its table, the client library an
+> app handles a service with and the serial service's byte stream over
+> it, tested on the host only; and pairing and bonding
 > with the pairing window and the bond store. On the Pi 4 the controller
 > comes up and a phone's scan sees the board advertising under the name
 > `erxos`; a connection, GATT access and pairing have not run on the
 > board. Designed: an installed app's own `ble` grant, the rule that a service's
-> state belongs to its handler, the app that handles the serial
-> service, and tests against a Bumble peer that scans, connects, reads
+> state belongs to its handler beyond its owner's check of sets and
+> notifications, the console over the serial service,
+> and tests against a Bumble peer that scans, connects, reads, streams
 > and pairs.
 
 **Background needed.** [Chapter 3](03-erlang.md), sections 3.3 and
@@ -503,9 +506,9 @@ board's checklist exercises this path
 ([design-bluetooth.md, Decisions](../design-bluetooth.md#decisions)); the
 published card carries the kiosk alone. The `apps` row's `gatt` field,
 the package's own field, install's checks and the narrowing of each
-session are designed and not built, and so is the app that handles the
-serial service: the service's declaration and its table are built, and
-no app attaches to it.
+session are designed and not built. The serial service's library,
+`erx_gatt_serial`, is built and tested on the host against the registry;
+no domain of a suite or a board attaches to it yet.
 
 A service has at most one handler, the process that attached to it. The
 registry's `attach` makes the caller the handler, refuses a second one,

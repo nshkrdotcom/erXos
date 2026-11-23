@@ -1,0 +1,13 @@
+%% Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
+%% SPDX-License-Identifier: BSD-2-Clause
+
+%% Test only: the handler the Bluetooth suite's peers talk to (docs/design-bluetooth.md,
+%% "On QEMU against Bumble"), in a domain of the suite's own that holds `ble` for `nus`:
+%% every byte a phone writes to the serial service comes back on its notifications.
+{application, erx_gatt_echo_test,
+ [{description, "erXos test: the serial service's bytes sent back"},
+  {vsn, "1"},
+  {modules, [erx_gatt_echo_test]},
+  {registered, [erx_gatt_echo_test, erx_gatt_serial]},
+  {applications, [kernel, stdlib, erx, erx_bt_client]},
+  {mod, {erx_gatt_echo_test, []}}]}.

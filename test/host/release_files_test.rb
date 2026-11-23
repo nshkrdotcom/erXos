@@ -138,7 +138,7 @@ class ReleaseFilesTest < Minitest::Test
     paths = entries.map { |entry| entry.fetch('path') }
     release = File.read(File.join(@scratch, 'release/boot/start/start.rel'))
     only = %w[asn1 crypto public_key ssh ssl inets erx_blk erx_fat erx_storage erx_f2fs erx_media erx_memdraw erx_display erx_fb erx_usb erx_win erx_ui
-              erx_desk erx_web erx_net erx_wifi erx_web_line erx_ssh_line erx_app erx_bt erx_ntpd erx_pcie]
+              erx_desk erx_web erx_net erx_wifi erx_web_line erx_ssh_line erx_app erx_bt erx_bt_client erx_ntpd erx_pcie]
     assert_equal Erx::ReleaseFiles::APPLICATIONS - Erx::ReleaseFiles::SYSTEM_APPLICATIONS, only
     only.each do |application|
       refute_includes release, "{#{application},"
@@ -343,8 +343,8 @@ class ReleaseFilesTest < Minitest::Test
     %w[compiler asn1 crypto public_key].each { |name| assert_match(/\{#{name},"[^"]+",load\}/, release, "app only loads #{name}") }
     refute_match(/\{ssh,/, release, 'an app runs no ssh daemon')
     assert_match(/\{erx_ui,"#{VERSION}"\},\{erx_shell,"#{VERSION}"\},
-                  \{erx_session,"#{VERSION}",load\},\{erx_app,"#{VERSION}",load\}\]\}\.\n\z/x,
-                 release, 'the app script starts the client side and only loads erx_session and erx_app')
+                  \{erx_session,"#{VERSION}",load\},\{erx_app,"#{VERSION}",load\},\{erx_bt_client,"#{VERSION}"\}\]\}\.\n\z/x,
+                 release, 'the app script starts the client side and the Bluetooth client and only loads erx_session and erx_app')
   end
 
   # A principal can run OTP's ssh daemon in its own session (docs/design-ssh.md, "Stages",

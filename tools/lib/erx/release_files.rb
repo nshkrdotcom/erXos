@@ -179,7 +179,8 @@ module Erx
     #   "Releases"), and erx_app (DOMAIN_ONLY), which the template's -eval starts and
     #   which mounts the app's package at /app and starts what it declares. Its .app
     #   file names erx_session, since the design starts a native app's program through
-    #   the session's servers.
+    #   the session's servers. It also takes the Bluetooth client, erx_bt_client, a
+    #   library, for an app granted `ble` (docs/design-bluetooth.md, "The client").
     # * usb, the USB domain's (docs/design-usb.md, "Domains and authority"): the USB
     #   stack, erx_usb, so no other domain parses what a USB device writes, and erx_blk,
     #   a library application, whose erx_blk_usb is a medium's block transport. The script
@@ -224,7 +225,7 @@ module Erx
                         'ssh' => [*DOMAIN_BASE, 'asn1', 'crypto', 'public_key', 'ssh'].freeze,
                         DomainStartup::APP_TEMPLATE.release =>
                           [*SESSION_BASE, 'compiler', 'asn1', 'crypto', 'public_key', 'ssl', 'inets', *DomainStartup::DISPLAY_CLIENT,
-                           'erx_ui', 'erx_app'].freeze,
+                           'erx_ui', 'erx_app', 'erx_bt_client'].freeze,
                         'usb' => [*DOMAIN_BASE, 'erx_blk', 'erx_usb'].freeze,
                         'bt' => [*DOMAIN_BASE, 'crypto', 'erx_bt'].freeze,
                         'pcie' => [*DOMAIN_BASE, 'erx_pcie'].freeze,

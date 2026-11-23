@@ -332,6 +332,11 @@ limit bt_write_queue u8 16
 # (3.3.3), after which an unconfirmed indication ends the link.
 limit bt_handler_timeout_ms u32 5000
 limit att_transaction_timeout_ms u32 30000
+# How often erx_gatt asks again for a service whose previous handler's end has not yet
+# reached the registry, and how long it asks before it answers `attached`
+# (docs/design-bluetooth.md, "The client").
+limit bt_attach_retry_ms u32 50
+limit bt_attach_wait_ms u32 5000
 # The Security Manager Protocol over its fixed channel (Core 6.3 Vol 3 Part H), as
 # erx_smp and erx_smp_core use it: a responder that pairs by LE Secure Connections
 # only (docs/design-bluetooth.md, "Secure Connections only"). The command codes (3.3,

@@ -28,6 +28,21 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
 * [Low] bluetooth suite, the controllers' log has no size bound (`BtDomain::Controllers`): the DEBUG log records every HCI
   packet until the deadline.
 
+* [High] bluetooth, the serial service on QEMU and the board (docs/design-bluetooth.md "Stage 3: the serial
+  service", "On QEMU against Bumble"): `erx_gatt_serial` and the echo `erx_gatt_echo_test` are built and tested on
+  the host only. Missing: a domain of the Bluetooth suite's own that holds `ble` for `nus` and boots
+  `erx_gatt_echo_test` from a test release (`tools/lib/erx/bt_domain.rb`, as `ECHO_BOOT` boots `erx_echo_test`),
+  the peer `test/bt/peer/serial_peer.py` (connect, Exchange MTU, subscribe to `tx`, 64 KiB through `rx` with
+  `write` with response, every byte back in order) with the harness that starts it against Bumble's second
+  controller, the suite's serial row and its seeded fault (`send/2` cutting at `Mtu`), and the board's run with
+  `blew nus` from a Mac. Unverified until then: that the funnel delivers the registry's events to a handler in
+  another domain in the shape `erx_gatt:event/2` takes, and that a facet call's answer crosses back as the host
+  stand-in has it.
+* [Medium] bluetooth, a handler attached mid-connection sends at the default MTU (`erx_gatt_serial`; the item
+  "what a handler hears" below): the registry does not replay a link's MTU at `attach`, so after a restart of the
+  serial handler `send/2` cuts at 20 octets until the phone's next Exchange MTU, which most phones send once.
+
+
 ## Security residuals
 
 * [Medium] bluetooth, the `bt` row's grants (docs/design-bluetooth.md "The Bluetooth domain"): the design has the
@@ -204,10 +219,9 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
 * [High] bluetooth, the `ble` facet's side in other domains (docs/design-bluetooth.md "The `ble` facet",
   "Declarations: `abi/gatt`"): `erx_ble_facet` admits a grantee's operations and forwards them to the registry,
   but no app uses it. Missing: `ble_grant`'s refusals (`tools/lib/erx/manifest.rb`, `check_ble_grants`) of a
-  service two rows name, two served services of one UUID, and advertising data that do not fit; the client
-  `erx_gatt`, which takes the events' envelope off, and the `erx_gatt_service` behaviour (a first version, written
-  before the facet's redesign, is on branch `bt-gatt-client`, commit bda412e16, with its EUnit suite and fuzz
-  target: start from it, not from scratch); and the served
+  service two rows name, two served services of one UUID, and advertising data that do not fit; a fuzz target
+  of the client's readers, `erx_gatt:event/2` and `answer/2` (`erlang/apps/erx_bt_client`; branch
+  `bt-gatt-client`, commit bda412e16, has one written before the facet's redesign); and the served
   services read from the manifest's rows, where `erx_bt_sup` serves every declared service. Whether the
   registry's monitor of a handler in another domain fires when that handler or its domain ends is unverified,
   and so is the mint's success path: no suite grants `ble`, so no test sees the boot view's `services` and limits
@@ -222,12 +236,11 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   services (`erx_principal`) and the narrowing in `erx_domain_core:app_session/4`; the `EPERM` and `EEXIST` closes;
   the recovery's publication without each app whose record it changes or whose package it no longer admits, before
   it registers (`erx_pkg_plan:recover/2`, PK7); a service's state as its handler's (docs/design-bluetooth.md "A
-  service belongs to its handler"): the registry's check that `set`, `notify` and `indicate` come from the
-  handler, its `{handler, Service, Handler | none}` to every link and the values dropped at a handler's end
-  (`erx_gatt_registry`), the handler a link's write carries and the link's reset at a change (`erx_bt_link_core`);
-  the client modules `erx_gatt_service` and `erx_gatt_serial` with `erx_gatt:attach/1`'s retry and the limits
-  `bt_attach_retry_ms` and `bt_attach_wait_ms` in `abi/formats/bluetooth.txt`, and their entries in the SDK's
-  `public.txt`; the tests the designs pair with seeded faults, the Bluetooth suite's two-package cases among them.
+  service belongs to its handler"): the registry's `{handler, Service, Handler | none}` to every link and the
+  values dropped at a handler's end (`erx_gatt_registry`), the handler a link's write carries and the link's reset
+  at a change (`erx_bt_link_core`); the client modules' entries in the SDK's `public.txt` and `erx_bt_client` in
+  the app template's release (`tools/lib/erx/release_files.rb`); the tests the designs pair with seeded faults,
+  the Bluetooth suite's two-package cases among them.
   Unverified: that the end of a handler in another domain reaches the registry within `bt_attach_wait_ms`; the
   suite's removal and restart cases settle it.
 * [Medium] bluetooth, what a handler hears (`erx_gatt_registry`; docs/design-bluetooth.md "The `ble` facet"):

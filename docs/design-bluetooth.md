@@ -1993,7 +1993,11 @@ own session, whose public functions the SDK lists
   answering `{ok, State}`. The callbacks run in the handler's process,
   so their calls of `erx_gatt:set/3`, `notify/4` and `indicate/4` come
   from the owner, and another process of the app reaches the service
-  through `call/2`.
+  through `call/2`. The handler monitors the facet and stops with
+  `{facet, Reason}` when it ends: the Bluetooth domain's restart takes
+  the registry and every attachment, and a handler that only listens
+  would otherwise hear nothing more; its supervisor's restart attaches
+  through the facet the new incarnation mints.
 * **`erx_gatt_serial`**, the serial service over `erx_gatt_service`
   ([For apps](#for-apps)): `erx_gatt_serial:start_link(Owner)` starts
   the handler of `nus`, registered in the session under its module's
@@ -2255,7 +2259,10 @@ a library over the facet, turns it into a byte stream for each phone:
 `rx` writes, each `{write, ...}` answered at once, become `{serial, Conn,
 Bytes}` messages to the app, and `erx_gatt_serial:send(Conn, Bytes)`
 cuts the bytes into notifications of at most `Mtu - 3` octets on `tx`,
-returning once all are queued. The stream is as reliable as ATT makes it:
+returning once all are queued; a notification the link's full queue
+refuses `busy` is asked again until the queue takes it, for at most
+`bt_handler_timeout_ms`, after which `send/2` answers `{error, busy}`.
+The stream is as reliable as ATT makes it:
 a phone that writes faster than the app reads loses the commands past
 `bt_write_queue` (ATT 3.3.2), which nRF-style terminal apps send as write
 commands; an app that needs every byte uses `write` with response.
