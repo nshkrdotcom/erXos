@@ -211,9 +211,16 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   from `abi/services/ble.txt`; admission's `Held` input and steps 7 and 8 (`erx_app_admit:admit/4`), kept by
   `erx_pkg` from its committed admissions and run in the recovery's and the build's order; the record's GATT
   services (`erx_principal`) and the narrowing in `erx_domain_core:app_session/4`; the `EPERM` and `EEXIST` closes;
-  the tests the two designs pair with seeded faults, the Bluetooth suite's two-package case among them. Unverified:
-  whether a restarted app session's attach can reach the registry before the end of its previous session's handler,
-  which answers `{error, attached}`; a `service NAME restart` in the Bluetooth suite settles it.
+  the recovery's publication without each app whose record it changes or whose package it no longer admits, before
+  it registers (`erx_pkg_plan:recover/2`, PK7); a service's state as its handler's (docs/design-bluetooth.md "A
+  service belongs to its handler"): the registry's check that `set`, `notify` and `indicate` come from the
+  handler, its `{handler, Service, Handler | none}` to every link and the values dropped at a handler's end
+  (`erx_gatt_registry`), the handler a link's write carries and the link's reset at a change (`erx_bt_link_core`);
+  the client modules `erx_gatt_service` and `erx_gatt_serial` with `erx_gatt:attach/1`'s retry and the limits
+  `bt_attach_retry_ms` and `bt_attach_wait_ms` in `abi/formats/bluetooth.txt`, and their entries in the SDK's
+  `public.txt`; the tests the designs pair with seeded faults, the Bluetooth suite's two-package cases among them.
+  Unverified: that the end of a handler in another domain reaches the registry within `bt_attach_wait_ms`; the
+  suite's removal and restart cases settle it.
 * [Medium] bluetooth, what a handler hears (`erx_gatt_registry`; docs/design-bluetooth.md "The `ble` facet"):
   `write` and `subscribed` name the characteristic without its service, though a handler may handle several
   services whose characteristics share a name; and a handler that attaches while a phone is connected hears

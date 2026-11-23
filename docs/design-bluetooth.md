@@ -378,6 +378,71 @@ the controller's resources are freed only on its report: a handle's
 outstanding ACL packets return to the credit count at its Disconnection
 Complete, as HCI 4.2 states, and not before.
 
+### A service belongs to its handler
+
+A served service has at most one handler, the process that attached to
+it ([The `ble` facet](#the-ble-facet)), and that process holds it until
+its end: no operation detaches, and the registry's monitor of the
+handler is the one way an attachment ends. A pid never names two
+processes within a boot
+([design-domains.md](design-domains.md#invariants), D1), so a service's
+handler, or `none`, names its **owner**, and an owner, once gone, never
+comes back. Everything about a service that changes while the domain
+lives belongs to its owner, and every path into that state compares
+against the owner:
+
+* **What the owner does.** The registry takes `set`, `notify` and
+  `indicate` of a service only from its handler, the caller its facet
+  wrote into the forwarded request, and `reply` only for a write it
+  handed that handler. A request that reaches the registry
+  after the end of its caller has detached it, however long it was on
+  its way from a facet that has since ended, is refused `{error,
+  not_attached}`. That is the check
+  [design-domains.md](design-domains.md#facets) asks of a service that
+  must take back what a revoked grant started: a check on each use
+  against something that ends with the grant, here the handler, which
+  ends with the grantee's session. An `attach` forwarded before its
+  caller's end and taken after it makes the ended process the owner
+  only until the monitor's `'DOWN'`, which a monitor of an ended process
+  gives at once; meanwhile only writes reach it, and the links'
+  deadline answers them.
+* **What the phone sends the owner.** Each link keeps, for each served
+  service, the handler the registry last told it of. A write carries
+  the handler under which its first byte reached the link: a Write
+  Request or Write Command its own arrival's, a prepared write its first
+  Prepare Write's. The registry hands a write to the service's handler
+  only when that handler is the one the write carries, and otherwise
+  answers it Unlikely Error, as a service with no handler is answered.
+  So a phone's bytes sent while one process owned a service, a Prepare
+  Write queue, write commands queued behind a request or a write on its
+  way to the registry as the owner changes, reach that owner or nobody.
+* **What the owner left.** At each change of a service's owner, an
+  `attach` or a handler's end, the registry sends every link `{handler,
+  Service, Handler | none}`. The link then serves the service's
+  declared initial values and drops the service's notifications still
+  waiting for credits. The registry drops, at a handler's end, the
+  values that handler set, so a link that joins later is answered the
+  declared values too. A new owner starts from the declarations, and a
+  service no one owns serves only them.
+
+What a phone can see across a change is bounded by one message inside
+the domain: until its link takes the change, the link serves the
+previous owner's values and sends the notifications it had already
+queued; nothing the phone sends meanwhile reaches the next owner. A
+notification already handed to the controller, and an indication
+already sent, complete as they would have.
+
+The construction adds one field to a link's write and one message from
+the registry to its links; the handler's pid is already in every
+request and the registry already monitors it. Two other ways were
+rejected. Draining the old owner's effects before its services are free
+would make a removal or an update wait on the Bluetooth domain, a
+domain the package process otherwise never waits on, since it frees the
+services at its commit. Ending the links that touched the service would need the
+registry to know what each link holds, which only the link knows, and
+would cut a phone's other services, the console's among them, at every
+restart of an app.
+
 ### One owner, one step
 
 Each kind of process owns its state and decides by a pure step that
@@ -388,8 +453,8 @@ stack's owners do
 | Owner | Its state | Its pure core | Effects |
 | --- | --- | --- | --- |
 | the **controller process**, `erx_bt_hci` | the bring-up, the command slot, ACL credits, the map from handles to links, advertising | `erx_bt_hci_core` | items for its writer, which writes `data` and `ctl`; acknowledgements to its reader; starting and ending link processes ([The controller process's effects](#the-controller-processs-effects)) |
-| a **link process**, `erx_bt_link`, one per connection | L2CAP reassembly, the ATT bearer (MTU, the request in progress, queued commands, the prepared write, the indication in flight), the notifications waiting for credits, subscriptions, its one key and whether it is encrypted, the pairing in progress | `erx_bt_link_core`, over `erx_gatt_server`, `erx_gatt_gate` and `erx_smp_core` | messages to the controller process, the registry, the window and the store, and its two calls at its start ([The link's messages](#the-links-messages)) |
-| the **registry**, `erx_gatt_srv` | the table, each service's handler, the live `Conn` map, the writes handed to handlers | `erx_gatt_registry` | a monitor of each link and each handler, events to handlers, requests to links |
+| a **link process**, `erx_bt_link`, one per connection | L2CAP reassembly, the ATT bearer (MTU, the request in progress, queued commands, the prepared write, the indication in flight), each service's handler as the registry last told it, the notifications waiting for credits, subscriptions, its one key and whether it is encrypted, the pairing in progress | `erx_bt_link_core`, over `erx_gatt_server`, `erx_gatt_gate` and `erx_smp_core` | messages to the controller process, the registry, the window and the store, and its two calls at its start ([The link's messages](#the-links-messages)) |
+| the **registry**, `erx_gatt_srv` | the table, each service's handler and the values it set, the live `Conn` map, the writes handed to handlers | `erx_gatt_registry` | a monitor of each link and each handler, events to handlers, requests to links |
 | the **store**, `erx_bt_store` | the identity address, from stage 1; the bonds, from stage 4 | `erx_bt_state` (stage 4) | reads and writes through the store's backend; a monitor of each link holding a bond, and `forgotten` to it (stage 4) |
 | the **window**, in `erx_bt_fs` (stage 4) | whether a pairing window is open, its mode and its opener's fid; the pairing wait | `erx_bt_window` | lines on the opener's `pair` file; a monitor of each link that owes it a pairing's outcome |
 
@@ -415,7 +480,8 @@ round trip to a handler is one step out and one step back.
 | a phone's subscription lost at a power cut | a bonded link's configuration write is answered only once the store has kept it |
 | a peer with a bonded phone's address changes that bond's kept subscriptions or table hash | a link is its bond's only from its encryption with the bond's key, and only the bond's own link writes them |
 | a window closed as its pairing completes leaves a kept bond counted failed, or a failure kept | the link's one step that hands the bond to the store decides which side the close fell on, and the store's answer is the outcome |
-| an app's crash leaves dangling attributes | attributes are configuration; the handler detaches, values stay |
+| an app's crash leaves dangling attributes | attributes are configuration; the handler detaches, and its service serves its declarations |
+| a removed or restarted app's late `set` or notification, or a phone's bytes buffered for it, reaches the service's next owner | a service's state is its handler's, and every effect and every write is compared with the handler it was made under ([A service belongs to its handler](#a-service-belongs-to-its-handler)) |
 
 ## Stages
 
@@ -1619,8 +1685,10 @@ would stop the Bluetooth domain at start with `{handles_past_0xffff,
 Count}`, never serve a wrong table. (That 0xFFFF is the last valid
 handle, ATT 3.2.2, is unverified: it is the 16-bit field's last value.)
 
-A characteristic's value is the one the handler last set, or the
-declared initial value, or empty: a read never waits on an app. A read of
+A characteristic's value is the one its service's current handler last
+set, or the declared initial value, or empty: a read never waits on an
+app, and a handler's values end with it
+([A service belongs to its handler](#a-service-belongs-to-its-handler)). A read of
 a value that changes between two Read Blob requests may tear, which ATT
 leaves to the higher layer (3.2.9); the one reader such tearing would
 hurt, a long read of a value an app changes while a phone reads it, is
@@ -1764,25 +1832,39 @@ What happens to an app's grant at each event:
   `{gatt_not_offered, S}`. No run-time rule decides between a domain and
   an app.
 * **Removal.** The publication without the app ends its session, its
-  facet ends with it, and the registry's monitor detaches its handler.
-  The package leaves the admitted set, so its services are free for the
-  next install. The record keeps its `gatt` until the reboot, as it
-  keeps the rest, but no session of a removed app starts
-  ([design-packaging.md](design-packaging.md#invariants), PK7). The
-  values its handler set stay and are served to phones until the next
-  handler sets its own, as after any handler's end.
+  facet ends with it, and the registry's monitor detaches its handler,
+  which ends its ownership of its services: their values return to the
+  declared ones, and what a phone sent while the app owned them reaches
+  no one else ([A service belongs to its
+  handler](#a-service-belongs-to-its-handler)). The package leaves the
+  admitted set, so its services are free for the next install at once,
+  before the handler's end has reached the registry; a next owner's
+  attach waits for that end in `erx_gatt` ([The client](#the-client)).
+  The record keeps its `gatt` until the reboot, as it keeps the rest,
+  but no session of a removed app starts
+  ([design-packaging.md](design-packaging.md#invariants), PK7).
 * **Update.** The update ends the app's session before its package's
-  name changes; admission of the new package counts the services of
-  every admitted app but the one of the name, so an update keeps its own
-  services, may add free ones and may drop some, which are free from its
-  commit on. The next session's facet names the new set.
+  name changes, which ends its handler's ownership as a removal does;
+  admission of the new package counts the services of every admitted
+  app but the one of the name, so an update keeps its own services, may
+  add free ones and may drop some, which are free from its commit on.
+  The next session's facet names the new set.
 * **A restart of the app's session.** The new session's grant is minted
-  anew and its handler attaches again. Its attach is answered `{error,
-  attached}` if the end of the previous session's handler has not yet
-  reached the registry. That fails safe: no other app can hold the
-  service, so an attach made again once the end has arrived succeeds,
-  and until then the service answers writes as any service without a
-  handler does.
+  anew and its handler attaches again, a new owner that starts from the
+  declared values and sets its own. Its attach may meet the previous
+  session's handler, whose end has not yet reached the registry, and
+  `erx_gatt` asks again until it has ([The client](#the-client)).
+* **A recovery of the package process.** A recovery after the boot's
+  reads the package directory again, which a crafted storage domain may
+  have changed, for instance by putting back an older package of an
+  installed app that declares other services. Before it registers a
+  record that differs from the one the registry holds, it publishes a
+  set without that app, and without every app whose package it no longer
+  admits, which ends their sessions
+  ([design-packaging.md](design-packaging.md#boot-and-recovery)). So no
+  session runs on a grant its principal's record no longer gives
+  ([design-packaging.md](design-packaging.md#invariants), PK7), and two
+  live sessions never hold one service, whatever the recovery read.
 * **The Bluetooth domain's restart.** The new mint mints the grant of
   every live session again, as it mints every configured grant.
 * **Boot.** The recovery admits the image's packages first and then the
@@ -1798,21 +1880,25 @@ What happens to an app's grant at each event:
 its `admit/3` refuses a request naming any other service with `{error,
 not_granted}` and one of no operation's shape with `{error, badarg}`;
 the facet is the only path to the registry from another domain, so this
-is the one check of a grant, and the registry checks none. It finds the
+is the one check of a grant, and the registry checks no grant: it
+checks only the owner, that an effect on a service comes from the
+service's handler ([A service belongs to its
+handler](#a-service-belongs-to-its-handler)). The facet finds the
 registry by its registered name at each request, refusing `{error,
 unavailable}` while none is registered, and forwards the request with
 its caller, the grantee's process, which it took from the call. The
 registry's entry, `erx_gatt_srv:facet/3`, takes that caller and the
 operation and no grant; the forwarded call's `From` names the facet,
 and the caller in the request is the process that becomes a service's
-handler, hears its events and alone answers the writes handed to it.
+handler, hears its events, alone sets and notifies its values and alone
+answers the writes handed to it.
 
 | Operation | Answer |
 | --- | --- |
 | `attach(Service)` | `{ok, #{Char => #{max := Max, access := Accesses}}}`, each characteristic's maximum and its accesses with their levels: the caller becomes the service's handler, and hears `connected` for each live link once, when it handles no other service yet; the registry monitors it, and its end detaches it |
-| `set(Service, Char, Value)` | `ok`: reads return `Value` from now on |
-| `notify(Conn, Service, Char, Value)` | `ok` once queued for the link, or `{error, busy}` when its queue holds `bt_notify_queue` |
-| `indicate(Conn, Service, Char, Value)` | `ok` once the phone confirms |
+| `set(Service, Char, Value)` | `ok`: reads return `Value` from now on, until the caller's end; `{error, not_attached}` when the caller is not the service's handler |
+| `notify(Conn, Service, Char, Value)` | `ok` once queued for the link, or `{error, busy}` when its queue holds `bt_notify_queue`; `{error, not_attached}` as for `set` |
+| `indicate(Conn, Service, Char, Value)` | `ok` once the phone confirms; `{error, not_attached}` as for `set` |
 | `reply(Req, ok \| {error, Code})` | `ok`: the answer goes to the write's link when `Req` names a write the registry handed to the caller and not yet answered; any other answer is dropped |
 
 `Service` is one the grant names; `Char` one the declaration names. A
@@ -1848,9 +1934,69 @@ on and reach the new registry at their next request, but a handler is
 not told: it hears no `disconnected` for those links and no event
 after, its `reply` to a write handed out before is dropped, and its
 services serve reads from their declared initial values and answer
-writes Unlikely Error until it attaches and sets them again. `erx_gatt_service`, a behaviour over the facet,
-turns these into callbacks for an app that wants them, and `erx_gatt`'s
-calls are what it uses.
+writes Unlikely Error until it attaches and sets them again. Its next
+`set`, `notify` or `indicate` is refused `{error, not_attached}`, since
+the new registry holds no handler, and that answer is how the client
+learns of it ([The client](#the-client)).
+
+#### The client
+
+An app's code reaches the facet through three modules that run in its
+own session, whose public functions the SDK lists
+([design-packaging.md](design-packaging.md#the-sdk)):
+
+* **`erx_gatt`**, the client, the one module that takes the events'
+  envelope off. `erx_gatt:attach(Service)` asks the facet; an answer
+  `{error, attached}` it does not pass on at once but asks again every
+  `bt_attach_retry_ms`, 50 ms, until `bt_attach_wait_ms`, 5 s, has
+  passed since its first ask, and only then answers `{error, attached}`;
+  every other answer it passes on as it comes. Nothing tells a
+  would-be handler that a previous one's end has reached the registry,
+  which happens inside the Bluetooth domain, so the one that wants the
+  service asks again, and the deadline is the bound on how long that
+  end may take. The previous handler may be the same app's previous
+  session's, after a restart or an update, or another app's, after a
+  removal freed its services and this app was installed; both are ended
+  sessions, so the end arrives. A second process of the same session
+  that attaches a service its sibling holds meets no end and gets
+  `{error, attached}` at the deadline: a service has one handler, and
+  an app gives it one process. `set/3`, `notify/4` and `indicate/4`
+  make the facet's operations and answer theirs, except `{error,
+  not_attached}`, at which they exit the calling process with
+  `{not_attached, Service}`: the caller is no longer the service's
+  owner, after the registry's restart, and only a new attach makes it
+  one again, which its supervisor's restart does.
+* **`erx_gatt_service`**, a behaviour whose process is one service's
+  handler. `erx_gatt_service:start_link(Service, Module, Args)` attaches
+  through `erx_gatt:attach/1`, then calls `Module:init(Args)`, which
+  answers `{ok, Values, State}`, and sets each characteristic of
+  `Values`, a map from characteristic to value, before it answers `{ok,
+  Pid}`; an attach that fails is `{error, Reason}`, `{error, attached}`
+  past the deadline among them, so the app's supervisor sees a start
+  that failed and restarts it within its intensity. A write is
+  `Module:handle_write(Conn, Char, Value, State)`, whose `{Answer,
+  State}` is the write's reply, `ok` or `{error, Code}`; every other
+  event of the table above is `Module:handle_event(Event, State)`,
+  answering `{ok, State}`; `erx_gatt_service:call(Server, Request)` is
+  `Module:handle_call(Request, From, State)`, answering `{reply, Reply,
+  State}`, and any other message `Module:handle_info(Info, State)`,
+  answering `{ok, State}`. The callbacks run in the handler's process,
+  so their calls of `erx_gatt:set/3`, `notify/4` and `indicate/4` come
+  from the owner, and another process of the app reaches the service
+  through `call/2`.
+* **`erx_gatt_serial`**, the serial service over `erx_gatt_service`
+  ([For apps](#for-apps)): `erx_gatt_serial:start_link(Owner)` starts
+  the handler of `nus`, registered in the session under its module's
+  name, which sends `Owner` `{serial, Conn, Bytes}` messages and the
+  `connected` and `disconnected` events; `erx_gatt_serial:send(Conn,
+  Bytes)` calls it.
+
+`bt_attach_retry_ms` and `bt_attach_wait_ms` are limits of
+`abi/formats/bluetooth.txt`, beside `bt_handler_timeout_ms`. That the
+end of a handler in another domain reaches the registry within 5 s is
+unverified, as the monitor's firing itself is
+([todo-bluetooth.md](todo-bluetooth.md)); the Bluetooth suite's restart
+and removal cases settle it.
 
 ### Links: the fixed channels
 
@@ -1949,11 +2095,13 @@ that never waits on a link:
    address names a candidate, not a proven bond: what of the bond the
    link may use before its encryption is the key alone (below).
 2. `erx_gatt_srv:join(Conn, #{address := Address}) -> #{table := Table,
-   values := Values}`. The registry maps `Conn` to the link, tells the
-   services' handlers `connected` at level `open` and not bonded, as
-   every link starts, and answers the table and the values the handlers
-   last set. It takes `join` and `set` in one order, so every `set`
-   after the values it answered reaches the link.
+   values := Values, handlers := Handlers}`. The registry maps `Conn` to
+   the link, tells the services' handlers `connected` at level `open`
+   and not bonded, as every link starts, and answers the table, the
+   values the current handlers set and each served service's handler or
+   `none`. It takes `join`, `set` and every change of a handler in one
+   order, so every `set` and every `{handler, ...}` after what it
+   answered reaches the link.
 
 `erx_bt_link_core:new/1` builds the core from these. What the controller
 process sends meanwhile waits in the mailbox, within the link's backlog
@@ -2022,11 +2170,12 @@ takes it and forwards nothing.
 | window, link | `{admission, Tag, Verdict}` | at once, for each `admit` | the Security Manager |
 | | `{withdraw, Tag}` | the window closes while the link runs its pairing, before its `keeping` | Pairing Failed, Unspecified Reason, and the outcome `withdrawn` ([The pairing window](#the-pairing-window)); after the link sent `keeping` it changes nothing |
 | | `{wait, Ms}` | at once, for each `wait` | at `0` the link sends the Security Request unless the phone has begun encryption; otherwise it asks again `Ms` later |
-| link, registry | `{write, Ref, Key, Value}` | a write the gate allowed | the service's handler, which the facet hands it under a fresh `Req` |
+| link, registry | `{write, Ref, Key, Value, Handler}` | a write the gate allowed; `Handler` is the service's handler as the link knew it when the write's first byte arrived | the service's handler, which the registry hands it under a fresh `Req` when it is `Handler`, and otherwise answers Unlikely Error; without `Handler`, bytes a phone sent while one app owned a service could reach the next ([A service belongs to its handler](#a-service-belongs-to-its-handler)) |
 | | `{subscribed, Key, none \| notify \| indicate}`, `{mtu, Mtu}` | the phone wrote a configuration; the bearer's MTU changed | the handlers' `subscribed` and `mtu` |
 | | `{security, #{level := L, bonded := B}}` | the link's level or `bonded` changed | the handlers' `connected` |
 | registry, link | `{answer, Ref, Answer}` | the handler answered the write `Ref` | the write's response; an answer to a write no longer awaited changes nothing |
 | | `{set, Key, Value}` | a handler set a value | reads return it |
+| | `{handler, Service, Handler \| none}` | an `attach` of the service, or its handler's end | the service's owner as later writes carry it; the link serves the service's declared values and drops its notifications still waiting for credits. Without it a removed app's values and queued notifications would stay before its successor's phones |
 | | `{notify, notify \| indicate, Key, Value}`, a request of `gen_server:send_request/2`, answered `ok \| {error, Reason}` | a handler's `notify` or `indicate` | the registry answers its own caller from the answer, and the request's monitor makes a link that ends first answer `{error, gone}`; a caller's `From` passed to the link would wait for nothing when the link ends |
 | link, store | `{keep, Tag, Bond, Subscriptions}` | the pairing's third phase ended | the store keeps the bond, tells the window the outcome and, at `ok`, monitors the link ([Bonds and the store](#bonds-and-the-store)) |
 | | `{subscriptions, Subscriptions}` | a link encrypted with a kept bond's key changed a configuration | GATT 3.3.3.3: the Write Response waits for the store's answer |
@@ -2605,7 +2754,7 @@ a radio peer can do:
 | Adversary | Can | Cannot |
 | --- | --- | --- |
 | A radio peer, anyone in range | send any packet the controller forwards; connect while a slot is free and so hold it; read and write `open` characteristics; pair during a `nodisplay` window and so reach `encrypted` characteristics | reach an `encrypted` characteristic without a bond made in a window, or an `authenticated` one without the passkey the window showed; make the system domain parse a radio byte, since no `ble` grant names it; make the Bluetooth domain hold more than its bounds; replace a bond |
-| An app holding a `ble` grant | attach to, set, notify and indicate the services its grant names, and answer the writes handed to it; keep its facet's requests in flight up to the row's `in_flight` | handle, set or notify a service its grant does not name, which its facet refuses before the registry sees it, an installed app's grant naming only the services admission gave it and no other app; take a service another app or a configured domain holds by installing a package that declares it, which admission refuses; answer a write handed to another process; reach a link, the store or the controller except through the registry |
+| An app holding a `ble` grant | attach to, set, notify and indicate the services its grant names, and answer the writes handed to it; keep its facet's requests in flight up to the row's `in_flight` | handle, set or notify a service its grant does not name, which its facet refuses before the registry sees it, an installed app's grant naming only the services admission gave it and no other app; take a service another app or a configured domain holds by installing a package that declares it, which admission refuses; set, notify or receive a phone's bytes on a service once its handler has ended, or leave values or buffered bytes for the service's next owner, since a service's state is its handler's; answer a write handed to another process; reach a link, the store or the controller except through the registry |
 | The controller, its closed firmware | everything a radio peer can; read every LTK erXos gives it; forge what a bonded peer could send | reach anything erXos does not send it: it sees the line, not the machine |
 | A compromised Bluetooth domain | everything the controller can; read the bonds; act as any bonded phone toward the apps it serves; see every byte of the console's lines, passphrases included | reach a device, a partition or a facet beyond its row's; log anyone in without the passphrase, which the vault checks |
 
@@ -2714,6 +2863,17 @@ its line at the system domain's `/proc`: bytes each way, breaks, resets.
   link ended before answering it; a notification queued before
   the end is dropped with the link's queue, as the controller drops what
   it had.
+* **A handler's end and its effects in flight** race only at the
+  registry and at each link, and the owner decides both: the registry
+  takes an effect only from the service's current handler and hands a
+  write on only under the handler it carries, and its `{handler, ...}`
+  reaches each link before any `set` of the next owner, since the
+  registry sends both in its one order. A request forwarded by a facet
+  that has since ended, a write a link sent before it took the change,
+  and the handler's end reaching the registry after its successor first
+  asked to attach each fall in one of these cases, and no process waits
+  on another for any of them
+  ([A service belongs to its handler](#a-service-belongs-to-its-handler)).
 * **One window** exists at a time; its state and the pairing wait are
   the window process's, and the link asks it at a Pairing Request and
   before a Security Request, and tells it a failure or that the store
@@ -2790,9 +2950,9 @@ and stops in the reverse order, the controller process first.
 | a link whose backlog of the controller's messages reaches `bt_link_backlog` | the controller process | the link: its handle is disconnected with `0x14` and it ends at `link_down` | the phone reconnects |
 | a malformed ATT request | the ATT server | nothing: Invalid PDU | none needed |
 | a handler that does not answer in 5 s | the link's deadline | nothing: Unlikely Error | none |
-| the registry's crash, or the store's restart before it | `erx_bt_sup` | the registry, with every attachment, every write handed to a handler and the values handlers set; what follows it in `erx_bt_sup`, every link included | `erx_bt_sup` restarts them; the facets and the mint stay, a request meanwhile is refused `{error, unavailable}`, and each app must attach and set its values again, though nothing tells it to ([The `ble` facet](#the-ble-facet)) |
+| the registry's crash, or the store's restart before it | `erx_bt_sup` | the registry, with every attachment, every write handed to a handler and the values handlers set; what follows it in `erx_bt_sup`, every link included | `erx_bt_sup` restarts them; the facets and the mint stay, a request meanwhile is refused `{error, unavailable}`, and each app must attach and set its values again: its next `set`, `notify` or `indicate` is refused `{error, not_attached}`, which ends its handler for its supervisor to restart, and a handler that makes none of these is not told ([The client](#the-client)) |
 | the mint's end | `erx_bt_top` | the domain: every facet ends with its mint | the domain service restarts the domain within its intensity, and its mint mints every grant anew |
-| a handler that ends | the registry's monitor | the handler's attachment | the app attaches again |
+| a handler that ends | the registry's monitor | the handler's attachment: its services' values return to the declared ones, the writes handed to it are left to the links' deadlines, and what phones sent under it reaches no one | the app's supervisor restarts the handler, which attaches again through `erx_gatt`'s retry and sets its values ([The client](#the-client)) |
 | the store answers `unavailable`, returns a blob that does not decode, or leaves a `put` unconfirmed, a backend call past `bt_store_timeout_ms` included | the store | the pairing; at start, the bonds: the domain runs without them and refuses pairing; the configuration write; `forget` | `/proc/bt` and the log say `store_unavailable` or `store_unreadable`; the store is `unknown`; after an unconfirmed `put` a change reads first and fails unless the read succeeds; after the start's read the next start reads again; `forget all` alone replaces a blob that does not decode ([Bonds and the store](#bonds-and-the-store)) |
 | a broken line, its driver's start failed included | the line service | reads of `data`; with no driver, writes too | the controller group's restart writes `reset`, which starts the driver again |
 | a line tree or the host link ends, or line 153's owner | its line group's supervisor | the group after it: on the Pi 4, the tree's fids and, for the owner, the host link's sessions | the group restarts, its owner first; the console, in no group, is untouched. The Bluetooth domain's `line` grant ended with the tree, and a grant of a system domain's service comes only in a ready answer, so `/line` answers `eio` to the controller group's restarts until the domain ends at its intensity; the domain service restarts it, and its ready answer brings a grant of the new tree |
@@ -2816,7 +2976,8 @@ and stops in the reverse order, the controller process first.
 | | `eio` | `forget ADDRESS` while the store stays `unknown`, or any `forget` whose `put` is unconfirmed |
 | | `enoent` | no bond has that identity |
 | `ble` facet | `{error, not_granted}` | a service the grant does not name, refused by the facet before the registry sees it |
-| | `{error, attached}` | the service already has a handler: for an app, only its previous session's, whose end has not yet reached the registry |
+| | `{error, attached}` | the service already has a handler: one whose end has not yet reached the registry, the same app's previous session's or, after a removal, the previous owner app's, which `erx_gatt:attach/1` waits out for up to `bt_attach_wait_ms` before it answers this; or another process of the same session that holds the service, which it answers at that deadline |
+| | `{error, not_attached}` | a `set`, `notify` or `indicate` whose caller is not the service's handler: another process of the grantee, or a handler whose end, or the registry's restart, has detached it; `erx_gatt` exits the caller with `{not_attached, Service}` |
 | | `{error, badarg}` | an operation of another shape, or a `reply` whose answer is not `ok`, `{error, value_not_allowed}` or `{error, Code}` with `Code` in `16#80..16#9F`, refused by the facet |
 | | `{error, unavailable}` | no registry is registered: before the row's `-eval` has started it, or while it restarts |
 | | `{error, no_such_characteristic}`, `{error, not_allowed}` | an unknown name; an access the declaration does not allow |
@@ -2892,6 +3053,9 @@ Each core's test is paired with the seeded faults it must catch.
 | a pairing's outcome, with the link, the window process and the store running | a window closed after the link's `keeping` leaves the bond kept, the window process logging `bonded` and counting no failure; a window closed before it fails the pairing `withdrawn`, and the store gets no `keep`; a link killed after `keeping` leaves the store's outcome as the pairing's; a window opened before that outcome answers `ebusy` | the window's monitor kept past `keeping` (the killed link counted `disconnected` while its bond is kept); the store's outcome sent to the link alone (the window waits) |
 | the store against a backend that never answers | a `put` is unconfirmed at `bt_store_timeout_ms`: the pairing fails `unavailable`, the window gets that outcome, a configuration write answers Unlikely Error, and the store is `unknown`; a `get` at the start leaves the store `unknown` at the same deadline | the backend called with no deadline (the test's own deadline passes with `keep` unanswered) |
 | an app's `ble` grant, through the session plan (`erx_domain_core:app_session/4`) over a template `ble` row whose `services` is `nus` and `nusb` | an app whose record holds `gatt nus` gets a `ble` row whose `services` is `[nus]`, and one whose record holds no `gatt` gets no `ble` row; the install refusals are admission's ([design-packaging.md](design-packaging.md#verification-and-testing)) | the row's `services` passed whole (the session's facet admits `nusb`, which the app did not declare) |
+| the registry's core (`erx_gatt_registry`), a service's owner, over a core serving `nus` and `nusb` with two joined links, handler `A` attached to `nus` and `nusb` | a `set` of `nus` from another caller is `{error, not_attached}` and changes no value; at `A`'s `down` every link gets `{handler, nus, none}` and `{handler, nusb, none}`, a later join answers `nus`'s declared values, and `A`'s `set` and `notify` stepped after that `down`, as a facet's late forwards, are `{error, not_attached}`; `B` then attaches `nus` and every link gets `{handler, nus, B}` before `B`'s first `set` reaches it; a write carrying `A` stepped after `B`'s attach is answered Unlikely Error and `B` hears nothing, and one carrying `B` reaches `B` | the caller check dropped from `set` (`A`'s late `set` reaches the value `B` owns); the write's handler compared with nothing (the write carrying `A` is handed to `B`); the values kept at a handler's `down` (the later join answers `A`'s value); `{handler, ...}` sent after the attach's own answer rather than in the same step (a `set` of `B` stepped at once reaches a link before the change) |
+| the link's core (`erx_bt_link_core`), a change of owner, with `nus` handled by `A` | a Prepare Write of `rx` under `A`, then `{handler, nus, none}` and `{handler, nus, B}`, then a second part and Execute Write: the write sent carries `A`; a Write Request after the change carries `B`; after `{handler, nus, none}` a Read of a readable characteristic of `nus` that `A` set, in the test's own declaration of `nus`, answers its declared value, and of two notifications queued for credits, one of `nus` and one of `nusb`, only `nusb`'s is sent | the handler taken at Execute Write rather than at the first Prepare Write (the prepared bytes carry `B`); the values kept at the change (the read answers `A`'s value); every queued notification dropped, or none (`nusb`'s lost, or `nus`'s sent) |
+| `erx_gatt:attach/1` against a stub facet, on a clock the test moves | a stub that answers `{error, attached}` twice and then `{ok, ...}` gives `{ok, ...}` after two waits of `bt_attach_retry_ms`; one that answers `{error, attached}` throughout gives `{error, attached}` once `bt_attach_wait_ms` has passed, and not before; `{error, not_granted}` and `{error, unavailable}` come back at the first ask; `set/3` answered `{error, not_attached}` exits the caller with `{not_attached, nus}` | the retry removed (the first case answers `{error, attached}`); the deadline removed (the second case asks without end, past the test's own deadline); `not_attached` returned rather than exiting (the caller lives on, detached) |
 
 ### Fuzz targets
 
@@ -2949,6 +3113,7 @@ stages' peers:
 | 2 | `test/bt/peer/gatt_peer.py`: writes, a write past the maximum, a subscription, notifications, an indication and its confirmation, a long write | each answers as declared; the handler sees each write once, in order | the link takes a second request before the handler answered the first |
 | 3 | `test/bt/peer/serial_peer.py`: 64 KiB through `erx_gatt_echo_test` with `write` with response | every byte comes back in order | `erx_gatt_serial:send/2` cutting at `Mtu` rather than `Mtu - 3` |
 | 3 | an app's grant, in a cell whose manifest offers `ble` and `gatt nus` in its `apps` row in place of the echo domain's grant: two test packages over `erx_gatt_echo_test`, `echo_a` and `echo_b`, each declaring `gatt nus`; `cp echo_a.app /apps/`, `service echo_a start`, then `serial_peer.py`; `cp echo_b.app /apps/`; `rm /apps/echo_a.app`, `cp echo_b.app /apps/`, `service echo_b start`, then `serial_peer.py` again | the bytes come back through `echo_a`; `echo_b`'s first copy fails with `EEXIST` and `/apps` holds no `echo_b.app`; after the removal its copy succeeds and the bytes come back through it | admission's check of the other apps' services removed: `echo_b`'s first copy succeeds |
+| 3 | the same cell, owners changing while a phone stays connected: with `echo_a` running, `test/bt/peer/gatt_peer.py` sends a Prepare Write of `rx` and waits for the harness; the harness runs `rm /apps/echo_a.app`, `cp echo_b.app /apps/` and `service echo_b start`; the peer then sends Execute Write and, after it, `serial_peer.py`'s stream; then `service echo_b restart` and the stream again | Execute Write is answered Unlikely Error and none of the prepared bytes comes back on `tx`; `echo_b`'s start attaches within `bt_attach_wait_ms`, after the removal and after the restart, and each stream comes back through `echo_b` whole | the link's write carrying the handler at Execute Write (the prepared bytes come back through `echo_b`); the registry ignoring a handler's end (`echo_b`'s start fails `{attached, nus}` at the deadline, and the stream gets Unlikely Error) |
 | 4 | `apps/pair.py --mode le --sc true --mitm true --io keyboard C tcp-client:...`, where the device configuration `C` fixes the peer's address and names its key store, `"keystore": "JsonKeyStore:K"` (`bumble/keys.py:198-206`, `:272-285`); the harness reads the passkey from the `pair` file and writes it to `pair.py`'s standard input, which `input()` reads (`apps/pair.py:102-107`, `:159-168`) | `bonded ... authenticated`; then `apps/gatt_dump.py --device-config C --encrypt` reads an `authenticated` value; after the Bluetooth domain restarts, it reads it again | the LTK reply sending a key of the wrong bond: encryption fails |
 | 4 | `apps/pair.py --sc false` | `failed ... secure_connections_required` | the Secure Connections flag check removed |
 | 4 | `apps/pair.py` while no window is open | Pairing Not Supported | the window check removed |
@@ -3046,7 +3211,17 @@ list ([todo-performance.md](todo-performance.md)):
   first, any app could take another's service while it restarts, and
   nothing would record which app a service belongs to. Narrowing each
   app's grant to the services admission gave it alone leaves the
-  registry's refusal for the one case of a session restarting.
+  registry's refusal for a previous handler whose end has not yet
+  reached it, of the same app or of the one a removal freed the service
+  from, which `erx_gatt` waits out.
+* **Draining a removed app's effects, or ending the links that touched
+  its services.** Either would keep a removed app's late effects and a
+  phone's buffered bytes from its successor, but the first makes a
+  removal wait on the Bluetooth domain and the second needs the registry
+  to know what each link holds and cuts a phone's other services;
+  making a service's state its handler's settles both with one field
+  and one message ([A service belongs to its
+  handler](#a-service-belongs-to-its-handler)).
 * **Reads answered by the handler.** A read that waits on an app needs a
   deadline, a policy for a missing handler and a consistency rule across
   Read Blob requests. A value the handler sets covers the constants,
@@ -3199,7 +3374,9 @@ list ([todo-performance.md](todo-performance.md)):
    template's one `ble` row, admission keeps a package's `gatt` only
    within that set and disjoint from every other admitted app's, and the
    domain service narrows each app's session's grant to it ([Who holds
-   `ble`](#the-ble-facet)). The rejected choices were to let only
+   `ble`](#the-ble-facet)); a service's state is its handler's, so
+   what one app left or was sent never reaches the next ([A service
+   belongs to its handler](#a-service-belongs-to-its-handler)). The rejected choices were to let only
    configured domains hold `ble`, and to grant the app template every
    offered service with the first attach winning ([Alternatives
    considered](#alternatives-considered)). The QEMU suite's echo stays a

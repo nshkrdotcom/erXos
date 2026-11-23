@@ -265,13 +265,13 @@ clock restart` starts it on the new package. `rm
 | **PK4.** Two apps see nothing of each other, and two signers' apps of one name share no directory | each is its own principal; the domain service computes every scope from the session's principal, the app's; the storage service roots each app's `data` grant at `apps/NAME/SIGNER/`, both parts from the principal's record | a scope, storage root or name pool derived from the template's key; a data root that leaves out the signer; two apps registered under one principal | a QEMU test with two apps; the mint's host test of one name under two signers, two roots; seeded: the mint's scope taken from the template's key, and a root of the name alone |
 | **PK5.** The system domain parses a package's header alone, through the generated reader, and loads no app code | the package process reads at most `pkg_header_max` bytes of a file and hands them to the file check; the image is parsed only in a session, the app's own at `/app` or a person's that mounted it | a system-domain module that mounts or reads a package's image | a source check over the system release that no module but the file check names a package's bytes, and that no system-release module calls `erx_verity` or `erx_erofs` on a package, with a seeded call from `erx_pkg` |
 | **PK6.** A package's name holds a whole package that the file check accepted and admission admitted | a copy is written into a temporary file that no open can reach by name; at its close the package process runs the file check (name agreement, exact length, size bound, header) and admission, makes the file durable, and only then renames it to `NAME.app`, over the package the name held if it held one, in one atomic rename; the recovery runs the same file check on every `NAME.app` before it admits one | a rename before the file is durable; an update that deletes the old package before its rename; a recovery that admits without the file check; a length check that accepts a short file | the planners' crash test over every write of an install and an update, with writes reordered between flushes; the file check's host test of a short, a long, an oversized and a misnamed file, run through the close and through the recovery |
-| **PK7.** No session of an app runs while its package's name changes, by a removal or an update | the start service's keepers are the only starters of an app's sessions (AP2: an app principal has no credentials, so no login starts one); before the package process deletes an app's file or renames another over it, it publishes a package set without the app, which the start service answers only once the app's sessions have ended, and it starts none until a set with the app arrives | a second starter of app sessions; a publication answered before the sessions end; an update that renames over a published package | the start table's host test of a publication that drops a running app; a QEMU test that removes a running app and one that updates it, each finding no session of it once the publication has answered; the build check that only `erx_starter_keeper` calls `erx_domain:start_app/2` (`app-starters`, `tools/lib/erx/chokepoint_rules/apps.rb`) |
+| **PK7.** No session of an app runs while its package's name changes, by a removal or an update, or while its principal's record changes, so every live session holds the grants its principal's record gives | the start service's keepers are the only starters of an app's sessions (AP2: an app principal has no credentials, so no login starts one); before the package process deletes an app's file or renames another over it, and before it registers a record that differs from the one the registry holds, it publishes a package set without the app, which the start service answers only once the app's sessions have ended, and it starts none until a set with the app arrives: an update at its step 7, a recovery before its first registration ([Boot and recovery](#boot-and-recovery)); a fresh install's app is in no set | a second starter of app sessions; a publication answered before the sessions end; an update that renames over a published package; a recovery that registers before that publication, or leaves running an app whose record it changes or whose package it no longer admits | the start table's host test of a publication that drops a running app; the recovery planner's host test of a directory changed under running sessions ([Verification and testing](#verification-and-testing)); a QEMU test that removes a running app and one that updates it, each finding no session of it once the publication has answered; the build check that only `erx_starter_keeper` calls `erx_domain:start_app/2` (`app-starters`, `tools/lib/erx/chokepoint_rules/apps.rb`) |
 | **PK8.** A removal or a purge reaches only what belongs to an app | a removal deletes one `NAME.app` inside the package directory, after a publication that drops only that package's row; a purge sends the storage service's `remove_app`, which reaches only the directory of app directories; a name that fails the app-name rule is refused before any effect | a removal that stops domains by principal name; a data removal through a grant wider than the app directories | the purge's host test with names `root`, a configured domain and a manifest principal, each refused with nothing stopped or deleted |
 | **PK9.** The system domain's atoms, tables and recovery work stay within the build's bounds | an app principal lives for the boot in one of `max` entries, which removal does not free until the next boot; its sessions take pooled names within its `names` quota; at most `max` copies are open at once and each holds its temporary file until its close is decided or its lifetime ends; the directory holds at most `max` installed packages, admitted, refused or shadowed, so a directory the package process wrote fits the recovery's bound, and recovery reads at most `pkg_scan_max` entries; the package process keeps a header's SHA-256, not its bytes | an unregister that frees an entry within the boot; a slot freed before its file is deleted; an install bound that counts admitted packages alone; a recovery that reads the directory unbounded | a host test that installs and removes `max` + 1 distinct names in one boot and finds the last refused with `apps_full`; the host test of `max` packages left refused by an ABI change; the recovery's fuzz target over listings past the bound |
 | **PK10.** A package of the image and one installed at run time give the same session | both pass the file check, `erx_app_admit:admit/4` and the same session plan; only what authenticates the header differs | a second admission or plan for one of them | the session plan's host test over one header admitted both ways |
 | **PK11.** No effect of an ended package lifetime happens once the next lifetime's recovery has begun | a lifetime is one run of `erx_pkg`; `erx_pkg_io` takes every file operation on `packages` and the start service every publication, each one at a time, finishing the one it began before taking the next, and each refuses an effect whose lifetime has ended; the recovery's first request is taken after every earlier one; copy handles name their lifetime, so they end with it; `erx_pkg_io` is never restarted: its end resets the machine | an executor that takes a request without checking its lifetime; a restarted `erx_pkg_io` while a request of its predecessor may be in flight; a copy handle that outlives its lifetime | the lifetime's host test: a package process killed with two copies writing and a close queued, after which no request of the ended lifetime reaches the simulated storage after the recovery's listing; seeded: an `erx_pkg_io` without the lifetime check |
 | **PK12.** An open of a package of `/apps`, and a mount over one, reads that package's bytes or `eio`, never another package's | the `apps` tree gives each package it publishes or admits a qid path drawn from the system domain's file version counter, which no restart of the tree resets, so no path names a second file while the system domain runs, as every server keeps its paths ([design-files.md](design-files.md#identity-and-version)); an open records the path of the package it opened, and `erx_pkg_io` serves a read only while its path table holds that path for the name, checked as it takes the read; it drops the name's entry as it takes the rename over the name or its deletion, and records a new entry only from the checkpoint request that makes the rename durable, when that checkpoint succeeds, or from the recovery's `path_entry` requests, all in its one-at-a-time order, in which the tree's walks and opens also learn their paths; a mount reads only through its one fid, one open of the tree; the session's export names each mount's tree when it is mounted, so a program's file table never joins a file of an old mount to one of a new mount at the same point ([design-files.md](design-files.md#narrowing-for-a-program)) | a qid path drawn from the name, the listing's order or a counter the tree's restart resets; a read that reopens the name instead of checking the open's package; a path taken out after the rename is sent, or checked before the read is taken; a `path_entry` request sent apart from the checkpoint; a path table that a second process writes or copies; a mount that reopens the name; an export tree named by its mount point | the `apps` tree's host tests of an open across an update and across a removal and reinstall, and of an old open's read queued around the rename; the export's host test of a point mounted again with an image whose inode numbers repeat |
-| **PK13.** Each GATT service is handled through at most one grant at a time: no two admitted apps declare one, and none declares one a configured domain's `ble` row names | the build derives one `ble` row for the app template, whose `services` is the `apps` row's `gatt`, and `ble_grant` refuses a service two rows name; admission keeps a package's `gatt` only within that row's set and apart from every other admitted app's (steps 7 and 8), at install, at boot and in the build's run over the `package` rows alike; the session plan narrows the row to the intersection of its set and the app's record; an app runs one session at a time | an admission that checks `Held` against the registry, which keeps a removed app's services, or not at all; a step 8 that counts the app's own name, refusing every update; a session plan that passes the row's set whole; a source `ble` row granted to another template | admission's corpus with each step seeded out; the session plan's host test ([design-bluetooth.md](design-bluetooth.md#host-tests-of-the-cores)); the manifest check's seeded rows; the Bluetooth suite's two-package case ([design-bluetooth.md](design-bluetooth.md#on-qemu-against-bumble)) |
+| **PK13.** Each GATT service is handled through at most one grant at a time: no two admitted apps declare one, and none declares one a configured domain's `ble` row names | the build derives one `ble` row for the app template, whose `services` is the `apps` row's `gatt`, and `ble_grant` refuses a service two rows name; admission keeps a package's `gatt` only within that row's set and apart from every other admitted app's (steps 7 and 8), at install, at boot and in the build's run over the `package` rows alike; the session plan narrows the row to the intersection of its set and the app's record; an app runs one session at a time; a record changes only while no session of its app runs (PK7), so no live session holds a service its record no longer gives, after a recovery that read a changed directory as after an update; and the Bluetooth domain makes a service's state its handler's, so a handler's end leaves nothing of it for the next ([design-bluetooth.md](design-bluetooth.md#a-service-belongs-to-its-handler)) | an admission that checks `Held` against the registry, which keeps a removed app's services, or not at all; a step 8 that counts the app's own name, refusing every update; a session plan that passes the row's set whole; a source `ble` row granted to another template; a recovery that registers a changed record while the app's session runs | admission's corpus with each step seeded out; the session plan's host test ([design-bluetooth.md](design-bluetooth.md#host-tests-of-the-cores)); the manifest check's seeded rows; the recovery planner's seeded registration before its first publication; the registry's and the link's host tests of a change of owner ([design-bluetooth.md](design-bluetooth.md#host-tests-of-the-cores)); the Bluetooth suite's two-package cases ([design-bluetooth.md](design-bluetooth.md#on-qemu-against-bumble)) |
 
 ## Data model
 
@@ -1707,8 +1707,7 @@ reads the listing of `installed/` and acts on it:
    `pkg_header_max` bytes read, the file check with `{signers, Keys}` and
    admission, in name order, each against the GATT services the image's
    packages and the installed ones admitted before it declare, a `path_entry` request for each package it lists, as
-   the file check judges it, and the registration of each admitted
-   package; a package refused stays on the medium, listed in `/apps`,
+   the file check judges it; a package refused stays on the medium, listed in `/apps`,
    removable there and shown `refused` with its reason at
    `/proc/packages`, and its refusal is logged; an installed package
    whose name a system update gave to a package of the image is
@@ -1723,15 +1722,32 @@ reads the listing of `installed/` and acts on it:
 4. an entry of no recognized form is left as it is, with a log line. No
    entry's name becomes an atom: names stay binaries until a
    registration, which takes one of the `max` entries;
-5. the package process publishes the package set. The first set of a
+5. when the registry already holds records, which only a recovery
+   after the boot's first can find, it publishes the set of the
+   admitted packages whose record the registry holds as it is. That
+   set leaves out each app whose record a registration would change
+   and each app whose package the recovery no longer admits, refused,
+   shadowed or gone, so its answer comes once their sessions have
+   ended, before any record changes (PK7). The directory may have
+   changed under running sessions: a crafted storage domain can put
+   back an older package of the same signer that declares other
+   needs or GATT services ([Security](#security)), and a session
+   whose grants were minted from an app's old record would otherwise
+   run beside one minted from another app's new record, both naming one
+   GATT service. At the boot's first recovery the
+   registry is empty and no app's session runs, so nothing is
+   published here;
+6. it registers each admitted package; a record the registry holds as
+   it is stays as it was;
+7. the package process publishes the package set. The first set of a
    boot is the boot's package set, whose rows the start service's boot
    applies `start.conf` to as it applies it to the manifest's rows; a later
    recovery's set, after a crash or a failed change, adds the rows it
    adds with no record, so they show `installed`, and ends the sessions
    of each row it drops.
 
-The recovery's publication is its lifetime's first, and the package
-process takes no close, removal or purge until it is answered, so the
+The recovery's publications are its lifetime's first, and the package
+process takes no close, removal or purge until the last is answered, so the
 first set of a boot holds what the image and the data partition held at
 boot and nothing an install of that boot added.
 
@@ -1834,6 +1850,7 @@ header.
 | the POSIX-lite personality, musl's functions as [design-programs.md](design-programs.md#the-posix-lite-personality) defines them | liberx's kernel calls and every `erx_*` C function |
 | a program's `main`, its standard descriptors, and a program that draws: `/dev/draw` with the draw protocol and `erx/draw.h`'s layouts and `erxdraw_*` stores, `/dev/kbd`, `/dev/mouse`, `/dev/wctl` | the channel, the program protocol and the startup message |
 | `app.txt`'s grammar and the package format | the boot image, the manifest and its rows |
+| Erlang, for an app whose package declares `gatt` ([design-bluetooth.md](design-bluetooth.md#the-client)): the behaviour `erx_gatt_service`, its `start_link/3` and `call/2` and its callbacks `init/1`, `handle_write/4`, `handle_event/2`, `handle_call/3` and `handle_info/2`, with the events `handle_event/2` receives (`connected`, `mtu`, `subscribed`, `disconnected`) and the answers a write's reply may be; `erx_gatt:set/3`, `notify/4` and `indicate/4`, called from those callbacks, with their answers and the exit `{not_attached, Service}`; `erx_gatt_serial:start_link/1` and `send/2`, with the `{serial, Conn, Bytes}` messages and events it sends its owner | `erx_gatt:attach/1` and `reply/2`, which the behaviour makes; the `ble` facet's operations as messages, the envelope `erx_gatt` takes off, and the modules of the Bluetooth domain |
 | Erlang: `erx_ui:open/1`, `tree/2` and `close/1`, its messages and the widget schema of `abi/formats/ui.txt`, whose properties and bounds `erx_ui_schema:property/1` gives as [design-display.md](design-display.md#widget-trees) states, with the types its spec names, and its trees, of type `erx_ui_schema:tree()`; `erx_win` and `erx_draw`'s exported functions, for an app that draws itself; `erx_prog_handler:start/1`; stock OTP 29.1.2 | every other function of erXos, `erx_ui:start/1` and the modules `erx_ui_lvgl` and `erx_ui_model` among them |
 
 **Erlang's host test entry.** `erx_ui_host` stands in for a display on
@@ -2071,7 +2088,10 @@ and removals, after the publication of the one it is carrying out
 A lifetime's effects are taken only while it is alive, by `erx_pkg_io`
 and the start service, each one at a time
 ([The package lifetime](#the-package-lifetime)). A crash of the package
-process ends no session: the next lifetime's recovery rebuilds the set
+process ends no session but those of the apps whose record the next
+lifetime's recovery changes or whose package it no longer admits, which
+its first publication ends before it registers anything
+([Boot and recovery](#boot-and-recovery), step 5); the recovery rebuilds the set
 from the manifest and the directory and publishes it, and until then the
 start service keeps the last set it took. A crash between a publication
 without an app and its deletion, or the rename of its update, leaves the
@@ -2130,7 +2150,7 @@ it no longer offers with `{gatt_not_offered, S}`; its data stays.
 | a missing application or a refused program | `erx_app` | `erx_app` ends with the application's start error or `{program, Reason}`, and the session with it |
 | the storage domain that serves `system`, or the data partition's, is down at boot | the package process's reads through `system` and `packages` | the image's packages wait for the first, the installed ones for the second; their rows are absent until the recovery runs |
 | a failed publication, rename, deletion or checkpoint | `erx_pkg_io`'s or the start service's answer | the request answers `eio`, the lifetime ends, and the recovery reconciles the directory, the registry and the set; an app stopped for an update is installed again on the package its name holds, stopped until its own `start` |
-| a crash of the package process | its supervisor | open copies answer `eio` at their next write or close and publish nothing; the recovery deletes their temporary files and publishes the set; past the supervisor's intensity the package process stays down and `/apps` answers `eio` |
+| a crash of the package process | its supervisor | open copies answer `eio` at their next write or close and publish nothing; the recovery deletes their temporary files, stops each app whose record it changes or whose package it no longer admits before it registers, and publishes the set, those apps' rows `installed` and stopped; past the supervisor's intensity the package process stays down and `/apps` answers `eio` |
 | an end of `erx_pkg_io` | the start service's application | the system domain ends and the machine resets; the boot's recovery follows |
 | a power cut inside an install, an update or a removal | the recovery | temporary files are deleted; each name holds one package whole, the old or the new, or none |
 | the package directory holds more than the scan bound, which only entries no lifetime wrote can make | the recovery | no installed package is admitted; `scan` is `overflow` at `/proc/packages`; creates and removals in `/apps` answer `eio`; the partition is repaired on another machine |
@@ -2196,7 +2216,9 @@ storage domain; an app's code; an app directory on the build host.
   data directory of its own: trusted keys authorize packages in general,
   and a name stays bound to its signer only within a boot. It cannot run
   code no trusted signer signed, change a byte of an image any session
-  reads, widen a grant, start an app with no start row, steer a purge at
+  reads, widen a grant, make a running session keep a grant its app's new
+  record does not give, and so two live sessions hold one GATT service
+  (PK7, PK13), start an app with no start row, steer a purge at
   anything that is not an app (PK8), or make the recovery spend past its
   bound (PK9). Refusing an older package needs a counter the platform's
   trust root keeps, as for system updates
@@ -2345,6 +2367,19 @@ request, for the races between a publication and a command.
   leave them: a recovery that admits the installed packages first, which
   refuses the image's; a removal that leaves its package in `Held`,
   which refuses another app's install of `nus` until the next boot;
+* a recovery after the boot's over a directory changed under running
+  sessions, the registry holding `a` with `gatt nus`, `b` with `gatt
+  nusb` and `c` with none, each running, and the directory holding
+  packages of the same signers that give `a` no `gatt`, `b` `gatt nus`
+  and `c` its record as it is: the plan publishes a set holding `c`
+  and neither `a` nor `b` before any registration, then registers `a`
+  and `b`, then publishes all three, `c` running throughout; seeded: the
+  registrations before the first publication, which registers `b`
+  with `nus` while `a`'s session runs on it; the first publication
+  leaving out only refused packages, which keeps `a` running; every
+  installed app left out, which stops `c`; the first publication made
+  at the boot's first recovery too, which gives the boot an empty first
+  set to apply `start.conf` to;
 * entries and the directory's bound: a removal that frees the entry,
   which lets `max` + 1 names install in one boot; a bound that counts
   admitted packages alone, which installs a new name beside `max`
@@ -2410,6 +2445,16 @@ request, for the races between a publication and a command.
   variable module or fun apart, which the app's check pins to a reviewed
   list: the example calling `erx_ui:start/1`, exported but not public;
   the example calling through a variable module;
+* the BLE client's boundary: the Bluetooth suite's `echo_a` and `echo_b`
+  ([design-bluetooth.md](design-bluetooth.md#on-qemu-against-bumble))
+  are packed through the exported SDK, with nothing but the SDK on
+  their paths, and the same xref check finds every call they make into
+  erXos's modules in `public.txt` and their callback module complete
+  against `erx_gatt_service`'s callbacks, under `warnings_as_errors`;
+  seeded: `erx_gatt_service:start_link/3` left out of `public.txt`,
+  which fails the packing; the test app calling `erx_gatt:attach/1`,
+  which the check refuses as not public; `handle_write/4` dropped from
+  the test app, which the compile refuses;
 * no list names an example, outside the kiosk cell's harness
   (`tools/lib/erx/kiosk.rb` and its suite) and its one packing recipe
   (`ImageApps.packed_kiosk`), which pack one through the SDK:
