@@ -16,8 +16,9 @@
 > it, tested on the host only; and pairing and bonding
 > with the pairing window and the bond store. On the Pi 4 the controller
 > comes up and a phone's scan sees the board advertising under the name
-> `erxos`; a connection, GATT access and pairing have not run on the
-> board. Designed: an installed app's own `ble` grant, the rule that a service's
+> `erxos`, and a Mac connects to it, discovers its GATT table and has a
+> read of the serial service's write-only characteristic refused; an echo
+> through an app and pairing have not run on the board. Designed: an installed app's own `ble` grant, the rule that a service's
 > state belongs to its handler beyond its owner's check of sets and
 > notifications, the console over the serial service,
 > and tests against a Bumble peer that scans, connects, reads, streams
@@ -591,8 +592,9 @@ the UART's pins and the controller's power as the firmware leaves
 them, the enable pin, and whether the patch is needed. A manual
 checklist with a phone follows. The board has run the domain to
 advertising on the ROM alone, with the pins set by the system domain's
-root at boot; connecting, reading and writing GATT values and pairing are
-not yet run on it.
+root at boot. A script, `tools/ble_board_check.rb`, drives a Mac's `blew`
+through the scripted steps (scan, connect and discover, write and read the
+serial service); an echo through an app and pairing are not yet run on the board.
 
 ## 19.8 Design choices
 

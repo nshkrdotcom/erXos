@@ -396,12 +396,12 @@ Eshell V17.1.1 (type help(). for help)
   reset, the identify commands and the start of advertising. On the Pi 4
   the root sets the on-board pin functions at boot, the domain brings up
   the on-board controller, and a phone's scan sees the board advertising
-  as `erxos`. A Mac connects to it, again after each disconnection,
-  agrees an ATT MTU of 185, discovers its GATT table (GAP, GATT and
-  Nordic's UART service), and has a
-  read of the UART's write-only characteristic refused; `tools/ble_board_check.rb`
-  runs those steps. No app serves the UART service on the card yet, so a
-  write to it is answered Unlikely Error and nothing echoes; pairing has
+  as `erxos`. A Mac connects to it, again after each disconnection, and
+  macOS's log shows an ATT MTU of 185 and the GAP and GATT services; the
+  Mac's `blew` discovers Nordic's UART service and has a read of its
+  write-only characteristic refused, which `tools/ble_board_check.rb`
+  scripts. No app serves the UART service on the card yet, so a write to
+  it is answered Unlikely Error and no echo can be checked yet; pairing has
   not run on the board.
 
 **Display and input**

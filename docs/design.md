@@ -1667,6 +1667,7 @@ a separate formula) for erXos's own code, the runtimes, and Fiasco and L4Re
 Perl for Fiasco, as L4Re's macOS guide prescribes
 ([research](research-hierarchical-scheduling.md#fiasco-under-hvf)); Ruby;
 QEMU 11.1; `dtc`; CBMC, at the version `test/cbmc/roster.json` pins, for `make check-cbmc`; `b3sum`, the oracle the imported BLAKE3 is compared with;
+`blew`, a macOS Bluetooth LE command-line tool, which `tools/ble_board_check.rb` drives for the scripted part of the Pi 4 Bluetooth checklist;
 GNU coreutils for `gtimeout`, the harness's deadlines;
 git, which lists the project's files for the source check;
 and native host OTP, stock OTP 29.1.2 built from the pinned tarball with its

@@ -3151,7 +3151,13 @@ peer.
 ### On the board
 
 The Pi 4's checklist, by hand, with a phone and with a Bumble peer on a
-USB dongle on the development host, which makes the peer side scripted:
+USB dongle on the development host, which makes the peer side scripted,
+and with a Mac as a second scripted peer: `tools/ble_board_check.rb` drives
+`blew`, a macOS command-line tool over CoreBluetooth, to scan, connect and
+discover, write and read Nordic's UART service, one `blew` run and one
+connection per step. CoreBluetooth hides GAP and GATT's own services from
+an app, so the Mac's steps work on the UART service, and a step reports
+unknown when `blew` times out or cannot use Bluetooth. The list:
 the machine appears in the phone's scanner with its name; nRF-style GATT
 browsers show the declared table; a terminal app for Nordic's UART
 service echoes through an app, once the board has a home for one
