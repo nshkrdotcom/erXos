@@ -193,9 +193,9 @@ on GPLEV are not shown; the QEMU suite below settles them.
 The design rests on one table. The platform record gains `header`: the
 SoC pin table it is checked against (`bcm2711`), the path of its **pin
 controller**, the device whose registers set the pins' functions (on
-the Pi 4 the GPIO controller), and one row for each of GPIO 0 to 27,
-each with a **use** and, for a pin a block other than GPIO drives, a
-**function** and a **pull**:
+the Pi 4 the GPIO controller), the [on-board pins](#on-board-pins)
+below, and one row for each of GPIO 0 to 27, each with a **use** and,
+for a pin a block other than GPIO drives, a **function** and a **pull**:
 
 | Use | Meaning | Function and pull |
 | --- | --- | --- |
@@ -204,7 +204,8 @@ each with a **use** and, for a pin a block other than GPIO drives, a
 | `jtag` | the ARM's JTAG, on development cards | the function's name, such as `ARM_TMS` |
 | `reserved` | nothing touches the pin | none |
 
-A checked-in table of the SoC's bank-0 pins, `hw/pins/bcm2711.txt`, is
+A checked-in table of the SoC's bank-0 pins and the on-board pins a
+record names, `hw/pins/bcm2711.txt`, is
 written from DS 5.3, Table 94, as the CMSIS-SVD files are written from
 the register chapters. It has one row per pin, with its power-on pull
 and its six alternate functions, and one row per controller a header map
@@ -240,7 +241,8 @@ build derives from it, so nothing else states a pin:
    pull; the `jtag` rows give `enable_jtag_gpio=1` on a development card
    and nothing on a release card. The host link's lines come from its
    rows, so `OVERLAY_PINS` is deleted; the console's rows give lines too,
-   which agree with what `enable_uart=1` forces.
+   which agree with what `enable_uart=1` forces. The map's on-board rows
+   give lines of their own ([On-board pins](#on-board-pins)).
 2. **The pin controller's record carries `PINS`**, a 28-bit mask of the
    `gpio` rows, through the manifest's device row and its holder's
    record, as the network record carries `MAC`
@@ -288,8 +290,9 @@ Every rule about pins follows from the map instead of from a list:
   would break the probe the card exists to offer; the map makes that
   impossible to write.
 * **Only header pins are served, but the registers are shared with bank
-  1.** The map has rows for bank 0 only, so the firmware's pins in banks
-  1 and 2 cannot be named. Their fields are not all in other registers,
+  1.** The map's `gpio` rows are bank 0's only, and its on-board rows
+  name pins of bank 1 for `config.txt` alone, so no pin of banks 1 and 2
+  can be served. Their fields are not all in other registers,
   though: GPFSEL2 holds GPIO 20 to 29 (DS Table 66), PUP_PDN_CNTRL_REG1
   GPIO 16 to 31 (DS Table 91), and the edge enables GPREN0 and GPFEN0
   GPIO 0 to 31 (DS Tables 78 and 80), so the GPIO driver's
@@ -304,6 +307,54 @@ Every rule about pins follows from the map instead of from a list:
   pins already set when it starts, so the vault's SPI driver depends on
   no other domain, and there is no claim protocol between drivers.
 * **A pin is never both a bus pin and a GPIO pin.** It has one row.
+
+### On-board pins
+
+Some of the SoC's pins off the header are wired on the board to a chip
+whose link needs the pin's function set at boot. On the Raspberry Pi 4,
+GPIO 30 to 33 carry UART0 to the Bluetooth controller, a CYW43455, in
+ALT3 ([design-bluetooth.md](design-bluetooth.md#the-hardware)); the
+WiFi chip's SDIO lines on GPIO 34 to 39 are the same case. Rather than
+depend on what the firmware leaves in those pins, `config.txt` sets
+their function, and the header map takes them as its `onboard` list,
+beside `rows`:
+
+| GPIO | Device | Function |
+| --- | --- | --- |
+| 30 to 33 | UART0, `/soc/serial@7e201000` | `CTS0`, `RTS0`, `TXD0`, `RXD0` |
+
+A row states three things: the GPIO, the device path of the SoC block
+whose signal the pin carries, and the function's Table 94 name. It has
+no pull: a `gpio=` line makes only the changes it names (Raspberry Pi
+documentation, `config_txt-gpio.adoc`), so a line that sets only the
+function leaves the pin's power-on pull as it was. Which on-board chips an image's
+pins are set for is the record's list: a board's record holds a row for
+each on-board pin its images need set, and a row is added with the
+driver or bring-up that needs it, as a controller row is. The SoC table
+gains a pin row for each on-board pin a record names, after bank 0's,
+written from Table 94 as the others are.
+
+What follows from the rows:
+
+* **`config.txt`.** Each run of consecutive on-board rows of one
+  alternate gives one `gpio=N-M=aK` line, with no pull attribute; on the
+  Pi 4, `gpio=30-33=a3`. The rows are the line's one source.
+* **Nothing is served.** An on-board pin is never a `gpio` row, so
+  `PINS`, a mask of header pins, cannot name it, and no driver writes
+  its function or pull at run time.
+
+**What the reader refuses**, each with a diagnostic naming the row: an
+`onboard` that is not a list; a row with keys other than `gpio`,
+`device` and `function`, a pull among them; a GPIO that is a header
+pin, which its row in `rows` sets; a GPIO the SoC table has no row for;
+a device that is not a path of the record; a function the pin does not
+carry; rows out of increasing GPIO order, or naming one GPIO twice;
+and, counted together with the header's device rows of the same device,
+a function that is not a signal of the device's controller, one signal
+on two rows, or a missing signal the controller cannot work without. An
+on-board row's device need not be driven, unlike a header device row's:
+the pin is wired to its chip whatever runs, and setting its function
+hands it to no block but the one it is wired to.
 
 ## Placement: units and domains
 
@@ -991,8 +1042,8 @@ so the case is known to reach the code it tests.
 | the vault's TPM framing step, with the vault's TPM design, against a model TPM that inserts 0 to 3 wait states on reads and writes | the data sent right after the header without looking at the last bit |
 | `erx_pwm_core`, with a case of 100 ns at 27 MHz giving 3 ticks | rounding down instead of to nearest, which the 100 ns case exposes |
 | `erx_rtc_ds3231` | the nibble check removed; 12 AM taken as hour 12; the century bit ignored |
-| the header map reader | for each refusal of the reader, one map that breaks only it: a missing pin, a function not the pin's, the console on GPIO 13, `SDA1` on an SPI0 row, SPI0 without SCLK, a `gpio` row with a function, a driven bus that no row names |
-| the `config.txt` writer | `jtag` rows written as `gpio=` lines on a release card |
+| the header map reader | for each refusal of the reader, one map that breaks only it: a missing pin, a function not the pin's, the console on GPIO 13, `SDA1` on an SPI0 row, SPI0 without SCLK, a `gpio` row with a function, a driven bus that no row names; an on-board row on a header pin, with a pull, or with a function the pin does not carry, and UART0's on-board rows without `TXD0` |
+| the `config.txt` writer | `jtag` rows written as `gpio=` lines on a release card; the on-board rows written with no line, which the Pi 4's `gpio=30-33=a3` exposes |
 | property 8's pin controller clause | the same manifest giving `gpio` to the devices domain, which fails naming property 8 and the unit |
 | `gpio_grant` and `rtc_grant` | a `pins` holding GPIO 14; two `rtc` rows with different addresses; an `rtc` row whose `bus` names SPI0 |
 

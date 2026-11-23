@@ -23,9 +23,18 @@ class PinsTest < Minitest::Test
     expected.each do |(gpio, function), alternate|
       assert_equal alternate, @table.alternate(gpio: gpio, function: function), "GPIO #{gpio} #{function}"
     end
-    assert_equal (0..27).to_a, @table.pins.map(&:gpio)
-    assert_equal %i[up] * 9 + %i[down] * 19, @table.pins.map(&:pull)
+    assert_equal [*0..27, *30..33], @table.pins.map(&:gpio)
+    assert_equal %i[up] * 9 + %i[down] * 23, @table.pins.map(&:pull)
     assert_nil @table.pins.fetch(16).functions.first
+  end
+
+  # The on-board pins a platform record names: UART0's to the Pi 4's Bluetooth controller,
+  # in Table 94's ALT3 column.
+  def test_the_onboard_functions_are_where_table_94_puts_them
+    { 30 => 'CTS0', 31 => 'RTS0', 32 => 'TXD0', 33 => 'RXD0' }.each do |gpio, function|
+      assert_equal 3, @table.alternate(gpio: gpio, function: function), "GPIO #{gpio} #{function}"
+    end
+    assert_equal [true, true, false, false], [0, 27, 28, 30].map { |gpio| @table.header_pin?(gpio) }
   end
 
   def test_a_device_base_names_its_controller_and_signals
@@ -53,6 +62,8 @@ class PinsTest < Minitest::Test
   SEEDED_FAULTS = {
     'a pin out of order' => ['pin 1 up SCL0', 'pin 9 up SCL0', /in order/],
     'a missing pin' => ["pin 27 down SD0_DAT3 - DPI_D23 SD1_DAT3 ARM_TMS SPI6_CE1_N\n", '', /in order/],
+    'an on-board pin out of order' => ['pin 30 down', 'pin 34 down', /in order/],
+    'an on-board pin among the header pins' => ['pin 30 down', 'pin 27 down', /in order/],
     'a GPIO number with a leading zero' => ['pin 1 up SCL0', 'pin 01 up SCL0', /invalid GPIO number/],
     'an uppercase controller name' => ['controller bsc0 ', 'controller BSC0 ', /invalid controller name/],
     'a table past its byte bound' => ["\npin 0 ", "\n#{'#' * (64 * 1024)}\npin 0 ", /bounded ASCII/],

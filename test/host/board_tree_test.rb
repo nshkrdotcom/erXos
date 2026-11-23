@@ -29,7 +29,8 @@ class BoardTreeTest < Minitest::Test
 
   # Seeded fault: a console the card's tree does not name serial0, such as the PL011
   # UART0 that Linux's tree names so, is refused before anything is built. The header map
-  # gives UART0 the console's GPIO 14 and 15, so the record itself is one the reader takes.
+  # gives UART0 the console's GPIO 14 and 15, and no on-board rows, which would give it TXD0
+  # and RXD0 twice, so the record itself is one the reader takes.
   def test_a_console_other_than_serial0_is_refused
     assert_equal '/soc/serial@7e215040', Erx::BoardTree.console_board(PI).aliases.fetch('serial0')
     uart0 = '/soc/serial@7e201000'
@@ -37,7 +38,7 @@ class BoardTreeTest < Minitest::Test
       function = { 14 => 'TXD0', 15 => 'RXD0' }[row.fetch('gpio')]
       function ? row.merge('use' => uart0, 'function' => function) : row
     end
-    pl011 = record(console: uart0, header: PI.record.fetch('header').merge('rows' => rows))
+    pl011 = record(console: uart0, header: PI.record.fetch('header').merge('rows' => rows, 'onboard' => []))
     assert_raises(Erx::Error) { Erx::BoardTree.console_board(pl011) }
     runner = Erx::Runner.new(owner_root: ROOT, log_dir: File.join(ROOT, 'build/logs'))
     assert_raises(Erx::Error) { Erx::BoardTree.build(root: ROOT, runner: runner, platform: pl011, compiler: 'clang', revision: REVISION) }

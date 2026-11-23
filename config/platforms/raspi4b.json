@@ -147,6 +147,28 @@
         "use": "jtag",
         "function": "ARM_TMS"
       }
+    ],
+    "onboard": [
+      {
+        "gpio": 30,
+        "device": "/soc/serial@7e201000",
+        "function": "CTS0"
+      },
+      {
+        "gpio": 31,
+        "device": "/soc/serial@7e201000",
+        "function": "RTS0"
+      },
+      {
+        "gpio": 32,
+        "device": "/soc/serial@7e201000",
+        "function": "TXD0"
+      },
+      {
+        "gpio": 33,
+        "device": "/soc/serial@7e201000",
+        "function": "RXD0"
+      }
     ]
   },
   "ram_first": 0,

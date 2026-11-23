@@ -17,6 +17,7 @@ class HeaderMapTest < Minitest::Test
   SPI = '/soc/spi@7e204000'
   BSC0 = '/soc/i2c@7e205000'
   UART2 = '/soc/serial@7e201400'
+  UART0 = '/soc/serial@7e201000'
 
   def test_the_pi_map_is_accepted_with_its_derived_facts
     header = PI.header
@@ -30,6 +31,10 @@ class HeaderMapTest < Minitest::Test
                    9 => [SPI, 0, :none], 10 => [SPI, 0, :none], 11 => [SPI, 0, :none],
                    14 => [PI.record.fetch('console'), 5, :none], 15 => [PI.record.fetch('console'), 5, :none] },
                  header.device_rows.to_h { |row| [row.gpio, [row.use, row.alternate, row.pull]] })
+    # UART0's pins to the Bluetooth controller, CTS0, RTS0, TXD0 and RXD0 in ALT3, with no pull.
+    assert_equal({ 30 => [UART0, 'CTS0', 3, :keep], 31 => [UART0, 'RTS0', 3, :keep], 32 => [UART0, 'TXD0', 3, :keep],
+                   33 => [UART0, 'RXD0', 3, :keep] },
+                 header.onboard.to_h { |row| [row.gpio, [row.use, row.function, row.alternate, row.pull]] })
   end
 
   def test_a_board_without_a_header_has_no_map
@@ -78,7 +83,24 @@ class HeaderMapTest < Minitest::Test
                                            map['rows'][4] = { 'gpio' => 4, 'use' => 'gpio' }
                                            map['rows'][5] = { 'gpio' => 5, 'use' => 'gpio' }
                                          }, /the record's driven device "\/soc\/serial@7e201600" has no pins/],
-    'an unknown pin table' => [->(map) { map['pins'] = 'bcm2712' }, /bcm2712/]
+    'an unknown pin table' => [->(map) { map['pins'] = 'bcm2712' }, /bcm2712/],
+    'on-board rows that are no list' => [->(map) { map['onboard'] = {} }, /onboard must be a list/],
+    # GPIO 16 carries CTS0 in ALT3 too, so only the header-pin rule breaks.
+    'an on-board row on a header pin' => [->(map) { map['onboard'][0]['gpio'] = 16 },
+                                          /on-board GPIO 16 is a header pin, set by its row in rows/],
+    'on-board rows out of order' => [->(map) { map['onboard'][0], map['onboard'][1] = map['onboard'][1], map['onboard'][0] },
+                                     /on-board rows must be in increasing GPIO order, each GPIO once/],
+    'a pull on an on-board row' => [->(map) { map['onboard'][0]['pull'] = 'none' },
+                                    /on-board row 0 must be an object of device, function and gpio/],
+    'an on-board function not the pin\'s' => [->(map) { map['onboard'][2]['function'] = 'RXD0' }, /GPIO 32 does not carry RXD0/],
+    'an on-board pin the table lacks' => [->(map) { map['onboard'] << { 'gpio' => 34, 'device' => UART0, 'function' => 'TXD0' } },
+                                          /GPIO 34 is not in the pin table/],
+    'an on-board device that is no device of the record' => [->(map) { map['onboard'][0]['device'] = '/soc/serial@7e201001' },
+                                                             %r{on-board GPIO 30: "/soc/serial@7e201001" is not a device path}],
+    # GPIO 30 carries UART1's CTS1 in ALT5.
+    'an on-board signal of another controller' => [->(map) { map['onboard'][0]['function'] = 'CTS1' },
+                                                   /GPIO 30: CTS1 is not a signal of #{UART0}, uart0/],
+    'UART0 without TXD0' => [->(map) { map['onboard'].delete_at(2) }, /#{UART0} has no row for TXD0/]
   }.freeze
 
   def test_each_refusal_breaks_only_its_rule
@@ -116,6 +138,16 @@ class HeaderMapTest < Minitest::Test
     rows[4] = { 'gpio' => 4, 'use' => bsc3, 'function' => 'SDA3', 'pull' => 'none' }
     error = assert_raises(Erx::Error) { Erx::Platform.new(name: 'raspi4b', record: record) }
     assert_match(/#{bsc3} names a signal on two rows/, error.message)
+  end
+
+  # A record device whose path is a plain use's name, gpio, must not let an on-board row
+  # skip the controller check: MII_A_CRS is GPIO 30's ALT4, a function no controller owns.
+  def test_an_onboard_device_named_like_a_plain_use_is_refused
+    record = JSON.parse(JSON.generate(PI.record))
+    record.fetch('units').first.fetch('devices') << { 'path' => 'gpio', 'role' => 'ordinary' }
+    record.fetch('header')['onboard'] = [{ 'gpio' => 30, 'device' => 'gpio', 'function' => 'MII_A_CRS' }]
+    error = assert_raises(Erx::Error) { Erx::Platform.new(name: 'raspi4b', record: record) }
+    assert_match(/device path gpio has no unit address/, error.message)
   end
 
   def test_a_header_of_another_shape_is_refused

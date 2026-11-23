@@ -123,8 +123,8 @@ module Erx
     # * development_lines: the firmware's own boot log on the console and, for a map with
     #   jtag rows, the ARM's JTAG, on a development card only.
     # * a dtoverlay line for each overlay the board's tree carries.
-    # * pin_lines: the header map's device rows. The firmware sets no pins from an overlay,
-    #   so an overlay's device gets its pins from these lines alone.
+    # * pin_lines: the header map's device rows and on-board rows. The firmware sets no pins
+    #   from an overlay, so an overlay's device gets its pins from these lines alone.
     def config_txt(platform, overlays:, build_kind:)
       header = platform.header
       raise Error, "#{platform.record_path}: the boot partition needs a header map" if header.nil?
@@ -176,18 +176,20 @@ module Erx
       "core_freq=#{clock / 1_000_000}\ncore_freq_fixed=1\n"
     end
 
-    # The pull letters of a gpio= line.
-    PULL_LETTERS = { none: 'n', up: 'u', down: 'd' }.freeze
+    # The pull attribute of a gpio= line, none for an on-board row (:keep), whose pull the
+    # line leaves as it is: a line makes only the changes it names (config_txt-gpio.adoc).
+    PULL_ATTRIBUTES = { none: ',pn', up: ',pu', down: ',pd', keep: '' }.freeze
 
-    # One gpio=N=aK,pX line for each run of consecutive device rows of one alternate and
-    # pull, written gpio=N-M=... for a run of more than one pin.
+    # One gpio=N=aK,pX line for each run of consecutive device or on-board rows of one
+    # alternate and pull, written gpio=N-M=... for a run of more than one pin, and without
+    # ,pX for on-board rows.
     def pin_lines(header)
-      runs = header.device_rows.slice_when do |left, right|
+      runs = (header.device_rows + header.onboard).slice_when do |left, right|
         right.gpio != left.gpio + 1 || [right.alternate, right.pull] != [left.alternate, left.pull]
       end
       runs.map do |run|
         pins = run.size == 1 ? run.first.gpio.to_s : "#{run.first.gpio}-#{run.last.gpio}"
-        "gpio=#{pins}=a#{run.first.alternate},p#{PULL_LETTERS.fetch(run.first.pull)}\n"
+        "gpio=#{pins}=a#{run.first.alternate}#{PULL_ATTRIBUTES.fetch(run.first.pull)}\n"
       end.join
     end
 

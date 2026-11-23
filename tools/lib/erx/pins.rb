@@ -6,9 +6,10 @@ require_relative 'error'
 require_relative 'bounded_file'
 
 module Erx
-  # A SoC's pin table, hw/pins/<soc>.txt: each bank-0 pin's power-on pull and alternate
-  # functions, and the controllers that own those functions (docs/design-header-io.md,
-  # "The construction: one map of the header"). The file's own header states the format;
+  # A SoC's pin table, hw/pins/<soc>.txt: the power-on pull and alternate functions of each
+  # bank-0 pin, the header's, and of each on-board pin a platform record names, and the
+  # controllers that own those functions (docs/design-header-io.md, "The construction: one
+  # map of the header" and "On-board pins"). The file's own header states the format;
   # this reader checks every row against it and refuses the whole table at its first bad
   # row.
   module Pins
@@ -38,6 +39,10 @@ module Erx
 
         index
       end
+
+      # Whether the GPIO is one of the header's, bank 0, which a header map row sets; every
+      # other pin of the table is an on-board pin.
+      def header_pin?(gpio) = gpio.is_a?(Integer) && gpio.between?(0, BANK0_PIN_COUNT - 1)
 
       # The controller whose registers are at the base address; raises when no row has it.
       def fetch_controller(base:)
@@ -71,7 +76,8 @@ module Erx
       parse(BoundedFile.read(File.join(root, 'hw/pins', "#{soc}.txt"), maximum: MAX_BYTES))
     end
 
-    # Pin rows come first, GPIO 0 to 27 in order; controller rows follow, sorted by name.
+    # Pin rows come first, GPIO 0 to 27 in order, then the on-board pins in increasing order;
+    # controller rows follow, sorted by name.
     def parse(bytes)
       raise Error, 'pin table must be bounded ASCII' unless bytes.is_a?(String) && bytes.bytesize <= MAX_BYTES && bytes.ascii_only?
 
@@ -83,8 +89,9 @@ module Erx
         raise Error, 'pin table rows must be pin rows, then controller rows'
       end
       pins = pin_rows.map { |words| pin(words) }
-      unless pins.map(&:gpio) == (0...BANK0_PIN_COUNT).to_a
-        raise Error, "pin table must list GPIO 0 to #{BANK0_PIN_COUNT - 1} in order"
+      gpios = pins.map(&:gpio)
+      unless gpios.take(BANK0_PIN_COUNT) == (0...BANK0_PIN_COUNT).to_a && gpios.each_cons(2).all? { |left, right| left < right }
+        raise Error, "pin table must list GPIO 0 to #{BANK0_PIN_COUNT - 1}, then the on-board pins, in order"
       end
 
       controllers = controller_rows.map { |words| controller(words) }

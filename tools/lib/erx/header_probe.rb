@@ -76,10 +76,11 @@ module Erx
       device
     end
 
-    # The one bank-0 pin that carries the console's receive signal.
+    # The one header pin, of bank 0, that carries the console's receive signal; an on-board
+    # pin may carry it too (GPIO 33's ALT5), but the console is on the header.
     def console_rx_pin(pins)
-      found = pins.pins.select { |pin| pin.functions.include?(CONSOLE_RX) }
-      raise Error, "header probe: #{found.size} pins of the pin table carry #{CONSOLE_RX}, not one" unless found.size == 1
+      found = pins.pins.select { |pin| pins.header_pin?(pin.gpio) && pin.functions.include?(CONSOLE_RX) }
+      raise Error, "header probe: #{found.size} header pins of the pin table carry #{CONSOLE_RX}, not one" unless found.size == 1
 
       found.first.gpio
     end

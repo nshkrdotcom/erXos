@@ -12,8 +12,9 @@ require_relative '../lib/erx/platform'
 # mutations of the Raspberry Pi 4's record: values of every row and field replaced by
 # others of each JSON type, rows dropped, repeated and swapped, and the record's text
 # changed byte by byte. Each input is either refused with Erx::Error and nothing else, or
-# read into a map of one row for each of GPIO 0 to 27 whose PINS mask has no bit above 27
-# and whose device rows each carry an alternate of 0 to 5. Whether the reader's answers
+# read into a map of one row for each of GPIO 0 to 27 whose PINS mask has no bit above 27,
+# whose device rows each carry an alternate of 0 to 5, and whose on-board rows are off the
+# header, with an alternate of 0 to 5 and their pull kept. Whether the reader's answers
 # are right is test/host/header_map_test.rb's.
 module Erx
   module PlatformRecordFuzz
@@ -22,9 +23,9 @@ module Erx
     SEED = Platform.load(root: ROOT, name: NAME).record
     # Values a mutation puts in a field: the record's own words, near misses and every JSON type.
     VALUES = ['gpio', 'reserved', 'jtag', '/soc/i2c@7e804000', '/soc/spi@7e204000', '/soc/serial@7e201600',
-              '/soc/serial@7e215040', '/soc/gpio@7e200000', '/soc/spi@7e215080', '/soc/i2c@', '/', 'SDA1', 'TXD1',
-              'ARM_TMS', 'SPI0_SCLK', 'none', 'up', 'down', 'bcm2711', '../bcm2711', 'uart', 'ordinary', '', -1, 0, 2,
-              27, 28, 2.0, 500_000_000, 1 << 64, nil, true, [], {}, [1], { 'gpio' => 0 }].freeze
+              '/soc/serial@7e215040', '/soc/serial@7e201000', '/soc/gpio@7e200000', '/soc/spi@7e215080', '/soc/i2c@', '/', 'SDA1', 'TXD1',
+              'ARM_TMS', 'SPI0_SCLK', 'CTS0', 'RXD0', 'MII_A_CRS', 'none', 'up', 'down', 'bcm2711', '../bcm2711', 'uart', 'ordinary', '', -1, 0, 2,
+              27, 28, 30, 33, 34, 2.0, 500_000_000, 1 << 64, nil, true, [], {}, [1], { 'gpio' => 0 }].freeze
 
     module_function
 
@@ -83,6 +84,8 @@ module Erx
       raise "a map of #{rows.size} rows" unless rows.map(&:gpio) == (0..27).to_a
       raise "PINS #{header.gpio_mask} past GPIO 27" unless header.gpio_mask < (1 << 28)
       raise 'a device row without an alternate' unless header.device_rows.all? { |row| (0..5).cover?(row.alternate) }
+      raise 'an on-board row on a header pin or with a pull' unless
+        header.onboard.all? { |row| row.gpio >= 28 && (0..5).cover?(row.alternate) && row.pull == :keep }
     rescue Erx::Error
       nil
     end

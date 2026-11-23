@@ -8,28 +8,37 @@ require_relative 'pins'
 
 module Erx
   # A platform record's header map, its "header" object (docs/design-header-io.md, "The
-  # construction: one map of the header"): pins, the SoC's pin table (hw/pins/<pins>.txt);
-  # controller, the path of the pin controller, the device whose registers set every bank-0
-  # pin's function; and rows, one for each of GPIO 0 to 27 in order, each a gpio number and a
-  # use, and for a pin another block drives, its function and pull. The record reader
-  # (Platform) checks the map against the pin table and the record's own devices, and
-  # config.txt's gpio= lines, enable_jtag_gpio and core_freq are derived from it
-  # (BootPartition), so nothing else states a pin. A map that breaks a rule is refused
+  # construction: one map of the header" and "On-board pins"), of four keys:
+  # * pins, the SoC's pin table (hw/pins/<pins>.txt);
+  # * controller, the path of the pin controller, the device whose registers set every
+  #   bank-0 pin's function;
+  # * rows, one for each of GPIO 0 to 27 in order, each a gpio number and a use, and for a
+  #   pin another block drives, its function and pull;
+  # * onboard, in increasing GPIO order, one row for each pin wired on the board to a chip
+  #   that needs the pin's function set (on the Pi 4, GPIO 30 to 33, UART0's to the
+  #   Bluetooth controller), each a gpio number, the device path of the SoC block whose
+  #   signal the pin carries, and the function.
+  # The record reader (Platform) checks the map against the pin table and the record's own
+  # devices, and config.txt's gpio= lines, enable_jtag_gpio and core_freq are derived from
+  # it (BootPartition), so nothing else states a pin. A map that breaks a rule is refused
   # whole, at its first broken rule, naming the row.
   module HeaderMap
     # One pin. use is "gpio" (plain GPIO, whose pull is its holder's to set), "reserved"
     # (nothing touches the pin), "jtag" (the ARM's JTAG, which enable_jtag_gpio sets on a
     # development card) or a device path of the record (the firmware sets the pin for that
     # device). function and alternate, the function's pin-table name and its alternate
-    # number, are a jtag or device row's; pull, :none, :up or :down, a device row's alone.
+    # number, are a jtag or device row's, header or on-board; pull is a device row's alone:
+    # :none, :up or :down on a header row, :keep on an on-board row, whose power-on pull
+    # the firmware leaves.
     Row = Data.define(:gpio, :use, :function, :alternate, :pull) do
       def device? = use.start_with?('/')
     end
 
     # The checked map. core_clock is the clock, in Hz, of the devices other than UARTs that
-    # rows name, the I2C and SPI controllers, which all divide the VideoCore's core clock;
-    # nil when the rows name none.
-    Map = Data.define(:controller, :rows, :core_clock) do
+    # header or on-board rows name, the I2C and SPI controllers, which all divide the
+    # VideoCore's core clock; nil when the rows name none. device_rows are the header's
+    # device rows; onboard holds the on-board rows.
+    Map = Data.define(:controller, :rows, :onboard, :core_clock) do
       def device_rows = rows.select(&:device?)
       def jtag? = rows.any? { |row| row.use == 'jtag' }
       # PINS: the gpio rows as a mask, bit n for GPIO n, the pins the pin controller's driver
@@ -48,8 +57,9 @@ module Erx
       end
     end
 
-    KEYS = %w[controller pins rows].freeze
+    KEYS = %w[controller onboard pins rows].freeze
     ROW_KEYS = %w[function gpio pull use].freeze
+    ONBOARD_KEYS = %w[device function gpio].freeze
     PLAIN_USES = %w[gpio reserved].freeze
     JTAG = 'jtag'
     PULLS = { 'none' => :none, 'up' => :up, 'down' => :down }.freeze
@@ -67,7 +77,7 @@ module Erx
       return nil unless record.key?('header')
 
       header = record.fetch('header')
-      raise Error, 'header must be an object of controller, pins and rows' unless header.is_a?(Hash) && header.keys.sort == KEYS
+      raise Error, 'header must be an object of controller, onboard, pins and rows' unless header.is_a?(Hash) && header.keys.sort == KEYS
 
       devices = devices_by_path(record.fetch('units'))
       controller = header.fetch('controller')
@@ -76,12 +86,14 @@ module Erx
       table = Pins.read(root: CODE_ROOT, soc: header.fetch('pins'))
       driven = Driven.new(given: DeviceKinds.given(CODE_ROOT), uarts: [record['console'], record['hostlink']].compact)
       rows = rows(header.fetch('rows'), table: table, devices: devices, driven: driven)
-      check_signals(rows, table: table)
+      onboard = onboard_rows(header.fetch('onboard'), table: table, devices: devices)
+      every = rows + onboard
+      check_signals(every, table: table)
       pinned = devices.select { |path, device| driven.driven?(path, device) && controller?(path, table) }.keys
-      unnamed = pinned - rows.map(&:use)
+      unnamed = pinned - every.map(&:use)
       raise Error, "the record's driven device #{unnamed.first.inspect} has no pins in the map" unless unnamed.empty?
 
-      Map.new(controller: controller, rows: rows.freeze, core_clock: core_clock(rows, devices: devices))
+      Map.new(controller: controller, rows: rows.freeze, onboard: onboard.freeze, core_clock: core_clock(every, devices: devices))
     end
 
     # The record's devices that have a path, by path; a unit or device that is not an object
@@ -138,11 +150,37 @@ module Erx
       end
     end
 
+    # The on-board rows: each names a pin of the table that is not a header pin, a device
+    # path of the record and a function the pin carries, and the pins increase. A device
+    # need not be driven, unlike a header row's: the pin is wired to its chip, and setting
+    # its function touches nothing else.
+    def onboard_rows(fields, table:, devices:)
+      raise Error, 'onboard must be a list of on-board rows' unless fields.is_a?(Array)
+
+      onboard = fields.each_with_index.map do |field, index|
+        unless field.is_a?(Hash) && field.keys.sort == ONBOARD_KEYS
+          raise Error, "on-board row #{index} must be an object of device, function and gpio"
+        end
+
+        gpio, device, function = field.values_at('gpio', 'device', 'function')
+        raise Error, "on-board GPIO #{gpio} is a header pin, set by its row in rows" if table.header_pin?(gpio)
+        raise Error, "on-board GPIO #{gpio.inspect}: #{device.inspect} is not a device path of the record" unless devices.key?(device)
+
+        Row.new(gpio: gpio, use: device, function: function, alternate: table.alternate(gpio: gpio, function: function), pull: :keep)
+      end
+      unless onboard.each_cons(2).all? { |left, right| left.gpio < right.gpio }
+        raise Error, 'on-board rows must be in increasing GPIO order, each GPIO once'
+      end
+
+      onboard
+    end
+
     # Each device's rows, and the jtag rows, carry only signals of the device's controller,
     # each once, with every signal it cannot work without; the jtag rows carry every JTAG
-    # signal, since enable_jtag_gpio sets all of their pins.
+    # signal, since enable_jtag_gpio sets all of their pins. Every row with a function is
+    # checked, whatever its use is named: a device path "gpio" cannot pass as a plain row.
     def check_signals(rows, table:)
-      rows.reject { |row| PLAIN_USES.include?(row.use) }.group_by(&:use).each do |use, named|
+      rows.select(&:function).group_by(&:use).each do |use, named|
         controller = use == JTAG ? table.fetch_named(JTAG) : table.fetch_controller(base: unit_address(use))
         functions = named.map(&:function)
         stray = named.find { |row| !controller.signals.include?(row.function) }
@@ -181,6 +219,6 @@ module Erx
 
       clocks[0]
     end
-    private_class_method :devices_by_path, :rows, :row, :check_signals, :controller?, :unit_address, :core_clock
+    private_class_method :devices_by_path, :rows, :row, :onboard_rows, :check_signals, :controller?, :unit_address, :core_clock
   end
 end

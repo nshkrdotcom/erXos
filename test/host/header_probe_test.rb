@@ -48,12 +48,15 @@ class HeaderProbeTest < Minitest::Test
     assert_match(/no SVD device for CM_WINDOW/, error.message)
   end
 
-  # The receive pin is the one pin carrying RXD1; a table where none or two do is refused.
+  # The receive pin is the one header pin carrying RXD1; a table where none or two do is
+  # refused, and an on-board pin that carries it too (GPIO 33) is not the console's.
   def test_refuses_a_receive_signal_on_no_pin_or_two
     pin = ->(gpio, functions) { Erx::Pins::Pin.new(gpio: gpio, pull: 'down', functions: functions) }
     [[], [pin.(15, ['RXD1']), pin.(16, ['RXD1'])]].each do |pins|
       assert_raises(Erx::Error) { Erx::HeaderProbe.console_rx_pin(Erx::Pins::Table.new(pins: pins, controllers: [])) }
     end
+    onboard = Erx::Pins::Table.new(pins: [pin.(15, ['RXD1']), pin.(33, ['RXD1'])], controllers: [])
+    assert_equal 15, Erx::HeaderProbe.console_rx_pin(onboard)
   end
 
   # The flat binary starts where the firmware loads kernel8.img, and the linker script, whose

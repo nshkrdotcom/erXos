@@ -1,35 +1,41 @@
 # Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
 # SPDX-License-Identifier: BSD-2-Clause
 #
-# The BCM2711's bank-0 pins and the controllers that own their functions, written by
-# erXos from Raspberry Pi Ltd's "BCM2711 ARM Peripherals" (release 4, 18 January 2022,
-# SHA-256 d6e16ea089a1716e80621f99a26e130a2379f0a81d945dc22e4f80dc49dcdc78). The pin rows
-# are section 5.3, Table 94 ("GPIO Pins Alternative Function Assignment", printed pages 77
+# The BCM2711's bank-0 pins, the on-board pins a platform record names, and the
+# controllers that own their functions, written by erXos from Raspberry Pi Ltd's "BCM2711
+# ARM Peripherals" (release 4, 18 January 2022, SHA-256
+# d6e16ea089a1716e80621f99a26e130a2379f0a81d945dc22e4f80dc49dcdc78). The pin rows are
+# section 5.3, Table 94 ("GPIO Pins Alternative Function Assignment", printed pages 77
 # and 78); the controllers' addresses are sections 2.1 (Table 2), 3.2, 9.5 and 11.5. The
-# platform record's header map is checked against this table, and config.txt's gpio=
-# lines take their alternate numbers from it (docs/design-header-io.md, "The
-# construction: one map of the header"); tools/lib/erx/pins.rb reads it.
+# platform record's header map and its on-board rows are checked against this table, and
+# config.txt's gpio= lines take their alternate numbers from it (docs/design-header-io.md,
+# "The construction: one map of the header" and "On-board pins");
+# tools/lib/erx/pins.rb reads it.
 #
 # pin GPIO PULL ALT0 ALT1 ALT2 ALT3 ALT4 ALT5
-#   One row for each of GPIO 0 to 27, in order. PULL is the pull a pin has after power-on:
+#   One row for each of GPIO 0 to 27, the header's pins, in order; then one for each
+#   on-board pin a platform record's on-board rows name, in increasing order: GPIO 30 to
+#   33, UART0's to the Raspberry Pi 4's Bluetooth controller. An on-board pin's row is
+#   added with the on-board row that needs it. PULL is the pull a pin has after power-on:
 #   Table 94's High is up and Low is down, which the reset values of
-#   GPIO_PUP_PDN_CNTRL_REG0 and REG1 (Tables 90 and 91) confirm pin by pin. ALTn is the
+#   GPIO_PUP_PDN_CNTRL_REG0 to REG2 (Tables 90 to 92) confirm pin by pin. ALTn is the
 #   function the pin carries when its FSEL field selects alternate n; - is Table 94's
 #   <reserved>. Table 94's names are kept, with a space inside a name written _ and the
 #   spaces around / dropped: "SOE_N / SE" is SOE_N/SE, "BSCSL SDA / MOSI" is
-#   BSCSL_SDA/MOSI.
+#   BSCSL_SDA/MOSI. A name the table breaks across two lines of its cell is one word:
+#   SD_CARD_PRES, SD_CARD_WRPROT.
 #
 # controller NAME BASE SIGNAL... [optional SIGNAL...]
-#   One row for each controller a header map may give pins to, sorted by name. BASE is the
-#   controller's registers' bus address as the datasheet gives it, the address in its
-#   device tree path, or none for a controller with no registers of its own. The signals
-#   before optional are those it cannot work without; each signal is a function of some
-#   pin row and belongs to one controller. uart1 is the auxiliary block's mini UART, whose
-#   registers start at offset 0x40 of the block at 0x7e215000 (Table 2).
+#   One row for each controller a header map or on-board row may give pins to, sorted by
+#   name. BASE is the controller's registers' bus address as the datasheet gives it, the
+#   address in its device tree path, or none for a controller with no registers of its
+#   own. The signals before optional are those it cannot work without; each signal is a
+#   function of some pin row and belongs to one controller. uart1 is the auxiliary block's
+#   mini UART, whose registers start at offset 0x40 of the block at 0x7e215000 (Table 2).
 #
-# A header map gives a pin to the device at a base address only when a controller row has
-# that base and the pin's function is one of its signals, so functions no controller row
-# owns cannot be given to a device: the
+# A header map or on-board row gives a pin to the device at a base address only when a
+# controller row has that base and the pin's function is one of its signals, so functions
+# no controller row owns cannot be given to a device: the
 # auxiliary SPI1 (SPI1_*), PWM0 (PWM0_*), the general-purpose clocks (GPCLK*), PCM
 # (PCM_*), the secondary memory interface (SA*, SD0 to SD17, SOE_N/SE, SWE_N/SRW_N), the
 # display interface (PCLK, DE, LCD_*, DPI_*), the SD controllers (SD0_*, SD1_*) and the BSC
@@ -68,6 +74,10 @@ pin 24 down SD0_DAT0 SD16 DPI_D20 SD1_DAT0 ARM_TDO SPI3_CE1_N
 pin 25 down SD0_DAT1 SD17 DPI_D21 SD1_DAT1 ARM_TCK SPI4_CE1_N
 pin 26 down SD0_DAT2 - DPI_D22 SD1_DAT2 ARM_TDI SPI5_CE1_N
 pin 27 down SD0_DAT3 - DPI_D23 SD1_DAT3 ARM_TMS SPI6_CE1_N
+pin 30 down - SA3 PCM_DIN CTS0 MII_A_CRS CTS1
+pin 31 down - SA2 PCM_DOUT RTS0 MII_A_COL RTS1
+pin 32 down GPCLK0 SA1 - TXD0 SD_CARD_PRES TXD1
+pin 33 down - SA0 - RXD0 SD_CARD_WRPROT RXD1
 
 controller bsc0 0x7e205000 SDA0 SCL0
 controller bsc1 0x7e804000 SDA1 SCL1
