@@ -47,6 +47,7 @@ typedef struct apply_give {
 typedef struct apply {
 	erx_dom_lib_t		*lib;
 	const erx_dom_plan_t	*plan;
+	uint32_t		 boot_flags;	/* the boot page's flags, computed once */
 	erx_dom_handles_t	 handles;
 	uint64_t		 installed[ERX_DOM_OBJ_COUNT];	/* each install's value in
 								 * the domain's table */
@@ -756,8 +757,7 @@ apply_bootinfo(apply_t *apply)
 		return (ERX_EINVAL);
 	inputs.node = node;
 	inputs.domain_id = spec->id;
-	inputs.flags = erx_dom_plan_boot_flags(&apply->lib->view, plan,
-	    apply->lib->det);
+	inputs.flags = apply->boot_flags;
 	inputs.pack_flags = apply->lib->pack_flags;
 	inputs.hwcap = apply->lib->hwcap;
 	inputs.hwcap2 = apply->lib->hwcap2;
@@ -1028,7 +1028,8 @@ apply_keep(apply_t *apply, erx_dom_created_t *created)
 	apply->lib->handles[plan->slot] = apply->handles;
 	lib_view_caps(apply->lib, plan->slot);
 	apply_keep_gives(apply);
-	*created = (erx_dom_created_t){ .id = plan->spec.id, .connection = plan->connection };
+	*created = (erx_dom_created_t){ .id = plan->spec.id, .connection = plan->connection,
+	    .supervised = (apply->boot_flags & ERX_BOOT_SUPERVISED) != 0 };
 	if (plan->connection_row == ERX_DOM_NO_ROW)
 		return;
 	row = &apply->lib->view.connections[plan->connection_row];
@@ -1102,7 +1103,8 @@ erx_dom_lib_apply(erx_dom_lib_t *lib, const erx_dom_plan_t *plan, erx_dom_create
 	static apply_t apply;
 	erx_status_t status;
 
-	apply = (apply_t){ .lib = lib, .plan = plan };
+	apply = (apply_t){ .lib = lib, .plan = plan,
+	    .boot_flags = erx_dom_plan_boot_flags(&lib->view, plan, lib->det) };
 	status = apply_plan(&apply, created);
 	memset(&apply, 0, sizeof(apply));
 	return (status);

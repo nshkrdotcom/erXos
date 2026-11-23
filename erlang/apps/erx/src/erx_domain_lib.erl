@@ -100,13 +100,15 @@ A created domain: its id and the system domain's values of its connection. conne
 its number, 0 for none, and also the label the system domain's bell is bound with; side,
 the domain's side, and bell, the domain's bell, are slots of the system domain's table;
 peer_side is the system domain's side; reader and system_lane are the data areas of the
-lanes the domain and the system domain read.
+lanes the domain and the system domain read. supervised is the supervised bit of the boot
+information the library wrote (docs/design-live.md, "Targets"), which erx_dom_plan_boot_flags
+decides; Erlang code reads it here and never recomputes it.
 """.
 -type created() :: #{id := pos_integer(), connection := non_neg_integer(), side := non_neg_integer(),
                      peer_side := non_neg_integer(), bell := non_neg_integer(),
                      reader := non_neg_integer(), system_lane := non_neg_integer(),
                      ctl_slots := non_neg_integer(), domain_pid_number := non_neg_integer(),
-                     domain_pid_serial := non_neg_integer()}.
+                     domain_pid_serial := non_neg_integer(), supervised := boolean()}.
 
 -doc """
 A configured domain of the system manifest: its row in the manifest's domain

@@ -412,7 +412,7 @@ with_sides(Case) ->
 %% The library's values of a domain's system connection, as erx_domain_lib:create/1 gives them.
 side_values() ->
     #{node => ?PEER_NODE, connection => 9, side => 11, peer_side => 12, bell => 13, reader => 2,
-      system_lane => 3, ctl_slots => 4, domain_pid_number => 40, domain_pid_serial => 0}.
+      system_lane => 3, ctl_slots => 4, domain_pid_number => 40, domain_pid_serial => 0, supervised => false}.
 
 %% open_side for the peer from a caller standing for the domain service.
 open_side() ->

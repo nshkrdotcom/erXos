@@ -145,13 +145,15 @@ class SystemDomainTest < Minitest::Test
     # the nodedown, or a message to the ended domain's pid that ended the connection (a
     # target rule that requires the receiver's creation), a monitor of that pid answered
     # by the connection's end (a monitor sent to the later peer), or a stale pid taken for
-    # the later domain's process of the same number and serial, each fails.
+    # the later domain's process of the same number and serial, or a build answer that is
+    # supervised or has no supervised key, each fails.
     refute_match later.fetch(:pattern), "1> #{line}\r\n"
     later.fetch(:verify).call("#{Suite::LATER_DOMAIN_ANSWER}\r\n")
     [Suite::LATER_DOMAIN_ANSWER.sub('{9,ok}', '{7,ok}'), Suite::LATER_DOMAIN_ANSWER.sub('[nodedown,nodeup]', '[nodeup,nodedown]'),
      Suite::LATER_DOMAIN_ANSWER.sub('true},up}', 'true},down}'), Suite::LATER_DOMAIN_ANSWER.sub('{9,ok}', '{error,name_taken}'),
      Suite::LATER_DOMAIN_ANSWER.sub('{noproc,noproc,noproc,noproc,', '{noconnection,noproc,noconnection,noconnection,'),
-     Suite::LATER_DOMAIN_ANSWER.sub('sd_new', 'sd_old')]
+     Suite::LATER_DOMAIN_ANSWER.sub('sd_new', 'sd_old'), Suite::LATER_DOMAIN_ANSWER.sub(/false\}\z/, 'true}'),
+     Suite::LATER_DOMAIN_ANSWER.sub(/false\}\z/, 'none}')]
       .each { |answer| assert_raises(Erx::Error) { later.fetch(:verify).call("#{answer}\r\n") } }
     refute_match ends.fetch(:pattern), "1> #{line}\r\n"
     down = '{domain_down,5,{halt,69}}'

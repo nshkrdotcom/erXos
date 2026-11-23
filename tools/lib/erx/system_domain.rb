@@ -482,7 +482,25 @@ module Erx
     # sd_old on; the probe checks both together, and erx_funnel_check_test the funnel's rule
     # alone. Since both messages come from one process over one lane, a frame that ended the
     # connection leaves SdLq without sd_new, whatever the three seconds of SdNw saw.
-    SERVICE_KILL_LATER = 'SdLc=erx_domain:create(SdSpec),SdLi=case SdLc of {ok,SdLd}->' \
+    # SdLsv is the supervised flag of the library's build answer for the later peer
+    # (erx_domain_lib:create/1's map, docs/design-live.md, "Targets"). erx_domain:create/1
+    # returns only a domain handle, so the shell traces the domain service's call into the
+    # library and reads the flag from its return_from, matched by the domain's id. The trace
+    # is switched off in create's after clause, so it ends even if create raises, and the
+    # call message, which comes before the return_from, is taken off after it. SdLsv is
+    # false, since no plan sets the boot page's supervised bit (erx_dom_plan_boot_flags), and
+    # none when no answer with the key and the domain's id arrived: a refused or raised create,
+    # or a map without the key.
+    SERVICE_KILL_LATER = 'SdLst=whereis(erx_domain_srv),' \
+                         'erlang:trace_pattern({erx_domain_lib,create,1},[{\'_\',[],[{return_trace}]}],[global]),' \
+                         'erlang:trace(SdLst,true,[call,{tracer,self()}]),' \
+                         'SdLc=try erx_domain:create(SdSpec) after erlang:trace(SdLst,false,[call]),' \
+                         'erlang:trace_pattern({erx_domain_lib,create,1},false,[global]) end,' \
+                         'SdLid=case SdLc of {ok,SdLd0}->erx_domain:id(SdLd0);_->none end,' \
+                         'SdLsv=receive {trace,SdLst,return_from,{erx_domain_lib,create,1},{ok,#{id:=SdLid,supervised:=SdLsv0}}}->' \
+                         'SdLsv0 after 5000->none end,' \
+                         'receive {trace,SdLst,call,{erx_domain_lib,create,_}}->ok after 0->ok end,' \
+                         'SdLi=case SdLc of {ok,SdLd}->' \
                          '{erx_domain:id(SdLd),erx_domain:introduce(SdDom(SdTid),SdLd)};SdLe->SdLe end,SdNw!sd_nwgo,' \
                          'SdLv=receive {erx_origin,_,{sd_nw,SdNw,SdLv0}}->SdLv0 after 60000->timeout end,' \
                          'SdLq=spawn(peer@erxos,fun()->ok=erx_dist:export(self(),[send],SdTid),SdDs!{sd_lqready,self()},' \
@@ -496,7 +514,7 @@ module Erx
     # The domain service never reuses an id: the four configured domains took the first
     # four, and the later peer is the first domain created after them.
     LATER_ID = STORAGE_ID + 1
-    LATER_DOMAIN_ANSWER = "{later_domain,ok,{#{LATER_ID},ok},{[nodedown,nodeup],{noproc,noproc,noproc,noproc,true},up},ok,sd_new,#{LATER_ID}}"
+    LATER_DOMAIN_ANSWER = "{later_domain,ok,{#{LATER_ID},ok},{[nodedown,nodeup],{noproc,noproc,noproc,noproc,true},up},ok,sd_new,#{LATER_ID},false}"
     LATER_DOMAIN_START = /\A\{later_domain,/n
     # SERVICE_KILL_HALT: a watcher of a process of erts, and erts made to kill its own
     # agent, its pid asked of erts first, since the system domain may only send to it, by
@@ -530,7 +548,7 @@ module Erx
                               "#{SERVICE_KILL_HOSTILE},io:format(\"~0kp~n\",[{hostile,SdZr,SdZw,SdZad,SdZdd,SdZx,SdZvs,SdZpong,SdZph}])," \
                               "#{SERVICE_KILL_DOWN},io:format(\"~0kp~n\",[{connection_down,SdKh,SdKbv,SdKcv,SdN1,SdR1,SdMh,SdMfv,SdMwv,SdN2,SdR2,SdStale}])," \
                               "#{SERVICE_KILL_IGNORED},io:format(\"~0kp~n\",[{ignored_down,SdYh,SdYc,SdYp,SdYv,SdYr,SdYn,SdYi}])," \
-                              "#{SERVICE_KILL_ENDS},#{SERVICE_KILL_LATER},io:format(\"~0kp~n\",[{later_domain,SdNh,SdLi,SdLv,SdLqr,SdLqv,SdLn}])," \
+                              "#{SERVICE_KILL_ENDS},#{SERVICE_KILL_LATER},io:format(\"~0kp~n\",[{later_domain,SdNh,SdLi,SdLv,SdLqr,SdLqv,SdLn,SdLsv}])," \
                               "#{SERVICE_KILL_HALT},io:format(\"~0kp~n\",[{domain_ends,SdE1,SdL1,SdV1,SdG2,SdE2,SdV2,SdB1,SdB2,SdV3,SdV4}])," \
                               'exit(whereis(erx_domain_srv),kill).'
     SERVICE_KILL_ANSWER = begin

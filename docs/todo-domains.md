@@ -610,7 +610,9 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   (`erlang/apps/erx_code/src/erx_code.erl`, `erx_code_target.erl`;
   `erlang/apps/erx_domain/src/erx_domain_pid.erl`; `liberx/system/dom_core.c`,
   `erx_dom_plan_boot_flags`): the code server's supervised path, the boot information's
-  `supervised` flag, its reader and `erx_dist:supervised/0` are built, but no domain is
+  `supervised` flag, its reader, `erx_dist:supervised/0` and the library's build answer
+  carrying the flag (`erx_dom_created_t`, `supervised` in `erx_domain_lib:created()`) are
+  built, but no domain is
   supervised, because nothing sends a start load and a supervised code server would wait
   for one until its boot timeout ([design-live.md](design-live.md#the-code-server),
   "`erx_code`'s side"). Missing:
@@ -624,8 +626,6 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
     but the domain service ignores it. It records the domain's code server, its supervised
     flag and its release hash with the domain, and for a supervised domain sends
     `erx_code` the notice that the domain started.
-  * The domain library's build answer carries no flags; it reports the supervised flag the
-    plan set, for the domain service to record.
   * The plan never sets `supervised`. It sets it for a configured row that allows a
     restart, and, once `erx_domain:create`'s restart is built and the request plan carries
     the specification's `restart`, for a created domain whose restart is `permanent` or

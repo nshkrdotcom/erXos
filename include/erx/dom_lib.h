@@ -156,7 +156,8 @@ typedef struct erx_dom_lib {
 #define ERX_DOM_NODE_MAX	(ERX_DOM_NAME_MAX + 1u + ERX_DOM_HOST_MAX)
 
 /*
- * What erx_dom_create returns: the domain's id and the system domain's values
+ * What erx_dom_create returns: the domain's id, whether it is supervised (the
+ * supervised bit of the boot page apply wrote), and the system domain's values
  * of its connection, which its agent opens the system side's port with.
  */
 typedef struct erx_dom_created {
@@ -174,6 +175,7 @@ typedef struct erx_dom_created {
 	uint32_t	ctl_slots;	/* slots of the control table that
 					 * ends peer_side */
 	erx_dom_pid_t	domain_pid;	/* the one process that writes it */
+	bool		supervised;	/* the boot page has ERX_BOOT_SUPERVISED */
 } erx_dom_created_t;
 
 /*

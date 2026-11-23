@@ -385,7 +385,7 @@ spec_from(ErlNifEnv *env, ERL_NIF_TERM map, erx_dom_spec_t *spec, erx_runtime_li
 static ERL_NIF_TERM
 created_term(ErlNifEnv *env, const erx_dom_created_t *created)
 {
-	ERL_NIF_TERM keys[10], values[10], result;
+	ERL_NIF_TERM keys[11], values[11], result;
 
 	keys[0] = atom(env, "id"), values[0] = enif_make_uint(env, created->id);
 	keys[1] = atom(env, "connection"), values[1] = enif_make_uint(env, created->connection);
@@ -398,7 +398,9 @@ created_term(ErlNifEnv *env, const erx_dom_created_t *created)
 	keys[7] = atom(env, "ctl_slots"), values[7] = enif_make_uint(env, created->ctl_slots);
 	keys[8] = atom(env, "domain_pid_number"), values[8] = enif_make_uint(env, created->domain_pid.number);
 	keys[9] = atom(env, "domain_pid_serial"), values[9] = enif_make_uint(env, created->domain_pid.serial);
-	if (!enif_make_map_from_arrays(env, keys, values, 10, &result))
+	/* The supervised bit of the boot page the library wrote, its one source. */
+	keys[10] = atom(env, "supervised"), values[10] = atom(env, created->supervised ? "true" : "false");
+	if (!enif_make_map_from_arrays(env, keys, values, 11, &result))
 		return (enif_make_badarg(env));
 	return (enif_make_tuple2(env, atom(env, "ok"), result));
 }
