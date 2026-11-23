@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: BSD-2-Clause
 # frozen_string_literal: true
 
+require_relative 'backend_core'
+
 module Erx
   # The sources of the hosted backend and its function API test. Apart from FunctionApi,
   # which loads the test images' recipe, so that the hosted build's class loads none of it.
@@ -16,13 +18,14 @@ module Erx
       kernel/crypto/blake3/blake3.c kernel/crypto/blake3/blake3_portable.c
       build/gen/kernel/generated/abi_decode.c build/gen/kernel/generated/abi_run.c
       build/gen/liberx/generated/abi_reader.c liberx/image_plan.c liberx/release.c liberx/release_fs.c
-      liberx/backend/core/entropy_take.c liberx/backend/core/object_info.c liberx/backend/core/park_table.c liberx/backend/core/refused.c
+      liberx/backend/core/entropy_take.c liberx/backend/core/object_info.c liberx/backend/core/park_table.c
       liberx/backend/core/trace_ring.c liberx/backend/core/vm_table.c liberx/backend/core/grow_table.c
       liberx/backend/hosted/object_info.c
       liberx/backend/hosted/arch/aarch64/switch_stack.S liberx/backend/hosted/arch/x86_64/switch_stack.S
       build/gen/liberx/backend/hosted/generated/calls.c
       liberx/backend/hosted/group.c liberx/backend/hosted/log.c liberx/backend/hosted/thread.c
       liberx/backend/hosted/trace.c liberx/backend/hosted/vm.c liberx/backend/hosted/wait.c
+      #{BackendCore::REFUSED}
       #{GUEST}/cases.c #{GUEST}/hosted.c #{GUEST}/irq_cases.c
     ].freeze
   end

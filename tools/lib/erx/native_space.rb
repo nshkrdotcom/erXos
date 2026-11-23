@@ -4,6 +4,7 @@
 
 require 'fileutils'
 
+require_relative 'backend_core'
 require_relative 'boot_image'
 require_relative 'error'
 require_relative 'fiasco'
@@ -23,7 +24,7 @@ module Erx
     # The same program as an image entry, whose read-only segments every task shares.
     IMAGE_PATH = 'boot/native-space-image'
     ROOT_SOURCES = [*NativeRoot::RUNTIME, *NativeRoot::VM, *NativeRoot::SERVICE, *NativeRoot::LAUNCH,
-                    'liberx/backend/core/refused.c', 'test/guest/native_space/guest.c'].freeze
+                    BackendCore::REFUSED, 'test/guest/native_space/guest.c'].freeze
     PROGRAM_SOURCES = [*NativeRoot::TASK, 'test/guest/native_space/program.c'].freeze
     CASES = %w[program_found writer_released between_tasks bounds revoke gate_refusals gate_queue
                created space_refusals released stop_steps first_thread budget_calls budget_destroy groups passing time budget_held

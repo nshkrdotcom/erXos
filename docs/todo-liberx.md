@@ -5,6 +5,13 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
 
 ## Major initiatives
 
+* [Medium] ABI, `liberx/backend/api.h`: the kernel calls are not generated from the ABI.
+  `docs/design-kernel.md` ("Kernel calls") says every call is in `abi/erx_abi.txt`, which declares one,
+  `debug_log`; `api.h` declares about 70 by hand, and the backends' refusing stubs
+  (`liberx/backend/core/refused.c`, `liberx/backend/fiasco/task_refused.c`,
+  `liberx/backend/hosted/refused.c`) repeat their signatures. A call's signature and status codes
+  thus live in hand-kept copies that agree only at the C compiler, and no decoder or Erlang twin is
+  generated for them. Declare the calls in the ABI and generate `api.h` and the stubs from it.
 * [Medium] ABI, generated names are reserved by a second list (`Names.validate` in
   `tools/lib/erx/abi_names.rb`): the emitters (`abi_emit_c.rb`, `abi_emit_marks.rb`) and `validate` share
   which layouts get a decoder, encoder or encoder input, but which names each gets is written in both, so

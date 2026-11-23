@@ -9,7 +9,7 @@
  * and its crash copies, the gate worker (sys/erxos/erx_gate.c) for its fault
  * gate, and the erx_program driver (sys/erxos/erx_program_drv.c) for a
  * program's spaces. The hosted process is the system domain alone, builds no
- * domain library (liberx/backend/core/dom_lib_none.c) and has no sub-space
+ * domain library (liberx/system/dom_lib_none.c) and has no sub-space
  * group, so the NIF module and the gate worker call none of them. Each is ERX_ENOTSUP for every hosted caller, as
  * the call table answers a call it does not offer (docs/design-fiasco.md,
  * "The hosted backend"): a hosted BeamAsm image, which none builds, would

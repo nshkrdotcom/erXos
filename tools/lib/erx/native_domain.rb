@@ -3,6 +3,7 @@
 # frozen_string_literal: true
 
 require_relative 'abi'
+require_relative 'backend_core'
 require_relative 'boot_image'
 require_relative 'erlang_apps'
 require_relative 'error'
@@ -52,7 +53,7 @@ module Erx
                 liberx/system/dom_dump.c
                 liberx/backend/core/boot_info.c liberx/backend/core/boot_manifest.c liberx/erx_lane.c liberx/erx_etf.c].freeze
     ROOT_SOURCES = [*NativeRoot::RUNTIME, *NativeRoot::VM, *NativeRoot::SERVICE, *NativeRoot::LAUNCH,
-                    'liberx/backend/core/refused.c', *SYSTEM, 'test/guest/native_domain/string.c',
+                    BackendCore::REFUSED, *SYSTEM, 'test/guest/native_domain/string.c',
                     'test/guest/native_domain/guest.c'].freeze
     ROOT_FLAGS = %w[-DERX_DOM_TEST_HOOKS].freeze
     PROGRAM_SOURCES = [*NativeRoot::TASK, 'test/guest/native_domain/program.c'].freeze

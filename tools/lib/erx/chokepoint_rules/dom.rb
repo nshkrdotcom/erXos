@@ -20,6 +20,8 @@ module Erx
     DOM_BOOT_VIEW = 'liberx/system/dom_boot_view.c'
     # The reader of a domain's crash area, which calls no planning entry.
     DOM_DUMP = 'liberx/system/dom_dump.c'
+    # The library where none is built: the refusing stub a runtime without it links.
+    DOM_NONE = 'liberx/system/dom_lib_none.c'
     # The library's one install (A7) and the domain service's NIF module, which
     # call neither entry; the NIF reaches only erx_dom_lib_*.
     DOM_INSTALL_FILES = %w[liberx/system/dom_install.c liberx/system/dom_install.h].freeze
@@ -40,7 +42,7 @@ module Erx
     ERXOS_NIFS = 'otp/erts/emulator/nifs/erxos/**/*'
 
     declare_group(
-      unchecked_objects: [DOM_CORE, DOM_LIFE, DOM_APPLY, DOM_APPLY_HEADER, DOM_BOOT, DOM_BOOT_VIEW, DOM_DUMP, *DOM_INSTALL_FILES],
+      unchecked_objects: [DOM_CORE, DOM_LIFE, DOM_APPLY, DOM_APPLY_HEADER, DOM_BOOT, DOM_BOOT_VIEW, DOM_DUMP, DOM_NONE, *DOM_INSTALL_FILES],
       rules: [
         # A creation origin is authority provenance: the planning entries
         # build every specification, origin included, inside the core, so
@@ -82,7 +84,7 @@ module Erx
           # domain service. dom_lib_none.c is the refusing stub of a runtime with no library, and the
           # native_domain guest is a test root that stands in for manifest startup on its configured row.
           sites: [DOM_BOOT, DOM_LIB_HEADER, DOM_CORE, DOM_HEADER, DOM_DRIVER, DOM_FUZZ, DOM_HOST_PLANNER, DOM_NIF,
-                  'liberx/backend/core/dom_lib_none.c', 'test/guest/native_domain/guest.c'].map { |path| Chokepoints::Site.new(glob: path) },
+                  DOM_NONE, 'test/guest/native_domain/guest.c'].map { |path| Chokepoints::Site.new(glob: path) },
           seed: { 'liberx/system/dom_apply.c' => "status = erx_dom_plan_configured(&view, id, row, &plan);\n",
                   'liberx/system/dom_life.c' => "status = erx_dom_lib_configured(lib, id, row, &created);\n" }
         ),
@@ -100,7 +102,7 @@ module Erx
           scope: Chokepoints::Scope.new(own: true, extra: [GLUE, ERXOS_NIFS]),
           pattern: /\berx_dom_(?:plan|lib)_(?:app_)?session\b/,
           sites: [DOM_BOOT, DOM_LIB_HEADER, DOM_CORE, DOM_HEADER, DOM_NIF, DOM_HOST_PLANNER,
-                  'liberx/backend/core/dom_lib_none.c', 'test/fixtures/dom_core_driver.c', 'tools/fuzz/dom_core_fuzz.c']
+                  DOM_NONE, 'test/fixtures/dom_core_driver.c', 'tools/fuzz/dom_core_fuzz.c']
                  .map { |site| Chokepoints::Site.new(glob: site) },
           seed: { 'liberx/system/dom_life.c' => "status = erx_dom_lib_session(lib, id, 0, \"x\", 1, pid, &created);\n" }
         ),

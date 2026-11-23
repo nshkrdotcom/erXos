@@ -40,7 +40,7 @@ module Erx
                       'liberx/backend/core/boot_info.c', 'liberx/backend/core/boot_manifest.c',
                       'liberx/backend/hosted/start.c', 'liberx/erx_lane.c', 'liberx/erx_funnel.c',
                       'liberx/erx_etf.c', 'liberx/erx_pipe_check.c', 'liberx/erx_pipe_core.c', 'liberx/erx_pipe_run.c',
-                      'liberx/backend/core/dom_lib_none.c', 'liberx/system/dom_dump.c',
+                      'liberx/system/dom_lib_none.c', 'liberx/system/dom_dump.c',
                       'liberx/backend/hosted/refused.c'].freeze
     # The tracked trees the hosted archive and the release's manifest are compiled from, for
     # the build record; their generated C is in the generated tree, which SOURCE_TREES adds.

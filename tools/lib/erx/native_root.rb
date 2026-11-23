@@ -5,6 +5,7 @@
 require 'digest'
 require 'fileutils'
 require 'json'
+require_relative 'backend_core'
 require_relative 'compile_memo'
 require_relative 'counter_reads'
 require_relative 'error'
@@ -121,7 +122,7 @@ module Erx
     # musl and a domain's runtime both link.
     OUTPUT_LINE = ["#{BACKEND}/output_line.c", 'liberx/backend/core/line_gather.c'].freeze
     SYSTEM = [*(RUNTIME - ["#{BACKEND}/root_mem.c"]), *VM, *SERVICE, *LAUNCH, "#{BACKEND}/root.c",
-              'liberx/backend/core/boot_info.c', 'liberx/backend/core/boot_manifest.c', 'liberx/backend/core/refused.c',
+              'liberx/backend/core/boot_info.c', 'liberx/backend/core/boot_manifest.c', BackendCore::REFUSED,
               'liberx/backend/core/arch/aarch64/cpu_features.c',
               "#{BACKEND}/api_names.c", "#{BACKEND}/libc_start.c", "#{BACKEND}/libc_root_start.c", "#{BACKEND}/libc_root_write.c", *OUTPUT_LINE, "#{BACKEND}/runtime_entry.c",
               "#{BACKEND}/park_report.c", "#{BACKEND}/runtime_main.c", "#{BACKEND}/rng200.c", "kernel/core/rng200.c", 'liberx/release.c', 'liberx/release_fs.c',
@@ -142,8 +143,8 @@ module Erx
     DOMAIN_RECORD = /\#\d+ \d+\.\d+ debug space \d+(?: dropped \d+)?: /n
     DOMAIN_RUNTIME = [*(TASK - ["#{BACKEND}/root_mem.c"]), "#{BACKEND}/libc_start.c", "#{BACKEND}/domain_entry.c", *OUTPUT_LINE,
                       "#{BACKEND}/runtime_main.c", 'liberx/backend/core/boot_info.c', 'liberx/backend/core/boot_manifest.c',
-                      'liberx/backend/core/refused.c', 'liberx/backend/core/object_info.c', 'kernel/core/log.c', "#{BACKEND}/api_names.c",
-                      "#{BACKEND}/task_refused.c", 'liberx/backend/core/dom_lib_none.c', "#{BACKEND}/release_task.c", 'liberx/release_fs.c', 'liberx/system/dom_dump.c',
+                      BackendCore::REFUSED, 'liberx/backend/core/object_info.c', 'kernel/core/log.c', "#{BACKEND}/api_names.c",
+                      "#{BACKEND}/task_refused.c", 'liberx/system/dom_lib_none.c', "#{BACKEND}/release_task.c", 'liberx/release_fs.c', 'liberx/system/dom_dump.c',
                       'kernel/crypto/blake3/blake3.c', 'kernel/crypto/blake3/blake3_portable.c', *CONNECTION, *PIPE].freeze
     # The sources that read musl's headers, which only NativeRuntime's sysroot holds:
     # - the boot page builder and the domain library;

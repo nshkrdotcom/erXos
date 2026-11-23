@@ -22,7 +22,7 @@
  *
  * The library is the one the root's start built (erx_dom_lib_system). Where
  * there is none, in a domain's runtime and a hosted runtime
- * (liberx/backend/core/dom_lib_none.c), no thread starts and every
+ * (liberx/system/dom_lib_none.c), no thread starts and every
  * well-formed call, register included, answers {error, enotsup}.
  *
  * The process that registers is the one that hears of every end, and the

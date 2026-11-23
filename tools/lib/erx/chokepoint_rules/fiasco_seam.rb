@@ -32,7 +32,6 @@ module Erx
         liberx/backend/erx/arch/aarch64/generated/calls.c
         liberx/backend/core/mem.h
         liberx/backend/core/refused.c
-        liberx/backend/core/dom_lib_none.c
         liberx/backend/core/object_info.c
         liberx/backend/core/object_info.h
         liberx/backend/core/device_check.h

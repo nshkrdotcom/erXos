@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
 # frozen_string_literal: true
 
+require_relative 'backend_core'
 require_relative 'boot_image'
 require_relative 'error'
 require_relative 'hosted_sources'
@@ -39,7 +40,7 @@ module Erx
     LAST_CASE = 'indices_run_out'
     GUEST = HostedSources::GUEST
     HOSTED_SOURCES = HostedSources::ALL
-    NATIVE_SOURCES = [*NativeRoot::RUNTIME, *NativeRoot::VM, *NativeRoot::SERVICE, 'liberx/backend/core/refused.c',
+    NATIVE_SOURCES = [*NativeRoot::RUNTIME, *NativeRoot::VM, *NativeRoot::SERVICE, BackendCore::REFUSED,
                       'liberx/backend/fiasco/api_names.c', 'build/gen/liberx/generated/abi_reader.c', "#{GUEST}/cases.c", "#{GUEST}/guest.c", "#{GUEST}/irq_cases.c", "#{GUEST}/device_cases.c",
                       "#{GUEST}/handle_cases.c"].freeze
     # Each case's patience in the guest is 60 seconds: a stall fails its own line.

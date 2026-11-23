@@ -12,7 +12,7 @@
  * irq.c, time_page.c, vm.c, watchdog_thread.c and runtime_entry.c read the root's
  * tables, which a task does not hold. A call the service comes to serve a task
  * moves from here to its stub in service_stubs.c. The domain library's entries,
- * which a task finds none of, are liberx/backend/core/dom_lib_none.c's.
+ * which a task finds none of, are liberx/system/dom_lib_none.c's.
  */
 
 #include <stddef.h>
