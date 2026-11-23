@@ -7,15 +7,15 @@
  * Drives kernel/core/vc_property.c for test/host/vc_property_test.rb. Each line of
  * standard input is one request and gets one line of answer, every word in hexadecimal:
  *
- *   request TAG ARG    -> request W..., the buffer the core writes for TAG with the
- *                         one-word argument ARG
+ *   request TAG ARG... -> request W..., the buffer the core writes for TAG with the
+ *                         argument words ARG..., one to ERX_VC_ROW_WORDS of them
  *   answer TAG W...    -> answer STATUS N BYTES, the core's check of the buffer W... as
  *                         the firmware left it, for TAG; STATUS in decimal, BYTES the
  *                         answer the core copies, its window's bytes in memory order
  *
  *   tag WORD           -> tag 1 when WORD is a member of fw_tag with a declaration, else tag 0
  *
- * TAG is notify, the ABI's NOTIFY_XHCI_RESET, or model, a tag of this driver's own with
+ * TAG is notify, the ABI's NOTIFY_XHCI_RESET, gpio, its SET_GPIO_STATE, or model, a tag of this driver's own with
  * a one-word request, an 8-byte window and a least answer of 4, which reaches the parts
  * of the check an empty window leaves out.
  */
@@ -36,6 +36,8 @@ tag_named(const char *name)
 {
 	if (name != NULL && strcmp(name, "notify") == 0)
 		return (erx_vc_tag_of(ERX_FW_TAG_NOTIFY_XHCI_RESET));
+	if (name != NULL && strcmp(name, "gpio") == 0)
+		return (erx_vc_tag_of(ERX_FW_TAG_SET_GPIO_STATE));
 	if (name != NULL && strcmp(name, "model") == 0)
 		return (&model);
 	return (NULL);
@@ -66,11 +68,16 @@ main(void)
 			return (2);
 		while ((word = strtok(NULL, " \n")) != NULL && nwords < ERX_VC_BUFFER_WORDS)
 			words[nwords++] = (uint32_t)strtoul(word, NULL, 16);
-		if (strcmp(verb, "request") == 0 && nwords == 1) {
-			/* The argument's one word, with a poison word behind it that a read past it shows. */
-			const struct { uint32_t value[1]; uint32_t poison; } argument = { { words[0] }, 0xdeadbeefu };
+		if (strcmp(verb, "request") == 0 && nwords >= 1 && nwords <= ERX_VC_ROW_WORDS) {
+			/* The argument's words, with a poison word behind them that a read past them shows. */
+			uint32_t argument[ERX_VC_ROW_WORDS + 1];
 			uint32_t buffer[ERX_VC_BUFFER_WORDS];
-			const size_t written = erx_vc_request(tag, argument.value, buffer);
+			size_t written;
+
+			for (size_t at = 0; at < nwords; at++)
+				argument[at] = words[at];
+			argument[nwords] = 0xdeadbeefu;
+			written = erx_vc_request(tag, argument, buffer);
 
 			printf("request");
 			for (size_t at = 0; at < written; at++)

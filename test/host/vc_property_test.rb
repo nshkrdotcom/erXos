@@ -16,7 +16,11 @@ require_relative '../fixtures/generated_tree'
 # an answer window, and its check of the answer the firmware leaves: a response code other
 # than success, a first tag other than the row's or a length below the least answer is
 # ERX_EPROTO, a response word without bit 31 is ERX_ENOTSUP, and a longer answer is cut to
-# the window. Seeded faults must each change a pinned answer.
+# the window. SET_GPIO_STATE, which the firmware answers in its first value word, is ERX_OK
+# with no bytes on a response word of 0 or with bit 31 set only when that word, the pin
+# word, reads 0, and ERX_ENOTSUP otherwise, as a buffer the firmware left untouched keeps
+# the pin the request wrote (docs/design-bluetooth.md, "The power line"). Seeded faults
+# must each change a pinned answer.
 class VcPropertyTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
   CORE = 'kernel/core/vc_property.c'
@@ -27,20 +31,28 @@ class VcPropertyTest < Minitest::Test
     "a word outside fw_tag given a declaration" => ["\tdefault:\n\t\treturn (NULL);", "\tdefault:\n\t\treturn (&vc_notify_xhci_reset);"],
     'the response code unchecked' => ['code != ERX_VC_CODE_SUCCESS', 'code == ERX_VC_CODE_REQUEST'],
     'the first tag searched past' => ['tag != spec->tag', 'tag == 0'],
-    'the response bit unchecked' => ['if (erx_vc_tag_header_indicator_response_get(indicator) == 0)',
-                                     'if (indicator == 0xffffffffu)'],
+    'the response bit unchecked' => ['erx_vc_tag_header_indicator_response_get(indicator) != 0 ||',
+                                     'indicator != 0xffffffffu ||'],
     'the least answer unchecked' => [') < spec->least_bytes', ') > UINT32_MAX - 1'],
     'the window not cut' => ['length < spec->window_bytes ? length : spec->window_bytes', 'length'],
     'the value buffer sized by the request alone' =>
       ['spec->request_bytes > spec->window_bytes ? spec->request_bytes : spec->window_bytes', 'spec->request_bytes'],
     'the end tag left out' => ["\twords[at++] = ERX_VC_END_TAG;\n", ''],
     'the argument read past its words' => ['word < request_words', 'word <= request_words'],
+    'the request built from its first word alone' => ['word < request_words ? argument[word]', 'word < request_words && word < 1 ? argument[word]'],
+    "result_word ignored, so the power line's answer is refused" =>
+      ['(spec->result_word && indicator == 0)', '(false && indicator == 0)'],
+    'result_word taken as true for every tag, so an ignored VL805 notification reads as performed' =>
+      ['.result_word = ERX_VC_NOTIFY_XHCI_RESET_RESULT_WORD != 0', '.result_word = true'],
+    'the pin word unchecked, so an untouched buffer reads as performed' =>
+      ['words[ERX_VC_VALUE_WORD] == 0 ? ERX_OK : ERX_ENOTSUP', 'ERX_OK'],
     'the copy past the answer' => ['at < answer.length ? value[at]', 'at < spec->window_bytes ? value[at]'],
     'the copy from the tag header' => ['&words[ERX_VC_VALUE_WORD]', '&words[ERX_VC_VALUE_WORD - 1]']
   }.freeze
 
   NOTIFY_ANSWER = '0000001c 80000000 00030058 00000004'
   MODEL_ANSWER = '00000020 80000000 00012345 00000008'
+  GPIO_ANSWER = '00000020 80000000 00038041 00000008'
 
   # The requests the tests pin, and the answers the design gives them.
   ANSWERS = [
@@ -69,9 +81,26 @@ class VcPropertyTest < Minitest::Test
     ["answer model #{MODEL_ANSWER} 80000010 04030201 08070605 11111111", 'answer 0 8 0102030405060708'],
     ["answer model #{MODEL_ANSWER} 80000003 04030201 08070605", 'answer -18 0 0000000000000000'],
     ["answer model #{MODEL_ANSWER} 00000006 04030201 08070605", 'answer -12 0 0000000000000000'],
-    # Only a member of fw_tag has a declaration: NOTIFY_XHCI_RESET's identifier, and not a
-    # tag the firmware knows that erXos does not send, nor the end tag.
+    # The power line's on request, pin 128 and state 1: eight words, 32 bytes, both words
+    # in the two-word value buffer.
+    ['request gpio 00000080 00000001', 'request 00000020 00000000 00038041 00000008 00000000 00000080 00000001 00000000'],
+    # Performed: a response word of 0, as the Pi 4's firmware leaves it, or with bit 31 set,
+    # and the pin word 0; ERX_OK with no bytes whatever the length.
+    ["answer gpio #{GPIO_ANSWER} 00000000 00000000 00000001", 'answer 0 0 '],
+    ["answer gpio #{GPIO_ANSWER} 80000000 00000000 00000001", 'answer 0 0 '],
+    ["answer gpio #{GPIO_ANSWER} 80000008 00000000 00000001", 'answer 0 0 '],
+    # Not performed: the pin word left at 128, as an untouched buffer keeps it, with either
+    # response word; and a nonzero response word without bit 31, the tag ignored.
+    ["answer gpio #{GPIO_ANSWER} 00000000 00000080 00000001", 'answer -12 0 '],
+    ["answer gpio #{GPIO_ANSWER} 80000000 00000080 00000001", 'answer -12 0 '],
+    ["answer gpio #{GPIO_ANSWER} 00000004 00000000 00000001", 'answer -12 0 '],
+    # Outside the interface: an error parsing the buffer, or another first tag.
+    ['answer gpio 00000020 80000001 00038041 00000008 00000000 00000000 00000001', 'answer -18 0 '],
+    ['answer gpio 00000020 80000000 00030058 00000008 00000000 00000000 00000001', 'answer -18 0 '],
+    # Only a member of fw_tag has a declaration: NOTIFY_XHCI_RESET's and SET_GPIO_STATE's
+    # identifiers, and not a tag the firmware knows that erXos does not send, nor the end tag.
     ['tag 00030058', 'tag 1'],
+    ['tag 00038041', 'tag 1'],
     ['tag 00030006', 'tag 0'],
     ['tag 00000000', 'tag 0']
   ].freeze

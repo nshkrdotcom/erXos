@@ -180,7 +180,15 @@
       "name": "vl805_notify",
       "device": "/scb/pcie@7d500000",
       "tag": "notify_xhci_reset",
-      "argument": 1048576
+      "arguments": [
+        1048576
+      ]
+    },
+    {
+      "device": "/soc/serial@7e201000",
+      "power_line": "bt_power",
+      "off_ms": 300,
+      "on_ms": 500
     }
   ],
   "units": [

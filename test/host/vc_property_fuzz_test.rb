@@ -24,7 +24,9 @@ class VcPropertyFuzzTest < Minitest::Test
   MUTANTS = {
     'the window clamp removed' => ['length < spec->window_bytes ? length : spec->window_bytes', 'length'],
     'the copy past the answer' => ['at < answer.length ? value[at]', 'at < ERX_VC_WINDOW_MAX ? value[at]'],
-    'the least answer unchecked' => [') < spec->least_bytes', ') > UINT32_MAX - 1']
+    'the least answer unchecked' => [') < spec->least_bytes', ') > UINT32_MAX - 1'],
+    'the pin word unchecked' => ['words[ERX_VC_VALUE_WORD] == 0 ? ERX_OK : ERX_ENOTSUP', 'ERX_OK'],
+    'result_word ignored' => ['(spec->result_word && indicator == 0)', '(false && indicator == 0)']
   }.freeze
 
   def test_the_seeds_pass_over_the_core

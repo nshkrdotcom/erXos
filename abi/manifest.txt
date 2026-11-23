@@ -308,13 +308,15 @@ layout erx_manifest wire_le 8 488
 # A firmware request row (docs/design-abi.md, "Devices and partition windows"): a row of the
 # platform record's firmware_requests whose device the manifest places, in the record's
 # order, so a row's index is its position among its device's rows. device is that device's
-# row, mf_none for the machine; tag and argument are what the request sends
-# (docs/design-fiasco.md, "The firmware request").
-layout erx_mf_firmware_request wire_le 4 20
+# row, mf_none for the machine; tag and the argument words are what the request sends, the
+# tag's request words of them (abi/formats/vc_property.txt, vc_row_words) and 0 past them,
+# from the platform record's row or the power line its power row names
+# (docs/design-fiasco.md, "The firmware request"; docs/design-bluetooth.md, "The power line").
+layout erx_mf_firmware_request wire_le 4 24
   field name erx_mf_str 0
   field device u32 8
   field tag fw_tag 12
-  field argument u32 16
+  field arguments u32 16 count @vc_row_words
 layout erx_mf_principal wire_le 8 80
   field name erx_mf_str 0
   field memory u64 8

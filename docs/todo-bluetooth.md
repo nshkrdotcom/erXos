@@ -15,6 +15,11 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   refuses two line records of one peripheral but takes a pl011 and a virtio_mmio line record together; only `check_line_grants`'
   one-grant limit, the root's record for the granted device alone and `check_serial_devices` keep it to one. Refuse more than one
   line record across both peripherals.
+* [Low] Bluetooth power line, `pci_firmware/1` sends any device's row 0 (`otp/erts/emulator/nifs/erxos/erx_domain_lib_nif.c`,
+  `pci_firmware_nif`): it names a host bridge but calls `erx_dom_lib_firmware_request(lib, Row, 0, ...)` for any device row,
+  and UART0's row 0 is `bt_off`, so a wrong row from the device service would power the controller off instead of answering
+  `enotsup`. Only the system domain's device service calls it, with its own bridge list. Refuse a row `lib_pci_bridge` does
+  not resolve before the request.
 * [Low] bluetooth suite, the domain's memory (`tools/lib/erx/bt_domain.rb` `MEMORY`): 32 MiB is unmeasured. Measure it at rest as
   `PcieDomain`'s memory note does (`MediumBoot::Footprint`) and size the row from that.
 * [Low] bluetooth suite, the two unverified QEMU facts (docs/design-bluetooth.md, "Sources"): whether bytes arriving with no

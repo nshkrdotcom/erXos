@@ -209,7 +209,7 @@ int	erx_mem_dma_addr(uint64_t mem, uint64_t offset, uint64_t *addr) ERX_WARN_UNU
  */
 typedef struct erx_firmware_row {
 	erx_fw_tag_t	tag;
-	uint32_t	argument;	/* the request's one word */
+	uint32_t	arguments[ERX_VC_ROW_WORDS];	/* the request's words; the tag's declaration says how many are sent */
 } erx_firmware_row_t;
 
 int	erx_firmware_request_row(erx_firmware_row_t row, uint8_t answer[ERX_VC_WINDOW_MAX], uint32_t *length)

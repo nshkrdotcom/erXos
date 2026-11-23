@@ -6,6 +6,7 @@
 #ifndef ERX_CORE_VC_PROPERTY_H
 #define ERX_CORE_VC_PROPERTY_H
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -34,13 +35,16 @@
  * One tag's declaration: its identifier, the bytes of its request, a whole number of
  * words up to ERX_VC_REQUEST_MAX, the bytes of its answer window, a whole number of words
  * up to ERX_VC_WINDOW_MAX,
- * and the least answer it accepts. Each comes from the ABI, never from a caller.
+ * the least answer it accepts, and result_word: whether the firmware answers the tag in its
+ * first value word, 0 when performed, rather than in its response word. Each comes from
+ * the ABI, never from a caller.
  */
 typedef struct erx_vc_tag {
 	uint32_t	tag;
 	uint32_t	request_bytes;
 	uint32_t	window_bytes;
 	uint32_t	least_bytes;
+	bool		result_word;
 } erx_vc_tag_t;
 
 /*
@@ -50,7 +54,9 @@ typedef struct erx_vc_tag {
 const erx_vc_tag_t	*erx_vc_tag_of(uint32_t tag);
 
 /*
- * Writes the request for spec with the argument's request_bytes / 4 words into words:
+ * Writes the request for spec with the argument's request_bytes / 4 words into words (for
+ * every tag of fw_tag at most ERX_VC_ROW_WORDS, so a firmware request row's words are its
+ * argument):
  * the buffer's size and code 0, the tag, its value buffer's size (the larger of the
  * request and the window), a request word of 0, the argument, zeroes to the end of the
  * value buffer and the end tag. Returns the number of words written, at most
@@ -61,8 +67,8 @@ size_t	erx_vc_request(const erx_vc_tag_t *spec, const uint32_t *argument,
 
 /*
  * The result of an answer's check: ERX_OK with length, the bytes of the answer, at most
- * the window; or ERX_EPROTO for an answer
- * outside the interface, or ERX_ENOTSUP for a tag the firmware ignored, with length 0.
+ * the window; or ERX_EPROTO for an answer outside the interface, or ERX_ENOTSUP for a tag
+ * the firmware ignored or did not perform, with length 0.
  */
 typedef struct erx_vc_answer {
 	erx_status_t	status;
@@ -75,8 +81,12 @@ typedef struct erx_vc_answer {
 /*
  * Checks the answer to spec's request in words, a copy of the buffer the caller read
  * once after the firmware answered, field by field: the response code, the first tag,
- * which must be spec's (another is refused, never searched past), the response bit and
- * the length against the least answer. A length past the window is cut to it. out gets
+ * which must be spec's (another is refused, never searched past), the response word and
+ * the length against the least answer. A response word without bit 31 is the firmware
+ * ignoring the tag, except a word of 0 on a tag whose declaration sets result_word. On such
+ * a tag the first value word decides, whatever the length: 0 is ERX_OK with no bytes, and
+ * any other word, as a buffer the firmware left untouched keeps the request's, is
+ * ERX_ENOTSUP. A length past the window is cut to it. out gets
  * the answer's first length bytes from the value buffer and zeroes to its end, so nothing
  * past the window is read and nothing but the answer reaches the caller.
  */

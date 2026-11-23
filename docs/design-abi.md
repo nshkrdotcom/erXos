@@ -1740,7 +1740,7 @@ bus address is the tree's fact, which the root derives at boot
 
 A platform's firmware requests reach the system domain in the manifest
 beside the device records, each as a record of its name, its belonging
-(a device row, or the machine), its tag and its argument, in the order of
+(a device row, or the machine), its tag and its argument words, in the order of
 the platform record's `firmware_requests`, so a row's index is its
 position among those of its device or the machine; the generator derives
 a machine row's tag and argument from its reading, and a device's off

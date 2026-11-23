@@ -51,13 +51,54 @@ limit vc_deadline_ns u64 1000000000
 
 # The tags erXos sends, a closed set, each member's value its identifier: a firmware request
 # row of the system manifest names one (abi/manifest.txt, erx_mf_firmware_request), and no
-# member reads the board's key. NOTIFY_XHCI_RESET has the USB controller behind a PCIe
-# bridge load its firmware: its request is one word, the function's address bus << 20 |
-# device << 15 | function << 12, and its answer is empty (docs/research-brcmstb-pcie.md,
-# section 5; docs/design-usb.md, "The VL805's firmware"). The address of a row is the
-# platform record's, never the caller's.
+# member reads the board's key. Each tag declares the bytes of its request, of its answer
+# window and of its least answer, and its result_word: 1 when the firmware answers the tag
+# in its first value word rather than in its response word, 0 otherwise. The words of a row
+# are the platform record's or a power line's below, never the caller's.
+#
+# NOTIFY_XHCI_RESET has the USB controller behind a PCIe bridge load its firmware: its
+# request is one word, the function's address bus << 20 | device << 15 | function << 12,
+# and its answer is empty (docs/research-brcmstb-pcie.md, section 5; docs/design-usb.md,
+# "The VL805's firmware").
+#
+# SET_GPIO_STATE sets a pin of the firmware's GPIO expander: its request is two words, the
+# pin and the state, and its answer is its first value word, which the firmware writes 0
+# when it performed the set; the firmware does not set the response word (FreeBSD
+# releng/15.1, sys/arm/broadcom/bcm2835/: bcm2835_firmware.h, lines 161-168;
+# bcm2835_mbox.c, lines 362-370; raspberrypi_gpio.c, lines 253-255; probe B-P2 of
+# docs/research-bluetooth-pi4.md, "The power phases"). A buffer the firmware left untouched
+# keeps the pin the request wrote, so an ignored request is not taken as performed. Its
+# rows come only from a power line (fw_power_line below), never from a record row
+# (docs/design-bluetooth.md, "The power line").
 enum fw_tag u32
   value notify_xhci_reset 0x00030058
+  value set_gpio_state 0x00038041
 limit vc_notify_xhci_reset_request u32 4
 limit vc_notify_xhci_reset_window u32 0
 limit vc_notify_xhci_reset_least u32 0
+limit vc_notify_xhci_reset_result_word u32 0
+limit vc_set_gpio_state_request u32 8
+limit vc_set_gpio_state_window u32 0
+limit vc_set_gpio_state_least u32 0
+limit vc_set_gpio_state_result_word u32 1
+
+# The most request words a device row carries (abi/manifest.txt, erx_mf_firmware_request,
+# argument0 and argument1); the manifest generator refuses a device row whose tag's
+# request is longer.
+limit vc_row_words u32 2
+
+# The power lines a platform record's power row may name, a closed set: each a pin of the
+# firmware's GPIO expander, set with SET_GPIO_STATE, with the pin's request word and its
+# off and on states. The manifest generator derives a device's two rows from its power
+# row, off at index 0 and on at index 1, named after the line (docs/design-bluetooth.md,
+# "The power line"). bt_power is the Raspberry Pi 4's Bluetooth controller's: expander pin
+# 0, request pin 128, which the firmware's device tree names in the shutdown-gpios of
+# UART0's bluetooth child, gpio-line-names BT_ON, active high (probe B-P2 of
+# docs/research-bluetooth-pi4.md, "The power phases"); nothing reads the tree for it. A
+# line's pin word is never 0, which the generator refuses: an untouched buffer keeps the
+# pin, and a 0 there would read as performed.
+enum fw_power_line u32
+  value bt_power 0
+limit vc_bt_power_pin u32 128
+limit vc_bt_power_off u32 0
+limit vc_bt_power_on u32 1

@@ -1092,38 +1092,109 @@ module Erx
       end
 
       # The platform record's firmware requests (docs/design-abi.md, "Devices and partition
-      # windows"): each a unique name, the node path of a PCIe bridge of the record's roster, a
-      # tag of vc_property.txt's closed set fw_tag and its argument. fw_tag's one member,
-      # notify_xhci_reset, is a bridge's notification for a function it lists in places, so
-      # the argument must be one place's address, bus << 20 | device << 15 | function << 12. A row is packed when the
-      # manifest places its device, with that device's row, in the record's order, so its
+      # windows"; docs/design-bluetooth.md, "The power line"), in the record's order. A
+      # request row is a unique name, the node path of a device of the record's roster, a tag
+      # of vc_property.txt's closed set fw_tag and its arguments, as many words as the tag's
+      # request: a notify_xhci_reset row names a PCIe bridge, and its one word is one place's
+      # address, bus << 20 | device << 15 | function << 12; a set_gpio_state row is refused,
+      # since that tag's rows come only from a power row. A power row names a UART device of
+      # the roster, which no other row names, a power line of the closed set fw_power_line and
+      # its off and on times in milliseconds, which the line service waits; it becomes the
+      # device's two rows, off at index 0 and on at index 1, each set_gpio_state with the
+      # line's pin and its off or on state, named after the line (bt_power gives bt_off and
+      # bt_on). Every row carries vc_row_words argument words, 0 past the tag's request. A
+      # row is packed when the manifest places its device, with that device's row, so its
       # index among its device's rows is the record's; a row of a device the manifest leaves
       # out is not packed, since no request can name it.
-      FIRMWARE_REQUEST_FIELDS = %w[argument device name tag].freeze
+      FIRMWARE_REQUEST_FIELDS = %w[arguments device name tag].freeze
+      FIRMWARE_POWER_FIELDS = %w[device off_ms on_ms power_line].freeze
+      FIRMWARE_FIELD = 'context.platform.firmware_requests'
 
       def firmware_requests(devices)
         rows = @context.platform.fetch('firmware_requests', [])
-        field = 'context.platform.firmware_requests'
-        invalid('the platform\'s firmware_requests is not a list', field) unless rows.is_a?(Array)
-        bridges = @context.platform.fetch('units').flat_map { |unit| unit.fetch('devices') }.map { |device| platform_device(device) }
-                           .select { |device| pcie_bridge?(device) }.to_h { |device| [device.fetch('path'), device] }
+        invalid('the platform\'s firmware_requests is not a list', FIRMWARE_FIELD) unless rows.is_a?(Array)
+        roster = @context.platform.fetch('units').flat_map { |unit| unit.fetch('devices') }.map { |device| platform_device(device) }
+                         .to_h { |device| [device.fetch('path'), device] }
+        expanded = rows.flat_map { |row| firmware_rows(row, roster) }
+        named = rows.map { |row| row.fetch('device') }
+        rows.select { |row| row.key?('power_line') }.each do |row|
+          invalid("the power row's device #{row.fetch('device')} is named by another firmware request", FIRMWARE_FIELD) unless
+            named.count(row.fetch('device')) == 1
+        end
+        names = expanded.map { |row| row.fetch('name') }
+        invalid('two firmware requests share a name', FIRMWARE_FIELD) unless names.uniq.size == names.size
         tags = @codec.schema.types.fetch('fw_tag').members
-        rows.filter_map do |row|
-          unless row.is_a?(Hash) && row.keys.sort == FIRMWARE_REQUEST_FIELDS && row.fetch('name').is_a?(String) &&
-                 row.fetch('name').match?(Frontend::IDENTIFIER) && tags.key?(row.fetch('tag')) &&
-                 place_addresses(bridges[row.fetch('device')]).include?(row.fetch('argument'))
-            invalid("a firmware request is not a name, a PCIe bridge of the platform's roster, a tag of fw_tag (#{tags.keys.join(', ')}) " \
-                    "and the address of one of the bridge's places", field)
-          end
+        expanded.filter_map do |row|
           device = devices.index { |placed| placed.fetch('path') == row.fetch('device') }
           next unless device
 
-          { 'name' => row.fetch('name'), 'device' => device, 'tag' => tags.fetch(row.fetch('tag')), 'argument' => row.fetch('argument') }
-        end.tap do |packed|
-          names = rows.map { |row| row.fetch('name') }
-          invalid('two firmware requests share a name', field) unless names.uniq.size == names.size
-          packed
+          row.merge('device' => device, 'tag' => tags.fetch(row.fetch('tag')))
         end
+      end
+
+      # One record row's rows, each a name, a device path, a tag and vc_row_words argument words.
+      def firmware_rows(row, roster)
+        invalid('a firmware request is not an object', FIRMWARE_FIELD) unless row.is_a?(Hash)
+        case row.keys.sort
+        when FIRMWARE_REQUEST_FIELDS then [firmware_request_row(row, roster)]
+        when FIRMWARE_POWER_FIELDS then firmware_power_rows(row, roster)
+        else invalid("a firmware request is neither a request row (#{FIRMWARE_REQUEST_FIELDS.join(', ')}) " \
+                     "nor a power row (#{FIRMWARE_POWER_FIELDS.join(', ')})", FIRMWARE_FIELD)
+        end
+      end
+
+      def firmware_request_row(row, roster)
+        name, path, tag, arguments = row.values_at('name', 'device', 'tag', 'arguments')
+        unless name.is_a?(String) && name.match?(Frontend::IDENTIFIER) && arguments.is_a?(Array) &&
+               firmware_record_row?(tag, roster[path], arguments)
+          invalid('a firmware request is not a name, a tag of fw_tag a record row may name (notify_xhci_reset), ' \
+                  "the PCIe bridge of the platform's roster it notifies and the address of one of the bridge's places", FIRMWARE_FIELD)
+        end
+        { 'name' => name, 'device' => path, 'tag' => tag, 'arguments' => firmware_words(tag, arguments) }
+      end
+
+      # Whether a record row may send tag to device with arguments: only notify_xhci_reset, to
+      # a PCIe bridge, for one of its places. set_gpio_state's rows come only from a power row,
+      # and any other word is no tag of fw_tag.
+      def firmware_record_row?(tag, device, arguments)
+        case tag
+        when 'notify_xhci_reset'
+          !device.nil? && pcie_bridge?(device) && arguments.size == firmware_request_words(tag) &&
+            place_addresses(device).include?(arguments.first)
+        else false
+        end
+      end
+
+      # A power line's two rows. Its pin word is never 0, so a buffer the firmware left
+      # untouched, which keeps the pin, is never read as performed (erx_vc_answer).
+      def firmware_power_rows(row, roster)
+        line, path, off_ms, on_ms = row.values_at('power_line', 'device', 'off_ms', 'on_ms')
+        lines = @codec.schema.types.fetch('fw_power_line').members
+        device = roster[path]
+        unless lines.key?(line) && device && device.fetch('selector') == @codec.member('mf_selector', 'dt') &&
+               device.fetch('role') == device_role('uart') && [off_ms, on_ms].all? { |ms| ms.is_a?(Integer) && ms.positive? }
+          invalid("a power row is not a power line of fw_power_line (#{lines.keys.join(', ')}), " \
+                  "a UART of the platform's roster and positive off and on times in milliseconds", FIRMWARE_FIELD)
+        end
+        pin = @codec.constant("vc_#{line}_pin")
+        invalid("the power line #{line} has pin word 0, which an untouched buffer would read as performed", FIRMWARE_FIELD) if pin.zero?
+        stem = line.delete_suffix('_power')
+        %w[off on].map do |state|
+          { 'name' => "#{stem}_#{state}", 'device' => path, 'tag' => 'set_gpio_state',
+            'arguments' => firmware_words('set_gpio_state', [pin, @codec.constant("vc_#{line}_#{state}")]) }
+        end
+      end
+
+      # The words of a tag's request (abi/formats/vc_property.txt).
+      def firmware_request_words(tag) = @codec.constant("vc_#{tag}_request") / 4
+
+      # A row's argument words as the manifest record carries them, vc_row_words of them, 0 past
+      # the tag's request; a tag whose request is longer than a row carries is refused.
+      def firmware_words(tag, arguments)
+        row_words = @codec.constant('vc_row_words')
+        invalid("the tag #{tag} has a longer request than a firmware request row carries", FIRMWARE_FIELD) if
+          firmware_request_words(tag) > row_words
+        Array.new(row_words) { |at| arguments.fetch(at, 0) }
       end
 
       # The addresses NOTIFY_XHCI_RESET names for a bridge's listed places; none for no bridge.

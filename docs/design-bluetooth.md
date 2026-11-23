@@ -812,7 +812,7 @@ state.
   its tag's request, `[1048576]` for the VL805's notification, and a
   power row's two rows carry the words its power line declares; the
   manifest's `erx_mf_firmware_request`
-  (`abi/manifest.txt`) carries two words, `argument0` and `argument1`,
+  (`abi/manifest.txt`) carries `vc_row_words` words, `arguments`,
   the generator writing 0 past the tag's request; `liberx`'s
   `erx_firmware_row_t` (`liberx/backend/api.h`) carries the same two
   words, which the system library copies from the record
@@ -879,7 +879,8 @@ state.
   the reply, and with an empty window nothing is copied to the caller.
   A buffer the firmware left untouched keeps the pin word the request
   wrote, 128, so an ignored request is refused rather than taken as
-  performed. The device
+  performed; the generator refuses a power line whose pin word is 0,
+  which an untouched buffer would read as performed. The device
   service answers `ok` for `ERX_OK` and `{error, Status}` otherwise,
   and for any error the line service ends the reset as a failed one,
   answering it `eio` ([A reset](#a-reset), "A reset that fails").

@@ -68,7 +68,7 @@
  * (erx_dom_lib_pci_firmware); last it hands ERX_ETIMEDOUT for a row past the catalogue,
  * which has no catalogue to mark:
  *
- *   firmware DEVICE INDEX tag=TAG argument=ARGUMENT
+ *   firmware DEVICE INDEX tag=TAG arguments=ARGUMENT0,ARGUMENT1
  *   firmware DEVICE past status=STATUS
  *   firmware outside status=STATUS
  *   firmware machine status=STATUS
@@ -416,8 +416,8 @@ print_firmware(erx_dom_lib_t *lib)
 		/* Bounded, so a resolver that repeats a row fails the test rather than hanging it. */
 		while (index < FIRMWARE_ROWS_SHOWN &&
 		    (status = erx_dom_firmware_row(&lib->view, device, index, &row)) == ERX_OK) {
-			printf("firmware %" PRIu32 " %" PRIu32 " tag=0x%" PRIx32 " argument=0x%" PRIx32 "\n", device, index,
-			    row.tag, row.argument);
+			printf("firmware %" PRIu32 " %" PRIu32 " tag=0x%" PRIx32 " arguments=0x%" PRIx32 ",0x%" PRIx32 "\n",
+			    device, index, row.tag, row.arguments[0], row.arguments[1]);
 			index++;
 		}
 		if (index != 0)

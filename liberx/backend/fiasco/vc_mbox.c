@@ -108,8 +108,6 @@ int
 erx_firmware_request_row(erx_firmware_row_t row, uint8_t answer[ERX_VC_WINDOW_MAX], uint32_t *length)
 {
 	const erx_vc_tag_t *const spec = erx_vc_tag_of(row.tag);
-	/* The request's words: the row's one, and zeroes for any a declaration reads past it. */
-	const uint32_t argument[ERX_VC_REQUEST_MAX / sizeof(uint32_t)] = { row.argument };
 	const l4_timeout_t poll = l4_timeout(L4_IPC_TIMEOUT_NEVER, l4_timeout_from_us(VC_MBOX_POLL_US));
 	uint32_t words[ERX_VC_BUFFER_WORDS];
 	erx_vc_mailbox_step_t step;
@@ -126,7 +124,7 @@ erx_firmware_request_row(erx_firmware_row_t row, uint8_t answer[ERX_VC_WINDOW_MA
 	while (step.op != ERX_VC_MAILBOX_DONE && step.op != ERX_VC_MAILBOX_CHECK) {
 		switch (step.op) {
 		case ERX_VC_MAILBOX_FILL:
-			(void)erx_vc_request(spec, argument, vc_mbox_buffer);
+			(void)erx_vc_request(spec, row.arguments, vc_mbox_buffer);
 			erx_fiasco_cache_clean((uintptr_t)vc_mbox_buffer, sizeof(words));
 			step = vc_mbox_feed(ERX_VC_MAILBOX_READ_STATUS, true);
 			break;

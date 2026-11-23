@@ -7,14 +7,16 @@
  * The mailbox answer check (erx_vc_answer in include/erx/core/vc_property.h) against a
  * hostile firmware, whose answer is whatever it wrote into the property buffer. The input
  * is four bytes that choose the tag's declaration, then the buffer's words, zero past the
- * input's end: byte 0 even takes NOTIFY_XHCI_RESET's declaration, odd a model one whose
- * window is byte 1, whose least answer is byte 2 and whose request is byte 3, each a number
- * of words cut to what a declaration may hold.
+ * input's end: byte 0 even takes NOTIFY_XHCI_RESET's declaration, odd with bit 1 set
+ * SET_GPIO_STATE's, and odd with bit 1 clear a model one whose window is byte 1, whose
+ * least answer is byte 2 and whose request is byte 3, each a number of words cut to what a
+ * declaration may hold.
  *
  * The buffer lies in an allocation of exactly ERX_VC_BUFFER_WORDS words, so a read past it
  * is AddressSanitizer's. The harness checks the result against a model written from the
- * interface (abi/formats/vc_property.txt): the response code, the first tag, bit 31 and the
- * least answer decide the status in that order, the length is the firmware's cut to the
+ * interface (abi/formats/vc_property.txt): the response code, the first tag, the response
+ * word and the least answer decide the status in that order, the first value word in place
+ * of the least answer on a tag the firmware answers there, the length is the firmware's cut to the
  * window, out holds the value buffer's first length bytes and zeroes to its end.
  */
 
@@ -46,6 +48,8 @@ declaration(const uint8_t choice[DECLARATION_BYTES])
 
 	if ((choice[0] & 1u) == 0)
 		return (*erx_vc_tag_of(ERX_FW_TAG_NOTIFY_XHCI_RESET));
+	if ((choice[0] & 2u) != 0)
+		return (*erx_vc_tag_of(ERX_FW_TAG_SET_GPIO_STATE));
 	return ((erx_vc_tag_t){
 		.tag = ERX_FW_TAG_NOTIFY_XHCI_RESET,
 		.request_bytes = choice[3] % (ERX_VC_REQUEST_MAX / WORD_BYTES + 1) * WORD_BYTES,
@@ -64,6 +68,8 @@ model(const erx_vc_tag_t *spec, const uint32_t *words)
 	if (words[ERX_VC_HEADER_OFF_CODE / WORD_BYTES] != ERX_VC_CODE_SUCCESS ||
 	    words[(ERX_VC_HEADER_SIZE + ERX_VC_TAG_HEADER_OFF_TAG) / WORD_BYTES] != spec->tag)
 		return ((erx_vc_answer_t){ .status = ERX_EPROTO, .length = 0 });
+	if (spec->result_word && (indicator == 0 || (indicator & 0x80000000u) != 0))
+		return ((erx_vc_answer_t){ .status = words[ERX_VC_VALUE_WORD] == 0 ? ERX_OK : ERX_ENOTSUP, .length = 0 });
 	if ((indicator & 0x80000000u) == 0)
 		return ((erx_vc_answer_t){ .status = ERX_ENOTSUP, .length = 0 });
 	if (length < spec->least_bytes)

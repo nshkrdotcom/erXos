@@ -60,6 +60,29 @@ class BootManifestTest < Minitest::Test
 
   def platform_record(platform) = Erx::Platform.load(root: ROOT, name: platform).record
 
+  # The firmware request rows bytes packs, each as its name, its device's path, its tag and
+  # its two argument words.
+  def firmware_rows(bytes)
+    offset, count = bytes.byteslice(480, 8).unpack('L<L<')
+    devices_offset = bytes.byteslice(256, 4).unpack1('L<') # the header's devices span
+    strings_offset = bytes.byteslice(360, 4).unpack1('L<') # and its strings span
+    (0...count).map do |row|
+      name_offset, name_length, device, tag, *arguments = bytes.byteslice(offset + (row * 24), 24).unpack('L<6')
+      path_offset, path_length = bytes.byteslice(devices_offset + (device * 104) + 8, 8).unpack('L<L<')
+      [bytes.byteslice(strings_offset + name_offset, name_length), bytes.byteslice(strings_offset + path_offset, path_length), tag, *arguments]
+    end
+  end
+
+  # The packer refuses the Pi 4's record with its firmware requests changed as the block says;
+  # the refusal.
+  def assert_firmware_requests_refused(source)
+    record = platform_record('raspi4b')
+    rows = yield(record.fetch('firmware_requests'))
+    error = assert_raises(Erx::Manifest::Invalid) { admitted(source, platform: 'raspi4b', record: record.merge('firmware_requests' => rows)) }
+    assert_equal 'context.platform.firmware_requests', error.field
+    error
+  end
+
   # hostlink: whether the boot carries erx.hostlink=1, which the driver passes on as its third argument.
   def read(bytes, stdout_path: '/pl011@9000000', hostlink: true)
     path = File.join(@directory, 'manifest.bin')
@@ -345,41 +368,49 @@ class BootManifestTest < Minitest::Test
 
   # The header's firmware_requests span (offset 480: offset u32, count u32) names the platform
   # record's rows of placed devices, each name (offset u32, length u32), device row u32, tag
-  # u32 and argument u32 (abi/manifest.txt, erx_mf_firmware_request). The Pi 4's one row is
-  # the VL805's notification, index 0 of its PCIe bridge's row; QEMU virt's record has none.
+  # u32 and two argument words u32, 0 past the tag's request (abi/manifest.txt,
+  # erx_mf_firmware_request); QEMU virt's record has none. The Pi 4's are the VL805's
+  # notification, index 0 of its PCIe bridge's row, and UART0's power row as two rows of
+  # UART0's device: bt_off, SET_GPIO_STATE with pin 128 and state 0, at index 0, and bt_on,
+  # state 1, at index 1 (docs/design-bluetooth.md, "The power line").
   def test_the_firmware_requests_are_the_platform_record_s_rows
     assert_equal 0, admitted.byteslice(480, 8).unpack1('x4L<')
     pi = Erx::Platform.load(root: ROOT, name: 'raspi4b').manifest_source(ROOT)
-    bytes = admitted(pi, platform: 'raspi4b')
-    offset, count = bytes.byteslice(480, 8).unpack('L<L<')
-    assert_equal 1, count
-    name_offset, name_length, device, tag, argument = bytes.byteslice(offset, 20).unpack('L<5')
-    assert_equal [0x0003_0058, 0x0010_0000], [tag, argument]
-    devices_offset = bytes.byteslice(256, 4).unpack1('L<') # the header's devices span
-    strings_offset = bytes.byteslice(360, 4).unpack1('L<') # and its strings span
-    path_offset, path_length = bytes.byteslice(devices_offset + (device * 104) + 8, 8).unpack('L<L<')
-    assert_equal '/scb/pcie@7d500000', bytes.byteslice(strings_offset + path_offset, path_length)
-    assert_equal 'vl805_notify', bytes.byteslice(strings_offset + name_offset, name_length)
+    assert_equal [['vl805_notify', '/scb/pcie@7d500000', 0x0003_0058, 0x0010_0000, 0],
+                  ['bt_off', '/soc/serial@7e201000', 0x0003_8041, 128, 0],
+                  ['bt_on', '/soc/serial@7e201000', 0x0003_8041, 128, 1]], firmware_rows(admitted(pi, platform: 'raspi4b'))
   end
 
   def test_a_firmware_request_of_an_unknown_tag_or_device_is_refused_at_the_packer
     pi = Erx::Platform.load(root: ROOT, name: 'raspi4b').manifest_source(ROOT)
-    # A path of no device, a PCIe function's empty path, a device that is no bridge, an address
-    # with function bits below bit 12, and a bus the bridge lists no place on.
+    # A tag outside fw_tag, a path of no device, a PCIe function's empty path, a device that is
+    # no bridge, an address with function bits below bit 12, a bus the bridge lists no place
+    # on, a word past 32 bits, a name that is no identifier, and words longer and shorter than
+    # the tag's one.
     [{ 'tag' => 'get_board_serial' }, { 'device' => '/scb/pcie@7d500001' }, { 'device' => '' },
-     { 'device' => '/soc/serial@7e201000' }, { 'argument' => 0x0010_0001 }, { 'argument' => 0x0020_0000 },
-     { 'argument' => 1 << 32 }, { 'name' => 'Not an identifier' }].each do |bad|
-      record = platform_record('raspi4b')
-      rows = record.fetch('firmware_requests').map { |row| row.merge(bad) }
-      error = assert_raises(Erx::Manifest::Invalid) do
-        admitted(pi, platform: 'raspi4b', record: record.merge('firmware_requests' => rows))
-      end
-      assert_equal 'context.platform.firmware_requests', error.field
+     { 'device' => '/soc/serial@7e201000' }, { 'arguments' => [0x0010_0001] }, { 'arguments' => [0x0020_0000] },
+     { 'arguments' => [1 << 32] }, { 'name' => 'Not an identifier' }, { 'arguments' => [0x0010_0000, 0] },
+     { 'arguments' => [] }, { 'arguments' => 0x0010_0000 }].each do |bad|
+      assert_firmware_requests_refused(pi) { |rows| rows.map { |row| row.key?('tag') ? row.merge(bad) : row } }
     end
-    record = platform_record('raspi4b')
-    twice = record.fetch('firmware_requests') * 2
-    error = assert_raises(Erx::Manifest::Invalid) { admitted(pi, platform: 'raspi4b', record: record.merge('firmware_requests' => twice)) }
-    assert_equal 'context.platform.firmware_requests', error.field
+    assert_firmware_requests_refused(pi) { |rows| rows * 2 }
+  end
+
+  # The power line's rows come only from a power row, so a record row naming SET_GPIO_STATE,
+  # here pin 131, GLOBAL_RESET, is refused; so is a power row naming a power line fw_power_line
+  # does not declare, a device that is not a UART of the roster or one another row names,
+  # or times that are not positive milliseconds.
+  def test_a_power_line_comes_only_from_a_declared_power_row_on_a_uart
+    pi = Erx::Platform.load(root: ROOT, name: 'raspi4b').manifest_source(ROOT)
+    assert_firmware_requests_refused(pi) do |rows|
+      rows + [{ 'name' => 'reset', 'device' => '/soc/serial@7e201400', 'tag' => 'set_gpio_state', 'arguments' => [131, 1] }]
+    end
+    [{ 'power_line' => 'wifi_power' }, { 'device' => '/scb/pcie@7d500000' }, { 'device' => '/soc/serial@7e201001' },
+     { 'off_ms' => 0 }, { 'on_ms' => '500' }, { 'tag' => 'set_gpio_state' }].each do |bad|
+      assert_firmware_requests_refused(pi) { |rows| rows.map { |row| row.key?('power_line') ? row.merge(bad) : row } }
+    end
+    error = assert_firmware_requests_refused(pi) { |rows| rows + rows.select { |row| row.key?('power_line') } }
+    assert_match(/named by another firmware request/, error.message)
   end
 
   def test_an_incomplete_or_empty_msi_frame_is_refused_at_the_packer

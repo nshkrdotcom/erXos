@@ -629,7 +629,7 @@ class DomPlannerTest < Minitest::Test
     platform.fetch('units').reject! { |unit| unit.fetch('key') == 'pcie' }
     platform.fetch('units').push({ 'key' => 'pcie', 'devices' => [bridge] }, { 'key' => 'vl805', 'devices' => [function] })
     platform['firmware_requests'] = [{ 'name' => 'vl805_notify', 'device' => bridge.fetch('path'), 'tag' => 'notify_xhci_reset',
-                                       'argument' => 0x0010_0000 }]
+                                       'arguments' => [0x0010_0000] }]
     @context = Erx::Manifest::Context.new(**ManifestContextFixture.arguments(@codec).merge(platform: platform))
     source = with_domains('alpha', 'pcie') + "unit pcie\n  placement \"pcie\"\n  holder @domain.pcie\n" \
                                              "unit vl805\n  placement \"vl805\"\n  holder @domain.alpha\n" + VL805_PCI_FACET
@@ -735,7 +735,7 @@ class DomPlannerTest < Minitest::Test
     lines = view_lines(vl805_manifest, 'firmware', 'firmware')
     rows = lines.grep(/\Afirmware \d+ \d+ /)
     assert_equal 1, rows.size, lines.inspect
-    device = rows.first[/\Afirmware (\d+) 0 tag=0x30058 argument=0x100000\z/, 1]
+    device = rows.first[/\Afirmware (\d+) 0 tag=0x30058 arguments=0x100000,0x0\z/, 1]
     refute_nil device, lines.inspect
     assert_includes lines, "firmware #{device} past status=-12"
     assert_includes lines, 'firmware outside status=-1'
