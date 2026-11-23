@@ -259,8 +259,10 @@ class ReleaseFilesTest < Minitest::Test
                                    codec: Codec.new, oracle: FakeOracle.new, release: Erx::ReleaseFiles.domain([base_boot]))
     system = Erx::ReleaseFiles.new(root: ROOT, otp: @otp, directory: File.join(@scratch, 'release'), runner: BootRunner.new,
                                    codec: Codec.new, oracle: FakeOracle.new)
-    assert_equal [{ 'path' => 'system/data', 'kind' => 'directory', 'flags' => 'system' }], system.directories
-    assert_equal [{ 'path' => 'domains/erxos/data', 'kind' => 'directory', 'flags' => 0 }], domain.directories
+    assert_equal(%w[data media].map { |name| { 'path' => "system/#{name}", 'kind' => 'directory', 'flags' => 'system' } },
+                 system.directories)
+    assert_equal(%w[data media].map { |name| { 'path' => "domains/erxos/#{name}", 'kind' => 'directory', 'flags' => 0 } },
+                 domain.directories)
     [system, domain].each do |release|
       points = release.directories.map { |entry| "#{entry.fetch('path')}/" }
       assert(release.entries.none? { |entry| points.any? { |point| entry.fetch('path').start_with?(point) } })

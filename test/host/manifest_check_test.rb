@@ -72,7 +72,7 @@ class ManifestCheckTest < Minitest::Test
   end
 
   def window(role:, partition: 1, device: BLOCK, holder: 'system', image: 'none', name: 'seeded', drive: nil)
-    "window #{name}\n  holder #{holder}\n  device \"#{device}\"\n  role #{role}\n  partition #{partition}\n" \
+    "window #{name}\n  holder #{holder}\n  device \"#{device}\"\n  role #{role}\n#{"  partition #{partition}\n" if partition}" \
       "  rights read\n  image #{image}\n#{"  drive #{drive}\n" if drive}"
   end
 
@@ -370,7 +370,7 @@ class ManifestCheckTest < Minitest::Test
 
   def test_the_pcie_domain_holding_a_window_or_a_service_is_refused
     usb_refused('windows', /pcie holds nothing but PCIe bridges' units, and its windows row/,
-                usb_source + window(role: 'fat', holder: '@domain.pcie'))
+                media_source + drive_window('disk0', holder: '@domain.pcie'))
     usb_refused('services', /pcie holds nothing but PCIe bridges' units, and its services row/, usb_source(serving: true))
   end
 
@@ -541,17 +541,30 @@ class ManifestCheckTest < Minitest::Test
   # A window names a PCIe function by its place (docs/design-abi.md, "Devices and partition
   # windows"): its bridge's path and its bus, device and function.
   def test_a_window_names_a_function_by_its_place
-    view = @codec.open('manifest', usb_admit(usb_source + drive_window('disk0', device: "#{BRIDGE}:0:2:0")).bytes)
+    view = @codec.open('manifest', usb_admit(media_source + drive_window('disk0', device: "#{BRIDGE}:0:2:0")).bytes)
     window = packed_rows(view, 'windows').find { |row| row.fetch('drive').zero? }
     function = view.fetch('devices', window.fetch('device'))
     assert_equal [@codec.member('mf_selector', 'pci'), 0, 2, 0], function.values_at('selector', 'bus', 'device', 'function')
     ["#{BRIDGE}:0:3:0", "#{BRIDGE}:1:2:0", "#{STICK}:0:2:0", "#{BRIDGE}:0:2", "#{BRIDGE}:0:2:0:0"].each do |name|
-      usb_refused('window.device', /window names no block or USB device the manifest places/, usb_source + drive_window('disk0', device: name))
+      usb_refused('window.device', /window names no block or USB device the manifest places/, media_source + drive_window('disk0', device: name))
     end
   end
 
-  def drive_window(drive, name: 'stick', partition: 1, device: STICK, role: 'fat')
-    window(role: role, partition: partition, device: device, holder: '@domain.storage', name: name, drive: drive)
+  # The media domain of these manifests (docs/design-drives.md, "Manifest rows"): the web
+  # domain, which holds no unit, no window and no facet, serves the media service.
+  MEDIA_SERVICE = "service media\n  server @domain.web\n  interface files\n"
+
+  def media_source(holders = USB_HOLDERS) = usb_source(holders) + MEDIA_SERVICE
+
+  def drive_window(drive, name: 'stick', device: STICK, role: 'drive', holder: '@domain.web', partition: nil)
+    window(role: role, partition: partition, device: device, holder: holder, name: name, drive: drive)
+  end
+
+  # A files facet row of service granted to grantee, with rights when given.
+  def files_facet(service, grantee, rights: nil, name: "#{service}_seeded")
+    "facet #{name}\n  name \"#{service}\"\n  grantee #{grantee}\n  service @service.#{service}\n" \
+      "#{"  parameter rights #{rights}\n" if rights}  operations none\n  max_request 131072\n  in_flight 16\n" \
+      "  reductions 100000\n  period_ns 1000000000\n  max_heap_size 262144\n"
   end
 
   # The packed windows of view, split into those on the controller at path and the rest.
@@ -560,35 +573,47 @@ class ManifestCheckTest < Minitest::Test
     rows.partition { |row| view.string(view.fetch('devices', row.fetch('device')).fetch('path')) == path }
   end
 
-  def test_drive_windows_encode_their_drive_and_others_none
-    stick, others = windows_on(@codec.open('manifest', usb_admit(usb_source + drive_window('disk0') + drive_window('disk3', name: 'other')).bytes), STICK)
-    assert_equal [0, 3], stick.map { |row| row.fetch('drive') }.sort
-    assert_equal [@codec.constant('mf_none')], others.map { |row| row.fetch('drive') }.uniq
+  # A drive window packs its drive's number and no partition, mf_none, as every other
+  # window packs no drive (docs/design-abi.md, "Devices and partition windows").
+  def test_drive_windows_encode_their_drive_and_no_partition_and_others_none
+    stick, others = windows_on(@codec.open('manifest', usb_admit(media_source + drive_window('disk0') + drive_window('disk3', name: 'other')).bytes), STICK)
+    none = @codec.constant('mf_none')
+    assert_equal [[none, 0], [none, 3]], stick.map { |row| row.values_at('partition', 'drive') }.sort
+    assert_equal [none], others.map { |row| row.fetch('drive') }.uniq
   end
 
-  def test_a_window_on_a_usb_device_without_a_drive_is_refused
-    usb_refused('window.drive', /a window names a drive exactly when it lies on a USB controller/, usb_source + drive_window(nil))
+  def test_a_drive_window_with_a_partition_is_refused
+    usb_refused('window.partition', /a drive window names no partition/, media_source + drive_window('disk0', partition: 1))
+    usb_refused('window.partition', /a drive window names no partition/, media_source + drive_window('disk0', partition: 0))
   end
 
-  def test_a_drive_on_another_device_is_refused
-    usb_refused('window.drive', /a window names a drive exactly when it lies on a USB controller/,
-                usb_source + drive_window('disk0', device: BLOCK))
+  def test_a_drive_window_without_a_drive_is_refused
+    usb_refused('window.drive', /a drive window names its drive, and no window of another role names one/, media_source + drive_window(nil))
   end
 
-  def test_a_drive_named_twice_for_one_partition_is_refused
-    usb_refused('window.partition', /two windows name one role, partition and drive of a device/,
-                usb_source + drive_window('disk1') + drive_window('disk1', name: 'again'))
+  def test_a_drive_on_a_window_of_another_role_is_refused
+    refused(Erx::Manifest::Invalid, 'window.drive', @source + window(role: 'data', partition: 0, drive: 'disk0'),
+            message: /a drive window names its drive, and no window of another role names one/)
+  end
+
+  # Drive numbers are one namespace across the machine: no two windows, on one controller
+  # or on two, name one drive.
+  def test_a_drive_named_twice_is_refused
+    usb_refused('window.drive', /drive disk1 is named by two windows/,
+                media_source + drive_window('disk1') + drive_window('disk1', name: 'again'))
+    usb_refused('window.drive', /drive disk1 is named by two windows/,
+                media_source + drive_window('disk1') + drive_window('disk1', name: 'other', device: "#{BRIDGE}:0:2:0"))
   end
 
   # A drive's name is disk and its decimal number, any number below mf_none: the cap is on
   # how many drives a controller names, not in the names.
   def test_a_drive_is_disk_and_a_number
     highest = @codec.constant('mf_none') - 1
-    view = @codec.open('manifest', usb_admit(usb_source + drive_window('disk7') + drive_window("disk#{highest}", name: 'high')).bytes)
+    view = @codec.open('manifest', usb_admit(media_source + drive_window('disk7') + drive_window("disk#{highest}", name: 'high')).bytes)
     assert_equal [7, highest], windows_on(view, STICK).first.map { |row| row.fetch('drive') }.sort
     ["disk#{@codec.constant('mf_none')}", 'disk', 'disk01', 'da0', 'xdisk0', '0', '"disk0"'].each do |drive|
       usb_refused('window.drive', /a drive is disk and a decimal number below #{@codec.constant('mf_none')}/,
-                  usb_source + drive_window(drive))
+                  media_source + drive_window(drive))
     end
   end
 
@@ -600,23 +625,75 @@ class ManifestCheckTest < Minitest::Test
     rows = (0..drives).map do |number|
       drive_window("disk#{number * 2}", name: "stick#{number}", device: number.even? ? STICK : function)
     end
-    usb_admit(usb_source + rows.take(drives).join)
-    usb_refused('window.drive', /a USB domain's controllers name more than #{drives} drives/, usb_source + rows.join)
+    usb_admit(media_source + rows.take(drives).join)
+    usb_refused('window.drive', /a USB domain's controllers name more than #{drives} drives/, media_source + rows.join)
     holders = USB_HOLDERS.merge('xhci' => '@domain.storage')
     apart = (0...drives * 2).map do |number|
       drive_window("disk#{number}", name: "stick#{number}", device: number < drives ? STICK : function)
     end
-    usb_admit(usb_source(holders) + apart.join, usb_platform)
+    usb_admit(media_source(holders) + apart.join, usb_platform)
   end
 
-  # Drive numbers are one namespace across the machine, so two controllers never name one drive.
-  def test_one_drive_on_two_controllers_is_refused
-    usb_refused('window.drive', /two USB controllers name drive 1/,
-                usb_source + drive_window('disk1') + drive_window('disk1', name: 'other', device: "#{BRIDGE}:0:2:0"))
+  def test_a_usb_controller_s_window_is_a_drive_window
+    usb_refused('window.role', /a window on a USB controller is a drive window/,
+                media_source + drive_window('disk0') + window(role: 'data', partition: 0, device: STICK, holder: '@domain.web'))
   end
 
-  def test_a_usb_controller_s_window_is_fat
-    usb_refused('window.role', /a window on a USB controller is a fat window/, usb_source + drive_window('disk0', role: 'data', partition: 0))
+  # A block device's drive (docs/design-drives.md, "A drive and its medium"): the device's
+  # one window is its drive window, which the media domain holds.
+  def test_a_block_device_s_drive_is_its_one_window
+    source, against = with_extra_device(role: 'block')
+    drive = drive_window('disk0', device: '/extra@0')
+    view = @codec.open('manifest', admit(source + MEDIA_SERVICE + drive, against).bytes)
+    assert_equal [[@codec.constant('mf_none'), 0]], windows_on(view, '/extra@0').first.map { |row| row.values_at('partition', 'drive') }
+    refused(Erx::Manifest::Invalid, 'window.device', source + MEDIA_SERVICE + drive + drive_window('disk1', device: '/extra@0', name: 'again'),
+            against, message: /a block device with a drive window has no other window/)
+    refused(Erx::Manifest::Invalid, 'window.device',
+            source + MEDIA_SERVICE + drive + window(role: 'data', partition: 0, device: '/extra@0', holder: '@domain.storage'),
+            against, message: /a block device with a drive window has no other window/)
+  end
+
+  # Who holds drive windows (docs/design-drives.md, "Manifest rows"): the media domain, the
+  # server of the one media service, alone, and only with one.
+  def test_a_drive_window_held_by_another_domain_than_the_media_domain_is_refused
+    usb_refused('service.server', /the service named media is served by the holder of every drive window/,
+                media_source + drive_window('disk0', holder: '@domain.storage'))
+    usb_refused('service.server', /the service named media is served by the holder of every drive window/,
+                media_source + drive_window('disk0') + drive_window('disk1', name: 'other', holder: '@domain.display'))
+    usb_refused('service.name', /a manifest with a drive window holds one service named media/,
+                usb_source + drive_window('disk0'))
+    usb_refused('service.name', /a manifest without a drive window holds no service named media/, media_source)
+  end
+
+  # The system domain serves no media: a crafted volume reaches a configured domain alone.
+  def test_a_media_service_of_the_system_domain_is_refused
+    served = changed(media_source).sub("server @domain.web\n  interface files", "server system\n  interface files")
+    usb_refused('service.server', /the media service is served by a configured domain/,
+                served + drive_window('disk0', holder: 'system'))
+  end
+
+  def test_a_media_domain_holding_a_unit_is_refused
+    usb_refused('unit.holder', /the media domain, web, holds no unit/,
+                media_source(USB_HOLDERS.merge('stick' => '@domain.web')) + drive_window('disk0'))
+  end
+
+  def test_a_media_domain_holding_a_window_of_another_role_is_refused
+    usb_refused('window.holder', /the media domain, web, holds drive windows alone/,
+                media_source + drive_window('disk0') + window(role: 'data', partition: 0, holder: '@domain.web'))
+  end
+
+  # A storage service is one a storage domain serves, a configured domain that holds a
+  # window of another role than drive: here packages, which the storage domain serves.
+  def test_a_media_domain_holding_a_facet_of_a_storage_service_is_refused
+    usb_refused('facet.grantee', /the media domain, web, holds a facet of packages, a storage service/,
+                media_source + drive_window('disk0') + files_facet('packages', '@domain.web'))
+  end
+
+  # Nothing runs from a drive (docs/design-drives.md, "Links and rights"): no media grant is rx.
+  def test_a_media_facet_granting_rx_is_refused
+    usb_admit(media_source + drive_window('disk0') + files_facet('media', '@session.system', rights: 'ro'))
+    usb_refused('facet.parameter', /facet media grants media rx, whose volumes are a stranger's bytes/,
+                media_source + drive_window('disk0') + files_facet('media', '@session.system', rights: 'rx'))
   end
 
   # Property 4: budgets, grants and the root startup rule.
@@ -1006,12 +1083,13 @@ class ManifestCheckTest < Minitest::Test
             pi_context, message: /domain display .*a row of services \(display\) names it/)
   end
 
-  # A domain holding gpio and a partition window, here a FAT window on the SD card, may
+  # A domain holding gpio and a partition window, here the SD card's data window, may
   # not hold gpio.
   def test_a_pin_controller_holder_with_a_window_is_refused
-    window = "window fat\n  holder @domain.pins\n  device \"/emmc2bus/mmc@7e340000\"\n  role fat\n  partition 1\n" \
+    window = "window seeded\n  holder @domain.pins\n  device \"/emmc2bus/mmc@7e340000\"\n  role data\n  partition 0\n" \
              "  rights read\n  image none\n"
-    refused(Erx::Manifest::Invalid, 'unit.holder', pi_source + pi_pins_domain + window + pi_unit('gpio', '@domain.pins'),
+    unheld = changed(pi_source.sub(/^window data\n(?:  .*\n)*/, ''))
+    refused(Erx::Manifest::Invalid, 'unit.holder', unheld + pi_pins_domain + window + pi_unit('gpio', '@domain.pins'),
             pi_context, message: /domain pins .*a row of windows names it/)
   end
 
@@ -1146,17 +1224,17 @@ class ManifestCheckTest < Minitest::Test
   end
 
   def test_a_window_held_by_no_configured_domain_is_refused
-    refused(Erx::Manifest::Invalid, 'window.holder', @source + window(role: 'fat', holder: '@domain.absent'),
+    refused(Erx::Manifest::Invalid, 'window.holder', @source + window(role: 'data', partition: 0, holder: '@domain.absent'),
             message: /names neither the system domain nor a configured domain/)
   end
 
   def test_a_window_on_no_placed_device_is_refused
-    refused(Erx::Manifest::Invalid, 'window.device', @source + window(role: 'fat', device: '/absent@0'),
+    refused(Erx::Manifest::Invalid, 'window.device', @source + window(role: 'data', partition: 0, device: '/absent@0'),
             message: /window names no block or USB device the manifest places/)
   end
 
   def test_a_window_on_a_device_that_is_no_block_device_is_refused
-    refused(Erx::Manifest::Invalid, 'window.device', @source + window(role: 'fat', device: '/pl011@9000000'),
+    refused(Erx::Manifest::Invalid, 'window.device', @source + window(role: 'data', partition: 0, device: '/pl011@9000000'),
             message: /window names no block or USB device the manifest places/)
   end
 
@@ -1167,7 +1245,7 @@ class ManifestCheckTest < Minitest::Test
 
   def test_a_fixed_role_must_carry_partition_zero
     refused(Erx::Manifest::Invalid, 'window.partition', @source + window(role: 'boot_a', partition: 2),
-            message: /a fixed role has partition 0 and FAT a primary partition, 1 to 4/)
+            message: /a window of a fixed role names partition 0/)
   end
 
   # PW1 as the manifest states it: the slot writer's windows, the boot and system
@@ -1213,7 +1291,7 @@ class ManifestCheckTest < Minitest::Test
   # window's holder, and only the derived rows grant it.
   def test_the_system_service_is_served_by_the_system_window_s_holder
     source = changed(@source.sub("service system\n  server @domain.storage", "service system\n  server @domain.network"))
-    refused(Erx::Manifest::Invalid, 'service.server', source, message: /holder of the system window/)
+    refused(Erx::Manifest::Invalid, 'service.server', source, message: /holder of every system window/)
   end
 
   # The build's packages and system rows (docs/design-packaging.md, "The apps row"):
@@ -1337,7 +1415,7 @@ class ManifestCheckTest < Minitest::Test
     %w[@domain.web @domain.network].each do |server|
       service = LOGIN_KEYS_SERVICE.sub('@domain.storage', server)
       refused(Erx::Manifest::Invalid, 'service.server', login_keys_source(service: service),
-              message: /holder of the record_volume window/)
+              message: /holder of every record_volume window/)
     end
   end
 
@@ -1415,19 +1493,12 @@ class ManifestCheckTest < Minitest::Test
   def test_a_record_volume_window_on_another_domain_than_the_system_window_s_holder_is_refused
     %w[@domain.web @domain.network].each do |holder|
       refused(Erx::Manifest::Invalid, 'service.server', login_keys_source(window: record_volume(holder: holder)),
-              message: /served by the holder of the record_volume window/)
-    end
-  end
-
-  def test_a_fat_window_must_name_a_primary_partition
-    [0, 5].each do |partition|
-      refused(Erx::Manifest::Invalid, 'window.partition', @source + window(role: 'fat', partition: partition),
-              message: /a fixed role has partition 0 and FAT a primary partition, 1 to 4/)
+              message: /served by the holder of every record_volume window/)
     end
   end
 
   def test_a_window_must_grant_read
-    refused(Erx::Manifest::Invalid, 'window.rights', @source + window(role: 'fat').sub('rights read', 'rights none'),
+    refused(Erx::Manifest::Invalid, 'window.rights', @source + window(role: 'data', partition: 0).sub('rights read', 'rights none'),
             message: /a window grants at least read/)
   end
 
@@ -1612,7 +1683,7 @@ end
             message: /a window of a role not marked writable grants read alone/)
     refused(Erx::Manifest::Invalid, 'window.image', @source.sub('image @image.release', 'image none'),
             message: /a verified-image window names its image/)
-    refused(Erx::Manifest::Invalid, 'window.image', @source + window(role: 'fat', image: '@image.release'),
+    refused(Erx::Manifest::Invalid, 'window.image', @source + window(role: 'data', partition: 0, image: '@image.release'),
             message: /only a verified-image window names an image/)
   end
 end

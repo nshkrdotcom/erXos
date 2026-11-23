@@ -35,6 +35,13 @@ erofs_line_test() ->
     ?assertEqual(<<"erofs on /usr/share (erofs, local, read-only)\n">>,
                  line(entry({erofs, image}, [<<"usr">>, <<"share">>], [], ro), erofs)).
 
+%% /media, the media tree, answers its own type whatever its drives hold
+%% (docs/design-drives.md, "Mounting it").
+media_grant_line_test() ->
+    ?assertEqual(<<"<0.88.0>:/media on /media (media)\n">>,
+                 line(entry({grant, server(), <<"media">>}, [<<"media">>], [], rw),
+                      {magic, ?ERX_P9_MAGIC_MEDIA})).
+
 %% The case the user met: /data, a facet's grant on the SD card's littlefs volume.
 littlefs_grant_line_test() ->
     ?assertEqual(<<"<0.88.0>:/data on /data (littlefs)\n">>,

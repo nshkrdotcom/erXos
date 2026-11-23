@@ -80,7 +80,7 @@ module Erx
         'system_image' => %w[input]
       }.freeze
       OPTIONAL = { 'machine' => %w[system_args boot_timeout_s], 'domain' => %w[args env], 'session' => %w[args env], 'service' => %w[name],
-                   'facet' => %w[name queue], 'image' => %w[salt], 'window' => %w[drive],
+                   'facet' => %w[name queue], 'image' => %w[salt], 'window' => %w[partition drive],
                    'start' => %w[enable display restarts restart_period_s],
                    'apps' => %w[services max], 'package' => %w[enable], 'display' => %w[palette] }.freeze
       # The declarations that carry no source alias: the one machine, the one apps row

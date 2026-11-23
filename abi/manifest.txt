@@ -130,7 +130,9 @@ flags mf_device_flags u32
 # (docs/todo-system-partition.md, deletions). record_volume is the one window on the
 # whole record partition besides the slot writer's two, read-only, held by the domain
 # that holds the system window, which reads root's login keys through it
-# (docs/design-ssh.md, "Root's login keys on the medium").
+# (docs/design-ssh.md, "Root's login keys on the medium"). drive is a drive's window,
+# on a USB controller or a block device, over whatever medium the drive holds, whole,
+# held by the media domain alone (docs/design-drives.md, "Manifest rows").
 enum mf_window_role u32
   attribute configured
   attribute writable
@@ -140,7 +142,7 @@ enum mf_window_role u32
   value reset_count 4 writable
   value vault 5 configured writable
   value data 6 configured writable
-  value fat 7 configured writable
+  value drive 7 configured writable
   value system 8 configured
   value system_a 9 writable
   value system_b 10 writable
@@ -218,6 +220,10 @@ bytes data_service 4 value 64617461
 # server holds the manifest's record_volume window, granted read-only to the system
 # domain and to the system principal's session template, whose import reads it.
 bytes login_keys_service 10 value 6c6f67696e5f6b657973
+# The name of the service that serves every drive's volumes (docs/design-drives.md,
+# "Manifest rows"): "media", an instance of files whose server, the media domain,
+# holds every drive window; no grant of it is rx.
+bytes media_service 5 value 6d65646961
 enum mf_image_format u32
   value erofs_verity 1
   value erofs_unchecked 2
@@ -507,9 +513,9 @@ layout erx_mf_device wire_le 8 104
   field power_on_ms u16 86
   field dma_limit u64 88
   field places erx_mf_span 96
-# A window on a USB controller's row names in drive the controller's drive whose medium
-# it serves, diskN as N, and every other window mf_none; drive numbers are machine-wide
-# (docs/design-usb.md, "Mass storage reaches the file servers").
+# A drive window names in drive its drive, diskN as N, and in partition mf_none; every
+# other window names drive mf_none. Drive numbers are machine-wide (docs/design-drives.md,
+# "Manifest rows").
 layout erx_mf_window wire_le 8 32
   field holder u32 0
   field device u32 4

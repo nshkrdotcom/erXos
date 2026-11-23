@@ -413,6 +413,11 @@ module Erx
         'liveness' => 'the system domain\'s watchdog pets without reading liveness records, which a later milestone brings'
       }.freeze
 
+      # A well-known service any grantee may hold, but whose rows never state rights rx,
+      # and why, which completes the refusal "grants NAME rx, whose ...": nothing runs
+      # from its tree (abi/services/files.txt, F6).
+      NeverRuns = Data.define(:why)
+
       # Who may hold a granted facet row of a well-known service (check_granted_rows), and
       # why: the system domain, and root's session template, the system principal's,
       # always (root :always) or only in a development build (root :development); with
@@ -449,21 +454,22 @@ module Erx
       #   being served at all (:served), or nothing (nil), when it derives none;
       # * window, the window role whose holder serves it, when one does: a manifest with
       #   that window holds exactly one service of the name, of the files interface,
-      #   served by the window's holder, and one without it holds none, so an apps row
+      #   served by the holder of every window of the role, and one without it holds
+      #   none, so an apps row
       #   that needs the service needs the window too;
       # * derived, the Derived rows the build derives of it. An apps row names no service
       #   with an :app_template row, since every app holds that grant already; the apps
       #   row packs the template's packages and system rows in fields of their own
       #   (apps_rows), so a new service with such a row needs a field there too;
       # * source, which granted rows (check_granted_rows) may grant it: :any, :none (only
-      #   the derived rows do), or a SourceGrants.
+      #   the derived rows do), a SourceGrants, or a NeverRuns.
       #
       # A row with neither needs nor window is not checked to be of the files interface.
       WellKnown = Data.define(:constant, :needs, :window, :derived, :source) do
         def initialize(constant:, needs:, window:, derived:, source:)
           raise Erx::Error, "WellKnown #{constant} needs #{needs.inspect}" unless [:apps, :served, nil].include?(needs)
           raise Erx::Error, "WellKnown #{constant} source #{source.inspect}" unless
-            [:any, :none].include?(source) || source.is_a?(SourceGrants)
+            [:any, :none].include?(source) || source.is_a?(SourceGrants) || source.is_a?(NeverRuns)
           raise Erx::Error, "WellKnown #{constant} derives rows that are not Derived" unless derived.all?(Derived)
           raise Erx::Error, "WellKnown #{constant} derives rows it never needs" unless needs || derived.empty?
 
@@ -504,7 +510,12 @@ module Erx
         # sessions read root's login keys, and nothing writes them (docs/design-ssh.md,
         # "Invariants", H8).
         WellKnown.new(constant: 'login_keys_service', needs: nil, window: 'record_volume', derived: [],
-                      source: SourceGrants.new(root: :always, read_only: true, why: 'tree holds root\'s login keys'))
+                      source: SourceGrants.new(root: :always, read_only: true, why: 'tree holds root\'s login keys')),
+        # Property 8's drive clauses (docs/design-drives.md, "Manifest rows" and "Links and
+        # rights"): the media domain, the server of every drive window, serves every
+        # drive's volumes, and no grant runs what a drive holds.
+        WellKnown.new(constant: 'media_service', needs: nil, window: 'drive', derived: [],
+                      source: NeverRuns.new(why: 'volumes are a stranger\'s bytes'))
       ])
 
       # The interface, and the name, of the facet the domain service grants every session
@@ -1865,7 +1876,8 @@ module Erx
       # One granted row of the well-known service known, with its resolved parameter
       # values: refused for a service whose rows only the build derives, and for one with
       # SourceGrants unless its grantee is the system domain or a template its root
-      # setting accepts and, for a read_only one, it states ro.
+      # setting accepts and, for a read_only one, it states ro, and for one with NeverRuns
+      # when it states rx.
       def check_granted_row(known, row, stated, tables)
         name = name_of(known)
         case known.source
@@ -1883,6 +1895,9 @@ module Erx
           invalid("facet #{row.fetch('name')} grants #{name}, whose #{why}, to another grantee than #{holders}", 'facet.grantee') unless grantee.first == grantee_kind('system') || root_may
           invalid("facet #{row.fetch('name')} grants #{name} other than read-only", 'facet.parameter') if
             read_only && stated.fetch('rights', 'rw') != 'ro'
+        in NeverRuns(why:)
+          invalid("facet #{row.fetch('name')} grants #{name} rx, whose #{why}", 'facet.parameter') if
+            stated.fetch('rights', 'rw') == 'rx'
         end
       end
 
@@ -1913,16 +1928,17 @@ module Erx
       # The well-known services' window clauses, those of property 19's eighth and of
       # docs/design-ssh.md, "Who publishes it": for each service with a window, a manifest
       # with the window holds exactly one service of its name, of the files interface,
-      # served by the window's holder, so the domain that mints the tree's grants is the
-      # one whose block driver serves its partition; and one without the window holds
+      # served by the holder of every window of the role, so the domain that mints the
+      # tree's grants is the one its windows reach (for drive windows, the media domain,
+      # which drives no device); and one without the window holds
       # none, nor an apps row that needs the service.
       def check_window_services(tables)
         service_rows = tables.fetch('services')
         WELL_KNOWN.select(&:window).each do |known|
           name = name_of(known)
           role = known.window
-          window = tables.fetch('windows').find { |row| row.fetch('role') == @codec.member('mf_window_role', role) }
-          unless window
+          windows = tables.fetch('windows').select { |row| row.fetch('role') == @codec.member('mf_window_role', role) }
+          if windows.empty?
             invalid("an apps row needs a #{role} window, whose holder serves #{name}", 'apps') if
               known.needs == :apps && derives?(known, service_rows)
             invalid("a manifest without a #{role} window holds no service named #{name}", 'service.name') if
@@ -1931,8 +1947,8 @@ module Erx
           end
 
           service = service_rows.fetch(fetch_well_known(service_rows, known, required_by: "a #{role} window"))
-          invalid("the service named #{name} is served by the holder of the #{role} window",
-                  'service.server') unless window.fetch('holder') == service.fetch('server')
+          invalid("the service named #{name} is served by the holder of every #{role} window",
+                  'service.server') unless windows.all? { |row| row.fetch('holder') == service.fetch('server') }
         end
       end
 
@@ -3190,23 +3206,26 @@ module Erx
         check_system_window(rows, tables)
         check_record_volume_window(rows)
         check_drives(rows, tables)
+        check_media_domain(rows, tables)
         placed = rows.map { |row| row.values_at('device', 'role', 'partition', 'image', 'drive') }
         invalid('two windows name one role, partition and drive of a device', 'window.partition') unless placed.uniq.size == placed.size
         rows.sort_by { |row| row.values_at('holder', 'device', 'role', 'partition', 'image', 'drive') }
       end
 
-      # Property 8's drive clause (docs/design-usb.md, "Mass storage reaches the file
-      # servers"): a window on a USB controller is a fat window naming a drive, disk and
-      # its decimal number below mf_none, packed as the number; every other window names
-      # none, packed as mf_none. How many drives a USB domain names is check_drives'.
+      # Property 8's drive clause (docs/design-drives.md, "Manifest rows"): a drive window
+      # names its drive, disk and its decimal number below mf_none, packed as the number;
+      # every other window names none, packed as mf_none; and every window on a USB
+      # controller is a drive window. A window lies on a block device or a USB controller
+      # (window_device); which drives the windows name, and who holds them, is
+      # check_drives', check_media_domain's and check_window_services'.
       def window_drive(record, role, device)
-        controller = device.fetch('role') == device_role('usb')
-        unless record.properties.key?('drive') == controller
-          invalid('a window names a drive exactly when it lies on a USB controller', 'window.drive')
-        end
-        return @codec.constant('mf_none') unless controller
+        drive = role == drive_role
+        invalid('a drive window names its drive, and no window of another role names one', 'window.drive') unless
+          record.properties.key?('drive') == drive
+        invalid('a window on a USB controller is a drive window', 'window.role') if
+          device.fetch('role') == device_role('usb') && !drive
+        return @codec.constant('mf_none') unless drive
 
-        invalid('a window on a USB controller is a fat window', 'window.role') unless role == @codec.member('mf_window_role', 'fat')
         token = one(record, 'drive')
         none = @codec.constant('mf_none')
         number = token.value[/\Adisk(0|[1-9][0-9]*)\z/, 1]&.to_i unless token.quoted
@@ -3215,19 +3234,48 @@ module Erx
         invalid("a drive is disk and a decimal number below #{none}", 'window.drive')
       end
 
-      # Property 8's drive clauses (docs/design-system.md; docs/design-usb.md, "Mass storage
-      # reaches the file servers"): drive numbers name drives across the machine, so no drive
-      # lies on two controllers, and the windows on all of one USB domain's controllers name
-      # at most usb_drives_max drives, the media that domain serves at once.
+      # Property 8's drive clauses (docs/design-drives.md, "Manifest rows"; docs/design-usb.md,
+      # "Media and drives"): a drive number names one drive across the machine, so no two
+      # windows name one; a block device's drive is the device's one window, the medium
+      # its driver's domain serves whole; and the drive windows on all of one USB domain's
+      # controllers name at most usb_drives_max drives, the media that domain serves at once.
       def check_drives(rows, tables)
-        none = @codec.constant('mf_none')
-        placed = rows.map { |row| row.values_at('device', 'drive') }.uniq.reject { |_device, drive| drive == none }
-        shared, = placed.group_by { |_device, drive| drive }.find { |_drive, places| places.size > 1 }
-        invalid("two USB controllers name drive #{shared}", 'window.drive') if shared
+        drives = rows.select { |row| row.fetch('role') == drive_role }
+        twice, = drives.group_by { |row| row.fetch('drive') }.find { |_drive, named| named.size > 1 }
+        invalid("drive disk#{twice} is named by two windows", 'window.drive') if twice
+        on_block, on_usb = drives.map { |row| row.fetch('device') }
+                                 .partition { |device| tables.fetch('devices').fetch(device).fetch('role') == device_role('block') }
+        invalid('a block device with a drive window has no other window', 'window.device') if
+          on_block.any? { |device| rows.count { |row| row.fetch('device') == device } > 1 }
         most = @codec.constant('usb_drives_max')
-        by_domain = placed.group_by { |device, _drive| device_holder(tables, device) }
         invalid("a USB domain's controllers name more than #{most} drives", 'window.drive') if
-          by_domain.any? { |_holder, places| places.size > most }
+          on_usb.group_by { |device| device_holder(tables, device) }.any? { |_holder, devices| devices.size > most }
+      end
+
+      # The media domain (docs/design-drives.md, "Manifest rows"), the configured domain
+      # that serves a service named media, holds no unit, no window but drive windows and
+      # no facet of a storage service, one that a storage domain serves, which is a
+      # configured domain holding a window of another role than drive. So the domain that
+      # parses every drive's volumes reaches no device and no stored file but through its
+      # drive windows and the grants a manifest gives it. That every drive window is its,
+      # and that a manifest with one holds one media service, is check_window_services'.
+      def check_media_domain(windows, tables)
+        services = tables.fetch('services')
+        none = @codec.constant('mf_none')
+        storage = windows.reject { |row| row.fetch('role') == drive_role }.map { |row| row.fetch('holder') }.uniq - [none]
+        services.select { |service| service.fetch('name') == @codec.fixed_bytes('media_service') }.each do |media|
+          domain = media.fetch('server')
+          invalid('the media service is served by a configured domain', 'service.server') if domain == none
+          label = "the media domain, #{tables.fetch('domains').fetch(domain).fetch('name')},"
+          invalid("#{label} holds no unit", 'unit.holder') if tables.fetch('units').any? { |unit| unit.fetch('holder') == domain }
+          invalid("#{label} holds drive windows alone", 'window.holder') if
+            windows.any? { |row| row.fetch('holder') == domain && row.fetch('role') != drive_role }
+          held = tables.fetch('facets').find do |facet|
+            facet.values_at('grantee_kind', 'grantee') == [grantee_kind('domain'), domain] &&
+              storage.include?(services.fetch(facet.fetch('service')).fetch('server'))
+          end
+          invalid("#{label} holds a facet of #{held.fetch('name')}, a storage service", 'facet.grantee') if held
+        end
       end
 
       # The holder of the unit that placed the device row at index.
@@ -3237,13 +3285,17 @@ module Erx
               .fetch('holder')
       end
 
-      # design-abi.md: fixed-medium roles have partition 0, because the medium
-      # layout determines their sectors; FAT names a primary partition.
+      # design-abi.md: a drive window names no partition, packed as mf_none, since it
+      # covers whatever medium its drive holds, whole; every other role is a fixed-medium
+      # role, whose window names partition 0, because the medium layout determines its
+      # sectors.
       def window_partition(record, role)
-        partition = number(record, 'partition')
-        allowed = role == @codec.member('mf_window_role', 'fat') ? (1..4) : (0..0)
-        invalid('a fixed role has partition 0 and FAT a primary partition, 1 to 4', 'window.partition') unless allowed.cover?(partition)
-        partition
+        if role == drive_role
+          invalid('a drive window names no partition', 'window.partition') if record.properties.key?('partition')
+          return @codec.constant('mf_none')
+        end
+        invalid('a window of a fixed role names partition 0', 'window.partition') unless number(record, 'partition').zero?
+        0
       end
 
       def window_rights(record, role)
@@ -3340,6 +3392,7 @@ module Erx
 
       def system_role = @codec.member('mf_window_role', 'system')
       def record_volume_role = @codec.member('mf_window_role', 'record_volume')
+      def drive_role = @codec.member('mf_window_role', 'drive')
 
       # The image table and its extents (docs/design-fiasco.md, "The Phase 1 manifest
       # check"): each image is format erofs_unchecked, since the packer writes no hash

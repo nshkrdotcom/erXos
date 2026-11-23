@@ -162,15 +162,16 @@ mount_own(Name, Grant) ->
 %% Where the tree of each service Name mounts, on the tree of its own name, with rw as
 %% the entry's own rights, which a resolution lowers to the rights the facet's grant
 %% carries (erx_facets:table/1), so a domain writes there only through an rw grant:
-%% data, the storage domain's tree, at /data; the system domain's files services: the
-%% package application's apps tree at /apps (docs/design-packaging.md, "/apps"), the
-%% start service's tree, start, at /etc/start, the domain service's machine at
-%% /machine, and the line service's tree, line, at /line (docs/design-apps.md,
-%% "Interfaces"; docs/design-system.md, "A session's request"; docs/design-bluetooth.md,
-%% "The controller's line"). /data is also an empty directory of every release, so a
-%% domain not granted data lists it as empty (ReleaseFiles::MOUNT_POINTS,
-%% tools/lib/erx/release_files.rb); a domain that holds no apps, start, machine or line
-%% facet has no such path, enoent.
+%% data, the storage domain's tree, at /data; media, the media domain's tree of every
+%% drive, at /media (docs/design-drives.md, "Mounting it"); the system domain's files
+%% services: the package application's apps tree at /apps (docs/design-packaging.md,
+%% "/apps"), the start service's tree, start, at /etc/start, the domain service's
+%% machine at /machine, and the line service's tree, line, at /line
+%% (docs/design-apps.md, "Interfaces"; docs/design-system.md, "A session's request";
+%% docs/design-bluetooth.md, "The controller's line"). /data and /media are also empty
+%% directories of every release, so a domain granted neither lists each as empty
+%% (ReleaseFiles::MOUNT_POINTS, tools/lib/erx/release_files.rb); a domain that holds no
+%% apps, start, machine or line facet has no such path, enoent.
 %%
 %% The packages and system facets have no place, so no domain's mount_facets/1, a
 %% session's included, mounts either: an app's session reaches them by erx:cap/1, its
@@ -179,6 +180,7 @@ mount_own(Name, Grant) ->
 %% packages grant at its own place (packages_place/0).
 -spec place(atom()) -> {binary(), [option()]} | none.
 place(data) -> {<<"/data">>, [{tree, <<"data">>}, rw]};
+place(media) -> {<<"/media">>, [{tree, <<"media">>}, rw]};
 place(apps) -> {<<"/apps">>, [{tree, <<"apps">>}, rw]};
 place(start) -> {<<"/etc/start">>, [{tree, <<"start">>}, rw]};
 place(machine) -> {<<"/machine">>, [{tree, <<"machine">>}, rw]};

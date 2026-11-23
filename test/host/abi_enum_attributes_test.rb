@@ -131,16 +131,16 @@ class AbiEnumAttributesTest < Minitest::Test
   end
 
   # The slot writer's roles are the ones not marked configured: a copy of the ABI whose
-  # fat role loses the attribute refuses a fat window held by a configured domain.
+  # data role loses the attribute refuses the data window the storage domain holds.
   def test_a_window_role_s_configured_fact_changes_the_manifest_check
     Dir.mktmpdir('erx-abi-roles-') do |root|
       seed_roles(root) do |text|
-        text.sub(/^(  value fat 7) configured/, '\1').tap { |seeded| assert text != seeded, 'fat is configured' }
+        text.sub(/^(  value data 6) configured/, '\1').tap { |seeded| assert text != seeded, 'data is configured' }
       end
-      fat = manifest_source + "window seeded\n  holder @domain.storage\n  device \"/virtio_mmio@a003e00\"\n" \
-                              "  role fat\n  partition 1\n  rights read\n  image none\n"
-      admit(fat, Erx::ABI::Codec.new(tree_schema))
-      error = assert_raises(Erx::Manifest::Invalid) { admit(fat, Erx::ABI::Codec.new(tree_schema(root))) }
+      source = manifest_source
+      assert_match(/^  holder @domain\.storage\n  device "[^"]+"\n  role data$/, source)
+      admit(source, Erx::ABI::Codec.new(tree_schema))
+      error = assert_raises(Erx::Manifest::Invalid) { admit(source, Erx::ABI::Codec.new(tree_schema(root))) }
       assert_equal 'window.holder', error.field
     end
   end

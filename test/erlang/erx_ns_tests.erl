@@ -391,8 +391,9 @@ facets_mount_only_where_granted() ->
     ?assertEqual(ok, erx_ns:mount_facets([])),
     ?assertEqual(ok, erx_ns:mount_facets([echo, packages, system])),
     ?assertEqual([?RELEASE], at_use()),
-    ?assertEqual(ok, erx_ns:mount_facets([echo, data])),
-    ?assertEqual([?RELEASE, #{point => [<<"data">>], provider => ended, root => [], rights => rw}], at_use()).
+    ?assertEqual(ok, erx_ns:mount_facets([echo, data, media])),
+    ?assertEqual([?RELEASE, #{point => [<<"data">>], provider => ended, root => [], rights => rw},
+                  #{point => [<<"media">>], provider => ended, root => [], rights => rw}], at_use()).
 
 %% The system domain's files services, apps, start and machine, have their places too:
 %% a session that holds their facets mounts each where the system domain mounts its own
