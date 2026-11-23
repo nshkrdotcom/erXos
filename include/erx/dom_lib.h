@@ -242,7 +242,7 @@ erx_status_t	erx_dom_lib_connect(erx_dom_lib_t *, uint32_t a, uint32_t b,
  * ERX_END_OFF or ERX_END_RESET, with erx_machine_end, and returns only its
  * refusal. It changes no domain of the view, since the end stops every thread
  * at once. Its erx_dom_end_begin, ending record and deadline are not built
- * (TODO.md), so it is committed with no record.
+ * (docs/todo-liberx.md), so it is committed with no record.
  */
 erx_status_t	erx_dom_lib_end_commit(erx_dom_lib_t *, uint32_t how) ERX_WARN_UNUSED_RESULT;
 
@@ -447,7 +447,7 @@ erx_status_t	erx_dom_lib_pci_report(erx_dom_lib_t *, uint32_t bridge, const erx_
  * row, a mode outside the set, or a raise of a function no living domain
  * holds or its catalogue does not give (erx_dom_pci_given), so the library
  * says a raise only of a function a holder holds and could be given now
- * (TODO.md, the start's leftovers); a holder's end lowers its
+ * (docs/todo-drivers.md, "PCIe, the start's leftovers"); a holder's end lowers its
  * functions itself.
  */
 erx_status_t	erx_dom_lib_pci_mode(erx_dom_lib_t *, uint32_t index, uint32_t mode) ERX_WARN_UNUSED_RESULT;

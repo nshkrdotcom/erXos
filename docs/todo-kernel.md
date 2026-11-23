@@ -213,8 +213,8 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   deletion's table step is what the core's `ERX_MAP_DELETED` record assumes.
 * [Critical] Kernel memory design, `docs/design-kernel.md` ("Virtual
   memory"): the map core's design review (branch
-  `worktree-agent-a613090776683a3d8`, commits `8f893069` and `58d89236`,
-  not landed) left three findings open for Phase 2's memory design.
+  `shelved/fault-reserve-memory-and-map-doom`, commits `8f893069` and
+  `58d89236`, not landed) left three findings open for Phase 2's memory design.
   (Critical) A release's private pages leave the page tree after the
   range is reusable, so a racing commit can map a page that the release
   then frees. (High) The step machine plans outside the lock and has no
@@ -665,12 +665,12 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   reaching l4sys's headers); the linked-kernel call-site reader the raw
   allocator and pmem converter rules need; and the vector route. Each fails the check as
   soon as a file it awaits lands, except the files it lists as existing
-  ([design-kernel.md](design-kernel.md#chokepoint-checks)). The
-  object leg's stated reason, that no build produces liberx's target
-  objects, no longer holds (the native roots build them, for example
-  `build/native-watchdog/root/liberx_backend_fiasco_end_how_c.o`), and its
-  exemptions, the groups' `unchecked_objects`, grow with every new liberx
-  source instead of shrinking; landing it deletes those lists.
+  ([design-kernel.md](design-kernel.md#chokepoint-checks)). The native
+  roots build liberx's target objects (for example
+  `build/native-watchdog/root/liberx_backend_fiasco_end_how_c.o`), so the
+  object leg waits only on its reader; until it lands its exemptions, the
+  groups' `unchecked_objects`, grow with every new liberx source, and
+  landing it deletes those lists.
 * [Medium] chokepoints, gaps of the text rules until the object leg
   closes them (`tools/lib/erx/chokepoints.rb`): rules match names, so they
   do not follow includes (a `kernel/core/cap.h` allowed to include

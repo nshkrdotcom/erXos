@@ -6,7 +6,7 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
 ## Major initiatives
 
 * [High] 0.2 on Fiasco, `liberx/backend/fiasco`: two pieces of the first part of the design's
-  [Implementation](design-fiasco.md#handles) note are open: the *A stale handle* case of the function API
+  [Verification](design-fiasco.md#handles) note are open: the *A stale handle* case of the function API
   suite, and the test that drives the space-create, image-map and pass wrappers with a stale handle, expecting
   `ERX_ESTALE`, with a wrapper mapping a lookup failure to `ERX_ETYPE` as its seeded fault. The design puts that
   test in `test/host/handles_test.rb`, but the wrappers (`service_task.c`, `erx_fiasco_task_create_body`,
@@ -40,10 +40,6 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   the caller's own table limit, or the design could state that the root's direct uses are checked only by its
   callers. The direct uses also answer only `ERX_OK` or `ERX_ESTALE`, never `ERX_ETYPE` or `ERX_ERIGHTS`, which
   the call table should say.
-* [Low] `docs/design-fiasco.md`, Handles, Implementation note: the second part's "a create of an IRQ entry whose
-  rights hold neither `TRIGGER` nor `ACK`" cannot be made, since every IRQ kind's default set holds `trigger`
-  (`abi/kernel.txt:566-571`); the pass and the duplicate cases cover the placement's refusal. The note should
-  drop it.
 * [High] 0.2 on Fiasco, `liberx/backend/fiasco`: a Fiasco factory per domain budget, carved from its parent's
   at the budget's creation with the manifest row's kernel-memory figure, and every object of the domain
   created through it, so a domain that spends its kernel memory fails alone with `ERX_ENOMEM`
@@ -62,17 +58,6 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   `used` partial with `guarantee`, `cap` and `carved` exact (the topic refuses every handle but `ERX_CAP_SELF`
   and reports only `used`: `service.c`, `ERX_INFO_BUDGET`); and the tests and seeded fault the design lists ([design-fiasco.md](design-fiasco.md), "Memory and
   budgets" and "Reporting a budget"). It blocks the release.
-* [High] 0.2 on Fiasco, `liberx/backend/fiasco`: doorbells and device lines placed directly in their holders
-  without Fiasco's special right, so a trigger and an acknowledgement are the holder's own `l4_irq_trigger`
-  and `l4_irq_unmask` and only the root binds or detaches
-  ([design-fiasco.md](design-fiasco.md#who-holds-what)). Create, duplicate and pass place through one
-  placement function that places nothing unless the new entry's rights hold `TRIGGER` or `ACK`, tested with an
-  inspection-only entry from each call and seeded with unconditional placement; and the root's slot layout is
-  the design's derived plan, the root's handle limit what the object space leaves after it, checked by a static
-  assertion, in place of the unbounded root table `object.c:68` opens with `UINT32_MAX`
-  ([design-fiasco.md](design-fiasco.md#handles)). The 65,536-slot figure is read from the source; the
-  boot probe of the last valid and first refused selector, with the alias check the design names, settles it on
-  a running kernel.
 * [High] 0.2 on Fiasco, `liberx/backend/fiasco` and the manifest: priority bands, CPU sets and per-domain
   thread limits from each domain's manifest row, applied at every thread's start, a create past the limit
   `ERX_ELIMIT` ([design-fiasco.md](design-fiasco.md#bands)).
@@ -82,13 +67,11 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   exception reply kept until the resume, `liberx`'s wait and call stubs retrying a cancelled wait or call, and a
   space whose threads do not all arrive within the deadline ended, with no Fiasco patch
   ([design-fiasco.md](design-fiasco.md#threads-bands-and-stops), FD21).
-* [High] Fiasco backend, `liberx/backend/fiasco`: DMA spaces behind the IOMMU for each confined device, and
-  MSIs as lines of the platform's MSI frame that the root binds through Fiasco's interrupt controller like any
-  other line, Fiasco's own MSI manager unused (`irq.c` answers `ERX_IRQ_MSI` with `ERX_ENOTSUP`); whether QEMU's
-  SMMUv3 works with Fiasco's binding under HVF is unverified ([design-fiasco.md](design-fiasco.md#devices)).
-  It does not block 0.2: no device of 0.2 is behind an IOMMU or raises an MSI (virtio-mmio on QEMU `virt`, no
-  IOMMU and no MSI on the Pi 4), and the unconfined devices are FD12's published downside. It blocks the first
-  release that confines a device or drives virtio-pci.
+* [High] Fiasco backend, `liberx/backend/fiasco`: DMA spaces behind the IOMMU for each confined device;
+  whether QEMU's SMMUv3 works with Fiasco's binding under HVF is unverified
+  ([design-fiasco.md](design-fiasco.md#devices)). It does not block 0.2: no device of 0.2 is behind an IOMMU
+  (virtio-mmio on QEMU `virt`, no IOMMU on the Pi 4), and the unconfined devices are FD12's published
+  downside. It blocks the first release that confines a device.
 * [Medium] Fiasco backend, `liberx/backend/fiasco`: vCPU signals are designed and not built; the backend has no
   `erx_vcpu_control` or `erx_vcpu_resume` and no bind of an IRQ object to a thread, so `liberx`'s signals in
   programs have no delivery on Fiasco. Build the call table's row as
@@ -830,7 +813,7 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   descriptor rights it does not enforce (`object.c`, `object_pass_item`: `mask & erx_ktype_rights_mask(type) &
   ~ERX_HR_DESTROY`), a reported value that is not true. Read-only sharing does not exist on this backend.
   Development builds run trusted code only; the gap blocks release. The work is the third part of the
-  design's [Implementation](design-fiasco.md#handles) note: the entry's rights set at create from the creation kind's default set in `abi/kernel.txt`, at a carve intersected with the parent
+  design's [Verification](design-fiasco.md#handles) note: the entry's rights set at create from the creation kind's default set in `abi/kernel.txt`, at a carve intersected with the parent
   entry's rights and `DESTROY`, intersected in `erx_backend_handle_dup` and `object_pass_item`, and a needed-right
   argument to `erx_fiasco_object_find` passed on to the lookup, so every call gets the check by construction; the *rights shrink*, *a
   creator's pass* and *writable peer side* cases, and a budget carved through an entry without `SPACES`, with their

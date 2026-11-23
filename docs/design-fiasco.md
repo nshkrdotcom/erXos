@@ -341,7 +341,7 @@ another. The root's table opens with its limit, and a handle past it is `ERX_ELI
 semaphore, and the task's row records the pair's index beside the thread's state, as L4Re's thread
 manager takes a thread's capability and its semaphore's from its slot allocator and keeps both in
 the thread's descriptor (`l4re-core`, `libpthread/src/manager.cc`, and the allocator,
-`l4re/util/include/counting_cap_alloc`; read by the advisor, not in this task, so unverified here).
+`l4re/util/include/counting_cap_alloc`; unverified: not read from a pinned source).
 A task other than the root takes two pairs, for its gate and its task object in the first and the
 semaphore its end ups in the second, the fourth slot unused, and its row records both indices. The
 pool's one unit is the pair, so a count of free pairs is also a count of what can be placed: a
@@ -393,20 +393,20 @@ page is 4 KiB (`types/arm/64/types-arch.h:24`), so `Slots_per_dir` is 512 pointe
 lookups refuse a directory index past the last (`obj_space_phys_util.cpp:202`, `:223`), so slot
 65,535 is the last valid selector and 65,536 the first refused. The directory index is computed in
 an `unsigned` from the word-wide selector (`:201`, `:222`), so a selector at or above 2^39 would
-alias a low slot unless the invocation path masks it first; this reading has no probe yet. Every
+alias a low slot unless the invocation path masks it first. Every
 selector erXos computes is below 65,536, so the alias reaches nothing erXos places, and a holder's
 aliased selector names only its own slots. The figures are read from the in-tree sources (SHA-256
-`3b619e13...` for `obj_space_phys_util.cpp`, `3e87dbd1...` for `obj_space_types.cpp`) and are
-unverified on a running kernel until a boot probe places a capability at slot 65,535 and is refused
-at 65,536, and checks that a selector 2^39 above a placed slot and the slots beside each probed one
-are unchanged. `erx_space_create` refuses with `ERX_EINVAL` a `cap_limit` whose window would pass
+`3b619e13...` for `obj_space_phys_util.cpp`, `3e87dbd1...` for `obj_space_types.cpp`), and a
+boot probe checks them on a running kernel: the `native_irq` suite places a capability at slot
+65,535 and is refused at 65,536, and checks that a selector 2^39 above an empty slot does not reach
+it (`erx_fiasco_test_object_space_probe`, `irq.c`). `erx_space_create` refuses with `ERX_EINVAL` a `cap_limit` whose window would pass
 the object space, where erXos's kernel takes any value up to `caps_max` (FD1). A caller that
 wants the largest table asks `erx_space_cap_limit_max()`, which answers the largest `cap_limit`
 whose window fits, so no code above `liberx` names Fiasco's figure; a session's port driver
 makes each program's image with it.
 
-**Implementation.** The design is built in four parts, each with the test that proves it and a
-seeded fault that test must catch:
+**Verification.** Four parts carry the design, each with the test that proves it and a seeded
+fault that test must catch:
 
 * The handle value and the lookup, in `handles.c`, built for the host: the entry's generation, its
   retirement, the first-in-first-out free list, the rights in the entry and the lookup's order.
@@ -422,8 +422,8 @@ seeded fault that test must catch:
 * IRQ placement and the direct stubs, in `irq.c`, `object.c` and the stubs: the window, the
   placement at create, duplicate and pass, the unmap at close, and the `l4_irq_trigger` and
   `l4_irq_unmask` stubs. The *direct doorbell* and *destroyed handle* cases of
-  [The release's cases](#the-releases-cases) prove it, with a pass, a duplicate and a create of an
-  IRQ entry whose rights hold neither `TRIGGER` nor `ACK`, each expecting the holder's slot empty, and
+  [The release's cases](#the-releases-cases) prove it, with a pass and a duplicate of an
+  IRQ entry into rights that hold neither `TRIGGER` nor `ACK`, each expecting the holder's slot empty, and
   a build of the root's layout plan. Seeded faults: the trigger stub sending a request, under which
   the root's request count moves; the close leaving the holder's slot mapped, under which a ring
   after close reaches the object; the placement function placing unconditionally, under which the
@@ -658,11 +658,11 @@ gives every call's result on Fiasco, its refusals included, on a development bui
 alike; it is the one place results are written, and the downside rows and other sections cite it.
 It is the target, and code that differs from it is a bug in `TODO.md`. Its last column names the rows of [Downsides against erXos's kernel](#downsides-against-erxoss-kernel)
 where the result differs from erXos's kernel's, and a row whose last column says none gives erXos's
-kernel's result. M7's parity review works from it: a difference that neither a row nor its downside
+kernel's result. The parity review between the backends works from it: a difference that neither a row nor its downside
 names is a bug in one backend. A call that names a space takes `ERX_CAP_SELF` or a space handle, and
 a task holds a space handle only for a space it created, since no space handle passes; so "a space
 the caller created" is checked by the handle alone. "Service" and "local" say where the body runs.
-The hosted backend carries the rows 1b-A needs where cheap and answers `ERX_ENOTSUP` elsewhere
+The hosted backend carries the rows between tasks where cheap and answers `ERX_ENOTSUP` elsewhere
 ([The hosted backend](#the-hosted-backend)). One function-API test set, `test/guest/function_api`,
 runs each case on every backend that carries its row and seeds Track K's conformance roster.
 `erx_cap_pass` takes any task's call in its creator's case, as the domain library in the root
@@ -698,7 +698,7 @@ callers as it says.
 | `erx_entropy_read`, `erx_entropy_add` | ERTS's `crypto` seed, the host link, musl's `getrandom` | service: `liberx/backend/fiasco/entropy.c` over `rng.c`, keyed from the counter, then mixed with `/chosen`'s `rng-seed` and `kaslr-seed` where the device tree carries them (`kernel/core/rng_seed.c`), and on the Raspberry Pi 4 with the board's random generator on the condition of [Entropy sources](design-platforms.md#entropy-sources) ([The Raspberry Pi 4](#the-raspberry-pi-4)); each reply holds 16 bytes and each request 32, so the stubs loop | the banner names what went in, `erx: entropy: from /chosen/rng-seed (32 bytes), /chosen/kaslr-seed (8 bytes) and the counter`, or on the Raspberry Pi 4 `erx: entropy: from the RNG200 (32 bytes) and the counter`, or says `erx: entropy: quality: low, from the counter alone` when nothing else went in, followed on the Pi 4 by `, since the RNG200 gave too few words within 100 ms` or `, since the RNG200 could not be read` when its read failed. A release image never runs on such a seed, as [design-crypto.md](design-crypto.md) requires: its root counts the bytes that went in from sources other than the counter, the count the banner prints, and with fewer than 32, after the banner's line, writes `erx: entropy: refused: a release does not run without a seed` and ends the machine as `ERX_END_OFF` before it starts any domain, so no key, vault or authentication path ever runs on the counter alone; a development build prints the line and goes on, its banner saying `development build: trusted code only`. `entropy_quality` stays unreported; at most 256 bytes a call; a read the generator cannot serve `ERX_ENOTSUP`; `ERX_ENTROPY_CREDIT` `ERX_ENOTSUP`, since no source is trusted | FD26 |
 | `erx_debug_log`, `erx_log_read`, `erx_log_take` | `liberx`, ERTS's crash path, test tasks; the Erlang log readers, of which the log service, `erx_syslog`, alone takes | service: [The console](#the-console) | correct | FD26 |
 | `erx_backend_trace_read`, `erx_trace_read` | `erx_trace_ring:read/3`, for `erx:trace` | local, in the root: [The trace ring](#the-trace-ring) | the root's parks, wakes, IRQ deliveries and task starts and ends, reported by `liberx trace`; a cursor past the head, or `max` of 0 or over 512, `ERX_EINVAL`; an exhausted ring `ERX_ELIMIT`; `erx_backend_trace_read` in a task `ERX_ENOTSUP`; `erx_trace_read` `ERX_ENOTSUP` everywhere, so the kernel's row is `unsupported` | FD26 |
-| `erx_watchdog_pet`, the crash record, `erx_machine_end(res, how)` | M1's criteria | pet: a local atomic store in the root, which alone links it (a task's ERTS fails to link, so no task can call it), and hosted `ERX_OK` with no effect. End: the root's alone, a task's call `ERX_ENOTSUP`, as the kernel's `POWER` check leaves it to the system domain ([design-system.md](design-system.md#a-sessions-request)); [The end path](#the-end-path) | `ERX_END_OFF`, `_RESET` and `_PANIC` as erXos's kernel ends them; `ERX_END_TRIAL` `ERX_ENOTSUP`, before anything stops, while the boot value is `unknown`, and otherwise the platform's trial request made by the root and a reset, a kernel hang or a stalled watchdog is caught only on a board whose platform record names a hardware watchdog, from the start of the root's watchdog thread ([The watchdog](#the-watchdog)) | FD26, FD29 |
+| `erx_watchdog_pet`, the crash record, `erx_machine_end(res, how)` | M1's criteria | pet: a local atomic store in the root, a task's call `ERX_ENOTSUP`, and hosted `ERX_OK` with no effect. End: the root's alone, a task's call `ERX_ENOTSUP`, as the kernel's `POWER` check leaves it to the system domain ([design-system.md](design-system.md#a-sessions-request)); [The end path](#the-end-path) | `ERX_END_OFF`, `_RESET` and `_PANIC` as erXos's kernel ends them; `ERX_END_TRIAL` `ERX_ENOTSUP`, before anything stops, while the boot value is `unknown`, and otherwise the platform's trial request made by the root and a reset, a kernel hang or a stalled watchdog is caught only on a board whose platform record names a hardware watchdog, from the start of the root's watchdog thread ([The watchdog](#the-watchdog)) | FD26, FD29 |
 | `erx_firmware_request(resource, index)` | the device service's firmware worker: the VL805's notification, the Bluetooth line's power notifications, the Raspberry Pi 4's sensor readings | the root's alone, a task's call `ERX_ENOTSUP`; in the root, local, in the caller's thread, never in the root service, whose one thread serves every task. Having no resource objects, the backend takes the row as a value, `erx_firmware_request_row` of `liberx/backend/api.h`, which the domain library's firmware entries call with the row it resolved from the manifest; the root maps the mailbox's page, which the board's platform record names, keeps a page of its own image as the buffer, and runs the same C17 mailbox core as erXos's kernel, sleeping between reads ([The firmware request](#the-firmware-request), [design-kernel.md](design-kernel.md#firmware-requests), [design-board-sensors.md](design-board-sensors.md#the-kernel-call)) | erXos's kernel's ([design-kernel.md](design-kernel.md#firmware-requests)): the row's answer, at most its window, in the caller's UTCB; a deadline of 1 s from the call's start; `ERX_EBUSY` beside a request in flight, the trial request's included; every call after an `ERX_ETIMEDOUT` answered `ERX_ETIMEDOUT` at once; `ERX_EPROTO` for an answer outside the interface; `ERX_ENOTSUP` on a platform whose record names no rows, QEMU `virt` among them | FD29: the root task, in user mode, maps the mailbox |
 | a thread's fault | a domain's or a program's fault; a test task's fault | [Faults](#faults-and-the-fault-of-the-root-task) | a fault record at the space's fault gate, thread `unknown`, the faulting thread left waiting; with no fault gate, a crash record and the task's end; the machine's end for the root | FD19, FD20 |
 | `erx_vcpu_control`, `erx_vcpu_resume`; `erx_irq_bind` to a thread | `liberx`'s signals in programs (Track P) | [vCPU upcalls on Fiasco](#vcpu-upcalls-on-fiasco), over Fiasco's vCPU interface with no kernel change | correct for programs whose every kernel call keeps `liberx`'s event rule; no umtx wait ends with `ERX_EINTR`, and a delivery that arrives during a kernel call is taken at the thread's return to its own code; an arming whose kernel-user memory Fiasco refuses `ERX_ENOMEM`, nothing armed | FD23 |
@@ -1407,7 +1407,7 @@ seeded violation and each refusal with a seeded record:
 | 3 PCIe configuration space | kept: on QEMU `virt` and on the Raspberry Pi 4 exactly one configured domain, `pcie`, holds the bridge's unit and nothing else; a `pci` device is placed by place on one configured domain, unconfined; a `pci` row names a line only behind the Pi 4's closed bridge, where the VL805's unit is the function at bus 1, device 0 with the INTx line its place routes in the platform's tree, and no other domain holds that line ([design-pcie.md](design-pcie.md#on-fiasco), [design-usb.md](design-usb.md#the-phase-1-part)) | |
 | 4 budgets and grants sum | kept for `root_memory`, baseline, shares, the configured domains' budgets and grants and `max_domains`; the configured domains' sums are the planner's (property 12); `root_startup` by the rule below. The sums are checked at build time; nothing enforces them at run time ([Budgets and groups as records](#budgets-and-groups-as-records)) | Track K (`root_startup`, enforcement) |
 | 5 names | kept | |
-| 6 no JIT in the root | kept; a full boot may use the native root image, since the interpreter image is not yet the root | |
+| 6 no JIT in the root | kept; a full boot may use the native root image | |
 | 7 the sealing secret | `sealing` is `none`, no entry carries `ERX_ENTRY_SEAL`, no TPM | M11 |
 | 8 partitions and devices reach holders | kept: the UARTs are the system domain's; the slot writer's windows, both slots' boot and system partitions and the two records, are the system domain's; the data window is a storage domain's, as the manifest places it; the one read-only `system` window is held by the configured domain that holds its block device, since the block driver hands a window only to its own domain ([The booted slot](#the-booted-slot)); the network device is the network domain's, which runs the network stack; the display domain holds the gpu and input devices; only the system domain holds a facet of the driver-control interface, whichever way its service row names the interface; no vault partition | M11 (vault) |
 | 9 a release build's confinement | release builds refused. In a development build every virtio-mmio device is unconfined and allowed, whoever holds it, the display domain's gpu and input devices and the network domain's net device among them, as the property's development clause says; the display domain is reported in the trusted base. The packer sets `ERX_PACK_UNCONFINED_DMA` when the manifest gives an unconfined device, as the property says, and nothing reads it | M11 |
@@ -2279,7 +2279,7 @@ is owed exactly one up, and the semaphore is the one the thread's umtx waits use
 kernel's rings ([Trace ring](design-kernel.md#trace-ring)), so erXos's kernel adds a source and not a format. The ring is static in
 `liberx/backend/core/trace_ring.c`, with a head word holding the next index, and backend initialisation touches its pages, so
 no write faults. That file is linked only into the root and the hosted process; a task links a stub whose reader answers
-`ERX_ENOTSUP` and whose writes do nothing, as only the root links `erx_watchdog_pet`, so a task has no ring.
+`ERX_ENOTSUP` and whose writes do nothing, so a task has no ring.
 
 | Event | Written by, and when | Arguments |
 | --- | --- | --- |
@@ -3542,9 +3542,8 @@ These differ from the native backend, and a caller must not depend on either sid
   a shared memory region each process maps; an IRQ object fires by a message to the target process's dispatcher thread;
   a space's end is its process's, observed by the first process. It carries the rows between tasks that the domain
   library, connections and sessions use, and no device row, since a hosted runtime has no devices. The same function-API set runs against it, and
-  the refusals are the native ones. Its design is written, and reviewed as a design, before its code: who walks a tree
-  of exits children first, how a pass crosses processes and how a crashed process's objects are released are its to
-  settle. Nothing above `liberx` sees which form ran.
+  the refusals are the native ones. Who walks a tree of exits children first, how a pass crosses processes and how a
+  crashed process's objects are released are its design's to settle. Nothing above `liberx` sees which form ran.
 
 ## Transport
 

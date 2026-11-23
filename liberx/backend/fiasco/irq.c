@@ -446,9 +446,10 @@ irq_probe_place(l4_cap_idx_t from, l4_cap_idx_t to)
  * The boot probe of docs/design-fiasco.md, "Handles": in the root's own space, a capability
  * placed at slot 65,535, the last slot of the last window erx_space_create admits, holds,
  * one at 65,536 is refused, and the slot before them stays empty; a selector 2^39 above
- * that empty slot does not reach it either. The root's slot 65,535 is its last task run's,
- * which a test machine never makes. The capability is the one placed for the root's
- * handle irq; the result is NULL, or the failure line.
+ * that empty slot does not reach it either. The root's slot 65,535 is at the end of its
+ * slot pool, which hands out pairs lowest first and which a test machine never fills.
+ * The capability is the one placed for the root's handle irq; the result is NULL, or the
+ * failure line.
  */
 const char *
 erx_fiasco_test_object_space_probe(uint64_t irq)

@@ -203,7 +203,7 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   driver's cases (no attribute, no free slot, the slot given back at exit).
 * [Low] `otp/erts/emulator/sys/erxos/sys.c`, `beam/erl_process.c`, `beam/erl_driver.h`: what signals' deletion leaves unused: the break flag and `erts_do_break_handling`, `thr_create_sigmask`,
   the Darwin steal declarations, and the `ERTS_SYS_SUSPEND_SIGNAL` and `ERTS_HAVE_TRY_CATCH` blocks.
-* [Low] `otp/erts/emulator/sys/erxos/sys.c`: on hosted a write to a closed pipe now ends the process with `SIGPIPE`, and a crash dump has no time limit; a dump says it could not read a process's stack, where it did not try.
+* [Low] `otp/erts/emulator/sys/erxos/sys.c`: on hosted a write to a closed pipe ends the process with `SIGPIPE`, and a crash dump has no time limit; a dump says it could not read a process's stack, where it did not try.
 * [Medium] runtime, the host link's kind: `hostlink_kind` (`liberx/backend/core/boot_manifest.c`)
   writes the PL011's compatible string and peripheral by hand beside the PL011 row of
   `erx_uart_kinds` (`include/erx/device_kinds.h`), so renaming that row leaves the host link matching
