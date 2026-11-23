@@ -76,43 +76,39 @@ module Erx
       permits: /\A(?:erx_(?:#{PROBE_PERIPHERALS})_\w+_(?:read|get)|erx_mini_uart_io_write|
                    ERX_(?:#{PROBE_PERIPHERALS.upcase})_\w+)\z/x
     )
-    # On Fiasco the root reads the board's RNG200 in the platform layer's place, through its one
-    # device shim, which may name the RNG200's header and accessors alone (docs/design-fiasco.md,
-    # "The Raspberry Pi 4").
-    RNG200_SHIM = Chokepoints::Site.new(glob: 'liberx/backend/fiasco/rng200.c',
-                                        permits: %r{\A(?:#\s*include\s*"erx/hw/rng200\.h"|erx_rng200_\w+)\z})
-    # On Fiasco the root's watchdog thread drives the board's hardware watchdog in the
-    # platform layer's place (docs/design-platforms.md, "The watchdog"): its one device shim
-    # names the watchdog's header and accessors alone, and its pure core only the header, the
-    # field setters and the field values, so no register is read or written outside the shim.
-    PM_WDT_SHIM = Chokepoints::Site.new(glob: 'liberx/backend/fiasco/pm_wdt.c',
-                                        permits: %r{\A(?:#\s*include\s*"erx/hw/pm_wdt\.h"|erx_pm_wdt_\w+)\z})
-    PM_WDT_CORE = Chokepoints::Site.new(glob: 'kernel/core/pm_wdt.c',
-                                        permits: %r{\A(?:#\s*include\s*"erx/hw/pm_wdt\.h"|erx_pm_wdt_\w+_set|ERX_PM_WDT_\w+)\z})
-    # The firmware mailbox's pure routine (docs/design-kernel.md, "Firmware requests") builds
-    # its message and reads the status it is fed through the header's field functions and
-    # values alone; the caller that owns the mailbox page reads and writes the registers.
-    VC_MAILBOX_CORE = Chokepoints::Site.new(glob: 'kernel/core/vc_mailbox.c',
-                                            permits: %r{\A(?:#\s*include\s*"erx/hw/vc_mbox\.h"|erx_vc_mbox_\w+_(?:get|set)|ERX_VC_MBOX_\w+)\z})
-    # On Fiasco the root maps the firmware's mailbox in the kernel's place, for the firmware
-    # requests of the platform record (docs/design-fiasco.md, "The call table",
-    # erx_firmware_request): its one device shim, the only root code that touches the
-    # registers, names the mailbox's header and accessors alone.
-    VC_MBOX_SHIM = Chokepoints::Site.new(glob: 'liberx/backend/fiasco/vc_mbox.c',
-                                         permits: %r{\A(?:#\s*include\s*"erx/hw/vc_mbox\.h"|erx_vc_mbox_\w+)\z})
-    # On Fiasco the root sets the on-board pins' functions once at boot, before any domain
-    # starts (docs/design-header-io.md, "On-board pins"): its one device shim, the only root
-    # code that touches the pin controller, names the controller's header and the
-    # function-select registers' accessors alone, and the pure core that plans the words
-    # only the header, the field setters and the field values.
-    PINS_SHIM = Chokepoints::Site.new(glob: 'liberx/backend/fiasco/bcm2711_pins.c',
-                                      permits: %r{\A(?:#\s*include\s*"erx/hw/bcm2711_gpio\.h"|erx_bcm2711_gpio_gpfsel[0-5]_(?:read|write))\z})
-    PINS_CORE = Chokepoints::Site.new(glob: 'kernel/core/bcm2711_pins.c',
-                                      permits: %r{\A(?:#\s*include\s*"erx/hw/bcm2711_gpio\.h"|erx_bcm2711_gpio_\w+_set|ERX_BCM2711_GPIO_\w+)\z})
-# The xHCI harness's stand-in controller answers the device NIF's register accesses and
-# reads the registers it wrote through the generated xHCI header, as GENET's harness does
-# for its engines; it is a host test and reaches no device.
-XHCI_HARNESS = Chokepoints::Site.new(glob: 'test/fixtures/erx_device_xhci_harness.c')
+    # The board devices the root drives itself on Fiasco, in the platform layer's place
+    # (docs/design-fiasco.md, "The Raspberry Pi 4"): the RNG200 it seeds its generator from,
+    # the hardware watchdog its watchdog thread drives (docs/design-platforms.md, "The
+    # watchdog"), the firmware's mailbox for the platform record's firmware requests
+    # (docs/design-fiasco.md, "The call table", erx_firmware_request) and the pin controller
+    # that sets the on-board pins before any domain starts (docs/design-header-io.md,
+    # "On-board pins"). Each device's one shim, the only root code that touches its
+    # registers, names its generated header and accessors alone; a pure core beside a shim
+    # names the header, its field functions and its field values, never an accessor, so no
+    # register is read or written outside the shim. Both peripheral rules read this one list.
+    ROOT_BOARD = lambda do
+      shim = lambda do |path, device, accessors: '\w+'|
+        Chokepoints::Site.new(glob: path, permits: %r{\A(?:#\s*include\s*"erx/hw/#{device}\.h"|erx_#{device}_#{accessors})\z})
+      end
+      core = lambda do |path, device, fields: 'set'|
+        Chokepoints::Site.new(glob: path,
+                              permits: %r{\A(?:#\s*include\s*"erx/hw/#{device}\.h"|erx_#{device}_\w+_#{fields}|ERX_#{device.upcase}_\w+)\z})
+      end
+      [shim.call('liberx/backend/fiasco/rng200.c', 'rng200'),
+       shim.call('liberx/backend/fiasco/pm_wdt.c', 'pm_wdt'),
+       core.call('kernel/core/pm_wdt.c', 'pm_wdt'),
+       shim.call('liberx/backend/fiasco/vc_mbox.c', 'vc_mbox'),
+       # The mailbox routine also reads the status it is fed through the field getters.
+       core.call('kernel/core/vc_mailbox.c', 'vc_mbox', fields: '(?:get|set)'),
+       # The pins' shim reaches the function-select registers alone.
+       shim.call('liberx/backend/fiasco/bcm2711_pins.c', 'bcm2711_gpio', accessors: 'gpfsel[0-5]_(?:read|write)'),
+       core.call('kernel/core/bcm2711_pins.c', 'bcm2711_gpio')]
+    end.call.freeze
+    ROOT_BOARD_TEXT = "the root's board device shims and cores on Fiasco"
+    # The xHCI harness's stand-in controller answers the device NIF's register accesses and
+    # reads the registers it wrote through the generated xHCI header, as GENET's harness does
+    # for its engines; it is a host test and reaches no device.
+    XHCI_HARNESS = Chokepoints::Site.new(glob: 'test/fixtures/erx_device_xhci_harness.c')
     # The prefix of every name Hardware.owned_symbols makes, so no list can fall behind the SVD files.
     OWNED_REGISTER = /\bERX_DEVICE_OWNED_\w+/
 
@@ -169,21 +165,21 @@ XHCI_HARNESS = Chokepoints::Site.new(glob: 'test/fixtures/erx_device_xhci_harnes
         # import check, and a header and a call are all a bypass of erx_device needs.
         Chokepoints::Forbidden.new(
           name: 'device-peripheral-headers',
-          rule: "only the kernel platform layer, the header probe and the root's RNG200, watchdog, mailbox and on-board pin shims, the watchdog's and the on-board pins' cores and the mailbox routine on Fiasco include a generated peripheral header",
+          rule: "only the kernel platform layer, the header probe and #{ROOT_BOARD_TEXT} include a generated peripheral header",
           design: DEVICE_DESIGN,
           scope: DEVICE_SCOPE,
           pattern: PERIPHERAL_INCLUDE,
-          sites: [PLATFORM_LAYER, PROBE_HEADERS, RNG200_SHIM, PM_WDT_SHIM, PM_WDT_CORE, VC_MAILBOX_CORE, VC_MBOX_SHIM, PINS_SHIM, PINS_CORE, XHCI_HARNESS],
+          sites: [PLATFORM_LAYER, PROBE_HEADERS, *ROOT_BOARD, XHCI_HARNESS],
           seed: { 'otp/erts/emulator/beam/seeded.c' => "#include <erx/hw/pl011.h>\n" }
         ),
         Chokepoints::Forbidden.new(
           name: 'device-peripheral-accessors',
-          rule: "only the generated peripheral headers, the kernel platform layer, the header probe, the root's RNG200, watchdog, mailbox and on-board pin shims and the watchdog, mailbox and on-board pin cores' field functions name their accessors",
+          rule: "only the generated peripheral headers, the kernel platform layer, the header probe and #{ROOT_BOARD_TEXT} name their accessors, the cores only their field functions",
           design: DEVICE_DESIGN,
           scope: DEVICE_SCOPE,
           pattern: /\b(?:#{PERIPHERAL_SYMBOLS.map { |symbol| Regexp.escape(symbol) }.join('|')})\b/,
           sites: PERIPHERAL_HEADERS.map { |header| Chokepoints::Site.new(glob: header) } +
-                 [PLATFORM_LAYER, PROBE_ACCESSORS, RNG200_SHIM, PM_WDT_SHIM, PM_WDT_CORE, VC_MAILBOX_CORE, VC_MBOX_SHIM, PINS_SHIM, PINS_CORE, XHCI_HARNESS],
+                 [PLATFORM_LAYER, PROBE_ACCESSORS, *ROOT_BOARD, XHCI_HARNESS],
           seed: { 'otp/erts/emulator/nifs/erxos/seeded.c' => "void f(erx_mmio_t d) { erx_pl011_dr_write(d, 65); }\n",
                   # The watchdog's core may name its setters, never a register access.
                   'kernel/core/pm_wdt.c' => "void f(erx_mmio_t d) { erx_pm_wdt_rstc_write(d, 0); }\n",
