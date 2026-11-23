@@ -44,6 +44,8 @@ module Erx
     LOG_RECORD = /\A#[0-9]+ [0-9]+\.[0-9]+ [a-z]+ space [1-9][0-9]*: \\x0A#{FORGED_LINE}\\x0A\\x1B\[2J\r?\n\z/n
     # What test/guest/native_task/modes.h says the write case writes.
     WRITE_BYTES = ("write case:\t\n\e[2J\xFF\n".b + Array.new(1103) { |index| index & 0xff }.pack('C*') + "\n").freeze
+    # What the write_refused case tries to write (test/guest/native_task/modes.h), none of which may reach the log.
+    WRITE_REFUSED_TEXT = "refused write\e]0;forged\a\n".b.freeze
 
     module_function
 
@@ -55,7 +57,8 @@ module Erx
        case_point('device_refused', seconds: 30), case_point('machine_end_refused', seconds: 30),
        case_point('pool_rounds', seconds: POOL_ROUNDS_SECONDS),
        case_point('log', seconds: 30),
-       case_point('write', seconds: 30), case_point('spin_stop', seconds: 60), case_point('root_stops', seconds: 30),
+       case_point('write', seconds: 30), case_point('write_refused', seconds: 30),
+       case_point('spin_stop', seconds: 60), case_point('root_stops', seconds: 30),
        case_point('request_against_exit', seconds: RACE_SECONDS),
        { name: 'task-done', pattern: /\Aerx: task: done/n, seconds: 30 }.freeze].freeze
     end
@@ -97,9 +100,11 @@ module Erx
 
     # A task's write reaches the serial log as the program wrote it. Fiasco's console
     # puts a carriage return ahead of every newline, whoever writes it, and that is the
-    # one difference (docs/design-fiasco.md, "The console").
+    # one difference (docs/design-fiasco.md, "The console"). A task that is no test task
+    # writes nothing.
     def judge_write(serial)
       raise Error, "the task's write is not in the serial log byte for byte" unless serial.b.include?(WRITE_BYTES.gsub("\n", "\r\n"))
+      raise Error, "a task the launcher did not make wrote to the console" if serial.b.include?(WRITE_REFUSED_TEXT.chomp)
     end
 
     def judge_fault(rest, fault, address)

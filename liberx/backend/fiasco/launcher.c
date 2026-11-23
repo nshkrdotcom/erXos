@@ -6,7 +6,9 @@
 /*
  * The test-task launcher in the root (docs/design-fiasco.md, "The call table"): a
  * task from a boot-image program, started, and later waited for. It uses the
- * ordinary calls; only the wait is the backend's own, as a task has no exit record.
+ * ordinary calls but two of the backend's own: the create, which marks the task as a
+ * test task whose task_write reaches the console ("The console"), and the wait, as a
+ * task has no exit record.
  */
 
 #include <stdatomic.h>
@@ -24,6 +26,7 @@
 #define LAUNCHER_CAP_LIMIT	4096u
 
 static bool	launcher_path_equal(const uint8_t *, size_t, const char *);
+static int	launcher_space_create(uint32_t, uint64_t *);
 
 static bool
 launcher_path_equal(const uint8_t *path, size_t length, const char *wanted)
@@ -33,6 +36,20 @@ launcher_path_equal(const uint8_t *path, size_t length, const char *wanted)
 	while (index < length && wanted[index] != '\0' && path[index] == (uint8_t)wanted[index])
 		index++;
 	return (index == length && wanted[index] == '\0');
+}
+
+/* erx_space_create of a child of the root with no budget and no fault gate, marked as a test task. */
+static int
+launcher_space_create(uint32_t flags, uint64_t *space)
+{
+	const erx_fiasco_space_create_request_t request = { .caller = erx_fiasco_thread_self()->index, .parent = ERX_CAP_SELF,
+	    .flags = flags, .cap_limit = LAUNCHER_CAP_LIMIT };
+	erx_fiasco_reply_t reply;
+	const int status = erx_fiasco_service_call(ERX_FIASCO_CALL_TEST_SPACE_CREATE, &request, sizeof(request), &reply);
+
+	if (status == ERX_OK)
+		*space = reply.first;
+	return (status);
 }
 
 int
@@ -68,7 +85,7 @@ erx_fiasco_launch_make(uint32_t entry, uint32_t flags, uint64_t *task, uint64_t 
 {
 	uint64_t space;
 	int64_t ignored;
-	int status = erx_space_create(0, ERX_CAP_SELF, 0, 0, flags, LAUNCHER_CAP_LIMIT, &space);
+	int status = launcher_space_create(flags, &space);
 
 	if (status != ERX_OK)
 		return (status);

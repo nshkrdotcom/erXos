@@ -428,7 +428,9 @@ service_run(const erx_fiasco_wire_decoded_t *decoded, erx_fiasco_reply_t *reply)
 	case ERX_FIASCO_CALL_VM_MAP:
 		return (erx_fiasco_task_vm_map_body(decoded->task, words));
 	case ERX_FIASCO_CALL_SPACE_CREATE:
-		return (erx_fiasco_task_create_body(decoded->task, words, &reply->first));
+		return (erx_fiasco_task_create_body(decoded->task, words, false, &reply->first));
+	case ERX_FIASCO_CALL_TEST_SPACE_CREATE:
+		return (erx_fiasco_task_create_body(decoded->task, words, true, &reply->first));
 	case ERX_FIASCO_CALL_GROUP_CREATE:
 		return (erx_fiasco_group_create_body(decoded->task, ((const erx_fiasco_group_create_request_t *)words)->budget,
 		    &reply->first));
@@ -627,9 +629,10 @@ service_debug_log(uint32_t task, const erx_fiasco_debug_log_request_t *request)
 
 /*
  * A task's standard output and standard error, which reach the console as the program
- * wrote them (docs/design-fiasco.md, "The console"). The bytes stay in the caller's
- * public UTCB, and this copy loads each word once. A program that wants a labelled,
- * escaped record calls erx_debug_log instead.
+ * wrote them (docs/design-fiasco.md, "The console"), for a test task alone: any other
+ * task, a domain's or a program's, has no raw way to the console. The bytes stay in the
+ * caller's public UTCB, and this copy loads each word once. A program that wants a
+ * labelled, escaped record calls erx_debug_log instead.
  */
 static int
 service_task_write(uint32_t task, const erx_fiasco_task_write_request_t *request)
@@ -637,6 +640,8 @@ service_task_write(uint32_t task, const erx_fiasco_task_write_request_t *request
 	const erx_fiasco_thread_record_t *const record = erx_fiasco_task_record(task, (uint32_t)request->caller);
 	char text[ERX_UTCB_BYTES_MAX];
 
+	if (!erx_fiasco_task(task)->test_task)
+		return (ERX_ENOTSUP);
 	if (record == NULL || request->len > sizeof(text))
 		return (ERX_EINVAL);
 	for (size_t done = 0; done < request->len; done += sizeof(uint64_t)) {

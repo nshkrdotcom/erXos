@@ -23,6 +23,7 @@
 #define MODE_YIELD	12	/* two threads on one CPU hand a count back and forth by yielding: ends with 0 */
 #define MODE_MACHINE_END	13	/* erx_machine_end from a task, refused with ERX_ENOTSUP: ends with 0 */
 #define MODE_POOL_ROUNDS	14	/* more thread creates, starts and exits than the root's slot pool holds pairs: ends with 0 */
+#define MODE_WRITE_REFUSED	15	/* from a task the launcher did not make: the launcher's create and a raw write refused: ends with 0 */
 
 /* The threads MODE_WAIT starts before it sleeps, each asleep for good. */
 #define WAIT_THREADS	2u
@@ -39,6 +40,9 @@
  */
 #define WRITE_HEAD	"write case:\t\n\033[2J\xff\n"
 #define WRITE_RUN_BYTES	1103
+
+/* What the refused write tries to put on the console; tools/lib/erx/native_task.rb finds none of it. */
+#define WRITE_REFUSED_TEXT	"refused write\033]0;forged\007\n"
 
 /* How many handles the IRQ case probes, from 1: the root's object is among them. */
 #define IRQ_SCAN	16u

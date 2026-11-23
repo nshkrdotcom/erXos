@@ -711,7 +711,9 @@ limit fiasco_task_rows u32 1024
 # (docs/design-fiasco.md, "The root service"). A request's tag label is its
 # fiasco_call number and its first word names the calling thread; a layout's
 # size fixes the request's word count, which the service's decoder checks. A
-# reply is erx_fiasco_reply. Number 1 is the ABI's debug_log.
+# reply is erx_fiasco_reply. Number 1 is the ABI's debug_log. test_space_create
+# is the test-task launcher's space_create, which marks the task as a test task
+# and which the service answers only for the root.
 enum fiasco_call u32
   value thread_create 2
   value thread_start 3
@@ -762,6 +764,7 @@ enum fiasco_call u32
   value mem_supply 50
   value mem_seal 51
   value mem_child 52
+  value test_space_create 53
 
 # erx_object_info's topics and the report each writes (docs/design-abi.md,
 # "Inspection schema"; docs/design-kernel.md, "Failure handling, diagnostics

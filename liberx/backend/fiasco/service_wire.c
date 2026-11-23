@@ -86,6 +86,7 @@ erx_fiasco_wire_words(int64_t number)
 	case ERX_FIASCO_CALL_VM_MAP:
 		return (sizeof(erx_fiasco_vm_map_request_t) / sizeof(uint64_t));
 	case ERX_FIASCO_CALL_SPACE_CREATE:
+	case ERX_FIASCO_CALL_TEST_SPACE_CREATE:
 		return (sizeof(erx_fiasco_space_create_request_t) / sizeof(uint64_t));
 	case ERX_FIASCO_CALL_IMAGE_MAP:
 		return (sizeof(erx_fiasco_image_map_request_t) / sizeof(uint64_t));

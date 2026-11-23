@@ -120,6 +120,34 @@ case_ends(const char *name, uint32_t flags, uint64_t mode, int64_t expected)
 }
 
 /*
+ * A task the root makes with erx_space_create, as the domain library makes a domain's,
+ * not through the launcher: it is no test task, so its raw write is refused.
+ */
+static void
+case_write_refused(void)
+{
+	const uint64_t before = erx_fiasco_vm_free_pages();
+	const uint32_t pairs = erx_fiasco_test_pool_free();
+	int64_t status = INT64_MIN;
+	uint64_t space = 0, pc;
+	int result = erx_space_create(0, ERX_CAP_SELF, 0, 0, 0, erx_space_cap_limit_max(), &space);
+
+	if (result == ERX_OK && erx_image_map(space, 0, program_entry, &pc) != ERX_OK) {
+		(void)erx_space_stop(space, ERX_EINVAL);
+		(void)erx_fiasco_task_join(space, &status);
+		result = ERX_EINVAL;
+	}
+	/* A refused start stops and joins the task itself. */
+	if (result == ERX_OK)
+		result = erx_fiasco_launch_start(space, pc, MODE_WRITE_REFUSED);
+	if (result == ERX_OK)
+		result = erx_fiasco_task_join(space, &status);
+	say_status(status);
+	say_case("write_refused", result == ERX_OK && status == 0 && erx_fiasco_test_pool_slots_gone() &&
+	    erx_fiasco_vm_free_pages() == before && erx_fiasco_test_pool_free() == pairs);
+}
+
+/*
  * A task cannot make a line, and reaches no IRQ object through a handle it was not given:
  * the root holds an object while the task runs, the task's probes of its own handles 1 to
  * IRQ_SCAN reach nothing, and the root still holds the object afterwards. The doorbell the
@@ -209,6 +237,7 @@ erx_fiasco_root_main(void)
 	case_ends("pool_rounds", 0, MODE_POOL_ROUNDS, 0);
 	case_ends("log", 0, MODE_LOG, 0);
 	case_ends("write", 0, MODE_WRITE, 0);
+	case_write_refused();
 	case_ends("spin_stop", 0, MODE_SPIN_STOP, STATUS_SPIN_STOP);
 	case_root_stops();
 	case_race();

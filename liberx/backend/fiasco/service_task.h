@@ -85,6 +85,7 @@ typedef struct erx_fiasco_task {
 	/* Thread n's pair, its thread and its semaphore, from its create's take until its deletion; none in the root's row. */
 	erx_slot_pair_t		 thread_pairs[ERX_FIASCO_THREADS_MAX];
 	erx_log_rate_t		 log_rate;	/* what its erx_debug_log lines have cost, zero at its start */
+	bool			 test_task;	/* the launcher made it, so its task_write reaches the console */
 } erx_fiasco_task_t;
 
 /*
@@ -144,8 +145,12 @@ int	erx_fiasco_thread_handle_name(uint32_t caller, uint64_t handle, uint32_t *ta
 void		erx_fiasco_task_set_archive(const erx_pack_view_t *view);
 const erx_pack_view_t	*erx_fiasco_task_archive(void);
 
-/* The bodies. caller is the calling task; each result is the call table's. */
-int	erx_fiasco_task_create_body(uint32_t caller, const erx_fiasco_space_create_request_t *request, uint64_t *space);
+/*
+ * The bodies. caller is the calling task; each result is the call table's. A create
+ * with test_task is the launcher's test_space_create, which only the root may ask for.
+ */
+int	erx_fiasco_task_create_body(uint32_t caller, const erx_fiasco_space_create_request_t *request, bool test_task,
+	    uint64_t *space);
 int	erx_fiasco_task_image_map_body(uint32_t caller, uint64_t space, uint64_t image, uint64_t entry, uint64_t *start);
 int	erx_fiasco_task_stop_body(uint32_t caller, uint64_t space, int64_t status);
 /*

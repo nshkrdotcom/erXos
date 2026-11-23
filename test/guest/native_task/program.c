@@ -454,6 +454,28 @@ mode_write(void)
 }
 
 /*
+ * In a task the root made with erx_space_create, as it makes a domain's: the launcher's
+ * create, which would mark a child as a test task, is refused, and so is the raw write
+ * of an escape sequence, and the judge finds none of its bytes in the serial log.
+ */
+static int64_t
+mode_write_refused(void)
+{
+	static const char text[] = WRITE_REFUSED_TEXT;
+	const erx_fiasco_space_create_request_t create = { .caller = erx_fiasco_thread_self()->index,
+	    .parent = ERX_CAP_SELF, .cap_limit = 16 };
+	const erx_fiasco_task_write_request_t request = { .caller = erx_fiasco_thread_self()->index,
+	    .len = sizeof(text) - 1 };
+	erx_fiasco_reply_t reply;
+
+	if (erx_fiasco_service_call(ERX_FIASCO_CALL_TEST_SPACE_CREATE, &create, sizeof(create), &reply) != ERX_ENOTSUP)
+		return (141);
+	erx_fiasco_utcb_store_bytes(text, request.len);
+	return (erx_fiasco_service_call(ERX_FIASCO_CALL_TASK_WRITE, &request, sizeof(request), &reply) == ERX_ENOTSUP ?
+	    0 : 140);
+}
+
+/*
  * More thread creates, starts and exits than the threads' share of the root's slot pool
  * holds pairs, one thread at a time on one stack, which the next reuses once the reaper has
  * cleared the word: each exit's reap gives the thread's pair back, or a create runs the
@@ -513,6 +535,8 @@ erx_task_main(const uint64_t args[ERX_FIASCO_START_ARGS])
 		return (mode_log());
 	case MODE_WRITE:
 		return (mode_write());
+	case MODE_WRITE_REFUSED:
+		return (mode_write_refused());
 	case MODE_WAIT:
 		for (uint32_t index = 0; index < WAIT_THREADS; index++) {
 			uint64_t thread;

@@ -309,9 +309,7 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   the driver, so its bytes can fall between the driver's at any byte; every runtime's C output and
   the park report are debug log records (`output_line.c`), and the end path's lines are the
   published FD26 row. Have test output reach the console through `erx_console` by a raw form the
-  ring does not have yet. The service also still answers
-  `task_write` from a domain's task, which its runtime does not call: refuse it there, so a
-  domain has no raw path to the console. A record `erx_console` writes still starts wherever the
+  ring does not have yet. A record `erx_console` writes still starts wherever the
   console's line stands, after a prompt with no newline included (`1> #0 ... debug space 0: erx_blk:`).
 * [Medium] system console, `erx_console:system_source/1`: the system domain's log records take
   the line's principal, which the console learns from the domain service at its first session

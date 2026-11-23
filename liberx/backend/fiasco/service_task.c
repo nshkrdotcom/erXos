@@ -54,6 +54,7 @@ typedef struct task_create {
 	const erx_fiasco_space_create_request_t *request;
 	uint32_t	parent;		/* the parent's task */
 	uint32_t	gate;		/* as erx_fiasco_gate_named gave it */
+	bool		test_task;	/* the launcher's create, from the root */
 } task_create_t;
 
 static uint64_t	pair_cap(erx_slot_pair_t, pair_slot_t);
@@ -381,15 +382,19 @@ task_objects_make(uint32_t task)
  * task_fill_space, then the handle added, all through object.c's one create path.
  */
 int
-erx_fiasco_task_create_body(uint32_t caller, const erx_fiasco_space_create_request_t *request, uint64_t *space)
+erx_fiasco_task_create_body(uint32_t caller, const erx_fiasco_space_create_request_t *request, bool test_task,
+    uint64_t *space)
 {
 	const uint64_t flags = request->flags, cap_limit = request->cap_limit;
-	task_create_t create = { .request = request };
+	task_create_t create = { .request = request, .test_task = test_task };
 	int status;
 
 	if ((flags & ~(uint64_t)ERX_SPACE_JIT) != 0 || cap_limit < 2 ||
 	    cap_limit > ERX_FIASCO_CAP_LIMIT_MAX)
 		return (ERX_EINVAL);
+	/* The test-task mark is the launcher's, which runs in the root, so no other task sets it. */
+	if (test_task && caller != ERX_FIASCO_TASK_ROOT)
+		return (ERX_ENOTSUP);
 	status = task_space_named(caller, request->parent, &create.parent);
 	if (status == ERX_OK)
 		status = erx_fiasco_gate_named(caller, request->fault, &create.gate);
@@ -433,7 +438,7 @@ task_fill_space(uint32_t record, const void *argument)
 	}
 
 	*erx_fiasco_task(task) = (erx_fiasco_task_t){ .state = ERX_FIASCO_TASK_LIVE, .flags = (uint32_t)create->request->flags,
-	    .pairs = pairs };
+	    .pairs = pairs, .test_task = create->test_task };
 	if (!task_objects_make(task)) {
 		/* No thread ever ran, so nobody waits on the ended semaphore, no status is owed, and its memory is a few pages. */
 		task_unrun(task);
