@@ -812,13 +812,13 @@ await_ended() ->
     ?assertEqual(timeout, gen_server:wait_response(erx_domain:await_grant(echo, 7), 200)).
 
 %% a ready without echo answers the wait unprovided: its grant is idle and no operation
-%% will start for it. A wait for a's next incarnation, 7, which the core has not heard
-%% of, waits for it.
+%% will start for it. A wait for 7, which the core has not heard of, is ended at once:
+%% a is not starting, so nothing comes for 7.
 await_unprovided() ->
     Wait = erx_domain:await_grant(echo, 5),
     ?assertEqual({reply, {error, unprovided}}, gen_server:receive_response(Wait, 2000)),
     ?assertMatch(#{{system, echo} := idle}, grants()),
-    ?assertEqual(timeout, gen_server:wait_response(erx_domain:await_grant(echo, 7), 200)).
+    ?assertEqual({reply, {error, ended}}, gen_server:receive_response(erx_domain:await_grant(echo, 7), 2000)).
 
 %% The service over b (row 0) and late (row 1, id 5), which serves screen, a windows
 %% service no row is granted.

@@ -23,12 +23,13 @@ service chooses only its name, its facets and the display, if any, its
 start names. A template is no configured
 domain, so the boot never starts one, and nothing restarts one or a session.
 
-The boot holds a configured row holding a `pci` device until the device
-service has answered a PCIe report, a PCIe row reported ready 30 s ago, or
-no PCIe row is booting, which is checked once the boot's other rows have
-started and at each PCIe row's end or stop for its boot timeout
-(pci_hold/2; docs/design-pcie.md, "The hold at boot"); a held row counts as
-starting.
+The boot holds the configured rows the device service names
+(erx_devices:held_at_boot/1) until it casts erx_domain:release_held/0, or
+until the fallback it names has passed since that server settled
+(handle_continue/2; docs/design-system.md, "Waiting for a grant", "The rows
+held at boot"); a held row counts as starting. The service names no PCIe
+concept: it forwards every end with its origin (erx_devices:domain_ended/2)
+and keeps the fallback's one timer.
 
 A create or a session's start for a principal one of whose domains is
 ending, its domain pid gone but its end not yet arrived, is held until that
@@ -150,10 +151,6 @@ reach it only through facets, which arrive with the connections.
 %% How long a start waits for its principal's ending domains to be retired, in
 %% milliseconds, unless start_link/1's release_wait sets it (start/3).
 -define(RELEASE_WAIT, 10000).
-%% How long the hold at boot outlasts the PCIe row's ready report, in milliseconds,
-%% unless start_link/1's pci_hold_after_ready sets it (docs/design-pcie.md, "The hold at
-%% boot").
--define(PCI_HOLD_AFTER_READY, 30000).
 %% The longest boot_timeout erlang:start_timer/3 takes.
 -define(BOOT_TIMEOUT_MAX, 16#ffffffff).
 %% At most this many log lines for refused and dropped mint messages within each window
@@ -174,8 +171,8 @@ Opts names a host test's stand-ins: lib, the domain library's module
 (erx_domain_lib by default); agent, the connection agent's (erx_connections);
 exports, the export table's (erx_dist); introduce_timeout, an introduce/2
 caller's deadline in milliseconds; release_wait, a held start's bound
-(start/3); pci_hold_after_ready, how long the hold at boot outlasts the PCIe
-row's ready report (pci_hold/2); mints, the owner function (erx_dist:owner/1 by default) and
+(start/3); device_service, the device service's module (erx_devices), whose held_at_boot/1 and
+domain_ended/2 the service calls; mints, the owner function (erx_dist:owner/1 by default) and
 deadline that erx_domain_mints:new/1 takes; facet_names, the table of
 facet names that facets/2 checks (the generated ?ERX_FACET_NAMES by default);
 inspect_policy, #{roots, development}, the system-shell principals and
@@ -233,8 +230,9 @@ state(Lib, Principals, Opts) ->
     %% connection to come up, with the timer of its deadline (settle_introductions/1).
     %% Held holds, by principal and in arrival order, each start waiting for the
     %% principal's ending domains to be retired, with the timer of its bound (start/3).
-    %% Pci_hold is the hold at boot (pci_hold/2): none, or the PCIe rows and the
-    %% configured rows held until it is released, in boot order.
+    %% Boot_held is the configured rows the device service holds at boot, in boot order,
+    %% until they are released, and fallback the release's own bound (fallback/1), none
+    %% once armed or released (handle_continue/2).
     %% Mints is erx_domain_mints' state, its pending operations' deadlines by tag in
     %% mint_timers, and mint_counts and mint_log what was refused or dropped (note/4).
     %% Served holds, by configured row, the facets of services the system domain serves
@@ -256,7 +254,7 @@ state(Lib, Principals, Opts) ->
       links => erx_domain_links:new(),
       introducing => #{}, introduce_timeout => maps:get(introduce_timeout, Opts, ?INTRODUCE_TIMEOUT),
       held => #{}, release_wait => maps:get(release_wait, Opts, ?RELEASE_WAIT),
-      pci_hold => none, pci_hold_after_ready => maps:get(pci_hold_after_ready, Opts, ?PCI_HOLD_AFTER_READY),
+      device_service => maps:get(device_service, Opts, erx_devices), boot_held => [], fallback => none,
       mint_config => MintConfig, mints => erx_domain_mints:new(MintConfig#{services => [], grants => []}),
       mint_timers => #{}, mint_counts => #{}, mint_log => {erlang:monotonic_time(millisecond), 0, 0},
       served => #{}, lines => #{},
@@ -320,98 +318,63 @@ library(Lib) ->
     end.
 
 %% Boot step 4's first part: each configured domain starts, in its place's order, before
-%% the service takes a call, but for the rows the hold at boot holds (pci_hold/2).
-handle_continue(boot, #{lib := Lib, configured := Configured} = State) ->
+%% the service takes a call, but for the rows the device service holds (held_at_boot/3).
+handle_continue(boot, #{lib := Lib, device_service := Devices, configured := Configured} = State) ->
     Ordered = lists:sort(fun(#{place := A}, #{place := B}) -> A =< B end, maps:values(Configured)),
-    Hold = pci_hold(devices(Lib), Ordered),
-    Free = case Hold of
-               none -> Ordered;
-               #{rows := Held} -> Ordered -- Held
-           end,
-    {noreply, pci_unless_booting(lists:foldl(fun start_configured/2, State#{pci_hold := Hold}, Free))}.
+    {Held, Fallback} = held_at_boot(Lib, Devices, [Row || #{row := Row} <- Ordered]),
+    {BootHeld, Free} = lists:partition(fun(#{row := Row}) -> lists:member(Row, Held) end, Ordered),
+    Holding = State#{boot_held := BootHeld, fallback := fallback(Fallback)},
+    {noreply, answer_in_place(lists:foldl(fun start_configured/2, Holding, Free))}.
 
-%% The hold at boot (docs/design-pcie.md, "The hold at boot"): a configured row holding a
-%% pci device starts only once the device service has answered a PCIe report
-%% (erx_domain:pci_report_answered/0), a PCIe row, the row holding a host bridge a pci
-%% device's place names, reported ready pci_hold_after_ready ago, or no PCIe row is
-%% booting (pci_unless_booting/1), whichever is first; the PCIe row itself is never held.
-%% The hold is none on a machine with no PCIe row or no row to hold, and otherwise the
-%% PCIe rows and the rows held, in Ordered's boot order. The decision reads only the
-%% device catalogue, as the library placed it at boot.
-pci_hold(Devices, Ordered) ->
-    Bridges = [Bridge || #{place := {Bridge, _Bus, _Device, _Function}} <- Devices],
-    Pcie = lists:usort([Row || #{index := Index, row := Row} <- Devices, is_integer(Row),
-                               lists:member(Index, Bridges)]),
-    Holding = [Row || #{place := {_, _, _, _}, row := Row} <- Devices, not lists:member(Row, Pcie)],
-    case [Entry || #{row := Row} = Entry <- Ordered, lists:member(Row, Holding)] of
-        Held when Pcie =/= [], Held =/= [] -> #{pcie => Pcie, rows => Held};
-        _ -> none
-    end.
-
-%% The device catalogue the hold is decided from, empty with no library or one that
-%% cannot say, so nothing is held.
-devices(none) ->
-    [];
-devices(Lib) ->
-    case Lib:devices() of
-        {ok, Devices} -> Devices;
+%% The rows held at boot among Rows, in boot order, and the fallback beside them, as the
+%% device service answers (docs/design-system.md, "Waiting for a grant", "The rows held
+%% at boot"); a runtime with no library has no device to wait for, and a call that fails
+%% holds nothing.
+held_at_boot(none, _Devices, _Rows) ->
+    {[], none};
+held_at_boot(_Lib, Devices, Rows) ->
+    case Devices:held_at_boot(Rows) of
+        {ok, Held, Fallback} -> {Held, Fallback};
         {error, Reason} ->
-            logger:error("erx_domain: the device catalogue is unreadable, so no row is held for PCIe: ~0p",
+            logger:error("erx_domain: the device service did not say which rows wait at boot, so none is held: ~0p",
                          [Reason]),
-            []
+            {[], none}
     end.
 
-%% The hold's one derived release: a hold no PCIe row is booting to release is released
-%% at once, so nothing waits on a row that will never report. It is checked when that
-%% can have become true: once the boot's other rows have started (a PCIe row whose start
-%% was refused, or whose domain was ready at its start with no report to make), and at a
-%% PCIe row's stop for its boot timeout (pci_row_gone/3). A PCIe row ready after its
-%% start is no longer booting but is not checked: its report is still to come, and its
-%% ready report's timer bounds the wait (arm_pci_hold_timer/2). A PCIe row's end
-%% releases the hold whatever its restart, so a row ending before every ready report
-%% cannot hold the rows for as long as its restarts last.
-pci_unless_booting(#{pci_hold := none} = State) ->
-    State;
-pci_unless_booting(#{pci_hold := #{pcie := Pcie}, core := Core} = State) ->
-    case [Row || #{origin := {configured, Row}, state := running} <- erx_domain_core:domains(Core),
-                 lists:member(Row, Pcie)] of
-        [] -> pci_release(State);
-        [_ | _] -> State
-    end.
-
-%% The domain whose origin is Origin has stopped booting, by its end or its boot timeout:
-%% when it is a PCIe row's, Release takes the hold (pci_release/1 at its end,
-%% pci_unless_booting/1 at its boot timeout).
-pci_row_gone({configured, Row}, Release, #{pci_hold := #{pcie := Pcie}} = State) ->
-    case lists:member(Row, Pcie) of
-        true -> Release(State);
-        false -> State
+%% The fallback as the service keeps it: {until_settled, Query, Ms}, the settlement query
+%% of its server and the milliseconds after which it releases the rows, until it is
+%% armed; none once armed, released, or when nothing is held. A server with no atom is
+%% no service and has settled, as settling_query/1 answers it, so its timer is armed now.
+fallback({settled, Name, Ms}) ->
+    case settling_query({server, Name}) of
+        {ask, Query} -> {until_settled, Query, Ms};
+        {answer, ok} -> armed(Ms)
     end;
-pci_row_gone(_Origin, _Release, State) ->
+fallback(none) ->
+    none.
+
+%% The fallback's one timer, armed the first time the settlement wait finds its server
+%% settled (answer_in_place/1); nothing re-arms or extends it, and a release disarms
+%% none, since its end then finds nothing held.
+arm_fallback(Starting, #{fallback := {until_settled, Query, Ms}, mints := Mints} = State) ->
+    case erx_domain_mints:settled(Query, Starting, Mints) of
+        wait -> State;
+        _Settled -> State#{fallback := armed(Ms)}
+    end;
+arm_fallback(_Starting, #{fallback := none} = State) ->
     State.
 
-%% The hold's release: each held row starts, in boot order; once released, there is
-%% none to release. A held row counted as starting, so the waits are checked again for
-%% any whose start failed and left it starting no longer.
-pci_release(#{pci_hold := none} = State) ->
+armed(Ms) ->
+    _ = erlang:start_timer(Ms, self(), release_held),
+    none.
+
+%% The release of the rows held at boot: each starts, in boot order, and a release with
+%% nothing held changes nothing. A held row counted as starting, so the waits are checked
+%% again for any whose start was refused and left it starting no longer.
+release_held(#{boot_held := []} = State) ->
     State;
-pci_release(#{pci_hold := #{rows := Held}} = State) ->
-    answer_in_place(lists:foldl(fun start_configured/2, State#{pci_hold := none}, Held)).
-
-%% A PCIe row's ready report bounds the hold: it arms the timer that releases it
-%% pci_hold_after_ready later, unless something released it first, when the timer finds
-%% none.
-arm_pci_hold_timer(Row, #{pci_hold := #{pcie := Pcie}, pci_hold_after_ready := After} = State) ->
-    case lists:member(Row, Pcie) of
-        true -> _ = erlang:start_timer(After, self(), pci_hold), State;
-        false -> State
-    end;
-arm_pci_hold_timer(_Row, State) ->
-    State.
-
-%% The configured rows held at boot, which count as starting while held.
-pci_held(#{pci_hold := none}) -> [];
-pci_held(#{pci_hold := #{rows := Held}}) -> [Row || #{row := Row} <- Held].
+release_held(#{boot_held := Held} = State) ->
+    answer_in_place(lists:foldl(fun start_configured/2, State#{boot_held := [], fallback := none}, Held)).
 
 %% The service's state once it has read from its library the manifest's configured
 %% domains, session templates, services and facet rows. It runs in init/1, so that what
@@ -643,16 +606,21 @@ answer_create(Built, From) ->
             Next
     end.
 
-handle_cast(pci_report_answered, State) ->
-    {noreply, pci_release(State)};
+handle_cast(release_held, State) ->
+    {noreply, release_held(State)};
 handle_cast(_Request, State) ->
     {noreply, State}.
 
-handle_info({domain_ended, Id, End, Record}, State) ->
-    %% The device service's PCIe process lowers the PCIe functions the domain held
-    %% (docs/design-pcie.md, "A holder's end"); it learns of the end before the service
-    %% starts the domain's next incarnation below, which may hold them again.
-    ok = erx_devices_pci:domain_ended(erx_devices_pci, Id),
+handle_info({domain_ended, Id, End, Record}, #{device_service := Devices, core := Core} = State) ->
+    %% The device service lowers the PCIe functions the domain held (docs/design-pcie.md,
+    %% "A holder's end") and, at a PCIe row's end, releases the rows held at boot; it
+    %% learns of the end, with the origin read before ended/4 retires the domain, before
+    %% the service starts the domain's next incarnation below, which may hold them again.
+    Origin = case erx_domain_core:fetch(Id, Core) of
+                 {ok, #{origin := Known}} -> Known;
+                 _ -> none
+             end,
+    ok = Devices:domain_ended(Id, Origin),
     {noreply, ended(Id, End, erx_domain_core:fault_where(End, Record), State)};
 handle_info({domain_ready, Ref, Id, Provides, Inspect}, State) ->
     {noreply, ready(Id, Ref, provided_atoms(Provides), Inspect, State)};
@@ -671,21 +639,20 @@ handle_info({timeout, Timer, {introduce_timeout, Key, From}}, State) ->
     {noreply, introduce_timed_out(Key, From, Timer, State)};
 handle_info({timeout, Timer, {release_wait, Principal}}, State) ->
     {noreply, release_timed_out(Principal, Timer, State)};
-handle_info({timeout, _Timer, pci_hold}, State) ->
-    {noreply, pci_release(State)};
+handle_info({timeout, _Timer, release_held}, State) ->
+    {noreply, release_held(State)};
 handle_info({timeout, _Timer, {boot_timeout, Id}}, #{core := Core} = State) ->
     %% Ids are never reused, so the timer of a domain that reported ready or ended finds
     %% it ready or gone. A domain stopping for its timeout takes no late report
     %% (ready/4), and its create is answered timeout once the stop's end arrives.
     case erx_domain_core:fetch(Id, Core) of
-        {ok, #{state := running, origin := Origin}} ->
+        {ok, #{state := running}} ->
             logger:notice("erx_domain: domain ~b did not report ready in time; stopping it", [Id]),
             stop(Id, State),
             %% A configured row stopping is no longer starting, so a session waiting for
             %% its grant is answered now, even if the library refused the stop and no
-            %% end will come. A PCIe row's timeout releases the hold unless one boots.
-            Stopping = answer_in_place(State#{core := erx_domain_core:stopping(Id, Core)}),
-            {noreply, pci_row_gone(Origin, fun pci_unless_booting/1, Stopping)};
+            %% end will come.
+            {noreply, answer_in_place(State#{core := erx_domain_core:stopping(Id, Core)})};
         _ ->
             {noreply, State}
     end;
@@ -1108,7 +1075,7 @@ ready(Id, Ref, Provides, Inspect, #{core := Core, waiting := Waiting} = State) -
             Answered = answer_ready(Id, grant_facets(Id, served(Origin, Domain, Ready), granted(Origin, Domain, Ready),
                                                      perform(Actions, Ready))),
             case Origin of
-                {configured, Row} -> arm_pci_hold_timer(Row, mints({ready, Row, Id, Node, Provides}, Answered));
+                {configured, Row} -> mints({ready, Row, Id, Node, Provides}, Answered);
                 {session, _Template} -> mints({session_ready, minted_rows(Domain), Id, marked(Start)},
                                               keep_lines(Id, Node, Provides, Answered));
                 request -> Answered
@@ -1661,9 +1628,7 @@ ended(Id, End, Where, #{lib := Lib, core := Core, links := Links} = State) ->
             {Unlinked, Actions} = erx_domain_links:ended(Id, Info, Links),
             Told = unprovide(Origin, Id, perform(Actions, State#{core := Ended, links := Unlinked})),
             _ = retire(Lib, Id),
-            %% A PCIe row's end releases the hold at boot, after its own restart.
-            Restarted = restart(Origin, Id, Life, Info, Where, waiter_ended(Id, Life, Info, Told)),
-            pci_row_gone(Origin, fun pci_release/1, release(Restarted))
+            release(restart(Origin, Id, Life, Info, Where, waiter_ended(Id, Life, Info, Told)))
     end.
 
 %% A crash's slogan, from its crash area, which goes at the retire after it.
@@ -1755,12 +1720,13 @@ mints(Event, #{mints := Mints} = State) ->
 %% with erx_domain_mints:settled/3's answer (answer_settling/2). The system domain holds
 %% every grant it will have from the boot on, so its namespace is checked from the first
 %% call. A starting row is one whose domain runs without having reported ready, or a row
-%% held at boot, which stays starting until the hold's release starts it.
-answer_in_place(#{core := Core, mints := Mints} = State) ->
+%% held at boot, which stays starting until the release starts it; the same evaluation
+%% arms the release's fallback once its server has settled (arm_fallback/2).
+answer_in_place(#{core := Core, mints := Mints, boot_held := Held} = State) ->
     Starting = [Row || #{origin := {configured, Row}, state := running} <- erx_domain_core:domains(Core)]
-        ++ pci_held(State),
+        ++ [Row || #{row := Row} <- Held],
     InPlace = fun(Grantee) -> erx_domain_mints:in_place(Grantee, Starting, Mints) end,
-    answer_settling(Starting, answer_sessions(InPlace, State)).
+    arm_fallback(Starting, answer_settling(Starting, answer_sessions(InPlace, State))).
 
 answer_sessions(InPlace, #{waiting := Waiting, core := Core} = State) ->
     Ready = [Id || Id := #{answer_at := in_place, pid := Pid} <- Waiting, Pid =/= gone, is_ready(Id, Core)],

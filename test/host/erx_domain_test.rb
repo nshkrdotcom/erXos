@@ -231,14 +231,13 @@ class ErxDomainTest < Minitest::Test
     Fault.new(name: "an end's step evaluated after its successor starts", file: SERVICE,
               from: "Told = unprovide(Origin, Id, perform(Actions, State\#{core := Ended, links := Unlinked})),\n" \
                     "            _ = retire(Lib, Id),\n" \
-                    "            %% A PCIe row's end releases the hold at boot, after its own restart.\n" \
-                    "            Restarted = restart(Origin, Id, Life, Info, Where, waiter_ended(Id, Life, Info, Told)),",
+                    "            release(restart(Origin, Id, Life, Info, Where, waiter_ended(Id, Life, Info, Told)))",
               to: "Told = perform(Actions, State\#{core := Ended, links := Unlinked}),\n" \
                   "            _ = retire(Lib, Id),\n" \
-                  "            Restarted = unprovide(Origin, Id, restart(Origin, Id, Life, Info, Where, waiter_ended(Id, Life, Info, Told))),",
+                  "            release(unprovide(Origin, Id, restart(Origin, Id, Life, Info, Where, waiter_ended(Id, Life, Info, Told))))",
               tests: 'erx_domain_mints_srv_tests', caught_by: 'display_ended'),
     # One incarnation's grant (docs/design-pcie.md, "Facets"), the pure decision of
-    # erx_domain_mints:system_grant/3: one matched by the service alone answers a wait for
+    # erx_domain_mints:system_grant/4: one matched by the service alone answers a wait for
     # one incarnation with another's installed facet; and without the idle case the wait
     # for an incarnation that provides no pcie is never answered.
     Fault.new(name: 'a grant wait matched by its service alone', file: MINTS,
@@ -246,8 +245,15 @@ class ErxDomainTest < Minitest::Test
               to: '#{Key := #{state := {installed, _Pair, Pid}}} ->',
               tests: 'erx_domain_mints_srv_tests', caught_by: 'await_installed'),
     Fault.new(name: 'a grant wait without its idle case', file: MINTS,
-              from: 'idle_grant(ready) -> {error, unprovided};', to: 'idle_grant(ready) -> wait;',
+              from: 'idle_grant(ready, _Starting) -> {error, unprovided};', to: 'idle_grant(ready, _Starting) -> wait;',
               tests: 'erx_domain_mints_srv_tests', caught_by: 'await_unprovided'),
+    # A wait for an id the core never heard, past its server row's newest incarnation,
+    # answered wait once the row is not starting: nothing comes for it, and its asker's
+    # entry stays in the settlement list for as long as the boot lasts.
+    Fault.new(name: 'a grant wait for no incarnation that waits on', file: MINTS,
+              from: 'idle_grant(unheard, false) -> {error, ended}.',
+              to: 'idle_grant(unheard, false) -> wait.',
+              tests: 'erx_domain_mints_tests', caught_by: 'a_grant_query_for_no_incarnation_of_its_row_is_answered_test'),
     # The answer to `report` (docs/design-pcie.md, "Facets"): a lowering that keeps every
     # function with a layout, blind to the library's confirmed and latest state, leaves
     # each function of a report the intake refused whole at its setting.
@@ -280,8 +286,8 @@ class ErxDomainTest < Minitest::Test
     # One that restarts blind to answered sends no holder's lowering while the answered
     # incarnation lives.
     Fault.new(name: 'a restart blind to answered', file: File.join(APPLICATION, 'erx_devices_pci.erl'),
-              from: 'resume(erx_devices_pci_core:resume(catalogues(Lib), Devices), Armed)',
-              to: 'resume(between, Armed)',
+              from: 'resume(erx_devices_pci_core:resume(catalogues(Lib), Devices), Released)',
+              to: 'resume(between, Released)',
               tests: 'erx_devices_pci_tests',
               caught_by: 'a_restart_while_the_answered_incarnation_lives_keeps_lowering_test'),
     # One that passes the enumerator's answer on unread hands a term of the PCIe domain's
@@ -330,26 +336,39 @@ class ErxDomainTest < Minitest::Test
               to: '{noreply, Answered#{parked := Parked}};',
               tests: 'erx_devices_pci_tests',
               caught_by: 'a_report_waits_for_the_firmware_request_in_flight_test'),
-    # The hold at boot (docs/design-pcie.md, "The hold at boot"): a held row started with
-    # the boot's free rows starts its pci holder before its function's state is settled;
-    # a report's answer that releases nothing, and a hold kept when the PCIe row did not
-    # start, each leave the held row waiting on a release that never comes.
+    # The rows held at boot (docs/design-system.md, "Waiting for a grant", "The rows held
+    # at boot"): a held row started with the boot's free rows starts its pci holder before
+    # its function's state is settled; a release that releases nothing, and a fallback
+    # never armed, each leave the held row waiting on a release that never comes.
     Fault.new(name: 'a held row started at boot', file: SERVICE,
-              from: '#{rows := Held} -> Ordered -- Held', to: '#{rows := _Held} -> Ordered',
-              tests: 'erx_domain_tests', caught_by: 'hold_released_by_the_report_answer_test_'),
-    Fault.new(name: "a report's answer that releases nothing", file: SERVICE,
-              from: "handle_cast(pci_report_answered, State) ->\n    {noreply, pci_release(State)};",
-              to: "handle_cast(pci_report_answered, State) ->\n    {noreply, State};",
-              tests: 'erx_domain_tests', caught_by: 'hold_released_by_the_report_answer_test_'),
-    Fault.new(name: 'a hold kept when the PCIe row did not start', file: SERVICE,
-              from: '        [] -> pci_release(State);', to: '        [] -> State;',
-              tests: 'erx_domain_tests', caught_by: 'hold_released_when_the_pcie_row_does_not_start_test_'),
+              from: '{BootHeld, Free} = lists:partition(fun(#{row := Row}) -> lists:member(Row, Held) end, Ordered),',
+              to: '{BootHeld, Free} = {[Entry || #{row := Row} = Entry <- Ordered, lists:member(Row, Held)], Ordered},',
+              tests: 'erx_domain_tests', caught_by: 'hold_released_by_release_held_test_'),
+    Fault.new(name: 'a release that releases nothing', file: SERVICE,
+              from: "handle_cast(release_held, State) ->\n    {noreply, release_held(State)};",
+              to: "handle_cast(release_held, State) ->\n    {noreply, State};",
+              tests: 'erx_domain_tests', caught_by: 'hold_released_by_release_held_test_'),
+    Fault.new(name: 'a fallback never armed', file: SERVICE,
+              from: '        _Settled -> State#{fallback := armed(Ms)}',
+              to: '        _Settled -> State#{fallback := {until_settled, Query, Ms}}',
+              tests: 'erx_domain_tests', caught_by: 'hold_fallback_after_the_pcie_rows_refused_start_test_'),
     # A held row that does not count as starting settles the display it serves as if
     # nothing would ever serve it, so the start table starts a row naming it at once.
     Fault.new(name: 'a held row that is not starting', file: SERVICE,
-              from: "<- erx_domain_core:domains(Core)]\n        ++ pci_held(State),",
-              to: "<- erx_domain_core:domains(Core)],",
-              tests: 'erx_domain_tests', caught_by: 'hold_released_by_the_report_answer_test_')
+              from: "<- erx_domain_core:domains(Core)]\n        ++ [Row || \#{row := Row} <- Held],",
+              to: "<- erx_domain_core:domains(Core)]\n        -- [Row || \#{row := Row} <- Held],",
+              tests: 'erx_domain_tests', caught_by: 'hold_released_by_release_held_test_'),
+    # The device service's release: dropped at a PCIe row's forwarded end, a PCIe row
+    # that ends before it reports holds the rows until the fallback; made at every
+    # restart, the held rows start with no report taken and are given nothing.
+    Fault.new(name: "the release dropped at a PCIe row's end", file: File.join(APPLICATION, 'erx_devices_pci_core.erl'),
+              from: "    [release_held || lists:member(Row, pcie_rows(Devices))];",
+              to: "    [release_held || lists:member(Row, pcie_rows(Devices)), false];",
+              tests: 'erx_devices_pci_tests', caught_by: 'a_pcie_rows_end_releases_and_another_rows_does_not_test'),
+    Fault.new(name: 'a restart releasing at once', file: File.join(APPLICATION, 'erx_devices_pci_core.erl'),
+              from: "    [release_held || lists:any(fun(\#{answered := D}) -> is_integer(D) end, Catalogues)].",
+              to: "    [release_held || Catalogues =:= Catalogues].",
+              tests: 'erx_devices_pci_tests', caught_by: 'a_restart_releases_at_its_start_only_once_a_report_was_answered_test')
   ].freeze
   
   def test_the_cases_catch_each_seeded_fault

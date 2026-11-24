@@ -251,6 +251,23 @@ settled_answers_each_query_as_its_decision_test() ->
     {_, Unprovided} = run([ready(?S, 5, #{})], Idle),
     ?assertEqual({error, unprovided}, Settled({grant, data, 5}, [], Unprovided)).
 
+%% A wait for an incarnation that never comes is answered once its server row is not
+%% starting, so no query waits past the row's boot timeout (docs/design-system.md, "One
+%% incarnation's grant"): an id the core has not heard of, past the row's newest
+%% incarnation, ready or ended, or of a row the core never heard, is ended, since the
+%% core will hear of it no more. While the row starts, the wait goes on.
+a_grant_query_for_no_incarnation_of_its_row_is_answered_test() ->
+    Settled = fun erx_domain_mints:settled/3,
+    Idle = erx_domain_mints:new((config([system]))#{files => [data]}),
+    ?assertEqual({error, ended}, Settled({grant, data, 5}, [], Idle)),
+    {_, Ready} = run([ready(?S, 5, #{})], Idle),
+    ?assertEqual({error, ended}, Settled({grant, data, 9}, [], Ready)),
+    ?assertEqual(wait, Settled({grant, data, 9}, [?S], Ready)),
+    {_, Ended} = run([{ended, ?S, 5}], Ready),
+    ?assertEqual({error, ended}, Settled({grant, data, 5}, [], Ended)),
+    ?assertEqual({error, ended}, Settled({grant, data, 9}, [], Ended)),
+    ?assertEqual(wait, Settled({grant, data, 9}, [?S], Ended)).
+
 two_grants_keep_their_own_operations_test() ->
     {Actions, State} = run([ready(?S, 5, #{data => mint(5)}), ready(?G, 6, #{}), {minted, 5, 2, {ok, facet(5)}},
                             {installed, 6, 1}, {installed, 4, 1}],

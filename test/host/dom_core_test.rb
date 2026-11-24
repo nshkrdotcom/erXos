@@ -121,6 +121,9 @@ class DomCoreTest < Minitest::Test
       ["\tif (!view->devices[device].power_line)\n\t\treturn (ERX_ENOTSUP);\n", ''],
     'a bridge notification resolves for a device with no catalogue' =>
       ['if (view->pci_bridges[at].facts.index == bridge)', 'if (true)'],
+    'a give that waits for an answered report' =>
+      ["return (layout->confirmed && layout->state == ERX_PCIE_STATE_READY ? layout : NULL);",
+       "return (bridge->answered != 0 && layout->confirmed && layout->state == ERX_PCIE_STATE_READY ? layout : NULL);"],
     'a firmware row of another tag resolves' =>
       ['if (view->firmware[at].tag != tag)', 'if (view->firmware[at].tag != tag && false)']
   }.freeze
@@ -323,7 +326,8 @@ class DomCoreTest < Minitest::Test
   # whole, so the next places again; a report with a record that is not one record's bytes
   # or past the bound is refused whole too, leaving no earlier confirmation.
   PCI = [
-    'pci placed 0 none givable=1', 'pci cpu 1 0x600000000+0x1000', 'pci same 0 none givable=1',
+    'pci placed 0 none givable=1', 'pci cpu 1 0x600000000+0x1000', 'pci unanswered answered=0 givable=1 unlisted=0',
+    'pci same 0 none givable=1',
     *%w[changed missing not_ready firmware_lost].map { |name| "pci #{name} 0 none givable=0" },
     'pci before_mark 0 none givable=1', 'pci marked givable=0', 'pci laid 0 none givable=1',
     "pci refused_later #{EINVAL} function givable=0", 'pci read 0 none givable=1',

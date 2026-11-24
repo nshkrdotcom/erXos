@@ -83,7 +83,9 @@ over(Devices, Bridges, Pcie, Live) ->
                                  false -> {error, ended}
                              end
                      end),
+    Test = self(),
     {ok, Pid} = erx_devices_pci:start_link(#{lib => ?MODULE, register => false,
+                                             release => fun() -> Test ! released, ok end,
                                              await => fun(Name, Id) ->
                                                               gen_server:send_request(Domains, {settled, {grant, Name, Id}})
                                                       end}),
@@ -92,7 +94,7 @@ over(Devices, Bridges, Pcie, Live) ->
 
 %% An earlier case's writes and calls, which may still be in the mailbox.
 flushed() ->
-    receive {library, _} -> flushed(); {called, _, _} -> flushed() after 0 -> ok end.
+    receive {library, _} -> flushed(); {called, _, _} -> flushed(); released -> flushed() after 0 -> ok end.
 
 stopped(Pid) ->
     exit(Pid, kill),
@@ -109,7 +111,7 @@ library() ->
 
 a_holders_end_lowers_its_rows_in_the_library_between_test() ->
     {Pid, _Facet} = started(mastering, fun(_) -> ok end),
-    erx_devices_pci:domain_ended(Pid, ?HOLDER),
+    erx_devices_pci:domain_ended(Pid, ?HOLDER, {configured, 1}),
     ?assertEqual({mode, ?ROW, off}, library()),
     stopped(Pid).
 
@@ -119,7 +121,7 @@ a_holders_end_is_written_then_sent_when_synced_test() ->
     %% The report's empty answer lowers the row the catalogue does not keep.
     ?assertEqual({mode, ?ROW, off}, library()),
     ?assertEqual({answered, ?PCIE}, library()),
-    erx_devices_pci:domain_ended(Pid, ?HOLDER),
+    erx_devices_pci:domain_ended(Pid, ?HOLDER, {configured, 1}),
     ?assertEqual({mode, ?ROW, off}, library()),
     receive {called, Facet, Call} -> ?assertEqual({set, ?PLACE, #{mode => off, route => none}}, Call)
     after 1000 -> ?assert(false)
@@ -187,7 +189,7 @@ a_holders_end_after_the_library_cleared_its_row_is_still_sent_test() ->
     ?assertEqual({mode, ?ROW, off}, library()),
     persistent_term:put({?MODULE, devices}, [(row(off))#{holder => none}]),
     ?assertEqual({error, not_held}, gen_server:call(Pid, {pci, ?HOLDER, {open, ?PLACE}})),
-    erx_devices_pci:domain_ended(Pid, ?HOLDER),
+    erx_devices_pci:domain_ended(Pid, ?HOLDER, {configured, 1}),
     receive {called, Facet, Call} -> ?assertEqual({set, ?PLACE, #{mode => off, route => none}}, Call)
     after 1000 -> ?assert(false)
     end,
@@ -202,7 +204,7 @@ a_holders_end_after_its_next_incarnation_was_read_is_still_sent_test() ->
     ?assertEqual({mode, ?ROW, off}, library()),
     persistent_term:put({?MODULE, devices}, [(row(off))#{holder => ?HOLDER + 1}]),
     ?assertEqual({error, not_held}, gen_server:call(Pid, {pci, ?HOLDER, {open, ?PLACE}})),
-    erx_devices_pci:domain_ended(Pid, ?HOLDER),
+    erx_devices_pci:domain_ended(Pid, ?HOLDER, {configured, 1}),
     receive {called, Facet, Call} -> ?assertEqual({set, ?PLACE, #{mode => off, route => none}}, Call)
     after 1000 -> ?assert(false)
     end,
@@ -227,7 +229,7 @@ a_restart_while_the_answered_incarnation_lives_keeps_lowering_test() ->
     receive {called, Facet, First} -> ?assertEqual({set, {?BRIDGE, 2, 0, 0}, #{mode => off, route => none}}, First)
     after 1000 -> ?assert(false)
     end,
-    erx_devices_pci:domain_ended(Pid, ?HOLDER),
+    erx_devices_pci:domain_ended(Pid, ?HOLDER, {configured, 1}),
     ?assertEqual({mode, ?ROW, off}, library()),
     receive {called, Facet, Call} -> ?assertEqual({set, ?PLACE, #{mode => off, route => none}}, Call)
     after 1000 -> ?assert(false)
@@ -239,7 +241,7 @@ a_restart_while_the_answered_incarnation_lives_keeps_lowering_test() ->
 a_restart_after_the_answered_incarnation_ended_begins_between_test() ->
     [begin
          {Pid, Facet} = restarted(?PCIE, Holder, [row(mastering)]),
-         erx_devices_pci:domain_ended(Pid, ?HOLDER),
+         erx_devices_pci:domain_ended(Pid, ?HOLDER, {configured, 1}),
          ?assertEqual({mode, ?ROW, off}, library()),
          receive {called, Facet, Call} -> ?assertEqual(none, Call) after 200 -> ok end,
          stopped(Pid)
@@ -369,3 +371,38 @@ a_report_waits_for_the_firmware_request_in_flight_test() ->
     ?assertEqual({mode, ?ROW, off}, library()),
     receive {reported, Answer} -> ?assertMatch({ok, _}, Answer) after 1000 -> ?assert(false) end,
     stopped(Pid).
+
+%% The release of the rows held at boot (docs/design-system.md, "Waiting for a grant",
+%% "The rows held at boot"): a process restarted before a report's intake, or between
+%% the intake and the answer, finds no answered incarnation and releases nothing at its
+%% start, and releases once at the report's answer; one restarted after the answer
+%% releases at its start, whether or not the answered incarnation still holds the bridge.
+a_restart_releases_at_its_start_only_once_a_report_was_answered_test() ->
+    Bridge = fun(Answered) -> #{bridge => #{index => ?BRIDGE}, firmware_lost => false, answered => Answered,
+                                layouts => []} end,
+    {Unanswered, _} = over([row(off)], [Bridge(none)], fun(_) -> ok end, [?PCIE]),
+    ?assertEqual(none, released(200)),
+    synced(Unanswered),
+    ?assertEqual(released, released(1000)),
+    ?assertEqual(none, released(200)),
+    stopped(Unanswered),
+    [begin
+         {Restarted, _} = over([row(off)], [Bridge(?PCIE)], fun(_) -> ok end, Live),
+         ?assertEqual(released, released(1000)),
+         ?assertEqual(none, released(200)),
+         stopped(Restarted)
+     end || Live <- [[?PCIE], []]].
+
+%% The forwarded end of a PCIe row's domain, the row holding the host bridge, releases
+%% the rows held at boot; the end of another row's domain does not.
+a_pcie_rows_end_releases_and_another_rows_does_not_test() ->
+    BridgeRow = #{index => ?BRIDGE, row => 0, holder => ?PCIE, place => none, setting => none},
+    {Pid, _} = over([BridgeRow, (row(off))#{row => 1}], [], fun(_) -> ok end, [?PCIE]),
+    erx_devices_pci:domain_ended(Pid, ?HOLDER, {configured, 1}),
+    ?assertEqual(none, released(200)),
+    erx_devices_pci:domain_ended(Pid, ?PCIE, {configured, 0}),
+    ?assertEqual(released, released(1000)),
+    stopped(Pid).
+
+released(Within) ->
+    receive released -> released after Within -> none end.

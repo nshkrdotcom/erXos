@@ -485,18 +485,6 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
 
 ## Security residuals
 
-* [Low] settlement wait, a grant query for an incarnation that never comes
-  (`erlang/apps/erx_domain/src/erx_domain_mints.erl`, `system_grant/3` and `heard/2`): a
-  `{grant, Name, Id}` query whose `Id` is past the server row's newest incarnation, which
-  has ended for good, or is no incarnation of that row at all, answers `wait` until the
-  row is heard at a higher id, which may never happen; the device service asks once for
-  each report, keyed by the envelope's domain, so a PCIe domain that keeps reporting
-  while the grant is idle grows the domain service's `settling` list without bound,
-  against the design's bound of the mint core's deadline and the server row's
-  boot timeout ([design-system.md](design-system.md#waiting-for-a-grant)). The entries of dead callers stay too, since the list sets no monitor.
-  Answer `{error, ended}` for an id past a row ended with no restart, and refuse an id
-  the core never issued for that row.
-
 * [Low] manifest check, who may hold a raw input, gpu or network device (`tools/lib/erx/manifest.rb`,
   [design-system.md](design-system.md) property 8): `check_input_grants` holds the input facet to a display
   domain, since its holder reads every key pressed, but no rule limits which domain holds a device of role
@@ -613,33 +601,20 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
 
 ## Planned features
 
-* [Medium] grants, one wait per kind of fact ([design-system.md](design-system.md#waiting-for-a-grant);
-  `erlang/apps/erx_domain/src/erx_domain_srv.erl`, `erx_domain_mints.erl`, `erx_devices_pci.erl`,
-  `erx_devices_pci_core.erl`): build the rest of the design's three waits (the registry wait and the settlement wait are built) and
-  delete what they replace. The steps land one
-  at a time or as one batch. Every commit builds, and leaves green the host tests it touches, with the
-  fixtures, oracles and stand-ins that build a changed representation changed in the same step; every
-  landing, of one step or of the batch, runs the landing gate once: `make check` and the QEMU suites the
-  step names. Each step's host cases are the design's verification rows for it, each with its seeded fault.
-  1. The two polls: the modules are built (`erx_ssh_dev`, `erx_input_follower`); what remains is the QEMU
-     cell. `tools/lib/erx/usb_boot.rb` gains a cell whose manifest allows the USB domain one restart
-     (:43 sets 0 for the others): after the first key it kills the domain's first incarnation, waits for
-     the display to follow the new input facet and types a second key that must arrive. Suites: `usb`,
-     `net_device`.
-  2. The hold moves. Out of `erx_domain_srv.erl`: `PCI_HOLD_AFTER_READY` and its option (:148-151, :172,
-     :243), `pci_hold` (:220-221), `pci_hold/2` through `pci_held/1` (:317-398), the cast and timer clauses
-     (:638-639, :666-667), the calls at :680, :1103, :1658 and :1756, and the moduledoc's paragraph (:26-31).
-     `handle_continue(boot)` (:308-315) asks `erx_devices:held_at_boot/1`, which the domain service's tests
-     stand in for, and holds the rows its `{Held, Fallback}` names, keeping the fallback beside them: one
-     timer, armed once when the settlement list finds the fallback's server settled, never re-armed; `erx_domain:pci_report_answered/0` (`erx_domain.erl:248-250`)
-     becomes `release_held/0`; the forward at :647 becomes `erx_devices:domain_ended(Id, Origin)`, the origin
-     read from the core before `ended/4`. Into the device service: `erx_devices_pci_core:held/2` and the
-     release (`answered` written, read too as the PCIe process starts; a PCIe row's forwarded end), with `erx_devices_pci.erl:259` casting `release_held/0` as the core's action. The `erx_facet:serve/2`
-     lines for `pci` and `pci_bus` (:191-192) stay. `test/host/dom_core_test.rb` gains the case that a
-     function a report confirmed `ready` is given before any report is answered. Suites: `pcie`, `usb`.
-  Tests while developing, the step's own: `erx_input_follower_tests`, `erx_ssh_dev_tests` (step 1);
-  `erx_devices_pci_core_tests`, `erx_devices_pci_tests`, `erx_domain_mints_srv_tests`, `dom_core_test`
-  (step 2).
+* [Medium] grants, the USB restart cell of the waits ([design-system.md](design-system.md#waiting-for-a-grant),
+  "Verification"; `tools/lib/erx/usb_boot.rb`): the three waits are built (`erx_ssh_dev`,
+  `erx_input_follower`, the settlement list and the rows held at boot); what remains is the QEMU cell
+  the design names for the input follower. `tools/lib/erx/usb_boot.rb` gains a cell whose manifest
+  allows the USB domain one restart (:43 sets 0 for the others): after the first key it kills the
+  domain's first incarnation, waits for the display to follow the new input facet and types a second
+  key that must arrive. Its landing runs `make check` and the `usb` and `net_device` suites.
+* [Low] grants, the rows held at boot, three verification rows unbuilt
+  ([design-system.md](design-system.md#waiting-for-a-grant), "Verification";
+  `test/erlang/erx_domain_tests.erl`, `erx_devices_pci_tests.erl`): the hold fixture checks a display a
+  held row serves, not a session waiting on a `files` grant it serves, nor a held row whose start is
+  refused at the release; no case restarts the PCIe process every 20 s with the fallback running; and
+  the restart between a report's intake and its answer is not told apart from one before the intake
+  (the fixture's bridge has no layouts). Build each with its seeded fault.
 * [Medium] code server, the rest of its inputs (`erlang/apps/erx/src/erx_code_agent.erl`,
   `erxos_env/2`; `erlang/apps/erx_code/src/erx_code_target.erl`): the code server reads
   its boot information's `supervised` flag and its runtime's limits, but no reader of the

@@ -393,78 +393,91 @@ ready(Id) ->
         _ -> timer:sleep(10), ready(Id)
     end.
 
-%% The hold at boot (docs/design-pcie.md, "The hold at boot"), on a machine whose row 0
-%% holds the host bridge, device 0, row 1, usb, the PCIe function at place {0, 1, 0, 0},
-%% and row 2, net, no pci device. The boot starts row 0 and net in boot order and holds
-%% usb, which starts only at the hold's release: at the device service's answer to a
-%% report, at the end of row 0's domain, at its boot timeout, 30 s (here 300 ms) after its
-%% ready report, or at once when row 0 does not start. Ready alone releases nothing.
-%% Usb serves screen, a display, which is not settled while usb is held.
--define(HOLD_DEVICES, [#{index => 0, row => 0, place => none}, #{index => 1, row => 1, place => {0, 1, 0, 0}},
-                       #{index => 2, row => 2, place => none}]).
-
-hold_released_by_the_report_answer_test_() ->
-    hold_fixture(<<"pcie">>, ?HOLD_DEVICES, #{}, fun() ->
+%% The rows held at boot (docs/design-system.md, "Waiting for a grant", "The rows held
+%% at boot"), on a machine of three rows, 0 the PCIe row, 1 usb and 2 net, where the
+%% device service's stand-in holds usb with a fallback of Fallback ms. The boot asks it
+%% once, with the rows in boot order, starts row 0 and net and holds usb, which starts
+%% only at erx_domain:release_held/0 or once the fallback's time has passed since the
+%% pcie server, row 0, settled. Usb serves screen, a display, which is not settled while
+%% usb is held. Every end is forwarded to the device service with its origin before the
+%% domain service retires the domain.
+hold_released_by_release_held_test_() ->
+    hold_fixture(<<"pcie">>, {[1], {settled, <<"pcie">>, 60000}}, fun() ->
         hold_booted(<<"pcie">>),
         ok = ready(5),
         held_not_started(),
         %% Held, usb is starting, so the display it serves is not settled until it reports.
         Settled = erx_domain:server_settled(<<"screen">>),
         ?assertEqual(timeout, gen_server:wait_response(Settled, 300)),
-        ok = erx_domain:pci_report_answered(),
+        ok = erx_domain:release_held(),
         started(7, 1, <<"usb">>),
-        ?assertEqual({reply, ok}, gen_server:receive_response(Settled, 2000))
+        ?assertEqual({reply, ok}, gen_server:receive_response(Settled, 2000)),
+        %% A release with nothing held changes nothing.
+        ok = erx_domain:release_held(),
+        #{core := Core} = sys:get_state(erx_domain_srv),
+        ?assertEqual([7], [Id || #{id := Id, origin := {configured, 1}} <- erx_domain_core:domains(Core)])
     end).
 
-hold_released_by_the_pcie_end_test_() ->
-    hold_fixture(<<"pcie">>, ?HOLD_DEVICES, #{}, fun() ->
+%% The PCIe row's end is forwarded with its origin before anything else of the end;
+%% the domain service itself releases nothing at it.
+hold_end_forwarded_with_its_origin_test_() ->
+    hold_fixture(<<"pcie">>, {[1], {settled, <<"pcie">>, 60000}}, fun() ->
         hold_booted(<<"pcie">>),
         ok = ready(5),
-        held_not_started(),
         erx_domain_srv ! {domain_ended, 5, {halt, 1}, #{}},
-        ?assertEqual([{close_side, 5, {domain_down, 5, {halt, 1}}}, {disconnect, 50}, {retire, 5}],
-                     [next_call() || _ <- lists:seq(1, 3)]),
+        ?assertEqual([{domain_ended, 5, {configured, 0}}, {close_side, 5, {domain_down, 5, {halt, 1}}},
+                      {disconnect, 50}, {retire, 5}],
+                     [next_call() || _ <- lists:seq(1, 4)]),
+        held_not_started(),
+        ok = erx_domain:release_held(),
         started(7, 1, <<"usb">>)
     end).
 
-%% Row 0, silent, never reports: its boot timeout stops it and releases the hold before
-%% its end arrives.
-hold_released_by_the_pcie_boot_timeout_test_() ->
-    hold_fixture(<<"silent">>, ?HOLD_DEVICES, #{}, fun() ->
+%% Row 0, silent, never reports: its stop for its boot timeout settles the pcie server,
+%% and the fallback releases usb 300 ms later.
+hold_fallback_after_the_pcie_boot_timeout_test_() ->
+    hold_fixture(<<"silent">>, {[1], {settled, <<"silent">>, 300}}, fun() ->
         hold_booted(<<"silent">>),
         held_not_started(),
         ?assertEqual({stop, 5}, next_call()),
+        ?assertEqual([{domain_ended, 5, {configured, 0}}, {close_side, 5, {domain_down, 5, stopped}},
+                      {disconnect, 50}, {retire, 5}],
+                     [next_call() || _ <- lists:seq(1, 4)]),
+        held_not_started(),
         started(7, 1, <<"usb">>)
     end).
 
-hold_released_after_the_pcie_ready_report_test_() ->
-    hold_fixture(<<"pcie">>, ?HOLD_DEVICES, #{pci_hold_after_ready => 300}, fun() ->
+%% The PCIe row's ready report settles its server, and the fallback releases usb after it.
+hold_fallback_after_the_pcie_ready_report_test_() ->
+    hold_fixture(<<"pcie">>, {[1], {settled, <<"pcie">>, 300}}, fun() ->
         hold_booted(<<"pcie">>),
         ok = ready(5),
         held_not_started(),
         started(7, 1, <<"usb">>)
     end).
 
-%% Row 0, noside, is refused its side and stopped, and its end never comes: the boot
-%% releases the hold once its starts are done, so nothing waits for row 0.
-hold_released_when_the_pcie_row_does_not_start_test_() ->
-    hold_fixture(<<"noside">>, ?HOLD_DEVICES, #{}, fun() ->
-        ?assertEqual([{configured, 5, 0}, {open_side, 5, 'noside@erxos', 50}, {stop, 5}],
-                     [next_call() || _ <- lists:seq(1, 3)]),
+%% Row 0, noside, is refused its side and stopped, and its end never comes: it settled
+%% at its refused start, and the fallback releases usb 300 ms after it.
+hold_fallback_after_the_pcie_rows_refused_start_test_() ->
+    hold_fixture(<<"noside">>, {[1], {settled, <<"noside">>, 300}}, fun() ->
+        ?assertEqual([{held_at_boot, [0, 1, 2]}, {configured, 5, 0}, {open_side, 5, 'noside@erxos', 50},
+                      {stop, 5}],
+                     [next_call() || _ <- lists:seq(1, 4)]),
         started(6, 2, <<"net">>),
+        held_not_started(),
         started(7, 1, <<"usb">>)
     end).
 
-%% With no place naming a bridge there is no PCIe row, and every row starts in boot order.
-no_pcie_row_holds_nothing_test_() ->
-    Devices = [Device#{place := none} || Device <- ?HOLD_DEVICES],
-    hold_fixture(<<"pcie">>, Devices, #{}, fun() ->
-        started(5, 0, <<"pcie">>),
-        started(6, 1, <<"usb">>),
-        started(7, 2, <<"net">>)
-    end).
+%% Nothing held, or a device service that cannot answer: every row starts in boot order.
+nothing_held_starts_every_row_test_() ->
+    [hold_fixture(<<"pcie">>, Held, fun() ->
+         ?assertEqual({held_at_boot, [0, 1, 2]}, next_call()),
+         started(5, 0, <<"pcie">>),
+         started(6, 1, <<"usb">>),
+         started(7, 2, <<"net">>)
+     end) || Held <- [{[], none}, {error, noproc}]].
 
-hold_fixture(PcieName, Devices, Opts, Test) ->
+hold_fixture(PcieName, Held, Test) ->
     Row = fun(Index, Name) -> #{row => Index, place => Index, name => Name, principal => 1, kind => service,
                                restarts => 0, restart_period_s => 60}
           end,
@@ -473,26 +486,27 @@ hold_fixture(PcieName, Devices, Opts, Test) ->
              persistent_term:put({erx_domain_fake_lib, boot},
                                  #{boot_timeout_s => 1,
                                    domains => [Row(0, PcieName), Row(1, <<"usb">>), Row(2, <<"net">>)],
-                                   services => [{1, screen, ?ERX_SERVICE_WINDOWS}]}),
-             persistent_term:put({erx_domain_fake_lib, devices}, Devices),
+                                   services => [{1, screen, ?ERX_SERVICE_WINDOWS}, {0, binary_to_atom(PcieName), ?ERX_SERVICE_PCIE}]}),
+             persistent_term:put({erx_domain_fake_lib, held}, Held),
              Log = erx_domain_fake_lib:start_log(),
-             {ok, Service} = erx_domain_srv:start_link(Opts#{lib => erx_domain_fake_lib, agent => erx_domain_fake_lib,
-                                                             exports => erx_domain_fake_lib,
-                                                             principals => ?PRINCIPALS}),
+             {ok, Service} = erx_domain_srv:start_link(#{lib => erx_domain_fake_lib, agent => erx_domain_fake_lib,
+                                                         exports => erx_domain_fake_lib,
+                                                         device_service => erx_domain_fake_lib,
+                                                         principals => ?PRINCIPALS}),
              unlink(Service),
              {Log, Service}
      end,
      fun(Started) ->
              stop_service(Started),
-             _ = [persistent_term:erase({erx_domain_fake_lib, Key}) || Key <- [boot, devices]]
+             _ = [persistent_term:erase({erx_domain_fake_lib, Key}) || Key <- [boot, held]]
      end,
      {timeout, 30, Test}}.
 
-%% The boot's starts with usb held: row 0, then net.
+%% The boot's starts with usb held: the device service asked, then row 0, then net.
 hold_booted(PcieName) ->
+    ?assertEqual({held_at_boot, [0, 1, 2]}, next_call()),
     started(5, 0, PcieName),
     started(6, 2, <<"net">>).
-
 %% Configured row Row's domain Id, named Name, started: made, its side opened, exported and
 %% its first thread started.
 started(Id, Row, Name) ->

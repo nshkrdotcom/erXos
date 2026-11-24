@@ -111,7 +111,7 @@ deadline, a starting server by its boot timeout. A server has settled by
 the same rule (server_settled/3): no starting row serves its service.
 
 One incarnation's grant (docs/design-system.md, "A session takes the
-console"). system_grant/3 answers a wait for the system domain's grant of a
+console"). system_grant/4 answers a wait for the system domain's grant of a
 service from one incarnation of its server row, from the grant's state and
 that row's newest incarnation alone: the facet once the grant is installed
 with that incarnation as its server, failed once it failed so, ended once the
@@ -119,15 +119,16 @@ incarnation has ended or the grant carries another server, and unprovided
 once the incarnation is ready and the grant idle, since it provides no such
 name and the core starts no operation for it. It answers wait otherwise:
 while the grant's operation for the incarnation is pending, which its deadline
-bounds, or while the core has not yet heard of the incarnation, which its
-row's boot timeout bounds for an incarnation of the server row, since its
-ready report or its end follows. The grant is matched by the incarnation,
+bounds, or while the core has not yet heard of the incarnation and the
+server row is starting, which the row's boot timeout bounds, since a ready
+report or an end follows; one not heard of once the row is not starting is
+ended, since the core will hear of it no more. The grant is matched by the incarnation,
 never by the service alone, so no wait is answered with a predecessor's facet.
 
 The settlement wait (docs/design-system.md, "Waiting for a grant").
 settled/3 answers each query of the closed set query() by one of the three
 decisions above, namespace by in_place/3 for the system domain, {server, Name}
-by server_settled/3 and {grant, Name, Id} by system_grant/3, or answers wait,
+by server_settled/3 and {grant, Name, Id} by system_grant/4, or answers wait,
 so the domain service keeps every waiter in one list and asks it again after
 each change of the grants or the starting rows.
 """.
@@ -306,7 +307,7 @@ and wait until then, from the grants and Starting alone, the configured rows
 whose domain runs without having reported ready and those held at boot.
 namespace is answered ok once the system domain's namespace is in place
 (in_place/3), {server, Name} ok once Name's server has settled
-(server_settled/3), and {grant, Name, Id} as system_grant/3 answers it.
+(server_settled/3), and {grant, Name, Id} as system_grant/4 answers it.
 """.
 -spec settled(query(), Starting :: [row()], state()) ->
           wait | ok | {ok, erx_facets:facet()} | {error, failed | ended | unprovided}.
@@ -314,8 +315,8 @@ settled(namespace, Starting, State) ->
     ok_or_wait(in_place(system, Starting, State));
 settled({server, Name}, Starting, State) ->
     ok_or_wait(server_settled(Name, Starting, State));
-settled({grant, Name, Id}, _Starting, State) ->
-    system_grant(Name, Id, State).
+settled({grant, Name, Id}, Starting, State) ->
+    system_grant(Name, Id, Starting, State).
 
 ok_or_wait(true) -> ok;
 ok_or_wait(false) -> wait.
@@ -335,22 +336,29 @@ server_settled(Name, Starting, #{declared := Declared}) ->
 %% with Id as its server, {error, ended} once Id has ended or the grant carries
 %% another server, {error, unprovided} once Id is ready and the grant is idle, and
 %% wait while none of these holds. A name the system domain is granted by no row is
-%% {error, unprovided}: nothing will ever be installed for it.
-system_grant(Name, Id, #{grants := Grants, rows := Rows} = State) ->
+%% {error, unprovided}: nothing will ever be installed for it. An idle grant's Id the core
+%% has not heard of, once its server row is not starting, is {error, ended}: nothing
+%% comes for it, so no query waits past the row's boot timeout.
+system_grant(Name, Id, Starting, #{grants := Grants, rows := Rows} = State) ->
     Key = {system, Name},
     case Grants of
         #{Key := #{state := {installed, {Id, _}, Pid}}} -> {ok, installed_facet(Pid, Key, State)};
         #{Key := #{state := {failed, {Id, _}, _Reason}}} -> {error, failed};
-        #{Key := #{state := idle, server := Server}} -> idle_grant(heard(Id, maps:get(Server, Rows, none)));
+        #{Key := #{state := idle, server := Server}} ->
+            idle_grant(heard(Id, maps:get(Server, Rows, none)), lists:member(Server, Starting));
         #{Key := #{state := Grant}} -> other_grant(Id, carried_pair(Grant));
         #{} -> {error, unprovided}
     end.
 
 %% An idle grant: Id provides no such name once it is ready, nothing comes for it once
-%% it has ended, and until the core hears of it there is nothing to decide.
-idle_grant(ready) -> {error, unprovided};
-idle_grant(ended) -> {error, ended};
-idle_grant(unheard) -> wait.
+%% it has ended, and until the core hears of it there is nothing to decide while its
+%% server row starts. With the row not starting, an Id the core has not heard of is an
+%% incarnation stopping without a ready report, or none of the row's, and the core will
+%% hear of it no more: nothing comes for it either.
+idle_grant(ready, _Starting) -> {error, unprovided};
+idle_grant(ended, _Starting) -> {error, ended};
+idle_grant(unheard, true) -> wait;
+idle_grant(unheard, false) -> {error, ended}.
 
 %% A grant with an operation pending, or settled with another server than Id: a wait
 %% for the operation's own server waits for it, and any other is another server's.

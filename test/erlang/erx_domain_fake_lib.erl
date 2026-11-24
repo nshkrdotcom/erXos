@@ -38,6 +38,8 @@
          connect/6, disconnect/1]).
 -export([open_side/2, close_side/2, become_installer/0, grant/1, export/3]).
 -export([agent/2, reader/1]).
+%% The device service's calls the domain service makes (erx_devices).
+-export([held_at_boot/1, domain_ended/2]).
 
 -include("generated/erx_abi.hrl").
 
@@ -88,6 +90,18 @@ apps() -> {ok, persistent_term:get({?MODULE, apps}, none)}.
 %% No device, or the device rows the persistent term {?MODULE, devices} sets, each with
 %% its index, its configured row and its place, as erx_domain_lib:devices/0 answers them.
 devices() -> {ok, persistent_term:get({?MODULE, devices}, [])}.
+
+%% The device service's stand-in, for a fixture that names it: the rows held at boot
+%% are the fixture's {Held, Fallback}, or its failed call's error; each call and each
+%% forwarded end is logged.
+held_at_boot(Rows) ->
+    log({held_at_boot, Rows}),
+    case persistent_term:get({?MODULE, held}) of
+        {error, _} = Error -> Error;
+        {Held, Fallback} -> {ok, Held, Fallback}
+    end.
+
+domain_ended(Id, Origin) -> log({domain_ended, Id, Origin}).
 session(Id, Template, Name, Display, DomainPid) when is_pid(DomainPid), is_atom(Display) ->
     session_made(get(session), Id, Template, Name, Display, DomainPid).
 

@@ -53,8 +53,19 @@ The functions return actions for the process to perform in order:
 Then}`, a `pcie` call whose answer goes to pcie_answer(Then, Answer);
 `{reply, From, Answer}`; `{arm_down, Since}`, the 5 s timer of the
 `between` that Since's end began, which a later `between` does not take;
-and `{firmware, Request}`, a `firmware` request handed to the firmware
-worker, which answers it with the request it was handed.
+`{firmware, Request}`, a `firmware` request handed to the firmware
+worker, which answers it with the request it was handed; and
+`release_held`, erx_domain:release_held/0.
+
+**The rows held at boot** (docs/design-system.md, "Waiting for a
+grant", "The rows held at boot") are this module's knowledge, read from
+the device catalogue alone: held/2 names the configured rows whose units
+hold a `pci` device, never a PCIe row, the row holding a host bridge some
+`pci` device's place names, and none on a machine with no PCIe row. They
+are released at an answered report (answered/4), at the start of a
+process whose library names an answered incarnation, and at the end of
+a PCIe row's domain (released_at_start/1, released_at_end/2). The process keeps no record of a
+release: one made again changes nothing.
 
 **`firmware`** requests (erx_firmware_worker), a bridge's notification and
 the line service's power requests (docs/design-bluetooth.md, "The power
@@ -71,7 +82,8 @@ While a request is in flight a `report` waits for its answer
 -export([request/3, pcie_answer/4, holder_ended/2, answered/4, incarnation_ended/2, down_timer/3,
          resume/2, resumed/5]).
 -export([firmware/3, firmware_answered/3, report_waits/1]).
--export_type([place/0, phase/0, request/0, action/0, then/0]).
+-export([held/2, released_at_start/1, released_at_end/2]).
+-export_type([place/0, phase/0, request/0, action/0, then/0, fallback/0]).
 
 -doc "A function by its host bridge's device row and its place, as erx_domain_lib:pci_place() spells it.".
 -type place() :: erx_domain_lib:pci_place().
@@ -103,9 +115,22 @@ driver's `master` after it; or a lowering.
                 | {pcie, Facet :: term(), pcie_call(), then()}
                 | {reply, From :: term(), term()}
                 | {arm_down, pos_integer() | start}
-                | {firmware, firmware_request()}.
+                | {firmware, firmware_request()}
+                | release_held.
 
 -type firmware_request() :: erx_firmware_worker:request().
+
+%% The fallback held/2 names: the PCIe row's service and 30 s, past a walk after a
+%% ready report (docs/design-system.md, "The rows held at boot").
+-define(FALLBACK_SERVER, <<"pcie">>).
+-define(FALLBACK_MS, 30000).
+
+-doc """
+The domain service's own release of the rows held at boot: once the `pcie`
+server has settled, at most this many milliseconds later; none when nothing is
+held.
+""".
+-type fallback() :: {settled, Server :: binary(), Ms :: pos_integer()} | none.
 
 %% A function as the PCIe domain's start reports it, its record and whether
 %% the start kept it at its setting; the enumerator owns the type.
@@ -305,11 +330,52 @@ holder_ended(Rows, Phase) ->
             _ -> []
         end.
 
--doc "Incarnation Id's report answered with Facet: synced, and every waiting request handled in order.".
+-doc """
+Incarnation Id's report answered with Facet, `answered` written: the rows held
+at boot released, synced, and every waiting request handled in order.
+""".
 -spec answered(pos_integer(), term(), [request()], [erx_domain_lib:device()]) -> {phase(), [action()]}.
 answered(Id, Facet, Waiting, Devices) ->
+    {Phase, Handled} = synced(Id, Facet, Waiting, Devices),
+    {Phase, [release_held | Handled]}.
+
+synced(Id, Facet, Waiting, Devices) ->
     Phase = {synced, Id, Facet},
     {Phase, lists:append([request(Request, Phase, Devices) || Request <- Waiting])}.
+
+-doc """
+The rows held at boot among Rows, the configured rows in boot order, and the
+fallback beside them (fallback/0).
+""".
+-spec held([erx_domain_lib:device()], [non_neg_integer()]) -> {[non_neg_integer()], fallback()}.
+held(Devices, Rows) ->
+    Pcie = pcie_rows(Devices),
+    Holding = [Row || #{place := {_, _, _, _}, row := Row} <- Devices, not lists:member(Row, Pcie)],
+    case [Row || Pcie =/= [], Row <- Rows, lists:member(Row, Holding)] of
+        [] -> {[], none};
+        Held -> {Held, {settled, ?FALLBACK_SERVER, ?FALLBACK_MS}}
+    end.
+
+-doc """
+The release a process's start makes: one when its library's catalogues name
+an answered incarnation on some bridge, whether or not it still holds it.
+""".
+-spec released_at_start([erx_domain_lib:pci_catalogue()]) -> [action()].
+released_at_start(Catalogues) ->
+    [release_held || lists:any(fun(#{answered := D}) -> is_integer(D) end, Catalogues)].
+
+-doc "The release a forwarded end makes: one when the domain's Origin is a PCIe row.".
+-spec released_at_end(erx_domain_core:origin() | none, [erx_domain_lib:device()]) -> [action()].
+released_at_end({configured, Row}, Devices) ->
+    [release_held || lists:member(Row, pcie_rows(Devices))];
+released_at_end(_Origin, _Devices) ->
+    [].
+
+%% The PCIe rows: each configured row holding a host bridge that some pci device's
+%% place names; a bridge the system domain holds is no row's.
+pcie_rows(Devices) ->
+    Bridges = [Bridge || #{place := {Bridge, _Bus, _Device, _Function}} <- Devices],
+    lists:usort([Row || #{index := Index, row := Row} <- Devices, is_integer(Row), lists:member(Index, Bridges)]).
 
 -doc """
 How a restarted process begins, from the library's catalogues and device
@@ -336,7 +402,7 @@ later incarnation's answered report, stays, and handles them.
 resumed(_Id, _Facet, {synced, _, _} = Phase, Waiting, Devices) ->
     {Phase, lists:append([request(Request, Phase, Devices) || Request <- Waiting])};
 resumed(Id, Facet, _Phase, Waiting, Devices) ->
-    {Synced, Handled} = answered(Id, Facet, Waiting, Devices),
+    {Synced, Handled} = synced(Id, Facet, Waiting, Devices),
     {Synced, [{pcie, Facet, {set, Place, Setting}, lowering}
               || #{place := Place, setting := #{mode := off} = Setting} <- Devices, Place =/= none] ++ Handled}.
 

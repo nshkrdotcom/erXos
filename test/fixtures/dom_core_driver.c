@@ -1182,6 +1182,13 @@ pcis(void)
 	pci_case("placed", report, 1);
 	printf("pci cpu %d 0x%llx+0x%llx\n", erx_dom_pci_bar_cpu(&pci_bridge.facts, &report[0].bars[0], &cpu) ? 1 : 0,
 	    (unsigned long long)cpu.base, (unsigned long long)cpu.size);
+	/*
+	 * The give reads the latest report alone (docs/design-system.md, "The rows held at
+	 * boot"): a function it confirmed ready is givable though no report was answered,
+	 * and one it did not list is not.
+	 */
+	printf("pci unanswered answered=%u givable=%d unlisted=%d\n", pci_bridge.answered,
+	    erx_dom_pci_givable(&pci_bridge, 1, 0, 0) != NULL ? 1 : 0, erx_dom_pci_givable(&pci_bridge, 1, 1, 0) != NULL ? 1 : 0);
 	/* A later report confirms the layout it repeats and no other. */
 	pci_case("same", report, 1);
 	report[0].revision = 1;

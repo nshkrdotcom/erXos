@@ -205,7 +205,7 @@ the_phases_test() ->
     ?assertEqual({synced(), []}, erx_devices_pci_core:down_timer(9, synced(), [])),
     {Phase, Actions} = erx_devices_pci_core:answered(9, ?FACET, Waiting, [held(10, 1, off)]),
     ?assertEqual(synced(), Phase),
-    ?assertMatch([{pcie, ?FACET, {set, _, _}, {raise, _, 10, decoding}}, {mode, 10, off},
+    ?assertMatch([release_held, {pcie, ?FACET, {set, _, _}, {raise, _, 10, decoding}}, {mode, 10, off},
                   {pcie, ?FACET, {reset, _}, {reset, _, 10}}], Actions).
 
 %% A restarted process begins synced only with the answered incarnation that
@@ -229,3 +229,37 @@ resumed_sends_every_row_at_off_then_handles_waiting_test() ->
                   {pcie, facet, {set, {?BRIDGE, 0, 1, 0}, #{mode := mastering}}, {raise, Request, 2, mastering}}],
                  Actions),
     ?assertEqual({{synced, 12, later}, []}, erx_devices_pci_core:resumed(11, facet, {synced, 12, later}, [], [Off])).
+
+%% The rows held at boot (docs/design-system.md, "Waiting for a grant", "The rows
+%% held at boot"), on a machine whose row 0 holds the host bridge, device ?BRIDGE,
+%% row 1 a function behind it, and row 2 no pci device: row 1 is held with the
+%% fallback; the PCIe row is never held, though it holds a function too; and with no
+%% place naming a bridge there is no PCIe row and nothing is held. Only rows asked
+%% for are answered, in the order asked.
+held_holds_the_rows_with_a_pci_device_never_the_pcie_row_test() ->
+    Devices = [#{index => ?BRIDGE, row => 0, place => none}, #{index => 5, row => 1, place => place(1)},
+               #{index => 6, row => 2, place => none}, #{index => 7, row => 0, place => place(2)}],
+    ?assertEqual({[1], {settled, <<"pcie">>, 30000}}, erx_devices_pci_core:held(Devices, [0, 1, 2])),
+    ?assertEqual({[], none}, erx_devices_pci_core:held(Devices, [0, 2])),
+    Unplaced = [Device#{place := none} || Device <- Devices],
+    ?assertEqual({[], none}, erx_devices_pci_core:held(Unplaced, [0, 1, 2])).
+
+%% The release, each event once: the answer to a report, the start of a process whose
+%% library names an answered incarnation, whether or not it still holds the bridge, and
+%% the forwarded end of a PCIe row's domain; not a resumed incarnation's facet, whose
+%% start released already, nor the start of a process with none answered, nor the end
+%% of another row's domain or a session's.
+release_once_answered_is_written_and_at_a_pcie_rows_end_test() ->
+    Devices = [#{index => ?BRIDGE, row => 0, holder => none, place => none, setting => none},
+               (row(5, 1))#{row => 1}],
+    Answered = (catalogue([]))#{answered => 11},
+    {_, AnsweredActions} = erx_devices_pci_core:answered(11, facet, [], Devices),
+    ?assertEqual([release_held], [Action || release_held = Action <- AnsweredActions]),
+    {_, Resumed} = erx_devices_pci_core:resumed(11, facet, {between, start}, [], Devices),
+    ?assertEqual([], [Action || release_held = Action <- Resumed]),
+    ?assertEqual([release_held], erx_devices_pci_core:released_at_start([Answered])),
+    ?assertEqual([], erx_devices_pci_core:released_at_start([catalogue([])])),
+    ?assertEqual([release_held], erx_devices_pci_core:released_at_end({configured, 0}, Devices)),
+    ?assertEqual([], erx_devices_pci_core:released_at_end({configured, 1}, Devices)),
+    ?assertEqual([], erx_devices_pci_core:released_at_end({session, 3}, Devices)),
+    ?assertEqual([], erx_devices_pci_core:released_at_end(none, Devices)).

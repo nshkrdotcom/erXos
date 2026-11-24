@@ -1288,10 +1288,14 @@ in place before anyone can connect to it.
   its server, `{error, ended}` when `D` has ended or the grant carries
   another server, and `{error, unprovided}` when `D` is ready and the
   grant is idle, since `D` provides no `pcie`, or the system domain is
-  granted no `pcie` at all. The wait is bounded by
+  granted no `pcie` at all. A `D` the mint core has not heard of, once
+  the grant's server row is not starting, is answered `{error, ended}`:
+  it stopped without a ready report or is no incarnation of the row, and
+  the mint core will hear of it no more. The wait is bounded by
   the mint core's deadline for an operation in progress and by the
   machine's boot timeout before the ready report of `D`, an incarnation
-  of the grant's server row.
+  of the grant's server row, so no query waits on an incarnation that
+  never comes.
 * **Why it holds by construction.** The wait reads only state the mint
   core already keeps, the grant of each `files` service to the session,
   and the domain service's own record of which configured domains are
@@ -3236,7 +3240,7 @@ service keeps every asker in one list with its query, and answers each
 once `erx_domain_mints:settled/3`, a pure function of the query, the
 grants and the starting rows, no longer returns `wait`. Its three
 clauses are `erx_domain_mints:in_place/3`, `server_settled/3` and
-`system_grant/3` as they stand, behind one dispatcher, not new rules.
+`system_grant/4` as they stand, behind one dispatcher, not new rules.
 It evaluates the list at the points where those facts change: after each step of the mint core,
 each stop for a boot timeout, and the release of the rows held at boot
 whatever each held row's start then does. An end's step is evaluated
@@ -3367,12 +3371,13 @@ fail its case.
 | same | `await(Name, none, 50)` answers `timeout`, and an installation after it leaves nothing in the caller's mailbox | the reply taken with a plain `receive` after a timer instead of `gen_server:receive_response/2`: the late `ok` lands in the mailbox |
 | same | `{erx, granted}` holds the ready answer's names when its installation wakes a waiter | the names written after the installation: the woken waiter reads none and waits on |
 | same | a ready answer that installs no facet still raises the generation | the generation raised only by a non-empty installation: a waiter on the names alone is never woken |
-| `erx_domain_mints_tests` | `settled/3` answers each query as `in_place/3`, `server_settled/3` and `system_grant/3` decide | the `{grant, Name, Id}` query matched by name alone: a predecessor's facet answers it |
+| `erx_domain_mints_tests` | `settled/3` answers each query as `in_place/3`, `server_settled/3` and `system_grant/4` decide, and a `{grant, Name, Id}` for an `Id` the core has not heard of is `{error, ended}` once the server row is not starting | the `{grant, Name, Id}` query matched by name alone: a predecessor's facet answers it; an unheard `Id` answered `wait` with the row not starting: the asker waits for good |
 | `erx_domain_mints_srv_tests` | three askers, one of each query, are each answered at the step that settles their own query; the system domain's installation is acknowledged only after the agent's answer | every asker answered when any query settles: the `{grant, ...}` asker is answered before its incarnation's installation |
 | same | a `{server, Name}` asker is answered at its row's end, before the row's restart starts | the list evaluated after the successor starts: the asker waits through the successor's boot |
-| same | a held row counts as starting: a session waiting on a `files` grant it serves is answered only after `release_held`, and a held row whose start is then refused settles at that release | held rows left out of the starting rows: the session is answered before its server starts |
+| `erx_domain_tests` | a held row counts as starting: a session waiting on a `files` grant it serves is answered only after `release_held`, and a held row whose start is then refused settles at that release | held rows left out of the starting rows: the session is answered before its server starts, and the display a held row serves is settled before it starts |
 | same | the fallback releases the held rows 30 s after the PCIe row's refused start, and 30 s after its stop for its boot timeout | a refused row counted as starting: the fallback is never armed and the rows stay held |
 | same | the PCIe process restarts every 20 s, with no report and no forwarded end, and the held rows are still released 30 s after the `pcie` server settled | the fallback kept by the PCIe process and armed again at each of its starts: the release never comes within the test's deadline |
+| same | the device service is asked once, with the rows in boot order; nothing held, or a call that fails, starts every row in boot order; the held row starts only at `release_held`, not at the boot | a held row started at boot: it starts with the free rows |
 | `erx_devices_pci_core_tests` | `held/2` holds the rows with a `pci` device, never the PCIe row, none without one | the PCIe row held: the case fails, as a boot would wait for a report that cannot come |
 | same | release once `answered` is written and at a PCIe row's forwarded end, each once | the release dropped at the forwarded end: a PCIe row that ends before reporting holds the rows until the fallback |
 | `erx_devices_pci_tests` | a restarted PCIe process releases at its start when the library's `answered` names an incarnation, and otherwise not until one of the three events, with the restart before the intake, between the intake and the answer, and after the answer | the restart releasing at once: with no report taken, the held rows start and are given nothing |

@@ -14,17 +14,28 @@ the core is handed.
 `pci` requests, each forwarded by its facet (erx_pci_bus_facet,
 erx_pci_facet) with the grantee it was minted for, as `{pci_bus, D,
 Operation}` and `{pci, Grantee, Operation}`; and the end of every domain,
-which erx_domain_srv forwards as it takes the library's `domain_ended`
-(domain_ended/2). A holder's end lowers the rows it held; the end of the
-answered PCIe incarnation moves the core to `between`.
+which erx_domain_srv forwards with its origin as it takes the library's
+`domain_ended` (erx_devices:domain_ended/2). A holder's end lowers the rows
+it held; the end of the answered PCIe incarnation moves the core to
+`between`; and the end of a PCIe row's domain releases the rows held at
+boot.
+
+**The rows held at boot** (docs/design-system.md, "Waiting for a grant",
+"The rows held at boot") are this process's to name and release: it
+answers erx_devices:held_at_boot/1 from the device catalogue
+(erx_devices_pci_core:held/2), and casts erx_domain:release_held/0 at a
+report's answer, at its own start when the library names an answered
+incarnation, and at a PCIe row's forwarded end
+(erx_devices_pci_core:released_at_start/1, released_at_end/2). It keeps no record of a release and
+makes no call to the domain service, so the domain service's call at
+boot cannot deadlock.
 
 **`report`** goes through the library's intake per bridge the library
 holds (erx_devices_pci_core:reports/2), every row lowered/3 names is
 lowered to `off`, and only then is erx_domain:await_grant(pcie, D) sent,
 not waited on; its answer, `{ok, Facet}`, answers the report with every
-setting, tells the domain service it has answered
-(erx_domain:pci_report_answered/0), which releases its hold at boot, and moves
-the core to `synced`; any other answers `{error, unavailable}`.
+setting, releases the rows held at boot and moves the core to `synced`;
+any other answers `{error, unavailable}`.
 
 **The rows a holder held** are those the process read from the library
 with that holder (`held`, by holder and then row), recorded at every read
@@ -77,7 +88,7 @@ item on admission by measured share).
 """.
 -behaviour(gen_server).
 
--export([start_link/0, start_link/1, domain_ended/2]).
+-export([start_link/0, start_link/1, domain_ended/3]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2]).
 
 -include("generated/erx_abi.hrl").
@@ -94,7 +105,8 @@ start_link() ->
 -doc """
 Opts names a host test's stand-ins: lib, the domain library's module
 (erx_domain_lib by default); await, the function of erx_domain:await_grant/2
-(the default); and register, false to start the process unregistered.
+(the default); release, the function of erx_domain:release_held/0 (the
+default); and register, false to start the process unregistered.
 """.
 -spec start_link(map()) -> gen_server:start_ret().
 start_link(Opts) ->
@@ -103,10 +115,13 @@ start_link(Opts) ->
         false -> gen_server:start_link(?MODULE, Opts, [])
     end.
 
--doc "Domain Id's end, as erx_domain_srv forwards it to Server, the process's name or pid.".
--spec domain_ended(gen_server:server_ref(), pos_integer()) -> ok.
-domain_ended(Server, Id) ->
-    gen_server:cast(Server, {domain_ended, Id}).
+-doc """
+Domain Id's end, whose origin is Origin (none for a domain the domain service
+does not know), as erx_domain_srv forwards it to Server, the process's name or pid.
+""".
+-spec domain_ended(gen_server:server_ref(), pos_integer(), erx_domain_core:origin() | none) -> ok.
+domain_ended(Server, Id, Origin) ->
+    gen_server:cast(Server, {domain_ended, Id, Origin}).
 
 init(Opts) ->
     Lib = maps:get(lib, Opts, erx_domain_lib),
@@ -114,6 +129,7 @@ init(Opts) ->
     Worker = erx_firmware_worker:start_link(Lib),
     State = #{lib => Lib,
               await => maps:get(await, Opts, fun erx_domain:await_grant/2),
+              release => maps:get(release, Opts, fun erx_domain:release_held/0),
               phase => {between, start}, waiting => [], held => #{},
               %% The firmware worker, and the firmware requests not yet answered, the first in it.
               worker => Worker, firmware => [],
@@ -125,7 +141,8 @@ init(Opts) ->
               calls => #{}, reports => #{}},
     {Devices, Read} = read(State),
     Armed = act({arm_down, start}, Read),
-    {ok, resume(erx_devices_pci_core:resume(catalogues(Lib), Devices), Armed)}.
+    Released = perform(erx_devices_pci_core:released_at_start(catalogues(Lib)), Armed),
+    {ok, resume(erx_devices_pci_core:resume(catalogues(Lib), Devices), Released)}.
 
 %% A restarted process waits for the facet of the incarnation its predecessor answered.
 resume({await, D}, #{await := Await, reports := Reports} = State) ->
@@ -140,6 +157,9 @@ handle_call({pci, Grantee, Operation}, From, #{phase := Phase, waiting := Waitin
         wait -> {noreply, Read#{waiting := Waiting ++ [Request]}};
         Actions -> {noreply, perform(Actions, Read)}
     end;
+handle_call({held_at_boot, Rows}, _From, State) ->
+    {Devices, Read} = read(State),
+    {reply, erx_devices_pci_core:held(Devices, Rows), Read};
 handle_call({pci_bus, _D, targets}, _From, #{lib := Lib} = State) ->
     {Devices, Read} = read(State),
     {reply, erx_devices_pci_core:targets(catalogues(Lib), Devices), Read};
@@ -151,7 +171,7 @@ handle_call({power, Device, Phase}, From, State)
   when is_integer(Device), Device >= 0, Device =< 16#ffffffff, ?ERX_IS_FW_POWER_PHASE(Phase) ->
     {noreply, firmware({From, {Device, {power, Phase}}}, State)}.
 
-handle_cast({domain_ended, Id}, #{phase := Phase, held := Held} = State) ->
+handle_cast({domain_ended, Id, Origin}, #{phase := Phase, held := Held} = State) ->
     {Rows, Kept} = case maps:take(Id, Held) of
                        {ByIndex, Others} -> {maps:values(ByIndex), Others};
                        error -> {[], Held}
@@ -159,7 +179,8 @@ handle_cast({domain_ended, Id}, #{phase := Phase, held := Held} = State) ->
     %% The holder's lowerings go on the phase they were decided in, then the phase moves.
     Lowered = perform(erx_devices_pci_core:holder_ended(Rows, Phase), State#{held := Kept}),
     {Next, Ended} = erx_devices_pci_core:incarnation_ended(Id, Phase),
-    {noreply, perform(Ended, Lowered#{phase := Next})}.
+    {Devices, Read} = read(Lowered#{phase := Next}),
+    {noreply, perform(Ended ++ erx_devices_pci_core:released_at_end(Origin, Devices), Read)}.
 
 handle_info({timeout, _Timer, {down, Since}}, #{phase := Phase, waiting := Waiting} = State) ->
     {Next, Actions} = erx_devices_pci_core:down_timer(Since, Phase, Waiting),
@@ -255,8 +276,6 @@ grant_answered({report, From, D}, {reply, {ok, Facet}}, #{lib := Lib, waiting :=
         {error, Reason} -> logger:error("erx_devices_pci: the library refused answered ~b: ~0p", [D, Reason])
     end,
     gen_server:reply(From, {ok, erx_devices_pci_core:settings(Devices)}),
-    %% The answer releases the domain service's hold at boot (docs/design-pcie.md, "The hold at boot").
-    ok = erx_domain:pci_report_answered(),
     {Phase, Actions} = erx_devices_pci_core:answered(D, Facet, Waiting, Devices),
     %% A restart's wait for an earlier incarnation no longer decides the phase.
     Left = maps:filter(fun(_ReqId, Wait) -> element(1, Wait) =/= resume end, Reports),
@@ -307,6 +326,9 @@ act({arm_down, Since}, State) ->
     State;
 act({firmware, Request}, #{worker := Worker} = State) ->
     ok = erx_firmware_worker:request(Worker, Request),
+    State;
+act(release_held, #{release := Release} = State) ->
+    ok = Release(),
     State.
 
 %% The core sends pcie calls only synced, on the answered incarnation's facet.
