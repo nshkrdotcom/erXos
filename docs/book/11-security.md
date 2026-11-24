@@ -454,6 +454,16 @@ domain ends or the service behind it does. **Revoking a grant is the
 facet's exit**: nothing is admitted after it, and nothing done before
 it is undone.
 
+The design adds two rules to the facet's end. A facet ends with only
+the leading atom of the reason of what it ended with, since a
+service's exit reason can hold what one grantee sent it, a passphrase
+among them, and every grantee in front of the service would otherwise
+receive it. And a session can be started bound to the processes it
+ends with, as a facet is: the domain service watches them from the
+start, so a front end's login has no moment in which its session runs
+unwatched ([design-login.md](../design-login.md)). Both are designed
+and not built.
+
 The design adds admission by the grantee's **share** of the service's
 CPU time per period, so one grantee cannot crowd out another. It also
 generates each service's admission path from its declaration, and

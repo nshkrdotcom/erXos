@@ -349,17 +349,21 @@ default pair, and not `password`. Both reach the same facet.
 **The login facet.** The SSH domain logs people in through the system
 domain's `login` facet ([design-login.md](design-login.md)), which every
 front end holds. Its grant lists four operations: `cookie`, `key_ok`,
-`login_key` and `login_passphrase`. A login belongs to the process that
-called for it, here the connection's state machine process, which runs
-both the exchange and authentication, so the facet keys each outstanding
-cookie by that process, and the session a login starts ends when that
-process ends ([A login belongs to the process that asked for
-it](design-login.md#a-login-belongs-to-the-process-that-asked-for-it)).
+`login_key` and `login_passphrase`. The connection's state machine
+process, which runs both the exchange and authentication, makes every
+call, so the facet keys each outstanding cookie by that process, and the
+session a login starts ends when that process ends, which the domain
+service watches from the session's start ([A session ends with what it
+was started for](design-login.md#a-session-ends-with-what-it-was-started-for)).
+The facet tells the SSH domain's processes apart only by the SSH
+domain's own word, so keeping each connection's cookie to its own
+process is the daemon's bookkeeping; what the facet guarantees is that
+no other domain reaches them.
 The checks SSH's operations make:
 
 | Operation | Checks |
 | --- | --- |
-| `cookie()` | 16 bytes from `erx_bytes:entropy/1`, kept as the **outstanding cookie** of the calling connection process for the login grace, 120 s; a new one replaces its last, and it goes when the process ends, when a login uses it or when the grace ends |
+| `cookie()` | 16 bytes from `erx_bytes:entropy/1`, kept as the **outstanding cookie** of the calling connection process for the login grace, 120 s; a new one replaces its last, and it goes when the process ends, when a key login with it succeeds or when the grace ends |
 | `key_ok(User, KeyBlob)` | `User` names an enrolled principal whose login keys hold `KeyBlob`; the same `false` for an unknown principal and an unknown key |
 | `login_key(User, Exchange, Alg, KeyBlob, Sig, Peer)` | as `key_ok`; `Alg` is `ssh-ed25519`; `Exchange` is the hash input of the connection's first key exchange, at most 64 KiB, which begins with five length-prefixed strings: the client's and the server's version lines, the client's and the server's `SSH_MSG_KEXINIT` payloads, and the host key. The server's payload begins with the byte `SSH_MSG_KEXINIT` and the calling process's outstanding cookie, and the host key is this machine's. The facet takes the SHA-256 of `Exchange` as the session identifier, builds the signed data of RFC 4252 section 7 itself from it, `User`, the service `ssh-connection`, `Alg` and `KeyBlob`, and checks the signature in `Sig`, the 83-byte signature blob of the name `ssh-ed25519` and 64 bytes, over that data with the system domain's Ed25519 verifier. A match retires the cookie |
 | `login_passphrase(User, Passphrase, Peer)` | the login design's passphrase check, under the network limits ([design-login.md](design-login.md#the-passphrase-check)) |
@@ -1507,7 +1511,7 @@ multiple of 51 or past 816 bytes refused).
 | SFTP (QEMU, stage 1 and stage 2): `scp` of a file of all 256 byte values to `DEST:/data/`, back, and `scp -r` of a directory of three files each way give the same bytes; `scp x DEST:` writes `x` in the home; `scp x DEST:~nobody/` fails with `scp`'s expand-path message | `subsystems` left empty: `scp` reports that the subsystem request failed; the server run on a tty: the bytes differ |
 | SFTP's reach: in a session whose template grants no `/data`, `scp x DEST:/data/` fails, and the SSH domain's `ssh_state` files are not visible | the server started in the SSH domain: the copy reaches that domain's files |
 | `erx_sftp_server` against stock `ssh_sftpd`: the same requests over a pipe pair and over a channel give the same replies, and a request past 256 KiB ends the job with status 1 | `stream_data/2` that drops a request split across two reads: a request cut in two gets no reply |
-| hangup: closing the client ends the shells and the session within 5 s; killing the SSH domain ends every session it started | the login's monitor of the connection process dropped: the session outlives it |
+| hangup: closing the client ends the shells and the session within 5 s; killing the SSH domain ends every session it started | the session start's `ends_with` dropped: the session outlives the connection |
 | limits: the 65th connection and the 11th channel are refused; the 6th counted failure is a disconnect | `max_auth_tries` not passed: the 6th failure is `SSH_MSG_USERAUTH_FAILURE` |
 | host key: the fingerprint survives a reboot; a corrupt file stops the daemon with the file named | the key made anew at each start: the fingerprints differ |
 | logging: a user name holding `ESC [`, a newline and a bidirectional override is escaped in the record and on the console | the user name written without the sink's escaper: the raw escape reaches the console capture |

@@ -2457,8 +2457,8 @@ limits, and whether it is live.
 the record of the facet behind it, so an attenuated grant is checked once
 against its ancestry. Each attenuating facet names the facet behind
 it in its `ends_with`, and the behaviour, which monitors it and traps no exits, turns its end into revocation in
-one direction alone: a facet whose facet behind ends ends with the same
-reason, so revoking a grant revokes every grant attenuated from it, and a
+one direction alone: a facet whose facet behind ends ends too, so
+revoking a grant revokes every grant attenuated from it, and a
 facet behind does not monitor an attenuating facet, so a command
 domain's end, which ends its facets, leaves its starter's facet running.
 
@@ -2471,6 +2471,18 @@ facet: a name the service handed the grantee in a reply, a pid or an alias,
 stays as usable as it was, so a service that must take back what it handed
 out hands names that it checks against the grant on each use, or aliases
 that end with the grant.
+
+**A facet's end carries no terms.** A facet ends with the leading atom
+of the reason of what it ended with, `erx_report:reason_name/1`, never
+the reason whole, and its grantee's callers and monitors see only that
+atom. A service's exit reason can hold what one grantee sent it, a
+passphrase or another domain's bytes, and every grantee of every facet
+in front of the service would otherwise receive it
+([design-login.md](design-login.md#secrets)). A forward whose service
+ends before it replies already answers its caller `{error, failed}`. A
+facet process that crashes in its callback still ends with the crash's
+reason, so a callback whose requests carry secrets keeps its `admit/3`
+a total function, as the login facet's does.
 
 **The facet table.** Every facet is an instance of an interface that
 `abi/services` declares: the system manifest's service row names the
@@ -2675,9 +2687,17 @@ ended session's name is taken again
 and the names a principal binds are bounded by its living sessions; each
 new binding counts against the domain service's names quota of 64 per
 principal. `Start` is a map: its `console` names the line a login's
-session starts at, and its `display` or `default_display`, which only
+session starts at; its `display` or `default_display`, which only
 the start service passes, names the display a start row's session
-starts on ([design-apps.md](design-apps.md#starting-a-session)).
+starts on ([design-apps.md](design-apps.md#starting-a-session)); and its
+`ends_with`, which only the login service passes, names the processes
+the session ends with, as a facet's mint names its own: the service
+monitors each as it admits the start, before the domain is made, refuses
+the start when one has ended before the domain runs and stops the
+session when one ends after, whatever became of whoever asked for it,
+so a front end's login has no moment in which its session runs and
+nothing watches its owner
+([design-login.md](design-login.md#a-session-ends-with-what-it-was-started-for)).
 The domain service restarts no session: an ended session's domain is
 gone, and whoever started it asks for a new session, with a new id: a
 login at a line ([design-live.md](design-live.md#the-console)), or a

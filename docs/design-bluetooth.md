@@ -550,9 +550,6 @@ the release otherwise only loads, declared per script
   domain roots at the data volume's `bt/` directory and grants to the
   Bluetooth domain alone, as it serves SSH's `ssh_state`
   ([design-ssh.md](design-ssh.md#host-keys));
-* at stage 4, the system domain's `login` facet, when the console is
-  configured and runs in this domain ([The console](#the-console);
-  [Decisions](#decisions), 8).
 
 It serves three things: the `ble` facet to apps, as the service `ble`
 that the manifest declares beside the domain's row ([The `ble`
@@ -570,8 +567,9 @@ network domain holds only its network device. The manifest check holds a
 domain's row to its grant, its login facet and its host key facet
 ([design-ssh.md](design-ssh.md#invariants), H3): it refuses a device, a
 partition window, a second `line` grant, and any facet but the `line`
-grant, the store's grant and, where the console runs here, the login
-facet, and a release manifest refuses the development store.
+grant and the store's grant, and a release manifest refuses the
+development store. The phone console runs in a domain of its own,
+`btconsole`, a client of the `ble` facet ([The console](#the-console)).
 
 ### The controller's line
 
@@ -1918,7 +1916,7 @@ handler receives, through the envelope rule, which the client module
 
 | Event | Meaning |
 | --- | --- |
-| `{connected, Conn, #{address := A, bonded := boolean(), level := L}}` | a phone connected, or its link's security changed: `level` is what the link reaches now, `open` until it is encrypted and then its key's, and `bonded` is true once the link is encrypted with a kept bond's key, a resolved bond's or its own pairing's once kept |
+| `{connected, Conn, #{address := A, bonded := boolean(), level := L, identity => I}}` | a phone connected, or its link's security changed: `level` is what the link reaches now, `open` until it is encrypted and then its key's, and `bonded` is true once the link is encrypted with a kept bond's key, a resolved bond's or its own pairing's once kept; `A` is the address the phone connected from, a resolvable private address included, and `identity`, present exactly when `bonded` is true, is the bond's identity address, which the link takes from the bond the store resolved or kept and the same phone keeps across connections |
 | `{mtu, Conn, Mtu}` | the bearer's MTU changed; a notification carries at most `Mtu - 3` octets |
 | `{subscribed, Conn, Char, none \| notify \| indicate}` | the phone wrote the characteristic's configuration |
 | `{write, Req, Conn, Char, Value}` | a write the gate allowed; the handler answers `erx_gatt:reply(Req, ok \| {error, Code})`, where `Req` is a reference the registry made for this write, which names it to no other handler, link or write |
@@ -2000,8 +1998,10 @@ own session, whose public functions the SDK lists
   would otherwise hear nothing more; its supervisor's restart attaches
   through the facet the new incarnation mints.
 * **`erx_gatt_serial`**, the serial service over `erx_gatt_service`
-  ([For apps](#for-apps)): `erx_gatt_serial:start_link(Owner)` starts
-  the handler of `nus`, registered in the session under its module's
+  ([For apps](#for-apps)): `erx_gatt_serial:start_link(Service, Owner)`
+  starts the handler of `Service`, `nus` or `console`, the two
+  declarations of the UART service's shape, an `rx` written and a `tx`
+  notified, for attaching and notifying, registered in the session under its module's
   name, which sends `Owner` `{serial, Conn, Bytes}` messages and the
   `connected` and `disconnected` events; `erx_gatt_serial:send(Conn,
   Bytes)` calls it.
@@ -2279,30 +2279,45 @@ connection is ([design-ssh.md](design-ssh.md#an-ssh-connection-is-a-line)):
 UART service's UUIDs whose `rx` and `tx` require `authenticated`, and
 each phone's stream is a line that logs a person in through the system
 domain's `login` facet ([design-login.md](design-login.md)) and then
-masters a tty of the new session. Which domain runs `erx_bt_console`,
-this one or a configured domain of its own, is open
-([Decisions](#decisions), 8); the console is the same either way, a
-client of the stream `erx_gatt_serial` gives ([For apps](#for-apps)).
-
-Its login grant has `line` `tty_line`, `logins` 8 and the one operation
-`login_passphrase` ([Who holds it](design-login.md#who-holds-it)). For
-each phone:
+masters a tty of the new session. `erx_bt_console` runs in a configured
+domain of its own, `btconsole` ([Decisions](#decisions), 8), a client of
+the stream `erx_gatt_serial:start_link(console, Owner)` gives ([For
+apps](#for-apps)), as the QEMU suite's echo is of `nus`'s. Its row holds
+two grants and nothing else, which the manifest check holds it to: the
+`ble` facet with `services` naming `console` alone, and the login facet
+with `line` `tty_line`, `logins` 8 and the one operation
+`login_passphrase` ([Who holds it](design-login.md#who-holds-it)). The
+Bluetooth domain holds no login facet. For each phone:
 
 * **One process per phone.** The first write of a `Conn` starts the
   phone's **console process**, which owns everything of that phone: its
   login, and so its session, and the tty it masters. It ends when the
   phone's link ends, which `erx_gatt_serial` reports, and its end ends
   the login, the session and the tty
-  ([A login belongs to the process that asked for
-  it](design-login.md#a-login-belongs-to-the-process-that-asked-for-it)).
+  ([A session ends with what it was started
+  for](design-login.md#a-session-ends-with-what-it-was-started-for)).
+  It sets `process_flag(sensitive, true)` before it reads a byte, since
+  the passphrase passes through it, and reports through
+  `erx_report:status/2`.
 * **The prompt.** Before a login there is no tty, so the console process
-  reads lines itself: it sends `login: `, takes bytes up to a CR, an LF
-  or a CR LF, echoing them, at most 32 bytes; then `Password:`, taking
-  up to 1,024 bytes without echo. A longer line, a NUL or a byte outside
-  printable ASCII in the name is a failed attempt, without asking the
-  facet. The process keeps the passphrase only until the facet answers.
+  reads lines itself through a pure core, `erx_bt_prompt`, which takes
+  each write as it arrives, in whatever pieces the phone cut it, and
+  returns the bytes to send and, at a line's end, the name or the
+  passphrase: it sends `login: `, takes bytes up to a CR, an LF or a
+  CR LF, echoing them; then `Password:`, taking bytes without echo. The
+  bounds are the login facet's own, from `erx_login.hrl`, a name of the
+  principal-name alphabet up to 32 bytes and a passphrase up to 1,024
+  ([Operations](design-login.md#operations)). A longer line, a NUL or a
+  byte outside the alphabet in the name is a failed attempt, without
+  asking the facet: the core discards the rest of the line, keeping
+  nothing of it, and asks again at its end. The process keeps the
+  passphrase only until the facet answers.
 * **The login.** It calls `login_passphrase(Name, Passphrase, Peer)`,
-  `Peer` being the bond's identity address in text. `no_match`,
+  `Peer` being the `identity` of the link's `connected` event in text,
+  the bond's identity address, which a phone keeps across connections
+  while its connection address changes; the console takes no write of a
+  link that is not bonded, which the `authenticated` requirement below
+  already gives. `no_match`,
   `limited` and `unavailable` are shown as `Login incorrect`,
   `Too many attempts; try later` and `Login unavailable`. After 3 failed
   attempts the process sends nothing more and drops the phone's writes
@@ -2339,6 +2354,8 @@ vault's, or before it the open choice of
 | Test | Passing case | Seeded fault |
 | --- | --- | --- |
 | prompt (host) | a 33-byte name, a NUL and a 1,025-byte passphrase each count as a failed attempt without a facet call; the fourth attempt gets no prompt | the length bound removed |
+| prompt fuzz (host) | `erx_bt_prompt` fed arbitrary bytes cut at arbitrary points never raises, never yields a name or passphrase past its bound, and its output never holds a byte of a passphrase | the echo left on for the passphrase |
+| identity (host) | the `connected` event of a bonded link from a resolvable private address carries the bond's identity address, and two connections of one bond carry the same | the connection address passed as `identity` |
 | manifest (host) | a `console` service at `encrypted` is refused; `nus` and `console` together are refused | either rule removed |
 | release manifests (build) | the shipped release manifests name no console; a sample that names one fails the check | the check's scan skipped |
 | Bumble (QEMU) | the stage 4 peer pairs by passkey, read from the `pair` file, writes `root`, the passphrase and `echo hello`, and reads `hello` in a notification; closing the link ends the session within 5 s | a wrong passphrase gets no shell, and a Just Works bond's write to `rx` is refused for insufficient authentication |
@@ -2996,8 +3013,10 @@ erx_bt_top                      one_for_all, intensity 0
       erx_bt_line_rx            the reader, registered
       erx_bt_line_tx            the writer, registered
       erx_bt_hci                the controller process, started last
-    erx_bt_console              when configured
 ```
+
+The phone console is no part of this tree: `erx_bt_console` and its
+`erx_gatt_serial` run in `btconsole` ([The console](#the-console)).
 
 `erx_bt_top` restarts nothing: the mint's end, or `erx_bt_sup`'s past
 its own intensity, ends `erx_bt`, a permanent application, and so the
@@ -3486,11 +3505,12 @@ list ([todo-performance.md](todo-performance.md)):
    path an app takes on every other machine and exercises the install
    check on the board; the published card keeps the kiosk alone.
 
-8. **Open: which domain runs the phone console.** Either the Bluetooth
-   domain runs `erx_bt_console` and holds the login facet, or a
-   configured domain of its own, `btconsole`, runs it, holding a `ble`
-   grant whose `services` names `console`, as the QEMU suite's echo
-   holds one naming `nus` (decision 6), and the login facet. An
+8. **Decided: the phone console runs in a configured domain of its own,
+   `btconsole`, holding a `ble` grant whose `services` names `console`,
+   as the QEMU suite's echo holds one naming `nus` (decision 6), and the
+   login facet; the Bluetooth domain holds no login facet.** The other
+   choice was the Bluetooth domain running `erx_bt_console` and holding
+   the login facet. An
    installed app is no option: an app's principal holds only its
    template's grants, and a login facet would let a package start any
    enrolled principal's session, past the manifest opt-in of decision 2.
@@ -3520,11 +3540,11 @@ list ([todo-performance.md](todo-performance.md)):
    * **Packaging** is the same: either is a manifest row, the opt-in of
      decision 2.
 
-   Recommended: a configured domain of its own. It buys no secrecy
-   against the radio stack, but it keeps the Bluetooth domain to its
-   radio, keeps a console defect out of the stack, and makes the console
-   an ordinary `ble` client, at the price of a domain and a hop that a
-   typing rate does not feel.
+   A domain of its own is chosen. It buys no secrecy against the radio
+   stack, but it keeps the Bluetooth domain to its radio, keeps a
+   console defect out of the stack, and makes the console an ordinary
+   `ble` client, at the price of a domain and a hop that a typing rate
+   does not feel.
 
 ## Board probes
 

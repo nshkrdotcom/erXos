@@ -665,10 +665,15 @@ reaches the system shell whatever the configuration says. And a
 connection's end is a hangup, which ends its shells and, with them, the
 session, as a UNIX session ends with its terminal. The login facet is
 the one every front end holds, the web's and the phone console's too
-([design-login.md](../design-login.md)): a login belongs to the front
-end's process that asked for it, here the connection's, so the session
-ends when that process does, on every path, a crash included, and no
-front end has a log-out to forget. The SSH domain, a
+([design-login.md](../design-login.md)). A login's session is started
+bound to the front end's process that asked for it, here the
+connection's: the domain service, which makes the session, watches
+that process from the start onwards and stops the session when the
+process ends, on every path, a crash of the login service included, so
+no front end has a log-out to forget. What the facet can tell apart is
+domains, not processes: it trusts the SSH domain to call from the right
+connection, and guarantees only that no other domain reaches that
+domain's logins. The SSH domain, a
 login through it end to end and its host key in the vault are designed
 and not built. One part of the
 design is built: the session's side of the SSH domain's line,

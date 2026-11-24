@@ -2999,7 +2999,7 @@ with what its grant names. The pieces:
   A login's line facet is replaced only by another login into the same
   session, which no login makes, since each starts a session of its
   own; and the session ends with the front end's process that logged in
-  ([design-login.md](design-login.md#a-login-belongs-to-the-process-that-asked-for-it)),
+  ([design-login.md](design-login.md#a-session-ends-with-what-it-was-started-for)),
   its ttys with it.
 * **Calls of the session's own.** A process of the session reaches the
   line process directly, without an envelope, since it acts with the
@@ -4940,7 +4940,13 @@ as for any service ([design-domains.md](design-domains.md#facets)).
   medium kept, each of them complete.
 * **Logins.** The principal service passes the vault every name it is
   given, the passphrase and the terminal it came from: the console's
-  UART, the host link or a network connection. The
+  UART, the host link or a network connection, which a front end's
+  login names as its configured domain's name and the peer it reports
+  ([design-login.md](design-login.md#operations)). The principal service
+  holds passphrases in its queue and heap as it passes them on, so it
+  sets `process_flag(sensitive, true)` before it registers and reports
+  through `erx_report:status/2`
+  ([design-login.md](design-login.md#secrets)). The
   vault answers matched, did not match, `limited` or `unavailable`, and
   nothing else:
   * **Limits by name and by terminal.** The vault counts failures by

@@ -679,12 +679,15 @@ sets `display` to `web`, and has the session mint its line for the web
 domain ([design-system.md](design-system.md#a-sessions-lines)); the
 reply names the line's facet.
 
-A login belongs to the web domain's process that called for it
-([A login belongs to the process that asked for
-it](design-login.md#a-login-belongs-to-the-process-that-asked-for-it)):
+A login's session ends with the web domain's process that called for it
+([A session ends with what it was started for](design-login.md#a-session-ends-with-what-it-was-started-for)):
 the web domain runs one **login process** per login, under the
 supervisor that keeps logins apart from connections, holding the
-login's cookie and line. A log-out, an expiry or the process's crash
+login's cookie and line. The cookie is a secret of the web domain's,
+which never reaches the system domain, so the login process sets
+`process_flag(sensitive, true)` before it mints one and keeps it out of
+its reports through `erx_report:status/2`
+([design-log.md](design-log.md)). A log-out, an expiry or the process's crash
 ends that process, and its session ends with it, as a console's log-out
 ends the sessions started there; the session's end ends its line and
 its applications' UIs. When the web domain ends, its login facet ends

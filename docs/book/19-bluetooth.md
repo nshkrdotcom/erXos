@@ -180,11 +180,11 @@ also offer a login console over the serial service: each phone's
 stream logs a person in by passphrase through the system domain's
 login facet, the one every front end holds
 ([design-login.md](../design-login.md)), and then masters a tty of the
-new session, as an SSH channel does. Whether the Bluetooth domain runs
-that console and holds the facet, or a small domain of its own does as
-a client of the `ble` facet, is an open decision of the design; the
-radio stack decrypts the link either way, so the choice is about
-keeping the stack to its radio, not about secrecy. The console and its
+new session, as an SSH channel does. A small domain of its own,
+`btconsole`, runs that console as a client of the `ble` facet and holds
+the login facet, so the Bluetooth domain keeps to its radio; the radio
+stack decrypts the link all the same, so the separation contains a
+console defect and buys no secrecy. The console and its
 login are designed and not built. The manifest check is designed to refuse
 anything more, because a stranger in radio range reaches whatever the
 domain holds through a parser defect; that check is designed and not
