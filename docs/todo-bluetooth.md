@@ -28,16 +28,17 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
 * [Low] bluetooth suite, the controllers' log has no size bound (`BtDomain::Controllers`): the DEBUG log records every HCI
   packet until the deadline.
 
-* [High] bluetooth, the serial service on QEMU and the board (docs/design-bluetooth.md "Stage 3: the serial
-  service", "On QEMU against Bumble"): `erx_gatt_serial` and the echo `erx_gatt_echo_test` are built and tested on
-  the host only. Missing: a domain of the Bluetooth suite's own that holds `ble` for `nus` and boots
-  `erx_gatt_echo_test` from a test release (`tools/lib/erx/bt_domain.rb`, as `ECHO_BOOT` boots `erx_echo_test`),
-  the peer `test/bt/peer/serial_peer.py` (connect, Exchange MTU, subscribe to `tx`, 64 KiB through `rx` with
-  `write` with response, every byte back in order) with the harness that starts it against Bumble's second
-  controller, the suite's serial row and its seeded fault (`send/2` cutting at `Mtu`), and the board's run with
-  `blew nus` from a Mac. Unverified until then: that the funnel delivers the registry's events to a handler in
-  another domain in the shape `erx_gatt:event/2` takes, and that a facet call's answer crosses back as the host
-  stand-in has it.
+* [High] bluetooth, the serial service on the board (docs/design-bluetooth.md "On the board", Decisions 7): the
+  QEMU suite's serial row passes (`tools/lib/erx/bt_domain.rb`, `test/bt/peer/serial_peer.py`), but no board run
+  has echoed `nus` to a phone. Decision 7 has the Pi 4's development card carry the echo as a second package,
+  enabled, with `max 2`, and its `apps` row offer `gatt nus` alone; no package of the echo exists, and the
+  installed app's `ble` grant (the item below) is not built, so the board's `blew nus` run waits on both.
+* [Medium] bluetooth, a handler started at boot (`erlang/apps/erx_bt_client/src/erx_gatt_service.erl`, `init/1`;
+  docs/design-bluetooth.md "The client"): a domain reports ready only once its boot script's applications have
+  started, and the domain service installs `ble` only after that, so a handler an app's start starts at once
+  stops `not_granted`. `erx_gatt_echo_test` answers its start and then waits for the facet itself; every handler
+  app would have to. Settle it in `erx_gatt_service` (start, then await the facet and attach in
+  `handle_continue`) or state the rule in the design.
 * [Medium] bluetooth, a handler attached mid-connection sends at the default MTU (`erx_gatt_serial`; the item
   "what a handler hears" below): the registry does not replay a link's MTU at `attach`, so after a restart of the
   serial handler `send/2` cuts at 20 octets until the phone's next Exchange MTU, which most phones send once.
@@ -58,6 +59,15 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
 
 ## Security residuals
 
+* [Medium] bluetooth, a link's events reach every app's handler (`erlang/apps/erx_bt/src/erx_gatt_registry.erl`,
+  `to_handlers/2` and the replay at `attach`; docs/design-bluetooth.md "A service belongs to its handler"): every
+  attached handler, of every service and so of every app the manifest grants `ble`, hears each link's
+  `connected`, with the phone's address and whether it is bonded, its `mtu` and its `disconnected`, so an app learns
+  which phones come and go, and when, though they never use its service: an information flow across apps the
+  grants do not state. The design should deliver a link's events only to the handlers of the services that link
+  uses, a link using a service from its first request that reaches one of the service's attributes (a read, a
+  write, a subscription), with `connected` and the MTU replayed to that handler then, so a handler hears only the
+  phones that talk to it.
 * [Medium] bluetooth, the `bt` row's grants (docs/design-bluetooth.md "The Bluetooth domain"): the design has the
   manifest check hold the Bluetooth domain's row to its `line` grant, the store's grant and the login facet, and
   refuse a device, a partition window and any other facet, but `tools/lib/erx/manifest.rb` has no such rule, so the
@@ -236,14 +246,16 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   `significant` with `auto_shutdown => any_significant`, or a chosen intensity, settles it in the design first.
 * [High] bluetooth, the `ble` facet's side in other domains (docs/design-bluetooth.md "The `ble` facet",
   "Declarations: `abi/gatt`"): `erx_ble_facet` admits a grantee's operations and forwards them to the registry,
-  but no app uses it. Missing: `ble_grant`'s refusals (`tools/lib/erx/manifest.rb`, `check_ble_grants`) of a
-  service two rows name, two served services of one UUID, and advertising data that do not fit; a fuzz target
+  and the Bluetooth suite's echo domain uses it for `nus`. Missing: `ble_grant`'s refusals (`tools/lib/erx/manifest.rb`, `check_ble_grants`) of a
+  service two rows name, two served services of one UUID, and advertising data that do not fit (while every
+  declared service is served, `tools/lib/erx/gatt_decl.rb` can refuse `advertise` services whose UUIDs do not
+  fit 31 octets, which `erx_bt_adv` otherwise answers with `badarg` at the controller process's start; and a
+  declared 128-bit UUID whose value is below 0x10000 is advertised as a 16-bit one, since `erx_bt_hci` hands
+  `erx_bt_adv` integers); a fuzz target
   of the client's readers, `erx_gatt:event/2` and `answer/2` (`erlang/apps/erx_bt_client`; branch
   `bt-gatt-client`, commit bda412e16, has one written before the facet's redesign); and the served
   services read from the manifest's rows, where `erx_bt_sup` serves every declared service. Whether the
-  registry's monitor of a handler in another domain fires when that handler or its domain ends is unverified,
-  and so is the mint's success path: no suite grants `ble`, so no test sees the boot view's `services` and limits
-  reach `init/1` in the shape it takes.
+  registry's monitor of a handler in another domain fires when that handler or its domain ends is unverified.
 * [High] bluetooth and packaging, an installed app's `ble` grant (docs/design-bluetooth.md "The `ble` facet", "Who
   holds `ble`"; docs/design-packaging.md "The `apps` row", "The declaration", "Admission", PK13): designed, not built.
   Missing: the `apps` row's `gatt` field and its derived `ble` row for the app template (`tools/lib/erx/manifest.rb`,

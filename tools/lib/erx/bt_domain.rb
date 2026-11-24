@@ -95,6 +95,63 @@ module Erx
         server @domain.#{DOMAIN}
         interface ble
     ROWS
+
+    # The echo domain (docs/design-bluetooth.md, "On QEMU against Bumble"): the handler of
+    # nus that the serial peer talks to, erx_gatt_echo_test, in a domain of the suite's own,
+    # since ble_grant refuses a grant to the system domain (B8). Its boot script, ECHO_BOOT,
+    # is MediumBoot's with the client library and the echo, which only a test image carries
+    # (ProductionImage#build_test_image).
+    #
+    # Its grant is a grant of its own from the Bluetooth domain's share record, 50 mcpu on
+    # CPU 0: MediumBoot's eighth of a CPU does not fit the system share's reserve beside
+    # the medium manifest's other domains (the planner refuses the web domain then). Its
+    # memory is the Bluetooth domain's MEMORY, reused unmeasured. Its arguments are
+    # MediumBoot's without the halt, so it stays up.
+    #
+    # Its one facet is ble for nus. The domain service makes it by introducing the two
+    # domains, so the echo's limits allow one connection (the Bluetooth domain's already
+    # allow one) and the machine's max_connections grows by one (manifest). The request
+    # bound, 1,024 octets, is above the largest request a handler makes, a notify of tx's
+    # 244 octets with its term's framing; 16 may be in flight.
+    ECHO_DOMAIN = 'echo'
+    ECHO_NODE = "#{ECHO_DOMAIN}@erxos".freeze
+    ECHO_BOOT = ReleaseFiles.domain_boot('gatt_echo', applications: [*MediumBoot::DOMAIN_BOOT.applications, 'erx_bt_client',
+                                                                     'erx_gatt_echo_test'], test: true)
+    ECHO_ROWS = <<~ROWS.freeze
+      limits #{ECHO_DOMAIN}
+        memory #{MEMORY}
+        outer #{MediumBoot::DOMAIN_OUTER}
+        grant @share.#{DOMAIN}
+        spaces none
+        lane 4096
+        connections 1
+        crash 0
+        flags none
+        runtime_limits @runtime_limits.system
+        band interactive
+        peer_held 4096
+        peer_held_total 4096
+      domain #{ECHO_DOMAIN}
+        principal @principal.system
+        limits @limits.#{ECHO_DOMAIN}
+        kind service
+        flags none
+        runtime @artifact.#{ProductionImage::DOMAIN_RUNTIME_ARTIFACT}
+        release @artifact.#{ECHO_BOOT.name}
+        restarts 0
+        restart_period_s 5
+        args "#{MediumBoot::UP_ARGS.join(' ')}"
+      facet ble
+        grantee @domain.#{ECHO_DOMAIN}
+        service @service.ble
+        operations none
+        max_request 1024
+        in_flight 16
+        reductions 100000
+        period_ns 1000000000
+        max_heap_size 262144
+        parameter services "nus"
+    ROWS
     # The line grant (docs/design-bluetooth.md, "The controller's line"): the device the
     # platform's line unit holds, a virtio console, which states no rate or flow, and a
     # files tree's quantities, as the data volume's grants: requests of the floor
@@ -117,11 +174,15 @@ module Erx
     # domain of MEMORY, and the domain's rows and line grant. MediumBoot drops the system
     # principal's session template, as for every medium cell: the shell the line is typed
     # at runs on the console, and the room one more domain gives the principal makes no
-    # more sessions that the display's grants would have to fit in its outer budget. The restarts are 0, so a failed bring-up that ends the domain
-    # stays ended.
+    # more sessions that the display's grants would have to fit in its outer budget. The
+    # echo domain's rows follow (ECHO_ROWS), and the principal gains room for both domains
+    # at MEMORY each, and the machine room for the connection the echo's grant makes. The
+    # restarts are 0, so a failed bring-up that ends a domain stays ended.
     def self.manifest(source, platform:)
       lined = Manifest::Edit.with_unit(source, LINE_UNIT, holder: 'system', units: platform.record.fetch('units'))
-      MediumBoot.manifest(lined, row: ROWS + line_grant(line_device(platform)), domains: 1, domain_memory: MEMORY)
+      medium = MediumBoot.manifest(lined, row: ROWS + line_grant(line_device(platform)) + ECHO_ROWS, domains: 2,
+                                          domain_memory: MEMORY)
+      MediumBoot.grown(medium, memory: 0, domains: 0, connections: 1)
     end
 
     # The line typed at the Erlang shell, one expression per element: the wait for the
@@ -146,8 +207,27 @@ module Erx
       "io:format(\"~0kp~n\",[{bt_ready,case BtDom of timeout->{no_domain,PcFind(#{NODE})};_->BtReady(none,600) end}])"
     ].join(',').concat(".\r").freeze
 
-    # The answer's line, which the shell's prompt may precede.
+    # The line typed once the bring-up answered, in the same shell, whose PcWait and PcFind
+    # it reuses: the wait for the echo domain, then BtEcho(K), which asks the echo domain
+    # every 100 ms, at most K times, whether its serial handler has attached nus, and
+    # answers attached or timeout. The handler, erx_gatt_serial, answers sys:get_state/2
+    # only once its init returned, which is after its attach succeeded, so a state means
+    # the registry has the handler the peer's writes reach. The question runs at the echo
+    # domain and answers a boolean, so no atom of its own crosses back.
+    def self.echo_line = [
+      "BtEchoDom=PcWait(#{ECHO_NODE},1200)",
+      "BtEchoRuns=fun()->case catch sys:get_state(erx_gatt_serial,500) of {'EXIT',_}->false;_->true end end",
+      "BtEcho=fun BtE(0)->timeout;BtE(BtK)->case catch erpc:call(#{ECHO_NODE},BtEchoRuns,1000) of " \
+      'true->attached;_->timer:sleep(100),BtE(BtK-1) end end',
+      "io:format(\"~0kp~n\",[{bt_echo,case BtEchoDom of timeout->{no_domain,PcFind(#{ECHO_NODE})};_->BtEcho(100) end}])"
+    ].join(',').concat(".\r").freeze
+
+    # The answers' lines, which the shell's prompt may precede.
     ANSWER = /\A#{PcieDomain::PROMPT}\{bt_ready,/n
+    ECHO_ANSWER = /\A#{PcieDomain::PROMPT}\{bt_echo,/n
+    # How long the echo line may take: the domain's wait, 1,200 polls of 100 ms, and the
+    # handler's 100 polls of at most 1.1 s, so the line answers within it, timeout included.
+    ECHO_SECONDS = 240
     # How long the line may take to print its answer: the domain's wait (1,200 polls of
     # 100 ms), its boot, and the bring-up's 600 polls of at most 1.1 s; a bring-up that
     # needs them all fails the checkpoint without the line's own timeout answer.
@@ -163,14 +243,29 @@ module Erx
       raise Error, "the Bluetooth domain's bring-up answered #{line.inspect}, not its facts" unless READY_LINE.match?(line)
     end
 
+    # The echo case: the answer, its prompt removed, is {bt_echo,attached}, or Error naming
+    # what came.
+    def check_echo(text)
+      line = text.b.sub(/\A#{PcieDomain::PROMPT}/n, '').strip
+      raise Error, "the echo domain answered #{line.inspect}, not that its handler attached nus" unless line == '{bt_echo,attached}'
+    end
+
     # The production checkpoints to the command shell, then the Erlang shell, the line and
-    # its answer, checked as the bring-up case. points must end at the command shell.
-    def checkpoints(points)
+    # its answer, checked as the bring-up case, then the echo line and its answer, checked
+    # as the echo case, after which serial runs the serial row, for at most
+    # Serial::SECONDS. points must end at the command shell.
+    def checkpoints(points, serial:)
       raise Error, 'the production checkpoints do not end at the shell' unless points.last.fetch(:name) == 'release-shell'
 
       [*points[0...-1], points.last.merge(type: ProductionImage::Run::ERL_LINE).freeze,
        ProductionImage::Run::ERLANG_SHELL.merge(type: BtDomain.line).freeze,
-       { name: 'bt-ready', pattern: ANSWER, seconds: READY_SECONDS, verify: ->(text) { check_ready(text) } }.freeze].freeze
+       { name: 'bt-ready', pattern: ANSWER, seconds: READY_SECONDS, verify: ->(text) { check_ready(text) },
+         type: BtDomain.echo_line }.freeze,
+       { name: 'bt-serial', pattern: ECHO_ANSWER, seconds: ECHO_SECONDS, verify_seconds: Serial::BOUND_SECONDS,
+         verify: lambda { |text|
+           check_echo(text)
+           serial.call
+         } }.freeze].freeze
     end
 
     # Bumble's apps/controllers.py, unmodified, with its two controllers joined by its local
@@ -183,11 +278,11 @@ module Erx
       LOG_LEVEL = { 'BUMBLE_LOGLEVEL' => 'DEBUG' }.freeze
       LISTEN_SECONDS = 30
       KILL_AFTER_SECONDS = 10
-    
+
       Ports = Data.define(:line, :peer)
-    
+
       module_function
-    
+
       # Runs the block with the controllers' Ports once both listen, and ends their process
       # group (ProcessGroup.terminate) when it returns or raises. seconds is their deadline,
       # timeout_program the tool that enforces it.
@@ -208,7 +303,7 @@ module Erx
           Thread.handle_interrupt(Object => :never) { ProcessGroup.terminate(pid) }
         end
       end
-    
+
       # count distinct loopback ports the kernel picks, each held until all are picked.
       # Another process may take one between its release and Bumble's bind; Bumble then
       # ends, which listening reports.
@@ -219,7 +314,7 @@ module Erx
       ensure
         servers.each(&:close)
       end
-    
+
       # Waits until the peer's port accepts a connection, which it closes at once, and the
       # controllers still run. controllers.py opens the line's transport first, so the peer's
       # listening means the line's does; the line's port is never touched, since every
@@ -234,21 +329,69 @@ module Erx
           ended!(pid, log)
           raise Error, "Bumble's controllers did not listen on #{ports.peer} within #{LISTEN_SECONDS} s; see #{log}" if
             Process.clock_gettime(Process::CLOCK_MONOTONIC) > limit
-    
+
           sleep(0.2)
           retry
         end
         ended!(pid, log)
       end
-    
+
       # Refuses controllers that have ended, as they do when another process holds a port.
       def ended!(pid, log)
         raise Error, "Bumble's controllers ended before both their ports listened; see #{log}" if Process.wait(pid, Process::WNOHANG)
       end
     end
-    
+
+    # The serial row (docs/design-bluetooth.md, "On QEMU against Bumble", stage 3):
+    # test/bt/peer/serial_peer.py on the controllers' second port, under the runner's
+    # deadline tool, standard input closed, its standard output in out and its standard
+    # error, where Bumble's warnings go, in log. The row passes when the peer exits 0 having
+    # printed its one passing line; check reads at most MAX_OUTPUT bytes of what it printed.
+    module Serial
+      SCRIPT = 'test/bt/peer/serial_peer.py'
+      # The peer's own bounds: its scan, its connection, 64 KiB of writes with response and
+      # their drain, with a margin. The checkpoint's verify may take this long.
+      SECONDS = 300
+      # The longest the row may take: the peer's deadline, its kill's grace and the
+      # interpreter's start.
+      BOUND_SECONDS = SECONDS + Controllers::KILL_AFTER_SECONDS + 10
+      MAX_OUTPUT = 4096
+      # The deadline tool's status when the deadline passed (GNU timeout).
+      TIMED_OUT = 124
+      PASSED = /\Aserial passed [0-9]+ [0-9]+\n\z/
+
+      module_function
+
+      def run(environment, root:, port:, directory:, timeout_program:)
+        out = File.join(directory, 'serial-peer.out')
+        log = File.join(directory, 'serial-peer.log')
+        argv = [timeout_program, '-k', Controllers::KILL_AFTER_SECONDS.to_s, SECONDS.to_s,
+                *environment.argv(File.join(root, SCRIPT), "tcp-client:127.0.0.1:#{port}")]
+        status = nil
+        Thread.handle_interrupt(Object => :never) do
+          pid = Process.spawn(*argv, in: File::NULL, out: [out, 'w', 0o600], err: [log, 'w', 0o600], pgroup: true)
+          begin
+            Thread.handle_interrupt(Object => :immediate) { _, status = Process.wait2(pid) }
+          ensure
+            ProcessGroup.terminate(pid) unless status
+          end
+        end
+        raise Error, "the serial peer did not end within #{SECONDS} s; see #{log}" if status.exitstatus == TIMED_OUT
+
+        check(File.open(out, 'rb') { |file| file.read(MAX_OUTPUT) }.to_s, log: log)
+        raise Error, "the serial peer exited #{status.exitstatus.inspect} after its passing line; see #{log}" unless status.success?
+      end
+
+      # The peer's output is its one passing line, or Error with what it printed, escaped,
+      # and the log its standard error went to.
+      def check(output, log:)
+        raise Error, "the serial peer printed #{output.b.inspect}, not its passing line; see #{log}" unless PASSED.match?(output.b)
+      end
+    end
+
     # Boots the image under HVF with one CPU against Bumble's controllers. Returns
-    # { "hvf-1cpu" => 'passed' }; a boot that does not reach the bring-up's facts raises.
+    # { "hvf-1cpu" => 'passed' }; a boot that does not reach the bring-up's facts, the echo's
+    # start or the serial row's pass raises.
     class Run
       CELL_CPUS = 1
 
@@ -264,14 +407,16 @@ module Erx
         @manifest = BtDomain.manifest(platform.manifest_source(@root), platform: platform)
       end
 
-      # Packs the image once, then boots it.
+      # Packs the test image, which carries ECHO_BOOT, once, then boots it.
       def call(jobs: 4, build: true)
         fiasco = Fiasco.new(root: @root, runner: @runner, compiler: @compiler)
         fiasco.build(jobs: jobs) if build
         directory = ProductionImage.clear_directory(root: @root, path: File.join(@root, 'build/bt/image'))
-        built, = ProductionImage.new(root: @root, runner: @runner, compiler: @compiler, linker: @linker, machine: @machine,
-                                     fiasco: fiasco)
-                                .build_medium(directory: directory, machine: @machine, manifest_source: @manifest)
+        nothing = ProductionImage::Added.new(entries: [].freeze, inputs: [].freeze, imports: {}.freeze)
+        built = ProductionImage.new(root: @root, runner: @runner, compiler: @compiler, linker: @linker, machine: @machine,
+                                    fiasco: fiasco)
+                               .build_test_image(directory: directory, added: nothing, domains: [ECHO_BOOT],
+                                                 manifest_source: @manifest)
         accel = QemuCells::LOCAL_ACCELERATOR
         boot(accel, built)
         { "#{accel}-#{CELL_CPUS}cpu" => 'passed' }
@@ -279,21 +424,29 @@ module Erx
 
       private
 
-      # One boot to the command shell, then the line's answer, with the controllers served
-      # for its length; their log is bumble.log in the boot's owner-only directory. Their
-      # deadline outlasts QEMU's, the checkpoints' seconds and a margin, by their own wait
-      # to listen and a minute for QEMU's start.
+      # One boot to the command shell, then the lines' answers and the serial row, with the
+      # controllers served for its length; their log is bumble.log in the boot's owner-only
+      # directory, beside the peer's. Their deadline outlasts QEMU's, the checkpoints'
+      # seconds and the serial row's, by their own wait to listen and a minute for QEMU's
+      # start.
       def boot(accel, built)
         cell = "#{accel}-#{CELL_CPUS}cpu"
         path = ProductionImage.clear_directory(root: @root, path: File.join(@root, 'build/bt', cell))
         directory = OutputDirectory.prepare(root: @root, path: path, mode: 0o700)
         points = ProductionImage::Run.checkpoints(built, root: @root, watchdog: MediumBoot::Run::WATCHDOG, cpus: CELL_CPUS,
-                                                         manifest_source: @manifest, memory_mib: @machine.memory_mib)
-        checkpoints = BtDomain.checkpoints(points)
-        seconds = checkpoints.sum { |point| point.fetch(:seconds) } + Controllers::LISTEN_SECONDS + 60
+                                                         manifest_source: @manifest, memory_mib: @machine.memory_mib,
+                                                         test_image: true)
         Bumble.use(root: @root, runner: @runner) do |environment|
+          serial = nil
+          checkpoints = BtDomain.checkpoints(points, serial: -> { serial.call })
+          # serial is set below, once the controllers' ports are known, before any checkpoint runs.
+          seconds = checkpoints.sum { |point| point.fetch(:seconds) + point.fetch(:verify_seconds, 0) } +
+                    Controllers::LISTEN_SECONDS + 60
           Controllers.serve(environment, log: File.join(directory, 'bumble.log'), seconds: seconds,
                                          timeout_program: @runner.timeout_program) do |ports|
+            serial = lambda do
+              Serial.run(environment, root: @root, port: ports.peer, directory: directory, timeout_program: @runner.timeout_program)
+            end
             Qemu.new(root: @root, runner: @runner, program: @qemu)
                 .run(platform: @machine.platform, accel: accel, cpus: CELL_CPUS, image: built.single, memory_mib: @machine.memory_mib,
                      directory: directory, line: QemuPlan::Line.new(port: ports.line), checkpoints: checkpoints)

@@ -11,6 +11,7 @@ require_relative '../../tools/lib/erx/bt_domain'
 class BtDomainTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
   PLATFORM = Erx::Platform.development(ROOT)
+  LOG = 'serial-peer.log'
 
   # The facts the Bluetooth domain prints come as a string after the prompt; a timeout, a
   # missing domain or a term that arrived as a foreign reason is refused with what came.
@@ -30,5 +31,37 @@ class BtDomainTest < Minitest::Test
     assert_includes source, "unit line\n  placement \"line\"\n  holder system\n"
     assert_includes source, "  parameter device \"/virtio_mmio@a000e00\"\n"
     refute_match(/^  parameter (rate|flow)/, source[source.index("facet line\n")..])
+  end
+
+  # The echo domain's grant of ble names nus alone, and its row boots the test-only
+  # release that starts erx_gatt_echo_test.
+  def test_the_manifest_grants_ble_for_nus_to_the_echo_domain
+    source = Erx::BtDomain.manifest(PLATFORM.manifest_source(ROOT), platform: PLATFORM)
+    grant = source[source.index("facet ble\n")..]
+    assert grant.start_with?("facet ble\n  grantee @domain.echo\n  service @service.ble\n")
+    assert_equal ["  parameter services \"nus\"\n"], grant.lines.grep(/^  parameter /)
+    assert_includes source, "domain echo\n"
+    assert_includes source, "  release @artifact.#{Erx::BtDomain::ECHO_BOOT.name}\n"
+    assert_includes Erx::BtDomain::ECHO_BOOT.applications, 'erx_gatt_echo_test'
+  end
+
+  # The echo case passes only when the echo domain answers that its handler attached nus.
+  def test_the_echo_case_wants_the_application_started
+    Erx::BtDomain.check_echo("5> {bt_echo,attached}\r\n")
+    ['{bt_echo,timeout}', '{bt_echo,{no_domain,[]}}', '{bt_echo,attached,more}'].each do |answer|
+      error = assert_raises(Erx::Error) { Erx::BtDomain.check_echo(answer) }
+      assert_includes error.message, answer
+    end
+  end
+
+  # The serial row passes on the peer's one passing line; any other output fails with it
+  # escaped, so a control byte the peer printed never reaches the terminal raw.
+  def test_the_serial_row_wants_the_peer_s_passing_line
+    Erx::BtDomain::Serial.check("serial passed 65536 247\n", log: LOG)
+    ["serial failed 12 of 65536 octets back within 60 s\n", '', "serial passed 65536 247\nmore\n"].each do |output|
+      assert_raises(Erx::Error) { Erx::BtDomain::Serial.check(output, log: LOG) }
+    end
+    error = assert_raises(Erx::Error) { Erx::BtDomain::Serial.check("serial failed \e]0;x\a\n", log: LOG) }
+    refute_includes error.message, "\e"
   end
 end
