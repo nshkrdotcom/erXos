@@ -16,6 +16,7 @@
 -define(OTHER, 9).
 -define(WAIT_MS, 2000).
 -define(ADDRESS, {random, <<16#C0, 16#FF, 16#EE, 16#12, 16#34, 16#56>>}).
+-define(GAP, #{name => <<"erxos">>, appearance => 0}).
 
 %% ---- the event reader ----
 
@@ -131,7 +132,7 @@ forged_event_dropped() ->
 %% The registry serving every declared service, with the relaying facet installed as ble.
 start_registry() ->
     persistent_term:put(erx_dist_owner, ?BT),
-    {ok, Registry} = erx_gatt_srv:start_link([erx_gatt_decl:service(Name) || Name <- erx_gatt_decl:names()]),
+    {ok, Registry} = erx_gatt_srv:start_link(?GAP, [erx_gatt_decl:service(Name) || Name <- erx_gatt_decl:names()]),
     unlink(Registry),
     Facet = spawn(fun() -> relaying_facet(#{}) end),
     erx_facets:install(#{ble => Facet}),

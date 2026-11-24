@@ -100,15 +100,18 @@ summary(Report, Meta) ->
                                                       meta => Meta#{pid => self()}}, []),
     Summary.
 
-%% Starts erx_bt_hci with a stand-in for the store and the test as its writer, queues the
-%% reader's bytes behind the writer's line_ready, and returns the events its crash logs.
-%% The default handler is off meanwhile, so EUnit's output shows no report.
+%% Starts erx_bt_hci with stand-ins for the two owners its configuration reads, the store
+%% and the registry, and the test as its writer, queues the reader's bytes behind the
+%% writer's line_ready, and returns the events its crash logs. The default handler is off
+%% meanwhile, so EUnit's output shows no report.
 controller_crash() ->
     {ok, #{module := Default} = Shown} = logger:get_handler_config(default),
     ok = logger:remove_handler(default),
     ok = logger:add_handler(capture, ?MODULE, #{config => #{to => self()}}),
-    Store = spawn(fun store/0),
+    Store = spawn(fun() -> owner(#{address => <<16#C0, 1, 2, 3, 4, 5>>}) end),
     true = register(erx_bt_store, Store),
+    Registry = spawn(fun() -> owner(#{advertised => #{uuids => [], name => <<"erxos">>, appearance => 0}}) end),
+    true = register(erx_gatt_srv, Registry),
     true = register(erx_bt_line_tx, self()),
     try
         {ok, Hci} = gen_server:start({local, erx_bt_hci}, erx_bt_hci, [], []),
@@ -122,14 +125,21 @@ controller_crash() ->
     after
         unregister(erx_bt_line_tx),
         unregister(erx_bt_store),
+        unregister(erx_gatt_srv),
         exit(Store, kill),
+        exit(Registry, kill),
         ok = logger:remove_handler(capture),
         ok = logger:add_handler(default, Default, Shown)
     end.
 
-store() ->
+%% A stand-in owner: answers each call from Answers, and any other call with
+%% {unexpected_call, Request}, so a new call in erx_bt_hci's start fails its start rather
+%% than blocking it past EUnit's timeout, which would skip the cleanup.
+owner(Answers) ->
     receive
-        {'$gen_call', From, address} -> gen:reply(From, <<16#C0, 1, 2, 3, 4, 5>>), store()
+        {'$gen_call', From, Request} ->
+            gen:reply(From, maps:get(Request, Answers, {unexpected_call, Request})),
+            owner(Answers)
     end.
 
 %% The events logged until each label has been seen.
