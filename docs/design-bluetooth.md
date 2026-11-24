@@ -550,8 +550,9 @@ the release otherwise only loads, declared per script
   domain roots at the data volume's `bt/` directory and grants to the
   Bluetooth domain alone, as it serves SSH's `ssh_state`
   ([design-ssh.md](design-ssh.md#host-keys));
-* at stage 4, the system domain's login facet, when the console is
-  configured ([The console](#the-console)).
+* at stage 4, the system domain's `login` facet, when the console is
+  configured and runs in this domain ([The console](#the-console);
+  [Decisions](#decisions), 8).
 
 It serves three things: the `ble` facet to apps, as the service `ble`
 that the manifest declares beside the domain's row ([The `ble`
@@ -569,8 +570,8 @@ network domain holds only its network device. The manifest check holds a
 domain's row to its grant, its login facet and its host key facet
 ([design-ssh.md](design-ssh.md#invariants), H3): it refuses a device, a
 partition window, a second `line` grant, and any facet but the `line`
-grant, the store's grant and the login facet, and a release manifest
-refuses the development store.
+grant, the store's grant and, where the console runs here, the login
+facet, and a release manifest refuses the development store.
 
 ### The controller's line
 
@@ -2274,28 +2275,78 @@ commands; an app that needs every byte uses `write` with response.
 
 The phone console is the serial service made a **login line**, as an SSH
 connection is ([design-ssh.md](design-ssh.md#an-ssh-connection-is-a-line)):
-`erx_bt_console`, in the Bluetooth domain, is the handler of the
-`console` service, a declaration with the UART service's UUIDs whose
-`rx` and `tx` require `authenticated`. Each phone's stream is a line: it
-asks for a name and a passphrase, logs in through the system domain's
-login facet, which the Bluetooth domain holds as the SSH and web front
-ends hold theirs, and the session's tty takes the line, with the
-console process as the tty's master, speaking the console interface's
-messages. The login facet's interface is the one the login design settles
-for every place a person meets the system
-([design-display.md](design-display.md#risks-and-decisions), 14).
+`erx_bt_console` handles the `console` service, a declaration with the
+UART service's UUIDs whose `rx` and `tx` require `authenticated`, and
+each phone's stream is a line that logs a person in through the system
+domain's `login` facet ([design-login.md](design-login.md)) and then
+masters a tty of the new session. Which domain runs `erx_bt_console`,
+this one or a configured domain of its own, is open
+([Decisions](#decisions), 8); the console is the same either way, a
+client of the stream `erx_gatt_serial` gives ([For apps](#for-apps)).
+
+Its login grant has `line` `tty_line`, `logins` 8 and the one operation
+`login_passphrase` ([Who holds it](design-login.md#who-holds-it)). For
+each phone:
+
+* **One process per phone.** The first write of a `Conn` starts the
+  phone's **console process**, which owns everything of that phone: its
+  login, and so its session, and the tty it masters. It ends when the
+  phone's link ends, which `erx_gatt_serial` reports, and its end ends
+  the login, the session and the tty
+  ([A login belongs to the process that asked for
+  it](design-login.md#a-login-belongs-to-the-process-that-asked-for-it)).
+* **The prompt.** Before a login there is no tty, so the console process
+  reads lines itself: it sends `login: `, takes bytes up to a CR, an LF
+  or a CR LF, echoing them, at most 32 bytes; then `Password:`, taking
+  up to 1,024 bytes without echo. A longer line, a NUL or a byte outside
+  printable ASCII in the name is a failed attempt, without asking the
+  facet. The process keeps the passphrase only until the facet answers.
+* **The login.** It calls `login_passphrase(Name, Passphrase, Peer)`,
+  `Peer` being the bond's identity address in text. `no_match`,
+  `limited` and `unavailable` are shown as `Login incorrect`,
+  `Too many attempts; try later` and `Login unavailable`. After 3 failed
+  attempts the process sends nothing more and drops the phone's writes
+  until the link ends, so a phone
+  retries only by reconnecting, and the facet's per-name and per-terminal
+  counts bind across connections.
+* **The tty.** On `{ok, Line}` it calls `open_tty` through the line with
+  a shell, `TERM` `dumb` and 80 columns by 24 rows, which `stty` changes,
+  and becomes the tty's master: its writes become `tty_input`, the
+  relay's `tty_output` become notifications through `erx_gatt_serial`,
+  and the link's end is `tty_hangup`. Echo, line editing and Ctrl-C are
+  the tty's line discipline's, as at the UART; a terminal app that
+  echoes locally shows a line twice, as on a serial line, until `stty
+  -echo`.
 
 The line never logs anyone in without a passphrase, in any build, and
 never offers the system shell, which only the console's secure lines
 carry ([design.md](design.md#decisions)). Since a passphrase must not
 cross the air in clear and a login prompt must not be reachable by
-anyone nearby, the manifest check refuses a `console` service whose `rx`
-or `tx` is below `authenticated`, which in turn needs stage 4. The
-UART service and the console share UUIDs, so a machine serves one of them.
-A release build offers the console only when its manifest opts in, with
-the Bluetooth row's console argument, and no manifest erXos ships does: a
-build check over the shipped release manifests fails on one that names a
-console service ([Decisions](#decisions), 2).
+anyone nearby, the manifest check refuses a `console` service whose
+`rx` or `tx` is below `authenticated`, which in turn needs stage 4. The
+UART service and the console share UUIDs, so a machine serves one of
+them: a manifest that offers both `nus` and `console` is refused, as a
+second holder of one service is. A release build offers the console
+only when its manifest opts in, with the console's row, and no manifest
+erXos ships does: a build check over the shipped release manifests
+fails on one that names a console service ([Decisions](#decisions),
+2). Logins by passphrase need a passphrase checker, which is the
+vault's, or before it the open choice of
+[design-login.md](design-login.md#risks-and-open-decisions), 1.
+
+**Tests.** Each with the seeded fault that proves it ran:
+
+| Test | Passing case | Seeded fault |
+| --- | --- | --- |
+| prompt (host) | a 33-byte name, a NUL and a 1,025-byte passphrase each count as a failed attempt without a facet call; the fourth attempt gets no prompt | the length bound removed |
+| manifest (host) | a `console` service at `encrypted` is refused; `nus` and `console` together are refused | either rule removed |
+| release manifests (build) | the shipped release manifests name no console; a sample that names one fails the check | the check's scan skipped |
+| Bumble (QEMU) | the stage 4 peer pairs by passkey, read from the `pair` file, writes `root`, the passphrase and `echo hello`, and reads `hello` in a notification; closing the link ends the session within 5 s | a wrong passphrase gets no shell, and a Just Works bond's write to `rx` is refused for insufficient authentication |
+
+The Raspberry Pi 4's checklist repeats the Bumble case with a phone's
+terminal app, from a development manifest whose console takes the UART
+service's UUIDs in the echo's place, so the published card keeps the
+echo of decision 7.
 
 ## Stage 4: pairing and bonding
 
@@ -3434,6 +3485,46 @@ list ([todo-performance.md](todo-performance.md)):
    the QEMU suite does. The second package is chosen, since it is the
    path an app takes on every other machine and exercises the install
    check on the board; the published card keeps the kiosk alone.
+
+8. **Open: which domain runs the phone console.** Either the Bluetooth
+   domain runs `erx_bt_console` and holds the login facet, or a
+   configured domain of its own, `btconsole`, runs it, holding a `ble`
+   grant whose `services` names `console`, as the QEMU suite's echo
+   holds one naming `nus` (decision 6), and the login facet. An
+   installed app is no option: an app's principal holds only its
+   template's grants, and a login facet would let a package start any
+   enrolled principal's session, past the manifest opt-in of decision 2.
+   Weighed:
+   * **Against a compromised radio stack, nothing changes.** The
+     Bluetooth domain decrypts the link, so whichever domain runs the
+     console, a defect there reached by anyone in range sees each
+     phone's passphrase and session in clear, can type into a logged-in
+     tty, and can feed a separate console a stream of its own making,
+     guessing passphrases at the same per-name and per-terminal limits
+     it would meet holding the facet itself. The separation SSH has from
+     the network domain buys confidentiality because SSH's encryption
+     ends in the SSH domain; the link's ends in the radio stack.
+   * **Least authority and containment.** Apart, the Bluetooth domain
+     holds nothing but its radio grants, as this section's rule says of
+     a domain that parses what anyone in range sends, and its row check
+     loses the login facet's exception; a console defect, reachable
+     only by a phone that paired with a passkey, ends or takes the
+     console's domain and not the radio stack, its bonds or the other
+     services; and the console is one more client of the public `ble`
+     facet, with no handler inside the stack.
+   * **Cost.** Apart costs one configured domain, its runtime's memory
+     and boot time, and a lane hop for each write and each notification,
+     which at a typing person's rate is not measurable against the
+     link's own interval; together costs nothing beyond the login
+     facet's row on the Bluetooth domain.
+   * **Packaging** is the same: either is a manifest row, the opt-in of
+     decision 2.
+
+   Recommended: a configured domain of its own. It buys no secrecy
+   against the radio stack, but it keeps the Bluetooth domain to its
+   radio, keeps a console defect out of the stack, and makes the console
+   an ordinary `ble` client, at the price of a domain and a hop that a
+   typing rate does not feel.
 
 ## Board probes
 

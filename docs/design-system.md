@@ -456,7 +456,7 @@ violation fails the build with the property, the record and the field:
    domain reaches a drive's medium through its drive grant
    ([design-drives.md](design-drives.md),
    [design-usb.md](design-usb.md#who-holds-a-controller)). The web domain, the configured domain that holds the
-   `erx_web_login` facet and parses browsers' bytes, holds no unconfined
+   `login` facet and parses browsers' bytes, holds no unconfined
    device, its network listener is TLS, and the host link's facets do not
    list `web`, so the web's development paths stay out of a release
    ([design-web.md](design-web.md)). A display domain, a configured
@@ -2803,9 +2803,10 @@ peer's.
 A **line** is a facet a session serves to a front-end domain, the web
 domain or the SSH domain, whose grantee the system domain names at run
 time instead of the manifest: the web domain when the host link's `web`
-facet opens or a login through `erx_web_login` succeeds
+facet opens or a login through its `login` facet succeeds
 ([design-web.md](design-web.md#logging-in-and-the-line)), and the SSH
-domain when a login through `erx_ssh_login` succeeds
+domain and the phone console when a login through theirs succeeds
+([design-login.md](design-login.md))
 ([design-ssh.md](design-ssh.md#logging-in)). Through it the front end
 opens what the session offers it: views of the session's paths for the
 web domain, ttys for the SSH domain's channels. The process that serves
@@ -2995,10 +2996,11 @@ with what its grant names. The pieces:
   messages from its master alone, and the tty ends at `tty_hangup`, with
   its master's end and with the session, as a terminal ends with its
   line, so a shell is never killed under a channel that is still open.
-  An SSH line's facet is replaced only by another login into the same
-  session, which [Logging in](design-ssh.md#logging-in) never makes,
-  and its opening, the login facet, ends only with the SSH domain, whose
-  end ends the session and every tty in it.
+  A login's line facet is replaced only by another login into the same
+  session, which no login makes, since each starts a session of its
+  own; and the session ends with the front end's process that logged in
+  ([design-login.md](design-login.md#a-login-belongs-to-the-process-that-asked-for-it)),
+  its ttys with it.
 * **Calls of the session's own.** A process of the session reaches the
   line process directly, without an envelope, since it acts with the
   session's authority anyway; the browser renderer hands the web line a
@@ -4464,8 +4466,7 @@ manifest lists: the vault.
 | update service, `erx_update` | system updates, through the slot writer: writing the spare slot, the trial, the commit and the fallback | [design-storage.md](design-storage.md#system-updates) |
 | start service, `erx_starter` | the start table, the manifest's `start` rows with the machine's `start.conf` over them, and the supervisor and keeper of each row; its tree, `start`; the package process and its `apps` tree ([design-packaging.md](design-packaging.md#apps)) | [design-apps.md](design-apps.md) |
 | file trees, `erx_procfs` and the device service's tree | the system domain's own `/proc`, the system shell's and the host link's, as every domain runs one for itself; `/dev` for administrators | [design-live.md](design-live.md#the-proc-tree), [Devices](#devices) |
-| web login, `erx_web_login` | the web domain's facet with two operations: `login`, which checks a login with the vault as the console does, starts a session and introduces it to the web domain, and `logout`, which ends a session a login through it started; the sessions it started end with it | [design-web.md](design-web.md#logging-in-and-the-line) |
-| SSH login, `erx_ssh_login` | the SSH domain's facet with five operations: `cookie`, which issues a cookie for a connection's first key exchange; `key_ok` and `login_key`, which check a principal's login keys from the vault and, for `login_key`, a signature over a session identifier the facet derives from that exchange; `login_passphrase`, which checks a passphrase with the vault as the console does; and `logout`; a login starts a session and introduces it to the SSH domain, and the sessions it started end with it | [design-ssh.md](design-ssh.md#logging-in) |
+| login service, `erx_login` | the `login` facet every front end holds, the SSH domain, the web domain and the phone console: cookies for SSH's key exchanges, key and passphrase logins, each starting a session of the principal and minting the front end's line; a login belongs to the front end's process that made it, and its session ends with that process | [design-login.md](design-login.md) |
 | vault, `erx_vault`, in a domain of its own | principals' keys and secrets; logins; signatures for key facets, by purpose; its sealing backend, and that backend's driver where it has one | [The vault](#the-vault) |
 
 ### The network domain
@@ -5003,7 +5004,7 @@ as for any service ([design-domains.md](design-domains.md#facets)).
   The SSH host key `{ssh_host, "ssh"}` is made at the first request for
   it after an installation. Its public blob is no secret: the vault gives
   it to its host key facet's grantee, whose daemon sends it to clients,
-  and to the system domain, whose SSH login facet reads it when it starts
+  and to the system domain, whose login facet reads it when it starts
   and compares it with the host key in each key login's exchange
   ([design-ssh.md](design-ssh.md#logging-in)).
 * **Login keys.** Each principal's SSH login keys, a list of Ed25519
@@ -5024,7 +5025,7 @@ as for any service ([design-domains.md](design-domains.md#facets)).
   does, under the limits and the queue of the terminal the session's
   login came from, so a session left open cannot add a way in; removing
   one needs no passphrase. The principal service decodes each blob with
-  the SSH login facet's decoder and refuses one that does not decode or
+  the login facet's decoder and refuses one that does not decode or
   whose key is of small order, so the vault parses no SSH structure
   ([design-ssh.md](design-ssh.md#login-keys)).
 * **Without its partition or its backend** the vault serves no login:

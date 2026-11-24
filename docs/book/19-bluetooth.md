@@ -175,9 +175,17 @@ own.
 
 The Bluetooth domain mounts its grant of the line at `/line` and
 opens `/line/data` and `/line/ctl` as ordinary files. Its manifest
-row holds that grant, a store for its bonds (19.6) and, when the
-machine offers a login console over the serial service, the system
-domain's login facet. The manifest check is designed to refuse
+row holds that grant and a store for its bonds (19.6). A machine may
+also offer a login console over the serial service: each phone's
+stream logs a person in by passphrase through the system domain's
+login facet, the one every front end holds
+([design-login.md](../design-login.md)), and then masters a tty of the
+new session, as an SSH channel does. Whether the Bluetooth domain runs
+that console and holds the facet, or a small domain of its own does as
+a client of the `ble` facet, is an open decision of the design; the
+radio stack decrypts the link either way, so the choice is about
+keeping the stack to its radio, not about secrecy. The console and its
+login are designed and not built. The manifest check is designed to refuse
 anything more, because a stranger in radio range reaches whatever the
 domain holds through a parser defect; that check is designed and not
 built, so the row's contents rest on the manifest text. Figure 19.1

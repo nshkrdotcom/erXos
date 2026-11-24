@@ -663,7 +663,12 @@ Two properties fall out of the construction. erXos needs no
 console line, and an SSH connection is never one, so no SSH login
 reaches the system shell whatever the configuration says. And a
 connection's end is a hangup, which ends its shells and, with them, the
-session, as a UNIX session ends with its terminal. The SSH domain, a
+session, as a UNIX session ends with its terminal. The login facet is
+the one every front end holds, the web's and the phone console's too
+([design-login.md](../design-login.md)): a login belongs to the front
+end's process that asked for it, here the connection's, so the session
+ends when that process does, on every path, a crash included, and no
+front end has a log-out to forget. The SSH domain, a
 login through it end to end and its host key in the vault are designed
 and not built. One part of the
 design is built: the session's side of the SSH domain's line,

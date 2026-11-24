@@ -330,7 +330,6 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   on a terminal's tty it waits on the line's console, and fails once the line has hung up or crashed. Have both call
   sites pass their own encoding to `prompt_width/2` (`prim_tty` holds `unicode`, `group` its `encoding`), extending edit
   44 of design-runtime.md; then no session console needs `user`, and `user => none` (erx_console.erl) can go.
-* [Medium] SSH stage 2, the login facet ([design-ssh.md](design-ssh.md)): the cookie table is keyed by the connection process, but a service behind `erx_facet` sees the facet's forward (a fresh alias, `erx_facet.erl`'s request handling), not the grantee's pid. The stage-2 design must say how the facet learns the connection: carried in the request, or keyed by the facet's forward and its `'DOWN'`.
 * [Medium] session lines, a tty's ending from its relay (`erlang/apps/erx_ssh_line/src/erx_ssh_line.erl`,
   `erlang/apps/erx_session/src/erx_session_relay.erl`; [design-system.md](design-system.md#a-sessions-lines)):
   each line is minted as a facet, but the SSH line still sends a channel its tty's ending itself, which exports
@@ -394,7 +393,7 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   1's trusted domains. Fix: the relay names the reference of its monitor of the master in its `tty_open`,
   and the master tags each message with it, which the relay requires.
 * [Medium] SSH before the vault, stages 2 and 3, development builds only
-  ([design-ssh.md](design-ssh.md#login-keys)): `erx_ssh_login`'s
+  ([design-ssh.md](design-ssh.md#login-keys)): the login facet's
   `login_key` checks the signature itself but compares no host key, and
   the host key is the file `/data/ssh/ssh_host_ed25519_key`, which the SSH
   domain reaches through `ssh_state` and whoever reads the data partition
@@ -607,17 +606,14 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   (`otp/lib/ssh/src/ssh_transport.erl`, `sign_with/4`): fine for Ed25519,
   the only host key erXos offers, but a held RSA key could not choose
   between `rsa-sha2-256` and `rsa-sha2-512`.
-* [Medium] login, one login service for front ends
-  ([design-ssh.md](design-ssh.md#risks-and-open-questions),
-  [design-web.md](design-web.md#risks-and-open-questions)):
-  `erx_ssh_login` and `erx_web_login` have one shape and merge into one
-  login service when login is designed for every place a person meets the
-  system. That merge also decides whether a principal's vault keys open
-  only to sessions that gave its passphrase themselves, which needs a
-  per-session unlock record in the vault and a way to give the passphrase
-  in a session after an SSH key login; until then a key login's session
-  uses the keys another session of the principal holds open
-  ([design-system.md](design-system.md#the-vault)).
+* [Medium] login, keys open only to sessions that gave the passphrase
+  ([design-login.md](design-login.md#risks-and-open-decisions), 3):
+  a key login's session uses the principal's vault keys while another
+  session of the principal holds them open
+  ([design-system.md](design-system.md#the-vault)). Opening them only
+  to sessions that gave the passphrase themselves needs a per-session
+  unlock in the login's row and the vault, and a way to give the
+  passphrase in a session after an SSH key login.
 * [Low] SSH, hardware-backed login keys
   ([design-ssh.md](design-ssh.md#risks-and-open-questions)): FIDO keys
   (`sk-ssh-ed25519@openssh.com`) are not accepted; accepting them needs

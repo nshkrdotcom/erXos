@@ -149,8 +149,8 @@ inspection schema `abi/inspection.txt` and to the pinned fetch step (`tools/erx 
 |  (TypeScript, React)      |         |   web facet:       |      |   per browser connection     |
 |      | HTTP + WebSocket   |         |   relays message   |----->| lines and logins             |
 | erx web (Ruby):           |--host---|   bytes            |      | relays whole messages; runs  |
-|   files from build/web,   |  link   | erx_web_login:     |      |   no widget server           |
-|   token, cookie, Origin,  |         |   login, logout    |<-----| erx_web_cowboy: network      |
+|   files from build/web,   |  link   | login facet:       |      |   no widget server           |
+|   token, cookie, Origin,  |         |   login_passphrase |<-----| erx_web_cowboy: network      |
 |   WebSocket relay         |         |                    |      |   front end, same core       |
 +---------------------------+         +--------------------+      +---------------+--------------+
                                                                     views |
@@ -174,8 +174,9 @@ front end `erx_web_cowboy` where the manifest gives the domain a network
 facet; it carries the client's files. It runs no widget server: a UI's
 server and its browser renderer are processes of the application's
 session.
-It holds a **login facet** of the system domain's `erx_web_login`, whose
-two operations are `login` and `logout`. It holds no inspect, trace,
+It holds the system domain's **login facet**, `login`, whose grant lists
+one operation, `login_passphrase` ([design-login.md](design-login.md)).
+It holds no inspect, trace,
 console or shell facet.
 
 **On Fiasco.** The web domain runs on Fiasco as designed:
@@ -666,25 +667,29 @@ them ([Logging in and the line](#logging-in-and-the-line)).
 
 ### Logging in and the line
 
-`erx_web_login`, a facet of the system domain held by the web domain,
-offers `login(Name, Passphrase) -> {ok, Line} | {error, Reason}` and
-`logout(Line)`, and nothing else. `login` hands the name and passphrase
-to the principal service, which the vault checks with the console's
-limits, 5 failures in 60 s from network connections limiting a name, and
-its four answers ([The console](design-live.md#the-console)); a principal
-that has not enrolled gets `no_match`, the same answer as a wrong
-passphrase, since enrolment is at the UART only. On a match the domain
-service starts a session for the principal, as a console login does; the
-session's environment sets `display` to `web`; and the system domain
-has the session mint its line for the web domain
-([design-system.md](design-system.md#a-sessions-lines)), and the reply
-names the line's facet.
-`logout(Line)` ends a session that a login through this facet started, as
-a console's log-out ends the sessions started there, and is refused for
-any other line; the session's end ends its line and its
-applications' UIs. When the web domain ends, its login facet ends with
-it, and the sessions its logins started end as at a log-out. The web
-domain never stores a passphrase.
+The web domain logs a person in through the system domain's `login`
+facet ([design-login.md](design-login.md)), with `line` `web_line`,
+`logins` 16 and the one operation `login_passphrase(Name, Passphrase,
+Peer)`, `Peer` being the browser's remote address. The facet checks the
+passphrase under the network limits and answers as the login design
+says, `no_match` for a principal that has not enrolled as for a wrong
+passphrase, since enrolment is at the UART only. On a match it starts a
+session for the principal, as a console login does, whose environment
+sets `display` to `web`, and has the session mint its line for the web
+domain ([design-system.md](design-system.md#a-sessions-lines)); the
+reply names the line's facet.
+
+A login belongs to the web domain's process that called for it
+([A login belongs to the process that asked for
+it](design-login.md#a-login-belongs-to-the-process-that-asked-for-it)):
+the web domain runs one **login process** per login, under the
+supervisor that keeps logins apart from connections, holding the
+login's cookie and line. A log-out, an expiry or the process's crash
+ends that process, and its session ends with it, as a console's log-out
+ends the sessions started there; the session's end ends its line and
+its applications' UIs. When the web domain ends, its login facet ends
+with it, and the sessions its logins started end. The web domain never
+stores a passphrase.
 
 The host link's `web` facet is the other way in. On its opening in a
 development build, the system domain has `root`'s session, the one the
@@ -891,8 +896,8 @@ messages of at most 64 KiB (`max_frame_size`) and no compression.
   403 with the vault's answer as one of `no_match`, `limited` and
   `unavailable`, which the client words. At most 16 logins are live; the
   17th is 503. A login ends 30 minutes after its last connection closes,
-  12 hours after it began, or at `POST /logout`; each calls the login
-  facet's `logout`, and its connections receive `bye expired` or
+  12 hours after it began, or at `POST /logout`; each ends the login's
+  process, and so its session, and its connections receive `bye expired` or
   `bye logout`. A login's line has at most four connections.
 * **The upgrade** at `/ws` needs a live cookie and an `Origin` equal to
   the server's own; the handler then drives `erx_web_conn` for the
@@ -923,8 +928,7 @@ binary form of `diff_op()` and events, and the content types an `image`
 may carry; the generator emits a reader and a writer of both directions
 in TypeScript, as in Erlang and C.
 
-**`abi/services/web.txt`**: `erx_web_login`'s `login` and
-`logout`, the host link's `web` facet's `connect`, `data` and
+**`abi/services/web.txt`**: the host link's `web` facet's `connect`, `data` and
 `close`, and the line, `web_line`, `served_by session`, with its one
 operation `open` and its `max_request` and `in_flight`
 ([design-system.md](design-system.md#a-sessions-lines)).
@@ -947,7 +951,7 @@ above.
 [--open]`, exit codes as
 every command's ([The host tool](design-live.md#the-host-tool)).
 
-**Interaction with other subsystems.** `erx_web_login` checks logins
+**Interaction with other subsystems.** The login facet checks logins
 through the principal service and the vault and starts sessions through
 the domain service ([The console](design-live.md#the-console)); the
 inspector and tracing answer the line's views through the session's
@@ -1238,7 +1242,7 @@ front end uses only Ruby's standard library.
 | cowboy's version does not fit erXos's OTP | low | the network front end waits | cowboy is plain Erlang; a patched copy enters as erXos's code |
 | `ui.txt`'s widget set lacks what a browser UI wants | medium | plainer UIs | the tree gains a kind for every display, never a browser-only one |
 | an attribute type of the schema projects outside `datum()`'s bounds (tuple width, depth 8) | low | such values arrive printed | the generator checks every attribute type of `abi/inspection.txt` against `datum()` and refuses one that does not fit |
-| login is being rethought, and that covers the network front end's `erx_web_login` as well as the console's and the display's | certain | this document's login may change | login is designed once for every place a person meets the system ([design-display.md](design-display.md#risks-and-decisions), 14); nothing here depends on the display's terminals or the console's lines beyond the vault's limits |
+| login at a display is still being designed, and it may reach the login facet the web domain holds | certain | the facet may gain a parameter for a display's local class; the web's grant does not change | login is designed once for every place a person meets the system ([design-display.md](design-display.md#risks-and-decisions), 14); nothing here depends on the display's terminals or the console's lines beyond the vault's limits |
 | no browser view of a terminal exists: W1 gives the web domain no shell facet, and the views are records, logs and traces | certain | a terminal is reachable only at the serial console and over the host link, not in a browser | a browser terminal is a design of its own, with its own authority question, since it would put a shell facet behind the web domain; it waits for the login rethink, which decides how a person reaches a shell from anywhere |
 
 Decided: TLS on the network front end, with plain HTTP only

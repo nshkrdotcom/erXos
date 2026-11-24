@@ -5915,7 +5915,10 @@ Decisions:
     whether a display's session opens the principal's vault keys; and
     whether a person's start row on a display stays as an option, as an
     automatic login does on UNIX. Until it exists a display shows the
-    session its start row names. The enrolment gap is recorded in
+    session its start row names. How a front-end domain logs a person
+    in, the `login` facet the SSH, web and phone-console front ends hold,
+    is settled in [design-login.md](design-login.md), whose open
+    decision 2 says how a display's login would use it. The enrolment gap is recorded in
     `TODO.md`: a principal a start row names, an app's or a person's,
     that never enrolled can be enrolled by whoever reaches a secure
     console line first, as any principal can, and then logged in to

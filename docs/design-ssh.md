@@ -174,9 +174,9 @@ What the sources say, read at the pins of [Sources](#sources):
              vault (host key, login keys, passphrases)      |    |
                        ^                                    |    |
                        | login keys, passphrase checks      |    |
-             system domain: erx_ssh_login facet <-----------'    |
-               cookie, key_ok, login_key, login_passphrase,       |
-               logout; principal service, domain service          |
+             system domain: login facet <-------------------'    |
+               cookie, key_ok, login_key, login_passphrase;       |
+               principal service, domain service                  |
                        | start_session, introduction             |
                        v                                         |
              session domain of the principal                     |
@@ -230,7 +230,8 @@ Its manifest row holds:
   QEMU manifests, where the harness forwards a host port to it), with
   `listen` on that port alone, `sockets` 80, the connection limit plus a
   margin, and `buffers` sized for them;
-* the system domain's `erx_ssh_login` facet;
+* the system domain's `login` facet, with `line` `tty_line` and the
+  operations of [design-login.md](design-login.md#who-holds-it)'s table;
 * before the vault, a read-write grant of the `ssh_state` files service,
   the host key's directory ([Host keys](#host-keys)), and at stage 4 the
   vault's key facet `{ssh_host, "ssh"}` in its place;
@@ -241,7 +242,7 @@ Its manifest row holds:
 
 The manifest check refuses an SSH domain row that holds any device, any
 partition window, any other facet of the system domain, or an
-`erx_ssh_login` facet on any other domain, or any files grant but
+`login` facet the login design's table does not give it, or any files grant but
 `ssh_state`'s, so the domain that parses SSH holds only its listener,
 its login facet and its host key, through `ssh_state` before the vault
 and the vault's facet from stage 4. In a release manifest the check
@@ -345,17 +346,26 @@ once at each start while it uses such a key, a residual recorded in
 The daemon offers `publickey` and `keyboard-interactive`, FreeBSD's
 default pair, and not `password`. Both reach the same facet.
 
-**The login facet.** `erx_ssh_login` is a facet of the system domain,
-declared in `abi/services/ssh.txt`, held by the SSH domain alone, with
-five operations:
+**The login facet.** The SSH domain logs people in through the system
+domain's `login` facet ([design-login.md](design-login.md)), which every
+front end holds. Its grant lists four operations: `cookie`, `key_ok`,
+`login_key` and `login_passphrase`. A login belongs to the process that
+called for it, here the connection's state machine process, which runs
+both the exchange and authentication, so the facet keys each outstanding
+cookie by that process, and the session a login starts ends when that
+process ends ([A login belongs to the process that asked for
+it](design-login.md#a-login-belongs-to-the-process-that-asked-for-it)).
+The checks SSH's operations make:
 
-| Operation | Checks | Answer |
-| --- | --- | --- |
-| `cookie()` | none: the facet draws 16 bytes from `erx_bytes:entropy/1` and keeps them as the **outstanding cookie** of the calling connection process, which it monitors, for the login grace, 120 s; a process holds one, a new one replacing its last, and the facet drops it when the process exits, when a login uses it or when the grace ends, so the table holds at most one cookie for each live connection, 64 at the daemon's limit, and never drops one to make room; past 128 outstanding, which only a domain that ignores its own limit reaches, it answers `unavailable` | `{ok, Cookie}`, or `{error, unavailable}` when the generator fails or 128 are outstanding |
-| `key_ok(User, KeyBlob)` | `User` names an enrolled principal whose login keys hold `KeyBlob` | `true` or `false`, the same for an unknown principal and an unknown key |
-| `login_key(User, Exchange, Alg, KeyBlob, Sig, Peer)` | as `key_ok`; `Alg` is `ssh-ed25519`; `Exchange` is the hash input of the connection's first key exchange, at most 64 KiB, which begins with five length-prefixed strings: the client's and the server's version lines, the client's and the server's `SSH_MSG_KEXINIT` payloads, and the host key. The server's payload begins with the byte `SSH_MSG_KEXINIT` and an outstanding cookie, and the host key is this machine's. The facet takes the SHA-256 of `Exchange` as the session identifier, builds the signed data of RFC 4252 section 7 itself from it, `User`, the service `ssh-connection`, `Alg` and `KeyBlob`, and checks the signature in `Sig`, the 83-byte signature blob of the name `ssh-ed25519` and 64 bytes, over that data with the system domain's Ed25519 verifier. A match retires the cookie | `{ok, Line}` or `{error, no_match \| limited \| unavailable}` |
-| `login_passphrase(User, Passphrase, Peer)` | the principal service hands it to the vault, as `erx_web_login`'s `login` does, under the vault's limit for network connections, 5 failures in 60 s per name | `{ok, Line}` or `{error, no_match \| limited \| unavailable}` |
-| `logout(Line)` | `Line` was started through this facet | `ok`; the session ends |
+| Operation | Checks |
+| --- | --- |
+| `cookie()` | 16 bytes from `erx_bytes:entropy/1`, kept as the **outstanding cookie** of the calling connection process for the login grace, 120 s; a new one replaces its last, and it goes when the process ends, when a login uses it or when the grace ends |
+| `key_ok(User, KeyBlob)` | `User` names an enrolled principal whose login keys hold `KeyBlob`; the same `false` for an unknown principal and an unknown key |
+| `login_key(User, Exchange, Alg, KeyBlob, Sig, Peer)` | as `key_ok`; `Alg` is `ssh-ed25519`; `Exchange` is the hash input of the connection's first key exchange, at most 64 KiB, which begins with five length-prefixed strings: the client's and the server's version lines, the client's and the server's `SSH_MSG_KEXINIT` payloads, and the host key. The server's payload begins with the byte `SSH_MSG_KEXINIT` and the calling process's outstanding cookie, and the host key is this machine's. The facet takes the SHA-256 of `Exchange` as the session identifier, builds the signed data of RFC 4252 section 7 itself from it, `User`, the service `ssh-connection`, `Alg` and `KeyBlob`, and checks the signature in `Sig`, the 83-byte signature blob of the name `ssh-ed25519` and 64 bytes, over that data with the system domain's Ed25519 verifier. A match retires the cookie |
+| `login_passphrase(User, Passphrase, Peer)` | the login design's passphrase check, under the network limits ([design-login.md](design-login.md#the-passphrase-check)) |
+
+Answers are the login design's
+([Refusals and error results](design-login.md#refusals-and-error-results)).
 
 **A key login is bound to one fresh exchange with this machine.** The
 construction: the facet chooses the cookie of the server's first
@@ -482,8 +492,8 @@ does, it has no keys, and a user who needs them logs in with the
 passphrase. The keys belong to the principal, not to one of its
 sessions, whichever way the session began. Keys open only to sessions
 that gave the passphrase themselves would need the vault to record each
-session's unlock; that record belongs to the merged login service
-([Risks and open questions](#risks-and-open-questions)).
+session's unlock; that record belongs to the login service
+([design-login.md](design-login.md#risks-and-open-decisions), 3).
 
 **OTP's hooks.** When the key callback module exports them, the daemon
 asks `kex_cookie/1` for the cookie of each connection's first
@@ -759,7 +769,7 @@ never asks the file's size, so a server that overstates it, or a file
 that never ends, costs at most 817 bytes. An answer longer than its
 request is refused by the files client, `erx_file_remote`, with `eio`,
 which the facet treats as any failed read below. The bytes then go to one pure function,
-`erx_ssh_login:medium_keys/1`, which refuses the whole file, with a log record, when its length is not a multiple of
+`erx_login:medium_keys/1`, which refuses the whole file, with a log record, when its length is not a multiple of
 51 or is past 16 keys', or when a blob does not decode under
 `erx_ssh_wire`'s key layout or is one of the eight points of small order
 that `add_login_key` refuses ([Logging in](#logging-in)): the blobs are
@@ -839,7 +849,7 @@ volume's root directory by its long name and answers exactly the bytes
 its entry's size gives, never its last cluster's slack
 ([design-storage.md](design-storage.md#removable-media-fat)), and
 `erx_boot_keys:decode/1`, which returns the blobs and the findings, or
-the file's refusal. The system domain's is `erx_ssh_login:medium_keys/1`.
+the file's refusal. The system domain's is `erx_login:medium_keys/1`.
 Each reads through a cursor and has a fuzz target
 ([Verification](#verification)).
 
@@ -983,9 +993,9 @@ it sends, so a client that types faster than the program reads loses the
 excess as on a line's overrun ([design-live.md](design-live.md#paths)).
 
 At the end of the connection every channel's tty gets `tty_hangup` and
-every job's relay `job_hangup`; the SSH domain then calls `logout(Line)`,
-and the session ends as a console session ends at log-out. If the SSH
-domain ends first, the facet ends with it and every session its logins
+every job's relay `job_hangup`; the connection's process ends, and with
+it the login it holds, so the session ends as a console session ends at
+log-out. If the SSH domain ends first, the facet ends with it and every session its logins
 started ends, as the web's do.
 
 ### Channel policy
@@ -1111,7 +1121,7 @@ closes, which the log record of each connection shows.
 | login grace (`negotiation_timeout`) | 120 s, FreeBSD's `LoginGraceTime` | how long an unauthenticated connection holds a slot | the SSH domain |
 | version line (`hello_timeout`) | 30 s | idle connections before the version line | the SSH domain |
 | authentication attempts per connection (`max_auth_tries`) | 6, FreeBSD's `MaxAuthTries`, counted as FreeBSD counts them ([Context](#context)) but for two cases recorded in `TODO.md`: an unoffered method as the first request goes free, and a change of user name between requests is not refused | guesses per connection | the SSH domain |
-| outstanding cookies | one per live connection process, each for at most 120 s and dropped when its process exits; past 128, `cookie` answers `unavailable` | the login facet's memory | the system domain, bounded by the table |
+| outstanding cookies and logins | one row per live connection process, its cookie for at most 120 s, dropped when its process exits; past the grant's `logins`, 128, `cookie` answers `unavailable` | the login facet's memory | the system domain, bounded by the grant |
 | failed logins per name | the vault's 5 in 60 s from network connections | guessing across connections | the vault, on its own grant |
 | channels per connection (`max_channels`) | 10, FreeBSD's `MaxSessions` | ttys and jobs per connection | the session, for each tty or job |
 | a channel's receive window and packet | 64 KiB and 32 KiB | what the SSH domain holds for one channel | the SSH domain |
@@ -1312,9 +1322,9 @@ change.
 | Invariant | Holds because |
 | --- | --- |
 | **H1.** A session started over SSH holds its template's facets and nothing else | the domain service makes it from the template; the facet chooses only the start map |
-| **H2.** No session starts without a check outside the SSH domain | `erx_ssh_login` is the SSH domain's only way to a session, and it decides from the vault or the verifier |
+| **H2.** No session starts without a check outside the SSH domain | the `login` facet is the SSH domain's only way to a session, and it decides from the vault or the verifier |
 | **H3.** The SSH domain holds no authority over principals | the manifest check limits its row to its grant, the login facet and the host key facet |
-| **H4.** A connection's end ends what it started | `tty_hangup` and `job_hangup` end its shells and jobs; `logout` ends its session; the facet's end ends all of them |
+| **H4.** A connection's end ends what it started | `tty_hangup` and `job_hangup` end its shells and jobs; the connection process's end ends its login and its session; the facet's end ends all of them |
 | **H5.** The system domain runs no OpenSSL; neither it nor the vault parses an SSH packet, and the vault decodes no SSH structure | the facet's decoder compares two fixed-format blobs against their one layout and takes five length-prefixed strings, each checked against the bytes that remain, in Erlang; the facet hashes the input as given with `erx_bytes:sha256/1` and checks Ed25519 with the update verifier, which alone decodes a key's bytes as a point; the vault sees lookups, passphrases, 32-byte exchange hashes and key blobs the principal service has already decoded |
 | **H6.** The host key never changes silently | it is made only when absent, and a corrupt one stops the daemon |
 | **H7.** A key login names one exchange that began after the facet chose its cookie and that carried this machine's host key | the facet derives the session identifier from the exchange input itself, finds its own outstanding cookie and the host key in that input, and retires the cookie at the login |
@@ -1464,7 +1474,7 @@ input and every accepted exchange input's five strings to its prefix);
 `erx_boot_keys:decode/1` and the FAT lookup (no crash, every blob 51
 bytes of the key blob's layout, checked by the target's own matcher
 rather than the decoder's, no lookup past 32 clusters); and
-`erx_ssh_login:medium_keys/1` (no crash on concatenations of up to 1 KiB;
+`erx_login:medium_keys/1` (no crash on concatenations of up to 1 KiB;
 every accepted list at most 16 keys, none of small order; a length not a
 multiple of 51 or past 816 bytes refused).
 
@@ -1497,7 +1507,7 @@ multiple of 51 or past 816 bytes refused).
 | SFTP (QEMU, stage 1 and stage 2): `scp` of a file of all 256 byte values to `DEST:/data/`, back, and `scp -r` of a directory of three files each way give the same bytes; `scp x DEST:` writes `x` in the home; `scp x DEST:~nobody/` fails with `scp`'s expand-path message | `subsystems` left empty: `scp` reports that the subsystem request failed; the server run on a tty: the bytes differ |
 | SFTP's reach: in a session whose template grants no `/data`, `scp x DEST:/data/` fails, and the SSH domain's `ssh_state` files are not visible | the server started in the SSH domain: the copy reaches that domain's files |
 | `erx_sftp_server` against stock `ssh_sftpd`: the same requests over a pipe pair and over a channel give the same replies, and a request past 256 KiB ends the job with status 1 | `stream_data/2` that drops a request split across two reads: a request cut in two gets no reply |
-| hangup: closing the client ends the shells and the session within 5 s; killing the SSH domain ends every session it started | `logout` not called at the connection's end: the session outlives it |
+| hangup: closing the client ends the shells and the session within 5 s; killing the SSH domain ends every session it started | the login's monitor of the connection process dropped: the session outlives it |
 | limits: the 65th connection and the 11th channel are refused; the 6th counted failure is a disconnect | `max_auth_tries` not passed: the 6th failure is `SSH_MSG_USERAUTH_FAILURE` |
 | host key: the fingerprint survives a reboot; a corrupt file stops the daemon with the file named | the key made anew at each start: the fingerprints differ |
 | logging: a user name holding `ESC [`, a newline and a bidirectional override is escaped in the record and on the console | the user name written without the sink's escaper: the raw escape reaches the console capture |
@@ -1521,7 +1531,7 @@ boots the card and logs in.
 
 | Interface | Between | Declared in |
 | --- | --- | --- |
-| `erx_ssh_login`: `cookie`, `key_ok`, `login_key`, `login_passphrase`, `logout` | the SSH domain and the system domain | `abi/services/ssh.txt`, citing [Logging in](#logging-in) |
+| `login`: `cookie`, `key_ok`, `login_key`, `login_passphrase` | the SSH domain and the system domain | `abi/services/login.txt`, citing [design-login.md](design-login.md) and [Logging in](#logging-in) |
 | the `ssh_line` facet in front of `erx_ssh_line`: `open_tty` | the SSH domain and a session it logged in | `abi/services/ssh.txt`, `served_by session`, citing [Sessions, ttys and shells](#sessions-ttys-and-shells), each operation as the line serves it ([design-system.md](design-system.md#a-sessions-lines)) |
 | a job's messages, `job_input`, `job_eof`, `job_sent` and `job_hangup` to the job, `job_written`, `job_output` and `exited` from its relay, and a tty's ending, `exited` or `signaled` | a channel of the SSH domain, and the job's relay or the tty | this document's table in [Sessions, ttys and shells](#sessions-ttys-and-shells), routed as [Risks and open questions](#risks-and-open-questions) settles, and `abi/signals.txt`'s signal set `tty_master` |
 | the console interface's seven messages | a channel and a tty | `abi/services/console.txt` ([design-live.md](design-live.md#paths)) |
@@ -1617,15 +1627,6 @@ boots the card and logs in.
 
 ## Risks and open questions
 
-* **One login service for front ends.** `erx_ssh_login` and
-  `erx_web_login` have the same shape, and they merge into one login
-  service, whose grant names the front end's line, when login is designed
-  once for every place a person meets the system
-  ([design-web.md](design-web.md#risks-and-open-questions)); until then
-  they are two facets. That service is also where a per-session unlock
-  record belongs, should a principal's keys open only to the sessions
-  that gave its passphrase themselves, with a way to give the passphrase
-  in a session after a key login; the item is in `TODO.md`.
 * **Ed25519-only login keys**, for S3: RSA and ECDSA users use the
   passphrase method or make an Ed25519 key. FIDO keys
   (`sk-ssh-ed25519@openssh.com`) are not accepted, a planned feature in

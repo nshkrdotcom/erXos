@@ -132,7 +132,7 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   domains, or removing it, changes design-live.md ("Scopes"), design-web.md (W1) and design-domains.md
   (property 9) with it, and needs a test that a browser's view of `/proc/kernel` ends `scope`. The
   system domain asks for a session's web line with `erx_domain:line/4`, and today only the host link's `web`
-  facet (`erx_hostlink_web`) does, for root's development session: the network login (`erx_web_login`) must not
+  facet (`erx_hostlink_web`) does, for root's development session: the network login (the `login` facet, [design-login.md](design-login.md)) must not
   hand its sessions' lines the same scope. The facet the session item under Bugs mints, taken by `erx:cap(inspect)`,
   is the better source of the scope. Not yet consistent at `all` in a
   session's runtime: `[domains, 4, threads]` through `entries/2` is gated only on the domain, not on the runtime

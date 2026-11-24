@@ -1056,7 +1056,8 @@ land after M11 repeat M11's closure over what they add.
    ship on `fixed` glyphs before the theme, which then restyles them.
 9. **The web on the network**, after part 2, M10's logins, M11's vault
    and 1b-G's network service with TLS. cowboy over TLS in the web domain;
-   `erx_web_login`, its cookies and a session per login; the manifest
+   the web domain's logins through the login facet
+   ([design-login.md](design-login.md)), its cookies and a session per login; the manifest
    check's refusal of plain HTTP in a release build
    ([design-web.md](design-web.md#the-network-front-end)).
 10. **GPU acceleration**, OpenGL-class rendering for the desktop and for
@@ -3155,9 +3156,9 @@ without pairing.
 * **(c) Stage 4 on QEMU `virt`.** The Security Manager as responder,
   the pairing window with its pairing wait and the control tree, the store with its
   development backend, reconnection with bonds and Service Changed, and
-  the stage 4 peers. The phone console joins it once the one login
-  design ([design-display.md](design-display.md#risks-and-decisions),
-  14) gives the console its login facet.
+  the stage 4 peers. The phone console joins it on the system domain's
+  login facet ([design-login.md](design-login.md)), in the order of that
+  document's build packages, once a passphrase checker exists.
 * **(d) The Raspberry Pi 4, on Fiasco.** Board probes B-P1 to B-P6,
   `erx_pl011`'s fresh start with hardware flow control, the system
   domain's line groups for the host link and the line trees, the Pi 4's
