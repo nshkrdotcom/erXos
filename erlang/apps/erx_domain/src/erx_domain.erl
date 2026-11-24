@@ -44,16 +44,19 @@ domain. Monitoring the domain pid watches the domain: it ends with
 or stopped.
 """.
 
--export([create/1, start_session/2, start_app/2, info/1, introduce/2, line/4, stop/2, id/1, node/1, pid/1]).
+-export([create/1, start_session/2, start_session_request/2, start_app/2, info/1, introduce/2, line/4,
+         line_request/4, stop/2, id/1, node/1, pid/1]).
 -export([system_principal/0, system_principal_request/0, system_namespace/0, server_settled/1,
          await_grant/2, release_held/0]).
 -export([inspect_view/1]).
--export_type([domain/0, spec/0]).
+-export_type([domain/0, spec/0, start/0]).
 
 -include("generated/erx_abi.hrl").
 
 -opaque domain() :: {erx_domain, Id :: pos_integer(), Node :: node(), Pid :: pid()}.
 -type spec() :: #{name := binary(), atom() => term()}.
+%% A session's start (start_session/2).
+-type start() :: #{console => term(), display => atom(), default_display => atom(), ends_with => [pid()]}.
 
 -doc """
 Creates a domain: {ok, Domain}, or {error, Reason}, Reason bad_identifier,
@@ -109,10 +112,17 @@ quota. Start names, each optional:
   session mark in every mint (docs/design-system.md, "Facets a configured
   domain serves");
 * default_display, a display the template is granted, which is only the
-  session's default display, and no mint carries.
+  session's default display, and no mint carries;
+* ends_with, a list of processes the session ends with, which only the login
+  service passes (docs/design-login.md, "A session ends with what it was
+  started for"): the service monitors each as it admits the start, before the
+  start is held or the domain made, answers {error, ended} when one has ended
+  before the session's namespace is in place, the session stopped if it was
+  made, and stops the session when one ends after, whoever is left to hear it.
 
 display and default_display exclude each other, and either one naming a
 display the template is not granted refuses the start with {bad_spec, Key};
+ends_with that is no list of pids refuses it with {bad_spec, ends_with}, and
 any other key is no facet the funnel lets through, {bad_spec, facets}. The
 session's name is its principal's name in the system manifest, root for the
 system principal, and the lowest number no living session of the principal
@@ -124,10 +134,20 @@ The service holds the start until the system release's boot has ended
 (erx_domain_srv), so an application's start must never wait on it: the
 boot would never end.
 """.
--spec start_session(pos_integer(), #{console => term(), display => atom(), default_display => atom()}) ->
-          {ok, domain()} | {error, term()}.
-start_session(Principal, Start) when is_integer(Principal), Principal > 0 ->
+-spec start_session(pos_integer(), start()) -> {ok, domain()} | {error, term()}.
+start_session(Principal, Start) when is_integer(Principal), Principal > 0, is_map(Start) ->
     gen_server:call(erx_domain_srv, {start_session, Principal, Start}, infinity).
+
+-doc """
+start_session/2 sent, not waited on: the caller takes its answer as a message with
+gen_server:check_response/2 or receive_response/2 on the returned id, so the login
+service goes on answering its front ends while sessions start
+(docs/design-login.md, "A row's states"). The start is the same, its ends_with
+bonded as the service admits it, whatever becomes of the caller.
+""".
+-spec start_session_request(pos_integer(), start()) -> gen_server:request_id().
+start_session_request(Principal, Start) when is_integer(Principal), Principal > 0, is_map(Start) ->
+    gen_server:send_request(erx_domain_srv, {start_session, Principal, Start}).
 
 -doc """
 Starts a session of the app Name, a package registered in this boot
@@ -272,6 +292,15 @@ something other than a facet of its own, and unavailable at the deadline.
 line(Name, Session, Peer, Opening) when is_atom(Name), is_integer(Session), Session > 0,
                                         is_integer(Peer), Peer > 0, is_pid(Opening) ->
     gen_server:call(erx_domain_srv, {line, Name, Session, Peer, Opening}, infinity).
+
+-doc """
+line/4 sent, not waited on, as start_session_request/2 is: the answer, the same as
+line/4's, arrives as a message to the returned id.
+""".
+-spec line_request(atom(), pos_integer(), pos_integer(), pid()) -> gen_server:request_id().
+line_request(Name, Session, Peer, Opening) when is_atom(Name), is_integer(Session), Session > 0,
+                                                is_integer(Peer), Peer > 0, is_pid(Opening) ->
+    gen_server:send_request(erx_domain_srv, {line, Name, Session, Peer, Opening}).
 
 -doc "exit(pid(Domain), Reason).".
 -spec stop(domain(), term()) -> ok.

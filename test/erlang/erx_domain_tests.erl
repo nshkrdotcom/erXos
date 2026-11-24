@@ -653,7 +653,7 @@ service_test_() ->
                           fun retire_answers_create/0, fun lost_side/0, fun ended_in_library/0,
                           fun forged_answer/0, fun refused_stop/0, fun facets/0,
                           fun configured_restart_held/0, fun sessions/0, fun killed_session_restarts/0,
-                          fun release_wait_bound/0,
+                          fun session_ends_with/0, fun start_in_flight/0, fun release_wait_bound/0,
                           fun service_end_ends_domain_pids/0]} end}.
 
 %% Ends a fixture's service and its call log, each registered by name.
@@ -1277,14 +1277,14 @@ facets() ->
     _ = [erlang:trace(Traced, false, ['receive']) || Traced <- [Pid, Facet]],
     _ = trace_messages(),
     ?assertMatch(#{grantee := Id, dropped := 0, max_request := 5000}, erx_facet:info(Facet)),
-    %% The facet ends with the domain.
+    %% The facet ends with the domain, with its end's leading atom alone.
     Monitor = monitor(process, Facet),
     ok = erx_domain:stop(Domain, shutdown),
     ?assertEqual({stop, Id}, next_call()),
     ?assertEqual({close_side, Id, {domain_down, Id, stopped}}, next_call()),
     ?assertEqual({disconnect, Id * 10}, next_call()),
     ?assertEqual({retire, Id}, next_call()),
-    ?assertEqual({domain_down, Id, stopped}, receive {'DOWN', Monitor, process, _, R} -> R after 2000 -> timeout end),
+    ?assertEqual(domain_down, receive {'DOWN', Monitor, process, _, R} -> R after 2000 -> timeout end),
     exit(Echo, kill).
 
 %% The trace messages that have come, in order.
@@ -1347,6 +1347,86 @@ killed_session_restarts() ->
     _ = [next_call() || _ <- [open_side, export, start]],
     ok = erx_domain:stop(Second, shutdown),
     retired(Id + 1).
+
+session_ends_with() ->
+    %% A session started with ends_with stops when any process it names ends
+    %% (docs/design-domains.md, "Principals, sessions and quotas"): here the second of
+    %% two, while the session runs. A start that names anything but processes is refused.
+    ?assertEqual({error, {bad_spec, ends_with}}, erx_domain:start_session(1, #{ends_with => [self, self()]})),
+    ?assertEqual({error, {bad_spec, ends_with}}, erx_domain:start_session(1, #{ends_with => self()})),
+    [Owner, Facet] = [idle() || _ <- [owner, facet]],
+    {ok, Session} = erx_domain:start_session(1, #{ends_with => [Owner, Facet]}),
+    Id = erx_domain:id(Session),
+    ?assertEqual({session, Id, 0, <<"root_1">>, none}, next_call()),
+    _ = [next_call() || _ <- [open_side, export, start, code_objects_export]],
+    exit(Facet, kill),
+    ?assertEqual({stop, Id}, next_call()),
+    retired(Id),
+    %% The session's end, by its own stop, ends the service's watch of the owner, whose
+    %% end then stops nothing; and a process that has already ended refuses the start,
+    %% answered ended.
+    {ok, Next} = erx_domain:start_session(1, #{ends_with => [Owner]}),
+    NextId = erx_domain:id(Next),
+    _ = [next_call() || _ <- [session, open_side, export, start, code_objects_export]],
+    ok = erx_domain:stop(Next, shutdown),
+    retired(NextId),
+    exit(Owner, kill),
+    {Gone, GoneMonitor} = spawn_monitor(fun() -> ok end),
+    receive {'DOWN', GoneMonitor, process, Gone, normal} -> ok end,
+    ?assertEqual({error, ended}, erx_domain:start_session(1, #{ends_with => [Gone]})),
+    %% Refused before its domain is made: the next call the library hears is the next start's.
+    {ok, Probe} = erx_domain:start_session(1, #{}),
+    ProbeId = erx_domain:id(Probe),
+    ?assertMatch({session, ProbeId, 0, <<"root_1">>, none}, next_call()),
+    _ = [next_call() || _ <- [open_side, export, start, code_objects_export]],
+    ok = erx_domain:stop(Probe, shutdown),
+    retired(ProbeId).
+
+start_in_flight() ->
+    %% A start held behind its principal's ending domain, whose owner ends while it waits,
+    %% is answered ended, and the library never makes its session: the service watches
+    %% ends_with from the start's admission, not from the domain's making. The start's
+    %% asynchronous form answers as a message to its request id.
+    {ok, First} = erx_domain:start_session(1, #{}),
+    Id = erx_domain:id(First),
+    _ = [next_call() || _ <- [session, open_side, export, start, code_objects_export]],
+    Ref = monitor(process, erx_domain:pid(First)),
+    ok = erx_domain:stop(First, kill),
+    ?assertEqual(killed, receive {'DOWN', Ref, process, _, Why} -> Why after 5000 -> timeout end),
+    Owner = idle(),
+    Request = erx_domain:start_session_request(1, #{ends_with => [Owner]}),
+    exit(Owner, kill),
+    ?assertEqual({reply, {error, ended}}, gen_server:receive_response(Request, 5000)),
+    ?assertEqual({stop, Id}, next_call()),
+    retired(Id),
+    %% The library's next call is the next start's: the refused start made nothing.
+    {ok, Probe} = erx_domain:start_session(1, #{}),
+    ProbeId = erx_domain:id(Probe),
+    ?assertMatch({session, ProbeId, 0, <<"root_1">>, none}, next_call()),
+    _ = [next_call() || _ <- [open_side, export, start, code_objects_export]],
+    ok = erx_domain:stop(Probe, shutdown),
+    retired(ProbeId),
+    %% A start whose caller ends while it is outstanding still stops with what it ends
+    %% with: the session the dead caller asked for stops at its facet's end.
+    Facet = idle(),
+    Caller = spawn(fun() -> erx_domain:start_session(1, #{ends_with => [Facet]}) end),
+    {session, SessionId, 0, <<"root_1">>, none} = next_call(),
+    exit(Caller, kill),
+    exit(Facet, kill),
+    ?assertEqual({stop, SessionId}, next_call_past([open_side, export, start, export])),
+    retired(SessionId).
+
+%% A process that waits until it is killed.
+idle() ->
+    spawn(fun() -> receive after infinity -> ok end end).
+
+%% The library's next call past any of the kinds Skipped.
+next_call_past(Skipped) ->
+    Call = next_call(),
+    case lists:member(element(1, Call), Skipped) of
+        true -> next_call_past(Skipped);
+        false -> Call
+    end.
 
 release_wait_bound() ->
     %% refused_stop's domain, whose stop the library refuses, never ends. With its pid

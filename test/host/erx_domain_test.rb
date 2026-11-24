@@ -186,6 +186,13 @@ class ErxDomainTest < Minitest::Test
               from: %q{{'DOWN', Monitor, _Type, _End, Reason} when is_map_key(Monitor, EndsWith)},
               to: %q{{'DOWN', Monitor, process, _End, Reason} when is_map_key(Monitor, EndsWith)},
               tests: 'erx_facet_tests', caught_by: 'ends_with_a_connection_port_test'),
+    # A facet that ends with the reason whole (docs/design-domains.md, "A facet's end
+    # carries no terms"): a service's reason, which can hold what one grantee sent it,
+    # reaches every grantee's monitor.
+    Fault.new(name: 'a facet ending with a term',
+              file: 'erlang/apps/erx/src/erx_facet.erl',
+              from: 'exit(erx_report:reason_name(Reason));', to: 'exit(Reason);',
+              tests: 'erx_facet_tests', caught_by: 'ends_with_its_grant_test'),
     # The check of a call from another domain that erx_facet and erx_session_line share
     # (erx:call_from/3): one that does not compare its reply alias's domain lets the
     # grantee have the facet's reply go to a third domain.

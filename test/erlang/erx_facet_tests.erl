@@ -157,13 +157,20 @@ limits_its_forwards_test() ->
     ?assertMatch(#{dropped := 1, refused := 1, outstanding := 1}, erx_facet:info(Facet)).
 
 %% The facet ends with its grantee's domain pid, and with the process behind it, with
-%% the same reason; a grant whose process has already ended starts no facet.
+%% the leading atom of the reason alone (docs/design-domains.md, "A facet's end carries no
+%% terms"): a service's reason can hold what one grantee sent it, and the facet's monitors
+%% are every grantee's. A grant whose process has already ended starts no facet.
 ends_with_its_grant_test() ->
     Domain = domain_pid(),
     Facet = facet(echo(), Domain, #{}),
     Monitor = monitor(process, Facet),
     exit(Domain, {domain_down, ?GRANTEE, stopped}),
-    ?assertEqual({domain_down, ?GRANTEE, stopped}, receive {'DOWN', Monitor, process, _, R} -> R after 1000 -> timeout end),
+    ?assertEqual(domain_down, receive {'DOWN', Monitor, process, _, R} -> R after 1000 -> timeout end),
+    Secret = echo(),
+    Cut = facet(Secret, domain_pid(), #{}),
+    CutMonitor = monitor(process, Cut),
+    exit(Secret, {badarg, <<"sentinel passphrase">>}),
+    ?assertEqual(badarg, receive {'DOWN', CutMonitor, process, _, R1} -> R1 after 1000 -> timeout end),
     Behind = echo(),
     Second = facet(Behind, domain_pid(), #{}),
     SecondMonitor = monitor(process, Second),

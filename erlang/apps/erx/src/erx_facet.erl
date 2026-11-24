@@ -10,8 +10,12 @@ when it is minted, so the checks below hold for every facet by construction.
 start/3 runs the callback's init/1 in the new process, exports the facet's
 pid toward the grantee with send alone, and only then returns the pid, so
 the grantee can message and monitor the facet and nothing more, before
-anyone hands the pid out. The facet ends, with the same reason, when any
-process or port its grant names in ends_with ends. A mint names:
+anyone hands the pid out. The facet ends when any process or port its grant
+names in ends_with ends, with the leading atom of that end's reason
+(erx_report:reason_name/1) and never the reason whole, so its grantee's
+callers and monitors see no term of the service's (docs/design-domains.md,
+"A facet's end carries no terms"): a service's reason can hold what one
+grantee sent it. A mint names:
 
 * the grantee, as its domain pid, or as the port of this domain's
   connection to it (erx_connections:connection/1), so the facet ends with
@@ -328,7 +332,7 @@ loop(#{ends_with := EndsWith, forwards := Forwards, exports := Exports} = State)
                 _ -> loop(request(Message, State))
             end;
         {'DOWN', Monitor, _Type, _End, Reason} when is_map_key(Monitor, EndsWith) ->
-            exit(Reason);
+            exit(erx_report:reason_name(Reason));
         {'DOWN', Monitor, process, _Pid, _Reason} when is_map_key(Monitor, Forwards) ->
             loop(replied(Monitor, {error, failed}, State));
         {'DOWN', _Monitor, _Type, _Object, _Info} ->

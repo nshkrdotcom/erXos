@@ -227,7 +227,8 @@ state(Lib, Principals, Opts) ->
     %% before any application and lives as long as the runtime (close_side/4). Waiting
     %% holds, by domain id, each create or session's start not yet answered (wait_created/4),
     %% and settling, in arrival order, each settlement query not yet answered, with its
-    %% caller (answer_settling/2).
+    %% caller (answer_settling/2). Bonds holds, by monitor, each process a session's start
+    %% named in ends_with, with the held start or the session its end ends (bond/3).
     %% Introducing holds, by the pair's key, each introduce/2 caller, or {mints, Tag} for the mint core (reply/2), waiting for its
     %% connection to come up, with the timer of its deadline (settle_introductions/1).
     %% Held holds, by principal and in arrival order, each start waiting for the
@@ -252,7 +253,7 @@ state(Lib, Principals, Opts) ->
     MintConfig = maps:merge(#{owner => fun erx_dist:owner/1}, maps:with([owner, deadline], maps:get(mints, Opts, #{}))),
     #{lib => Lib, agent => Agent, exports => Exports, node => erlang:is_alive(), core => undefined,
       boot_timeout => ?BOOT_TIMEOUT, release => {booting, []},
-      configured => #{}, templates => #{}, waiting => #{}, settling => [],
+      configured => #{}, templates => #{}, waiting => #{}, settling => [], bonds => #{},
       links => erx_domain_links:new(),
       introducing => #{}, introduce_timeout => maps:get(introduce_timeout, Opts, ?INTRODUCE_TIMEOUT),
       held => #{}, release_wait => maps:get(release_wait, Opts, ?RELEASE_WAIT),
@@ -443,7 +444,10 @@ templates(Lib) -> Lib:templates().
 handle_call({create, Spec}, From, State) ->
     {noreply, start({create, Spec}, From, State)};
 handle_call({start_session, Principal, Start}, From, State) ->
-    {noreply, after_boot({start_session, Principal, Start}, From, State)};
+    case bond(Start, From, State) of
+        {ok, Bonded, Next} -> {noreply, after_boot({start_session, Principal, Bonded}, From, Next)};
+        {error, _} = Refused -> {reply, Refused, State}
+    end;
 handle_call({start_app, Name, Start}, From, State) ->
     {noreply, after_boot({start_app, Name, Start}, From, State)};
 handle_call({info, Id}, From, #{core := Core} = State) ->
@@ -582,10 +586,111 @@ release_timed_out(Principal, Timer, #{held := Held} = State) ->
 
 run({create, Spec}, From, State) ->
     answer_create(create(Spec, State), From);
-run({start_session, Principal, Start}, From, State) ->
-    answer_create(start_session(Principal, Start, State), From);
+run({start_session, Principal, #{ends_with := Ends} = Start}, From, State) ->
+    Monitors = [Monitor || {Monitor, _Pid} <- Ends],
+    case bond_state(Ends, State) of
+        answered ->
+            State;
+        ended ->
+            gen_server:reply(From, {error, ended}),
+            unbond(Monitors, State);
+        live ->
+            answer_create(bound(Monitors, start_session(Principal, maps:remove(ends_with, Start), State)), From)
+    end;
 run({start_app, Name, Start}, From, State) ->
     answer_create(start_app(Name, Start, State), From).
+
+%% A session's start bonded to what it ends with (docs/design-domains.md, "Principals,
+%% sessions and quotas"): each process its ends_with names is monitored here, as the
+%% service admits the start and before the start is held or its domain made, and Start
+%% keeps each monitor beside its process. Bonds holds each monitor with what its 'DOWN'
+%% ends: {start, From} while the start waits, then {session, Id} once its domain is made
+%% (bound/2), until the session's end arrives (unbond_session/2). So no moment passes,
+%% from the admission to the session's end, in which nothing watches what the session
+%% ends with, whatever becomes of the start's caller. A start that names none is bonded
+%% to nothing.
+bond(Start, From, #{bonds := Bonds} = State) ->
+    Pids = maps:get(ends_with, Start, []),
+    case pids(Pids) of
+        true ->
+            Ends = [{monitor(process, Pid), Pid} || Pid <- Pids],
+            Holders = maps:from_list([{Monitor, {start, From}} || {Monitor, _Pid} <- Ends]),
+            {ok, Start#{ends_with => Ends}, State#{bonds := maps:merge(Bonds, Holders)}};
+        false ->
+            {error, {bad_spec, ends_with}}
+    end.
+
+%% Whether Term is a proper list of pids.
+pids([Pid | Rest]) when is_pid(Pid) -> pids(Rest);
+pids([]) -> true;
+pids(_Term) -> false.
+
+%% Where a start about to run stands with what it ends with: answered, when one of its
+%% bonds ended while it was held (bond_ended/2); ended, when a process of this node it
+%% names has ended though its 'DOWN' is not yet taken, so it is refused before its domain
+%% is made, as a facet's start is (erx_facet); live else. A process of another domain is
+%% learnt of only by its 'DOWN', which then stops the session the start made.
+bond_state(Ends, #{bonds := Bonds}) ->
+    case {[M || {M, _} <- Ends, not is_map_key(M, Bonds)], [P || {_, P} <- Ends, ended(P)]} of
+        {[_ | _], _} -> answered;
+        {[], [_ | _]} -> ended;
+        {[], []} -> live
+    end.
+
+ended(Pid) -> node(Pid) =:= node() andalso not is_process_alive(Pid).
+
+%% A start's bonds once it has run: the session's, if its domain was made, and none if it
+%% was refused before.
+bound(Monitors, {{error, _} = Error, Next}) ->
+    {Error, unbond(Monitors, Next)};
+bound(Monitors, {{waiting, Domain}, Next} = Built) -> rebound(Monitors, Domain, Built, Next);
+bound(Monitors, {{ready, Domain}, Next} = Built) -> rebound(Monitors, Domain, Built, Next);
+bound(Monitors, {{refused, Domain, _Refusal}, Next} = Built) -> rebound(Monitors, Domain, Built, Next).
+
+rebound(Monitors, {erx_domain, Id, _, _}, {Answer, _}, #{bonds := Bonds} = Next) ->
+    {Answer, Next#{bonds := maps:merge(Bonds, maps:from_keys(Monitors, {session, Id}))}}.
+
+%% One of a start's or a session's ends_with has ended: a held start is answered ended,
+%% and a session is stopped, its start answered ended if it is still waiting
+%% (settle/2). Either way the bond's other monitors go.
+bond_ended(Monitor, #{bonds := Bonds} = State) ->
+    Holder = maps:get(Monitor, Bonds),
+    Next = unbond([M || M := H <- Bonds, H =:= Holder], State),
+    case Holder of
+        {start, From} ->
+            gen_server:reply(From, {error, ended}),
+            Next;
+        {session, Id} ->
+            stop_bonded(Id, Next)
+    end.
+
+%% A waiting start is answered ended once its domain has ended (settle/2); if the library
+%% refuses the stop, no end will come, so it is answered now, as build/7 answers a refused
+%% stop, and the running domain is the refused stop's, logged by stop/2.
+stop_bonded(Id, #{core := Core, waiting := Waiting} = State) ->
+    case erx_domain_core:fetch(Id, Core) of
+        {ok, #{state := Life}} when ?IS_LIVE(Life) ->
+            case {stop(Id, State), Waiting} of
+                {ok, #{Id := #{refusal := none} = Waiter}} ->
+                    State#{waiting := Waiting#{Id := Waiter#{refusal := {error, ended}}}};
+                {refused, #{Id := #{from := From}}} ->
+                    gen_server:reply(From, {error, ended}),
+                    State#{waiting := maps:remove(Id, Waiting)};
+                _ ->
+                    State
+            end;
+        _ ->
+            State
+    end.
+
+%% Takes the bonds of Monitors away, with any 'DOWN' of theirs already queued.
+unbond(Monitors, #{bonds := Bonds} = State) ->
+    _ = [demonitor(Monitor, [flush]) || Monitor <- Monitors],
+    State#{bonds := maps:without(Monitors, Bonds)}.
+
+%% The bonds of session Id, which has ended, go with it.
+unbond_session(Id, #{bonds := Bonds} = State) ->
+    unbond([M || M := {session, I} <- Bonds, I =:= Id], State).
 
 %% A create's or a session's start's answer to From, now or once the domain reports or
 %% is retired.
@@ -622,7 +727,7 @@ handle_info({domain_ended, Id, End, Record}, #{device_service := Devices, core :
                  _ -> none
              end,
     ok = Devices:domain_ended(Id, Origin),
-    {noreply, ended(Id, End, erx_domain_core:fault_where(End, Record), State)};
+    {noreply, ended(Id, End, erx_domain_core:fault_where(End, Record), unbond_session(Id, State))};
 handle_info({domain_ready, Ref, Id, Provides, Inspect}, State) ->
     {noreply, ready(Id, Ref, provided_atoms(Provides), Inspect, State)};
 handle_info({mint_introduced, Tag, Result}, State) ->
@@ -684,6 +789,10 @@ handle_info({'EXIT', Pid, _Reason}, #{core := Core} = State) when Core =/= undef
         _ -> ok
     end,
     {noreply, pid_ended(Pid, State)};
+handle_info({'DOWN', Monitor, process, _Pid, _Reason}, #{bonds := Bonds} = State) when is_map_key(Monitor, Bonds) ->
+    %% A process a session's start named in ends_with has ended, by any reason: noproc
+    %% for one that had ended before the monitor, noconnection for one whose domain ended.
+    {noreply, bond_ended(Monitor, State)};
 handle_info(release_booted, #{release := {booting, Early}} = State) ->
     {noreply, lists:foldl(fun({Start, From}, Next) -> start(Start, From, Next) end,
                           State#{release := booted}, lists:reverse(Early))};
@@ -1715,7 +1824,8 @@ answer_in_place(#{core := Core, mints := Mints, boot_held := Held} = State) ->
     arm_fallback(Starting, answer_settling(Starting, answer_sessions(InPlace, State))).
 
 answer_sessions(InPlace, #{waiting := Waiting, core := Core} = State) ->
-    Ready = [Id || Id := #{answer_at := in_place, pid := Pid} <- Waiting, Pid =/= gone, is_ready(Id, Core)],
+    Ready = [Id || Id := #{answer_at := in_place, pid := Pid, refusal := none} <- Waiting, Pid =/= gone,
+                   is_ready(Id, Core)],
     InPlaceIds = [Id || Id <- Ready, InPlace({session, Id})],
     lists:foreach(fun(Id) -> send_app(Id, Core) end, InPlaceIds),
     lists:foldl(fun answer_ok/2, State, InPlaceIds).
