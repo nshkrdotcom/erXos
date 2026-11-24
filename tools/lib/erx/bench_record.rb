@@ -308,6 +308,10 @@ module Erx
 
     def percentiles(histogram) = PERCENTILES.transform_values { |p| percentile(histogram, p) }
 
+    # The history repository records are written to: ERX_BENCH_HISTORY, or
+    # ~/erxos-history (docs/design-bench.md, "The record").
+    def history = ENV.fetch('ERX_BENCH_HISTORY') { File.join(Dir.home, 'erxos-history') }
+
     # Writes record under history and returns the run directory's real path. boots is one
     # { serial:, qemu: } map of log paths per boot, copied as boot-<n>.serial.log and
     # boot-<n>.qemu.log. Everything is serialized and bounded before the directory is made,

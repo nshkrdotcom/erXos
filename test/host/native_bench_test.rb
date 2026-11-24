@@ -23,4 +23,30 @@ class NativeBenchTest < Minitest::Test
     assert_equal [10_000, 10_000, 10_000, 2000],
                  %w[wake-same-cpu wake-cross-cpu trigger-take park-deadline].map { |name| profiles.fetch(name).samples }
   end
+  # The native image's root runs on CPU 0 and times wake-cross-cpu against the last CPU,
+  # so a boot of n CPUs calibrates that one pair, and a boot of one CPU none.
+  def test_the_boot_asks_for_the_native_cells_on_the_counter_and_the_last_cpus_pair
+    wake = Erx::BenchSuite.benchmark('wake')
+    asked = Erx::NativeBench.asked(wake, cpus: 4)
+    assert_equal wake.landing.fetch('native'), asked.cells
+    assert_equal ['counter', [[0, 3]]], [asked.clock, asked.pairs]
+    assert_equal [], Erx::NativeBench.asked(wake, cpus: 1).pairs
+  end
+
+  # The seeded build skips one wake of wake-same-cpu: only that cell failed with a lost
+  # wake shows the run caught it.
+  def test_the_seeded_boot_is_caught_only_by_a_lost_wake_of_wake_same_cpu
+    cell = lambda do |operation, status, lost|
+      Erx::BenchRecord::Cell.new(
+        benchmark: 'wake', operation: operation, profile: Erx::NativeBench::LANDING_PROFILES.fetch('fast'),
+        conditions: Erx::BenchRecord::Conditions.new(load: 'idle', placement: 'same-cpu', parameters: {}, clock: 'counter', batch: 1),
+        status: status, reason: status == 'failed' ? 'lost wake' : 'the guest printed no line for it',
+        counts: { 'lost' => lost, 'early' => 0, 'missed' => 0 }, detail: {}
+      )
+    end
+    assert Erx::NativeBench.seed_caught?([cell.call('wake-same-cpu', 'failed', 1), cell.call('trigger-take', 'not_run', 0)])
+    refute Erx::NativeBench.seed_caught?([cell.call('wake-same-cpu', 'not_run', 0)])
+    refute Erx::NativeBench.seed_caught?([cell.call('wake-cross-cpu', 'failed', 1)])
+    refute Erx::NativeBench.seed_caught?([])
+  end
 end

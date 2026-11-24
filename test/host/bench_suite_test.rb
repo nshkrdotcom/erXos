@@ -63,4 +63,26 @@ class BenchSuiteTest < Minitest::Test
       )] })
     end
   end
+  # A boot's suite cell is its cells' worst, each judged in the record's environment,
+  # and failed when its seeded run's fault went uncaught.
+  def test_a_boots_suite_cell_comes_from_its_record_and_its_seeded_run
+    record = lambda do |cpus, placement, status|
+      conditions = Erx::BenchRecord::Conditions.new(load: 'idle', placement: placement, parameters: {}, clock: 'counter',
+                                                    batch: 1)
+      cell = Erx::BenchRecord::Cell.new(benchmark: 'wake', operation: 'wake-cross-cpu', conditions: conditions,
+                                        profile: Erx::BenchRecord::Profile.new(name: 'fast', warmup: 1, samples: 1, runs: 1),
+                                        status: status, reason: 'the machine has one CPU',
+                                        counts: { 'lost' => 0, 'early' => 0, 'missed' => 0 }, detail: {})
+      Erx::BenchRecord::Record.new(
+        environment: Erx::BenchRecord::Environment.new(kind: 'qemu-hvf', model: 'Mac16,10', cpus: cpus, system: nil, details: {}),
+        subject: Erx::BenchRecord::Subject.new(revision: '0' * 40, dirty: false, details: {}),
+        run: Erx::BenchRecord::Run.new(date: Time.at(0).utc, started_by: 'landing', load: nil, host_cpus: nil, reused_from: nil),
+        clock: {}, cells: [cell]
+      )
+    end
+    assert_equal 'passed', Suite.boot_cell(record.call(1, 'cross-cpu', 'unsupported'), seed_caught: true)
+    assert_equal 'partial', Suite.boot_cell(record.call(4, 'cross-cpu', 'unsupported'), seed_caught: true)
+    assert_equal 'not_run', Suite.boot_cell(record.call(4, 'cross-cpu', 'not_run'), seed_caught: true)
+    assert_equal 'failed', Suite.boot_cell(record.call(1, 'cross-cpu', 'unsupported'), seed_caught: false)
+  end
 end

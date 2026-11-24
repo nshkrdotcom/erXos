@@ -4,12 +4,14 @@
 
 require_relative 'bench_measurement'
 require_relative 'bench_record'
+require 'etc'
 require_relative 'boot_image'
 require_relative 'error'
 require_relative 'fiasco'
 require_relative 'native_root'
 require_relative 'qemu'
 require_relative 'runner'
+require_relative 'source_revision'
 
 module Erx
   # The native bench image (docs/design-bench.md, "1. `wake`: how late a waiting thread runs"): test/guest/native_bench's
@@ -40,11 +42,29 @@ module Erx
 
     # The BENCH and CLOCK lines of a serial log, each without its line end. They are the
     # guest's, untrusted: BenchMeasurement.boot is their one judge.
+    # The root's build flags: the test hooks, and the seeded fault when asked for.
+    def flags(seed_lost_wake:) = ['-DERX_FIASCO_TEST_HOOKS', *(seed_lost_wake ? ['-DERX_BENCH_SEED_LOST_WAKE'] : [])].freeze
+
     def guest_lines(serial) = serial.b.split(/\r?\n/n).grep(GUEST_LINE)
 
     # The profile each operation of benchmark ran at, in its landing form.
     def profiles(benchmark)
       benchmark.operations.transform_values { |operation| LANDING_PROFILES.fetch(operation.profile, nil) }.compact
+    end
+
+    # What a boot of the image at cpus CPUs asks of its guest: the benchmark's native
+    # landing cells at their profiles, on the counter, and the one pair the root (on CPU
+    # 0) times wake-cross-cpu across, with the last CPU; none on one CPU.
+    def asked(benchmark, cpus:)
+      BenchMeasurement::Asked.new(benchmark: benchmark, cells: benchmark.landing.fetch('native'),
+                                  profiles: profiles(benchmark), clock: 'counter',
+                                  pairs: cpus > 1 ? [[0, cpus - 1]] : [])
+    end
+
+    # Whether a seeded boot's cells show its fault: the build skips one wake of
+    # wake-same-cpu, so that cell is failed with a lost wake.
+    def seed_caught?(cells)
+      cells.any? { |cell| cell.operation == 'wake-same-cpu' && cell.status == 'failed' && cell.counts.fetch('lost').positive? }
     end
 
     # Raises on a setup failure the guest named, which a transcript's timeout would only imply.
@@ -65,16 +85,20 @@ module Erx
       end
 
       # One boot of the image under accel at cpus CPUs, with the kernel as last built
-      # unless asked to rebuild: its serial log, its seconds and the guest's lines.
+      # unless asked to rebuild: its serial log, its seconds, the guest's lines, the
+      # image's SHA-256, its build flags, QEMU's version, and the stored log a replayed
+      # boot came from (nil for a fresh one).
       def call(accel:, cpus:, seed_lost_wake: false, build: false, jobs: 4)
         fiasco = Fiasco.new(root: @root, runner: @runner, compiler: @compiler)
         fiasco.build(jobs: jobs) if build
-        built = image(fiasco, seed_lost_wake: seed_lost_wake)
+        flags = NativeBench.flags(seed_lost_wake: seed_lost_wake)
+        built = image(fiasco, seed_lost_wake: seed_lost_wake, flags: flags)
         directory = File.join(@root, 'build/qemu', "bench-#{accel}-#{cpus}cpu-#{Process.pid}-#{Random.bytes(8).unpack1('H*')}")
         report = boot(built, accel: accel, cpus: cpus, directory: directory)
         serial = File.binread(report.fetch('serial_log'))
         { serial: report.fetch('serial_log'), seconds: report.fetch('elapsed_seconds'),
-          lines: NativeBench.guest_lines(serial) }.freeze
+          lines: NativeBench.guest_lines(serial), image_sha256: report.fetch('image_sha256'), flags: flags,
+          compiler: @compiler, qemu_version: report['qemu_version'], reused_from: report['reused_from'] }.freeze
       end
 
       private
@@ -89,14 +113,80 @@ module Erx
         raise e
       end
 
-      def image(fiasco, seed_lost_wake:)
+      def image(fiasco, seed_lost_wake:, flags:)
         build = File.join(@root, 'build', seed_lost_wake ? 'native-bench-seeded' : 'native-bench')
-        flags = ['-DERX_FIASCO_TEST_HOOKS', *(seed_lost_wake ? ['-DERX_BENCH_SEED_LOST_WAKE'] : [])]
         root_task = NativeRoot.new(root: @root, source: @root, runner: @runner, compiler: @compiler, linker: @linker,
                                    platform: @platform, fiasco: fiasco)
                               .build(name: 'bench-root', sources: SOURCES, directory: File.join(build, 'root'), flags: flags)
         BootImage.new(root: @root, runner: @runner, compiler: @compiler, linker: @linker)
                  .build(directory: File.join(build, 'image'), stand_in_root: root_task)
+      end
+    end
+    # The native boot of the landing matrix (docs/design-bench.md, "The gates"): one boot
+    # of the image and one of its seeded build. The first boot's lines, judged against
+    # what it asked, are a record, which BenchRecord.write adds to the history unless the
+    # boot was replayed from the gate's store; the second's show whether its fault was caught.
+    class Landing
+      def initialize(root:, runner: Runner.new(owner_root: root, log_dir: File.join(root, 'build/logs')),
+                     run: Run.new(root: root, runner: runner))
+        @root = File.expand_path(root)
+        @runner = runner
+        @run = run
+      end
+
+      # benchmark's native cells booted as boot (a BenchSuite::Boot) says: the record, the
+      # run directory written (nil for a replayed boot), the refused lines' reasons, and
+      # whether the seeded boot was caught.
+      def call(benchmark, boot:, history:)
+        accel = boot.kind.delete_prefix('qemu-')
+        asked = NativeBench.asked(benchmark, cpus: boot.cpus)
+        date = Time.now.utc
+        before = load_average
+        measured = @run.call(accel: accel, cpus: boot.cpus)
+        after = load_average
+        seeded = @run.call(accel: accel, cpus: boot.cpus, seed_lost_wake: true)
+        answer = BenchMeasurement.boot(measured.fetch(:lines), asked)
+        record = BenchRecord::Record.new(
+          environment: environment(boot, accel: accel, measured: measured), subject: subject(measured),
+          run: BenchRecord::Run.new(date: date, started_by: 'landing', load: before && after && [before, after],
+                                    host_cpus: Etc.nprocessors, reused_from: measured.fetch(:reused_from)),
+          clock: answer.fetch(:clock) || {}, cells: answer.fetch(:cells)
+        )
+        written = unless record.run.replayed?
+                    BenchRecord.write(record, history: history, erxos_root: @root, boots: [{ serial: measured.fetch(:serial) }])
+                  end
+        { record: record, written: written, refused: answer.fetch(:refused),
+          seed_caught: NativeBench.seed_caught?(BenchMeasurement.boot(seeded.fetch(:lines), asked).fetch(:cells)) }
+      end
+
+      private
+
+      def environment(boot, accel:, measured:)
+        BenchRecord::Environment.new(
+          kind: boot.kind, model: sysctl('hw.model'), cpus: boot.cpus, system: nil,
+          details: { 'memory_mib' => MEMORY_MIB, 'accelerator' => accel, 'machine' => 'virt',
+                     'qemu' => measured.fetch(:qemu_version), 'host_os' => RbConfig::CONFIG['host_os'] }.compact
+        )
+      end
+
+      def subject(measured)
+        revision = SourceRevision.read(root: @root, runner: @runner)
+        raise Error, "bench: #{@root} is not a git checkout, so a record has no revision" unless revision
+
+        BenchRecord::Subject.new(revision: revision.commit, dirty: revision.dirty,
+                                 details: measured.slice(:image_sha256, :flags, :compiler).transform_keys(&:to_s))
+      end
+
+      # The host's one-minute load average, nil where it cannot be read.
+      def load_average
+        sysctl('vm.loadavg')[/\d+(?:\.\d+)?/]&.to_f
+      rescue Error
+        nil
+      end
+
+      def sysctl(name)
+        result = @runner.run(['sysctl', '-n', name], name: "bench-sysctl-#{name.tr('.', '-')}", deadline: 10)
+        File.binread(result.fetch('log'), 4096).strip
       end
     end
   end

@@ -5,6 +5,8 @@
 require_relative 'bench_record'
 require_relative 'declaration_files'
 require_relative 'error'
+require_relative 'line_escape'
+require_relative 'native_bench'
 
 module Erx
   # The benchmarks' declarations and the landing `bench` QEMU suite built from them
@@ -98,11 +100,14 @@ module Erx
     # The suite's cells: each boot's benchmarks, named as a QEMU cell that carries its
     # case (Erx::QemuCells::CELL_CASE_NAME): "hvf-4cpu-native-wake".
     def suite_cells
-      BOOTS.flat_map do |boot, entry|
-        configuration = "#{entry.kind.delete_prefix('qemu-')}-#{entry.cpus}cpu"
-        benchmarks.values.select { |declared| declared.landing.key?(boot) }
-                  .map { |declared| "#{configuration}-#{boot}-#{declared.name}" }
+      BOOTS.flat_map do |boot, _|
+        benchmarks.values.select { |declared| declared.landing.key?(boot) }.map { |declared| suite_cell_name(boot, declared.name) }
       end
+    end
+
+    def suite_cell_name(boot, benchmark)
+      entry = BOOTS.fetch(boot)
+      "#{entry.kind.delete_prefix('qemu-')}-#{entry.cpus}cpu-#{boot}-#{benchmark}"
     end
 
     # The suite cell of one benchmark in one boot, from its cells' [status,
@@ -114,19 +119,46 @@ module Erx
            .min_by { |status| WORST_FIRST.index(status) }
     end
 
-    # Whether environment lacks the CPUs cell's placement needs, so unsupported is the
-    # answer the declaration expects there. Deterministic mode runs one CPU.
-    def expected_unsupported?(cell, environment)
+    # Whether environment lacks the CPUs a placement needs (a LandingCell's, or a
+    # recorded cell's conditions), so unsupported is the answer the declaration expects
+    # there. Deterministic mode runs one CPU.
+    def expected_unsupported?(placed, environment)
       cpus = environment.kind == 'qemu-det' ? 1 : environment.cpus
-      !cpus.nil? && cpus < PLACEMENTS.fetch(cell.placement)
+      !cpus.nil? && cpus < PLACEMENTS.fetch(placed.placement)
     end
 
-    # The suite's run. No boot of the landing matrix has its bench image, so every cell
-    # is pending, the gate's status for a cell whose call does not exist; a suite whose
-    # every cell is pending does not fail the gate.
-    def run(_context)
-      { cells: suite_cells.to_h { |cell| [cell, 'pending'] },
-        notes: ['bench: the landing matrix has no bench image to boot'] }
+    # The suite cell of one boot's benchmark from its record: the worst of its cells,
+    # each judged in the record's environment, and failed when the boot's seeded run
+    # did not show its fault.
+    def boot_cell(record, seed_caught:)
+      return 'failed' unless seed_caught
+
+      suite_cell(record.cells.map { |cell| [cell.status, expected_unsupported?(cell.conditions, record.environment)] })
     end
+
+    # The suite's run: the native boot's wake cells and its seeded run, recorded in
+    # history (NativeBench::Landing). The xdomain boot has no bench image yet, so its
+    # cells are pending, the gate's status for a cell whose call does not exist.
+    def run(context, history: BenchRecord.history)
+      landing = NativeBench::Landing.new(root: context.root).call(benchmark('wake'), boot: BOOTS.fetch('native'),
+                                                                   history: history)
+      record = landing.fetch(:record)
+      cells = suite_cells.to_h { |cell| [cell, 'pending'] }
+                         .merge(suite_cell_name('native', 'wake') => boot_cell(record, seed_caught: landing.fetch(:seed_caught)))
+      { cells: cells, notes: landing_notes(landing) + ['bench: the xdomain boot has no bench image to boot'] }
+    end
+
+    # What the report says of the native boot. A refusal never quotes a guest's line, but
+    # may carry JsonInput's words about it, so each is escaped for the terminal.
+    def landing_notes(landing)
+      record = landing.fetch(:record)
+      written = landing.fetch(:written)
+      [written ? "bench: native: recorded #{LineEscape.escape(written)}" : "bench: native: replayed #{LineEscape.escape(record.run.reused_from)}, no record added",
+       *("bench: native: the seeded lost wake was not caught" unless landing.fetch(:seed_caught)),
+       *record.cells.reject { |cell| cell.status == 'measured' }
+              .map { |cell| "bench: native: #{cell.operation} #{cell.conditions.placement}: #{cell.status} (#{cell.reason})" },
+       *landing.fetch(:refused).map { |reason| "bench: native: refused: #{LineEscape.escape(reason)}" }]
+    end
+    private_class_method :landing_notes
   end
 end
