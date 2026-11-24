@@ -25,7 +25,7 @@ class BenchGuestLinesTest < Minitest::Test
       sanitizers = ENV.fetch('ERX_SANITIZERS', '').split(',').reject(&:empty?)
       flags = sanitizers.empty? ? [] : ["-fsanitize=#{sanitizers.join(',')}", '-fno-omit-frame-pointer']
       log, built = Open3.capture2e(ENV.fetch('ERX_CLANG', 'clang'), '-std=c17', '-Wall', '-Wextra', '-Werror', '-pedantic',
-                                   '-O1', '-g', *flags, '-I', ROOT, '-I', File.join(ROOT, 'test/guest/bench'),
+                                   '-O1', '-g', '-pthread', *flags, '-I', ROOT, '-I', File.join(ROOT, 'test/guest/bench'),
                                    *SOURCES.map { |source| File.join(ROOT, source) }, '-o', program, stdin_data: '')
       assert built.success?, log
       output, ran = Open3.capture2e(program, 'lines', stdin_data: '')
