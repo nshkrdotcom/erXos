@@ -35,14 +35,10 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   guest library of `test/guest/bench/` and the native bench guest `test/guest/native_bench/` with its runner
   `tools/lib/erx/native_bench.rb` exist: its root times `park-deadline`, the two wake handshakes and
   `trigger-take` on two executors of its group and prints their `BENCH` lines and the `CLOCK` line, and its
-  build with `ERX_BENCH_SEED_LOST_WAKE` skips one wake. Still to build: the `bench` QEMU suite's run, whose
-  cells are pending, booting that image and giving its lines to `BenchMeasurement.boot` and the record's one
-  writer, with the seeded boot as the suite's seeded run; `bench/erx_wake_bench.erl` with
+  build with `ERX_BENCH_SEED_LOST_WAKE` skips one wake; the `bench` suite boots both, records the first and
+  fails its cell unless the second loses its wake. Still to build: `bench/erx_wake_bench.erl` with
   `bench/erx_bench_hist.erl` for `erlang-timer` in the `xdomain` bench image; and the load cells, whose
   spinners are `native_task`'s program in new modes, which the landing matrix does not run yet.
-* [Medium] benchmarks, the native bench guest's sizes: `test/guest/native_bench/guest.c` states the landing
-  forms of the fast and periodic profiles as C constants and `tools/lib/erx/native_bench.rb` as
-  `LANDING_PROFILES`; generate one from the other, or pass the sizes in the root's argument.
 * [Medium] benchmarks, the native bench guest's handshake (`test/guest/native_bench/guest.c`): any `ERX_OK` from
   B's park is taken as A's poke, which holds only while nothing else moves the group's epochs; A should
   publish the poke's number and B re-park until it sees it. The executors run fixed scripts that must match the

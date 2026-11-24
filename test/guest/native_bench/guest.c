@@ -44,11 +44,17 @@
 #define BENCHMARK	"wake"
 #define LABEL_DOORBELL	UINT64_C(0x57a1)
 #define NS_PER_SECOND	UINT64_C(1000000000)
-/* The landing forms of the fast and periodic profiles (docs/design-bench.md, "Profiles"). */
-#define FAST_WARMUP	1000u
-#define FAST_SAMPLES	10000u
+/*
+ * The landing forms of the fast and periodic profiles (docs/design-bench.md, "Profiles"),
+ * which tools/lib/erx/native_bench.rb passes from NativeBench::LANDING_PROFILES.
+ */
+#if !defined(ERX_BENCH_FAST_WARMUP) || !defined(ERX_BENCH_FAST_SAMPLES) || !defined(ERX_BENCH_PERIODIC_SAMPLES)
+#error "the build passes the landing profiles' sizes"
+#endif
+#define FAST_WARMUP	ERX_BENCH_FAST_WARMUP
+#define FAST_SAMPLES	ERX_BENCH_FAST_SAMPLES
 #define PERIODS_PER_SECOND	UINT64_C(1000)
-#define PERIODIC_SAMPLES	2000u
+#define PERIODIC_SAMPLES	ERX_BENCH_PERIODIC_SAMPLES
 /* The first periodic deadline is this many periods after the run starts. */
 #define PERIODIC_LEAD	10u
 /* B parks this long for a wake; a park that reaches it lost its wake. */
@@ -586,8 +592,11 @@ erx_fiasco_root_main(void)
 	if (reason == NULL)
 		reason = erx_fiasco_root_up((const void *)(uintptr_t)handoff.image.start, (size_t)handoff.image.size, 0,
 		    NULL, ERX_FIASCO_ROOT_SLICE_US);
-	if (reason != NULL)
-		fail(reason);
+	if (reason != NULL) {
+		say("erx: bench: the root did not come up FAILED: ");
+		say(reason);
+		fail("\n");
+	}
 	erx_bench_read_pairs(erx_fiasco_counter, pairs, READ_PAIRS);
 	bind_doorbell();
 	say("erx: bench: timing\n");

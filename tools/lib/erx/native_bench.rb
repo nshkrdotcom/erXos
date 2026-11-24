@@ -24,7 +24,7 @@ module Erx
     SOURCES = [*NativeRoot::RUNTIME, *NativeRoot::VM, *NativeRoot::SERVICE, *NativeRoot::LAUNCH, *BENCH_LIBRARY,
                'test/guest/native_bench/guest.c'].freeze
     # The landing forms of the profiles the guest's cells take (docs/design-bench.md,
-    # "Profiles"), which test/guest/native_bench/guest.c's FAST_ and PERIODIC_ constants state.
+    # "Profiles"); the root is built with their sizes (flags).
     LANDING_PROFILES = {
       'fast' => BenchRecord::Profile.new(name: 'fast', warmup: 1000, samples: 10_000, runs: 1),
       'periodic' => BenchRecord::Profile.new(name: 'periodic', warmup: 0, samples: 2000, runs: 1)
@@ -42,8 +42,13 @@ module Erx
 
     # The BENCH and CLOCK lines of a serial log, each without its line end. They are the
     # guest's, untrusted: BenchMeasurement.boot is their one judge.
-    # The root's build flags: the test hooks, and the seeded fault when asked for.
-    def flags(seed_lost_wake:) = ['-DERX_FIASCO_TEST_HOOKS', *(seed_lost_wake ? ['-DERX_BENCH_SEED_LOST_WAKE'] : [])].freeze
+    # The root's build flags: the test hooks, the landing profiles' sizes, which
+    # test/guest/native_bench/guest.c takes from them alone, and the seeded fault when asked for.
+    def flags(seed_lost_wake:)
+      fast, periodic = LANDING_PROFILES.values_at('fast', 'periodic')
+      ['-DERX_FIASCO_TEST_HOOKS', "-DERX_BENCH_FAST_WARMUP=#{fast.warmup}u", "-DERX_BENCH_FAST_SAMPLES=#{fast.samples}u",
+       "-DERX_BENCH_PERIODIC_SAMPLES=#{periodic.samples}u", *(seed_lost_wake ? ['-DERX_BENCH_SEED_LOST_WAKE'] : [])].freeze
+    end
 
     def guest_lines(serial) = serial.b.split(/\r?\n/n).grep(GUEST_LINE)
 

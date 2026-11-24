@@ -49,4 +49,12 @@ class NativeBenchTest < Minitest::Test
     refute Erx::NativeBench.seed_caught?([cell.call('wake-cross-cpu', 'failed', 1)])
     refute Erx::NativeBench.seed_caught?([])
   end
+  # The guest's sample counts are the landing profiles' (one source): the root is built
+  # with them, and the seeded build adds only its fault.
+  def test_the_root_is_built_with_the_landing_profiles_sizes
+    sizes = %w[-DERX_BENCH_FAST_WARMUP=1000u -DERX_BENCH_FAST_SAMPLES=10000u -DERX_BENCH_PERIODIC_SAMPLES=2000u]
+    plain = Erx::NativeBench.flags(seed_lost_wake: false)
+    assert_equal sizes, plain.grep(/SAMPLES|WARMUP/)
+    assert_equal plain + ['-DERX_BENCH_SEED_LOST_WAKE'], Erx::NativeBench.flags(seed_lost_wake: true)
+  end
 end
