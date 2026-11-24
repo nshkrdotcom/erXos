@@ -1229,7 +1229,7 @@ module Erx
          point('root-identity', /\Aerx: root task: build/n, identity),
          point('root-manifest', /\Aerx: root task: manifest/n, manifest),
          point('root-watchdog', /\Aerx: root task: watchdog/n, /\Aerx: root task: watchdog #{watchdog}\r?\n\z/n),
-         *onboard_pins_points(root, source),
+         *onboard_pins_points(built),
          # ERTS's own lines are debug log records of the root's space (NativeRoot::DOMAIN_RECORD).
          point('erts-start', /\A#{NativeRoot::DOMAIN_RECORD}erx: erts: erl_start runs/n,
                /\A#{NativeRoot::DOMAIN_RECORD}erx: erts: erl_start runs, #{arguments} arguments\r?\n\z/n, seconds: 60),
@@ -1237,24 +1237,14 @@ module Erx
          SLOGAN, RELEASE_SHELL].freeze
       end
 
-      # The root's on-board pins line (docs/design-header-io.md, "On-board pins"): on a board
-      # whose header map has on-board rows, when the manifest gives the system domain the unit
-      # of the map's pin controller, the root sets every row before any domain starts, and
-      # QEMU's raspi4b keeps what it writes, so the words read back. Elsewhere the root prints
-      # no such line, or one this boot does not judge.
-      def self.onboard_pins_points(root, manifest)
-        platform = Platform.load(root: root, name: manifest.machine.string('platform'))
-        entry = platform.pins&.controllers&.first
-        rows = entry.nil? ? 0 : entry.boot_written_rows.size
+      # The root's on-board pins line (docs/design-header-io.md, "On-board pins"): when the
+      # manifest has rows the root writes at boot, of a pin controller the system domain holds,
+      # the root sets each before any domain starts, and QEMU's raspi4b keeps what it writes, so
+      # the words read back. The count is the packer's of the rows it packed (the manifest
+      # report's boot_pin_rows). Elsewhere the root prints no such line.
+      def self.onboard_pins_points(built)
+        rows = built.report.fetch('manifest').fetch('boot_pin_rows')
         return [] if rows.zero?
-
-        controller = platform.record.fetch('units').find do |unit|
-          unit.fetch('devices').any? { |device| entry.devices.include?(device.fetch('path')) }
-        end
-        held = manifest.records.fetch('unit', []).any? do |unit|
-          unit.reference('holder') == 'system' && unit.string('placement') == controller&.fetch('key')
-        end
-        return [] unless held
 
         [point('root-pins', /\Aerx: root task: on-board pins /n,
                /\Aerx: root task: on-board pins set: #{rows} rows\r?\n\z/n)]

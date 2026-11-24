@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "erx/core/bcm2711_pins.h"
 #include "erx/device_kinds.h"
 #include "liberx/backend/core/boot_manifest.h"
 #include "liberx/backend/core/manifest_dma.h"
@@ -235,12 +236,23 @@ main(int argc, char **argv)
 			    (unsigned long long)row.window.base, (unsigned long long)row.window.size);
 		else
 			printf("held_mailbox none\n");
-		/* The device the root writes itself once at boot, the pin controller (On-board pins). */
-		if (erx_manifest_open(bytes, length, &view, &error) && erx_boot_held_row(&view, "brcm,bcm2711-gpio", &row))
+		/*
+		 * The device the root writes itself once at boot, the pin controller (On-board pins),
+		 * and how many of the pins rows the root takes (erx_boot_pin_rows).
+		 */
+		if (erx_manifest_open(bytes, length, &view, &error) && erx_boot_held_row(&view, ERX_BCM2711_PINS_COMPATIBLE, &row)) {
+			erx_mf_pin_t pins[ERX_BCM2711_PINS_ROWS_MAX];
+			size_t taken;
+
 			printf("held_pins %.*s %llu %llu\n", (int)row.path.length, row.path.bytes,
 			    (unsigned long long)row.window.base, (unsigned long long)row.window.size);
-		else
+			if (erx_boot_pin_rows(&view, row.device, ERX_BCM2711_PINS_FIRST, pins, ERX_BCM2711_PINS_ROWS_MAX, &taken))
+				printf("pin_rows %zu\n", taken);
+			else
+				printf("pin_rows refused\n");
+		} else {
 			printf("held_pins none\n");
+		}
 	}
 	printf("devices %zu\n", manifest.device_count);
 	for (size_t at = 0; at < manifest.device_count; at++) {

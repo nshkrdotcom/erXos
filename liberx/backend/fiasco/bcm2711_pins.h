@@ -22,10 +22,8 @@
 
 /* What the root did with the manifest's on-board pins (erx_fiasco_program_board). */
 typedef enum erx_fiasco_board_pins {
-	/* The manifest has no pins row the root sets: nothing to set, and no line. */
+	/* The manifest has no pins row the root sets, of a pin controller the system domain holds: no line. */
 	ERX_FIASCO_BOARD_PINS_NONE = 1,
-	/* The manifest gives the system domain no pin controller: nothing is written. */
-	ERX_FIASCO_BOARD_PINS_ABSENT,
 	/* The tree does not confirm the controller's row: nothing is written. */
 	ERX_FIASCO_BOARD_PINS_UNCONFIRMED,
 	/* The rows, the page or the registers' reach are refused: nothing is written. */

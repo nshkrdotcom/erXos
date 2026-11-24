@@ -47,11 +47,6 @@ module Erx
     Entry = Data.define(:name, :kind, :devices, :rows) do
       # The device rows of the header's pins, bank 0, whose gpio= lines config.txt writes.
       def header_device_rows = rows.select { |row| row.device? && row.gpio < Pins::BANK0_PIN_COUNT }
-      # The rows the root sets at boot when the system domain holds the controller
-      # (liberx/backend/fiasco/runtime_entry.c, board_pin_taken): the device rows of the
-      # on-board pins, banks 1 and 2, whose default setting is a signal. The boot's
-      # checkpoint counts them here, so Ruby states the selection once.
-      def boot_written_rows = rows.select { |row| row.device? && row.gpio >= Pins::BANK0_PIN_COUNT && row.setting.alternate }
       # PINS: the gpio rows as a mask, bit n for GPIO n, the pins the driver may serve.
       def gpio_mask = rows.select { |row| row.owner == :gpio }.sum { |row| 1 << row.gpio }
       # A device's states on this entry: default first, then the others in name order.
@@ -228,7 +223,7 @@ module Erx
       function, pull, level = fields.values_at('function', 'pull', 'level')
       raise Error, "GPIO #{gpio}: pull #{pull.inspect} is not none, up or down" unless pull.nil? || PULLS.key?(pull)
       raise Error, "GPIO #{gpio}: out takes a level of 0 or 1, and nothing else takes a level" unless
-        function == 'out' ? [0, 1].include?(level) : level.nil?
+        function == 'out' ? [0, 1].any? { |value| value.eql?(level) } : level.nil?
 
       alternate = IN_OUT.include?(function) ? nil : table.alternate(gpio: gpio, function: function)
       Setting.new(function: function, alternate: alternate, pull: PULLS[pull], level: level)

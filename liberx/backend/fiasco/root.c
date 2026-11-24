@@ -324,9 +324,6 @@ root_report_pins(erx_fiasco_board_pins_t pins, uint32_t count)
 	case ERX_FIASCO_BOARD_PINS_SET:
 		what = "set: ";
 		break;
-	case ERX_FIASCO_BOARD_PINS_ABSENT:
-		what = "absent: the system domain holds no pin controller";
-		break;
 	case ERX_FIASCO_BOARD_PINS_UNCONFIRMED:
 		what = "unconfirmed: the tree does not confirm the pin controller's record";
 		break;

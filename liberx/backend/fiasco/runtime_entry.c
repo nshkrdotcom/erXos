@@ -381,24 +381,24 @@ board_seed(const erx_dt_t *tree, const erx_manifest_view_t *manifest, erx_fiasco
  * (erx_boot_held_row), with its path put in tree_path, and whether tree places the device
  * there (erx_dt_registers). *found is ABSENT when the manifest gives none, UNCONFIRMED
  * when the tree does not confirm the row, and READY when it does: the caller then opens
- * the device at *window, the row's window, and sets UNCONFIRMED when it cannot, so READY
- * is final only once the device is open. *window is written only with READY or
- * UNCONFIRMED. Returns NULL, or bad_path, why the root cannot boot, when the row's path
- * is not a node path; *found is then ABSENT.
+ * the device at row->window and sets UNCONFIRMED when it cannot, so READY is final only
+ * once the device is open. *row is written only with READY or UNCONFIRMED. Returns NULL,
+ * or bad_path, why the root cannot boot, when the row's path is not a node path; *found
+ * is then ABSENT.
  */
 static const char *
 board_row(const erx_dt_t *tree, const erx_manifest_view_t *manifest, const char *compatible, const char *bad_path,
-    erx_dt_window_t *window, erx_fiasco_found_t *found)
+    erx_boot_row_t *row, erx_fiasco_found_t *found)
 {
-	erx_boot_row_t row;
+	erx_boot_row_t held;
 
 	*found = ERX_FIASCO_FOUND_ABSENT;
-	if (!erx_boot_held_row(manifest, compatible, &row))
+	if (!erx_boot_held_row(manifest, compatible, &held))
 		return (NULL);
-	if (!tree_path_set(row.path))
+	if (!tree_path_set(held.path))
 		return (bad_path);
-	*window = row.window;
-	*found = erx_dt_registers(tree, tree_path, compatible, row.window) == ERX_DT_REGS_OK ? ERX_FIASCO_FOUND_READY :
+	*row = held;
+	*found = erx_dt_registers(tree, tree_path, compatible, held.window) == ERX_DT_REGS_OK ? ERX_FIASCO_FOUND_READY :
 	    ERX_FIASCO_FOUND_UNCONFIRMED;
 	return (NULL);
 }
@@ -408,13 +408,13 @@ static const char *
 board_watchdog(const erx_dt_t *tree, const erx_manifest_view_t *manifest, erx_fiasco_pm_wdt_t *wdt,
     erx_fiasco_found_t *found)
 {
-	erx_dt_window_t window;
+	erx_boot_row_t row;
 	const char *reason;
 
 	*wdt = (erx_fiasco_pm_wdt_t){ .armed = false };
 	reason = board_row(tree, manifest, ERX_PM_WDT_COMPATIBLE,
-	    "the hardware watchdog's record: its device-tree path is not a node path", &window, found);
-	if (*found == ERX_FIASCO_FOUND_READY && !erx_fiasco_pm_wdt_open(window, wdt))
+	    "the hardware watchdog's record: its device-tree path is not a node path", &row, found);
+	if (*found == ERX_FIASCO_FOUND_READY && !erx_fiasco_pm_wdt_open(row.window, wdt))
 		*found = ERX_FIASCO_FOUND_UNCONFIRMED;
 	return (reason);
 }
@@ -423,82 +423,47 @@ board_watchdog(const erx_dt_t *tree, const erx_manifest_view_t *manifest, erx_fi
 static const char *
 board_mailbox(const erx_dt_t *tree, const erx_manifest_view_t *manifest, erx_fiasco_found_t *found)
 {
-	erx_dt_window_t window;
+	erx_boot_row_t row;
 	const char *reason;
 
 	reason = board_row(tree, manifest, ERX_VC_MAILBOX_COMPATIBLE,
-	    "the firmware mailbox's record: its device-tree path is not a node path", &window, found);
-	if (*found == ERX_FIASCO_FOUND_READY && !erx_fiasco_vc_mbox_open(window))
+	    "the firmware mailbox's record: its device-tree path is not a node path", &row, found);
+	if (*found == ERX_FIASCO_FOUND_READY && !erx_fiasco_vc_mbox_open(row.window))
 		*found = ERX_FIASCO_FOUND_UNCONFIRMED;
 	return (reason);
 }
 
 /*
- * Whether the root's write takes a pins row: an on-board pin, bank 1 or 2, set to a signal
- * in a device's default state. Header pins are config.txt's gpio= lines', and a device's
- * other states and plain GPIO pins are the pin driver's (docs/design-pinctrl.md).
- */
-static bool
-board_pin_taken(const erx_manifest_view_t *manifest, const erx_mf_pin_t *row)
-{
-	static const uint8_t state[ERX_PIN_STATE_DEFAULT_SIZE] = ERX_PIN_STATE_DEFAULT_BYTES;
-	/* erx_manifest_open checked every string against the table, so the reads stay inside it. */
-	const uint8_t *const name = manifest->bytes + manifest->header.strings.offset + row->state.offset;
-
-	if (row->pin < ERX_BCM2711_PINS_FIRST || row->owner == ERX_MF_NONE ||
-	    row->function != ERX_PIN_FUNCTION_ALTERNATE || row->state.length != sizeof(state))
-		return (false);
-	for (size_t at = 0; at < sizeof(state); at++)
-		if (name[at] != state[at])
-			return (false);
-	return (true);
-}
-
-/*
  * Sets the board's on-board pins (erx_fiasco_program_board), at the pin controller's row as the
- * mailbox is mapped. The rows it takes (board_pin_taken) are copied out of the manifest first,
- * so the plan is taken whole: more rows than the plan takes, or a row that cannot be read,
- * writes nothing. *taken is how many it took.
+ * mailbox is mapped: the rows of that controller the root writes (erx_boot_pin_rows), copied
+ * out of the manifest first, so the plan is taken whole. A manifest that gives the system
+ * domain no pin controller has no such rows: its holder applies them. *taken is how many
+ * the root took.
  */
 static const char *
 board_pins(const erx_dt_t *tree, const erx_manifest_view_t *manifest, erx_fiasco_board_pins_t *found, uint32_t *taken)
 {
 	erx_mf_pin_t rows[ERX_BCM2711_PINS_ROWS_MAX];
-	erx_mf_pin_t row;
-	uint32_t count = 0;
-	erx_dt_window_t window;
+	erx_boot_row_t row;
 	erx_fiasco_found_t controller;
+	size_t count;
 	const char *reason;
 
-	*found = ERX_FIASCO_BOARD_PINS_REFUSED;
-	*taken = 0;
-	for (uint32_t at = 0; at < manifest->header.pins.count; at++) {
-		if (!erx_manifest_pins_at(manifest, at, &row))
-			return (NULL);
-		if (!board_pin_taken(manifest, &row))
-			continue;
-		if (count == ERX_BCM2711_PINS_ROWS_MAX)
-			return (NULL);
-		rows[count++] = row;
-	}
-	*taken = count;
 	*found = ERX_FIASCO_BOARD_PINS_NONE;
+	*taken = 0;
+	reason = board_row(tree, manifest, ERX_BCM2711_PINS_COMPATIBLE,
+	    "the pin controller's record: its device-tree path is not a node path", &row, &controller);
+	if (controller == ERX_FIASCO_FOUND_ABSENT)
+		return (reason);
+	if (!erx_boot_pin_rows(manifest, row.device, ERX_BCM2711_PINS_FIRST, rows, ERX_BCM2711_PINS_ROWS_MAX, &count)) {
+		*found = ERX_FIASCO_BOARD_PINS_REFUSED;
+		return (NULL);
+	}
+	*taken = (uint32_t)count;
 	if (count == 0)
 		return (NULL);
-	reason = board_row(tree, manifest, ERX_BCM2711_PINS_COMPATIBLE,
-	    "the pin controller's record: its device-tree path is not a node path", &window, &controller);
-	switch (controller) {
-	case ERX_FIASCO_FOUND_ABSENT:
-		*found = ERX_FIASCO_BOARD_PINS_ABSENT;
-		return (reason);
-	case ERX_FIASCO_FOUND_UNCONFIRMED:
-		*found = ERX_FIASCO_BOARD_PINS_UNCONFIRMED;
-		return (NULL);
-	case ERX_FIASCO_FOUND_READY:
-		/* The tree confirms the controller's row: the plan decides the rest. */
-		break;
-	}
-	*found = erx_fiasco_bcm2711_pins_set(window, rows, count);
+	*found = controller == ERX_FIASCO_FOUND_READY ? erx_fiasco_bcm2711_pins_set(row.window, rows, count) :
+	    ERX_FIASCO_BOARD_PINS_UNCONFIRMED;
 	return (NULL);
 }
 

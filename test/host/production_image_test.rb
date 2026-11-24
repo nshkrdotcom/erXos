@@ -534,32 +534,39 @@ class ProductionImageTest < Minitest::Test
     refute_match Erx::NetDevice.tree_checkpoint(node, coherent: true).fetch(:pattern), line
   end
 
-  FakeBuilt = Struct.new(:build_id, :index_hash, :flags, :test_code, keyword_init: true)
+  FakeBuilt = Struct.new(:build_id, :index_hash, :flags, :test_code, :report, keyword_init: true)
 
-  def checkpoint_verifier(name, built: FakeBuilt.new(build_id: 'aa', index_hash: 'bb', flags: 1, test_code: false), **options)
-    points = Erx::ProductionImage::Run.checkpoints(built, root: ROOT, watchdog: '1,30,600', cpus: 4,
-                                                   **{ manifest_source: PLATFORM.manifest_source(ROOT),
-                                                       memory_mib: DEVELOPMENT.memory_mib }.merge(options))
-    points.find { |point| point.fetch(:name) == name }.fetch(:verify)
+  # An image's identity and the manifest report's count of the rows the root writes at boot.
+  def fake_built(boot_pin_rows: 0, flags: 1, test_code: false)
+    FakeBuilt.new(build_id: 'aa', index_hash: 'bb', flags: flags, test_code: test_code,
+                  report: { 'manifest' => { 'boot_pin_rows' => boot_pin_rows } })
   end
 
-  # On the Pi 4, whose manifest gives the system domain the pin controller, the boot checks
-  # that the root set every on-board row: a mismatch, a refusal or another count fails it.
-  # QEMU's virt machine has no header map, so its boots name no such line.
+  def checkpoints(built, **options)
+    Erx::ProductionImage::Run.checkpoints(built, root: ROOT, watchdog: '1,30,600', cpus: 4,
+                                          **{ manifest_source: PLATFORM.manifest_source(ROOT),
+                                              memory_mib: DEVELOPMENT.memory_mib }.merge(options))
+  end
+
+  def checkpoint_verifier(name, built: fake_built, **options)
+    checkpoints(built, **options).find { |point| point.fetch(:name) == name }.fetch(:verify)
+  end
+
+  # The boot checks that the root set the rows the packer counted, the manifest report's
+  # boot_pin_rows, which the root takes as the packer does (boot_manifest_test.rb): a
+  # mismatch, a refusal or another count fails it. A manifest with none, as QEMU virt's and
+  # a Pi 4 manifest without UART0 are, names no such line, the Pi 4's whatever its record says.
   def test_a_pi4_boot_checks_the_root_set_its_on_board_pins
-    raspi4b = Erx::Platform.load(root: ROOT, name: 'raspi4b')
-    rows = raspi4b.pins.controllers.first.boot_written_rows.size
-    assert_equal 4, rows
-    verify = checkpoint_verifier('root-pins', manifest_source: raspi4b.manifest_source(ROOT))
-    verify.call("erx: root task: on-board pins set: #{rows} rows\r\n")
-    ["set: #{rows + 1} rows", 'mismatch: written, but the function-select words read back otherwise',
+    pi = Erx::Platform.load(root: ROOT, name: 'raspi4b').manifest_source(ROOT)
+    verify = checkpoint_verifier('root-pins', built: fake_built(boot_pin_rows: 4), manifest_source: pi)
+    verify.call("erx: root task: on-board pins set: 4 rows\r\n")
+    ['set: 5 rows', 'mismatch: written, but the function-select words read back otherwise',
      "not set: the rows or the controller's page are refused; nothing is written"].each do |outcome|
       assert_raises(Erx::Error) { verify.call("erx: root task: on-board pins #{outcome}\r\n") }
     end
-    points = Erx::ProductionImage::Run.checkpoints(FakeBuilt.new(build_id: 'aa', index_hash: 'bb', flags: 1, test_code: false),
-                                                   root: ROOT, watchdog: '1,30,600', cpus: 4,
-                                                   manifest_source: PLATFORM.manifest_source(ROOT), memory_mib: DEVELOPMENT.memory_mib)
-    assert_nil points.find { |point| point.fetch(:name) == 'root-pins' }
+    [PLATFORM.manifest_source(ROOT), pi].each do |source|
+      assert_nil checkpoints(fake_built, manifest_source: source).find { |point| point.fetch(:name) == 'root-pins' }
+    end
   end
 
   # A production boot is of an image that carries no test code, and the kernel must report
@@ -569,7 +576,7 @@ class ProductionImageTest < Minitest::Test
     verify.call("erx: boot image build aa index bb flags 0x1 archive 0x40200000+0x1000 bootargs 0\r\n")
     assert_raises(Erx::Error) { verify.call("erx: boot image build aa index bb flags 0x5 archive 0x40200000+0x1000 bootargs 0\r\n") }
     assert_raises(Erx::Error) { verify.call("erx: boot image build ab index bb flags 0x1 archive 0x40200000+0x1000 bootargs 0\r\n") }
-    test_image = FakeBuilt.new(build_id: 'aa', index_hash: 'bb', flags: 5, test_code: true)
+    test_image = fake_built(flags: 5, test_code: true)
     error = assert_raises(Erx::Error) { checkpoint_verifier('image-identity', built: test_image) }
     assert_match(/refuses a test image/, error.message)
   end
@@ -1281,7 +1288,7 @@ class ProductionImageTest < Minitest::Test
       archive = File.join(directory, 'image.pack')
       File.open(archive, 'wb') { |file| file.truncate(LOGGED_ARCHIVE) }
       built = FakeArchiveBuilt.new(build_id: 'aa', index_hash: 'bb', flags: 1, test_code: false, archive: archive,
-                                   report: { 'manifest' => { 'dma_memory' => LOGGED_DMA_MEMORY } })
+                                   report: { 'manifest' => { 'dma_memory' => LOGGED_DMA_MEMORY, 'boot_pin_rows' => 0 } })
       points = Erx::ProductionImage::Run.checkpoints(built, root: ROOT, watchdog: '1,30,600', cpus: 1,
                                                      manifest_source: PLATFORM.manifest_source(ROOT),
                                                      memory_mib: machine.memory_mib)

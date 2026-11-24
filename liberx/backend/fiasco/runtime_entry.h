@@ -67,9 +67,9 @@ typedef struct erx_fiasco_board {
  *     erx_firmware_request), of ERX_VC_MAILBOX_COMPATIBLE, mapped by its shim
  *     (erx_fiasco_vc_mbox_open); nothing is written;
  *   - the on-board pins (docs/design-header-io.md, "On-board pins"): the manifest's
- *     pins rows that set an on-board pin, bank 1 or 2, to a signal in a device's
- *     default state, set through the pin controller of ERX_BCM2711_PINS_COMPATIBLE
- *     (erx_fiasco_bcm2711_pins_set).
+ *     pins rows of the pin controller of ERX_BCM2711_PINS_COMPATIBLE the system domain
+ *     holds that set an on-board pin, bank 1 or 2, to a signal in a device's default
+ *     state (erx_boot_pin_rows), set through that controller (erx_fiasco_bcm2711_pins_set).
  * The caller runs it before any domain starts, so no driver finds an on-board pin unset.
  * Returns NULL, or why the root cannot boot: a row's path is not a node path. A root built
  * without a program finds none of them and sets no pin.

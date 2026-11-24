@@ -96,6 +96,8 @@ class PinTableTest < Minitest::Test
     'a level without out' => [->(entry) { entry['rows'][2]['level'] = 1 }, /GPIO 2: out takes a level of 0 or 1, and nothing else/],
     'out without a level' => [->(entry) { entry['rows'][8] = { 'gpio' => 8, 'use' => SPI, 'function' => 'out' } },
                               /GPIO 8: out takes a level/],
+    'a level that is not an integer' => [->(entry) { entry['rows'][8] = { 'gpio' => 8, 'use' => SPI, 'function' => 'out', 'level' => 1.0 } },
+                                       /GPIO 8: out takes a level/],
     'a state that names a pull its plain setting lacks' => [->(entry) { entry['onboard'][0]['states'] = { 'quiet' => { 'pull' => 'up' } } },
                                                             /GPIO 30: state quiet names a pull, and the row's plain setting names none/],
     'a state name that is no identifier' => [->(entry) { entry['rows'][2]['states'] = { 'Off' => { 'pull' => 'up' } } },

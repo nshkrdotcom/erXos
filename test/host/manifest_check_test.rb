@@ -1139,7 +1139,7 @@ class ManifestCheckTest < Minitest::Test
   # clock, which their rows carry as the PL011s carry theirs, so a manifest placing the
   # i2c and spi units is accepted.
   def test_the_pi_bus_units_carry_the_core_clock
-    admit(pi_source + pi_unit('i2c', 'system') + pi_unit('spi', 'system'), pi_context)
+    admit(pi_shipped + pi_unit('i2c', 'system') + pi_unit('spi', 'system'), pi_context)
   end
 
   # The Pi's record with change applied to the device at path in unit key.
@@ -1174,11 +1174,13 @@ class ManifestCheckTest < Minitest::Test
 
   # Property 8's pin controller clause (docs/design-header-io.md, "The pin controller and
   # the console"): whoever holds the GPIO page sets the console's pin functions, so the
-  # pin controller's unit, gpio, is unplaced, held by the system domain (the shipped
-  # manifest), or held by a domain of its own, which no row names but its units on the GPIO
-  # page, the services of the interfaces they back and the boot order.
-  def test_the_pin_controller_unit_is_unplaced_or_held_alone
-    admit(pi_source, pi_context)
+  # pin controller's unit, gpio, is held by the system domain (the shipped manifest) or by a
+  # domain of its own, which no row names but its units on the GPIO page, the services of
+  # the interfaces they back and the boot order. Unplaced, it has no holder to apply the
+  # rows of the devices the manifest places (docs/design-pinctrl.md), so it is refused.
+  def test_the_pin_controller_unit_is_held_by_the_system_or_alone
+    refused(Erx::Manifest::Invalid, 'context.platform.pins', pi_source, pi_context,
+            message: %r{pin controller gpio's device /soc/gpio@7e200000 is not placed})
     assert_includes pi_shipped, PI_GPIO_UNIT
     admit(pi_shipped, pi_context)
     admit(pi_source + pi_pins_domain + pi_unit('gpio', '@domain.pins'), pi_context)
@@ -1251,20 +1253,8 @@ class ManifestCheckTest < Minitest::Test
     gpio = units.find { |unit| unit.fetch('key') == 'gpio' }.fetch('devices').first
     units.find { |unit| unit.fetch('key') == 'i2c' }.fetch('devices') <<
       gpio.merge('path' => '/soc/gpiomem@7e200000', 'placement_key' => 'gpiomem')
-    refused(Erx::Manifest::Invalid, 'unit.holder', pi_source + pi_unit('i2c', '@domain.display'),
+    refused(Erx::Manifest::Invalid, 'unit.holder', pi_shipped + pi_unit('i2c', '@domain.display'),
             pi_context(record), message: %r{unit i2c reaches pin controller /soc/gpio@7e200000})
-  end
-
-  # A record whose map gives no pin to the console or the host link leaves the pin
-  # controller's holder free: with the four UART rows made gpio, the display domain may
-  # hold gpio beside the framebuffer.
-  def test_the_clause_follows_from_the_map
-    record = pi_record
-    uarts = record.values_at('console', 'hostlink')
-    record.fetch('pins').fetch('rows').each do |row|
-      row.replace('gpio' => row.fetch('gpio'), 'use' => 'gpio') if uarts.include?(row.fetch('use'))
-    end
-    admit(pi_source + pi_unit('gpio', '@domain.display'), pi_context(record))
   end
 
   # The network stack runs in the system domain in Phase 1, over the device its unit

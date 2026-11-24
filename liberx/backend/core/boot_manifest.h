@@ -114,12 +114,14 @@ bool	erx_boot_manifest_read(const uint8_t *bytes, size_t length, bool hostlink, 
  * A device the root reads itself at boot, with no driver and no record: a device-tree row
  * of a unit the system domain holds, its path into the manifest's bytes and its register
  * window as the platform record states it, which the firmware's tree only confirms
- * (erx_dt_registers). The Raspberry Pi 4's RNG200 is the one such device
- * (docs/design-fiasco.md, "The Raspberry Pi 4").
+ * (erx_dt_registers). The Raspberry Pi 4's RNG200, firmware mailbox, watchdog and pin
+ * controller are such devices (docs/design-fiasco.md, "The Raspberry Pi 4"). device is the
+ * row's index in the manifest's devices table, which a pins row's device column names.
  */
 typedef struct erx_boot_row {
 	erx_boot_words_t	path;
 	erx_dt_window_t		window;
+	uint32_t		device;
 } erx_boot_row_t;
 
 /*
@@ -128,6 +130,19 @@ typedef struct erx_boot_row {
  * a manifest that does not give the system domain the device keeps the root off it.
  */
 bool	erx_boot_held_row(const erx_manifest_view_t *view, const char *compatible, erx_boot_row_t *row);
+
+/*
+ * The pins rows the root writes once at boot (docs/design-pinctrl.md, "What the code does
+ * today"): each row whose device column is device, the row of the pin controller the
+ * system domain holds (erx_boot_held_row), of a pin first or above, that sets a device's
+ * pin to a signal in its default state. A row of another controller is its holder's to
+ * apply, a pin below first is config.txt's, and a device's other states and plain GPIO
+ * pins are the pin driver's. Copies them into rows in table order and sets *count; false,
+ * with *count 0, when a row cannot be read or more than max are taken, so the plan is
+ * taken whole or not at all.
+ */
+bool	erx_boot_pin_rows(const erx_manifest_view_t *view, uint32_t device, uint32_t first, erx_mf_pin_t *rows,
+	    size_t max, size_t *count);
 
 /*
  * Whether the manifest's console is the UART /chosen/stdout-path names

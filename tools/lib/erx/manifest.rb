@@ -600,7 +600,7 @@ module Erx
         invalid('duplicate shell principal', 'shell_principals') unless shell.map { |row| row.fetch('principal') }.uniq.size == shell.size
         rows['shell_principals'] = shell.sort_by { |row| row.fetch('principal') }
         check_and_place(rows, root_memory: root_memory, baseline: baseline)
-        check_pin_controller(rows, console, hostlink)
+        check_pin_controller(rows)
         system_principal = reference(machine, 'system_principal', 'principal')
         # The system principal's sessions are root_N (erx_domain_core:session_prefix/3),
         # so a principal named root must be the system principal.
@@ -630,7 +630,7 @@ module Erx
         report = { 'root_image_private_bytes' => root_private_bytes, 'root_memory' => root_memory,
                    'dma_memory' => device_memory, 'promised_memory' => promised,
                    'effective_system_cpuset' => system_cpus,
-                   'effective_users_cpuset' => users_cpus }.merge(placed_report)
+                   'effective_users_cpuset' => users_cpus, 'boot_pin_rows' => boot_pin_rows(rows) }.merge(placed_report)
         [{ 'header' => header, 'tables' => rows }, report]
       end
 
@@ -1270,6 +1270,20 @@ module Erx
         end
       end
 
+      # How many pins rows the root writes at boot, which the boot's checkpoint expects
+      # (ProductionImage::Run.onboard_pins_points): the rows of a controller the system domain
+      # holds, of an on-board pin, banks 1 and 2, that set a device's pin to a signal in its
+      # default state, as liberx/backend/core/boot_manifest.c's erx_boot_pin_rows takes them.
+      def boot_pin_rows(tables)
+        alternate = @codec.member('pin_function', 'alternate')
+        system = @codec.constant('mf_none')
+        tables.fetch('pins').count do |row|
+          row.fetch('function') == alternate && row.fetch('state') == PinTable::DEFAULT &&
+            row.fetch('pin') >= Pins::BANK0_PIN_COUNT &&
+            unit_holder(tables, tables.fetch('devices').fetch(row.fetch('device')).fetch('path')) == system
+        end
+      end
+
       def pin_function(setting)
         case setting&.function
         in nil then 'plain'
@@ -1435,27 +1449,23 @@ module Erx
 
       # Property 8's pin controller clause (docs/design-header-io.md, "The pin controller and
       # the console"): whoever holds the pin controller's register page sets the function of
-      # every pin, so when the board's header map gives a pin to the console or the host link,
-      # a unit with a device-tree row on that page is held by the system domain or by a domain
-      # of its own, which no manifest row names but those units, the services of the interfaces
-      # they back and the boot order (pin_domain_row?); an unplaced unit has no row. A session
+      # every pin, the console's and host link's among them, which every pin table gives rows
+      # (PinTable's driven-rows rule), so a unit with a device-tree row on that page is held by
+      # the system domain or by a domain of its own, which no manifest row names but those
+      # units, the services of the interfaces they back and the boot order (pin_domain_row?);
+      # an unplaced unit has no row. A session
       # template holds nothing, since holder_index resolves every holder through the domain
       # table. The units are found by the page, not by the controller's path, so a second row
-      # on the page under another path is caught too. A record without a map states no pin,
-      # and the clause is empty. Console and host link are the checked platform's
-      # (check_uarts). It runs once every row is placed, so it sees each one that names the
+      # on the page under another path is caught too. A record without a pin table states no
+      # pin, and the clause is empty. It runs once every row is placed, so it sees each one that names the
       # holder.
-      def check_pin_controller(rows, console, hostlink)
-        uarts = [console, hostlink].reject(&:empty?)
-        Array(@context.platform['pins']).each do |entry|
-          next unless (entry.fetch('rows') + entry.fetch('onboard')).any? { |row| uarts.include?(row['use']) }
-
-          entry.fetch('controller').each { |controller| check_pin_controller_unit(rows, controller) }
+      def check_pin_controller(rows)
+        PinTable.read(@context.platform)&.controllers&.each do |entry|
+          entry.devices.each { |controller| check_pin_controller_unit(rows, controller) }
         end
       end
 
-      # The clause for one device of a controller entry whose rows name the console or the
-      # host link.
+      # The clause for one device of a pin controller entry.
       def check_pin_controller_unit(rows, controller)
         device_tree = @codec.member('mf_selector', 'dt')
         row = platform_device(record_device(controller))

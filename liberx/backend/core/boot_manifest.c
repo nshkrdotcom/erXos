@@ -90,6 +90,21 @@ string_is(const erx_manifest_view_t *view, const erx_mf_str_t *string, const cha
 	return (text[at] == '\0');
 }
 
+/* Whether string is the length bytes of bytes, a name the ABI gives as bytes. */
+static bool
+string_is_bytes(const erx_manifest_view_t *view, const erx_mf_str_t *string, const uint8_t *bytes, size_t length)
+{
+	const uint8_t *const name = string_at(view, string);
+
+	if (string->length != length)
+		return (false);
+	for (size_t at = 0; at < length; at++) {
+		if (name[at] != bytes[at])
+			return (false);
+	}
+	return (true);
+}
+
 /* The row of kinds, of count rows, whose role and compatible string are device's; NULL for none. */
 static const device_kind_t *
 kind_find(const erx_manifest_view_t *view, const erx_mf_device_t *device, const device_kind_t *kinds, size_t count)
@@ -285,11 +300,34 @@ erx_boot_held_row(const erx_manifest_view_t *view, const char *compatible, erx_b
 			    !string_is(view, &device.compatible, compatible))
 				continue;
 			*row = (erx_boot_row_t){ .path = { (const char *)string_at(view, &device.path), device.path.length },
-			    .window = { device.base, device.size } };
+			    .window = { device.base, device.size }, .device = index };
 			return (true);
 		}
 	}
 	return (false);
+}
+
+bool
+erx_boot_pin_rows(const erx_manifest_view_t *view, uint32_t device, uint32_t first, erx_mf_pin_t *rows,
+    size_t max, size_t *count)
+{
+	static const uint8_t state[ERX_PIN_STATE_DEFAULT_SIZE] = ERX_PIN_STATE_DEFAULT_BYTES;
+	erx_mf_pin_t row;
+	size_t taken = 0;
+
+	*count = 0;
+	for (uint32_t at = 0; at < view->header.pins.count; at++) {
+		if (!erx_manifest_pins_at(view, at, &row))
+			return (false);
+		if (row.device != device || row.pin < first || row.owner == ERX_MF_NONE ||
+		    row.function != ERX_PIN_FUNCTION_ALTERNATE || !string_is_bytes(view, &row.state, state, sizeof(state)))
+			continue;
+		if (taken == max)
+			return (false);
+		rows[taken++] = row;
+	}
+	*count = taken;
+	return (true);
 }
 
 bool

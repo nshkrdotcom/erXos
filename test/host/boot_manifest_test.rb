@@ -50,12 +50,15 @@ class BootManifestTest < Minitest::Test
 
   # record: the platform record, by default the named platform's own; device_kinds: the
   # check's device kinds, by default the tree's.
-  def admitted(source = @source, platform: 'qemu-virt', record: platform_record(platform),
-               device_kinds: ManifestContextFixture.device_kinds)
+  def admitted(source = @source, **options) = admission(source, **options).bytes
+
+  # The check's admission of source, its bytes and its report.
+  def admission(source = @source, platform: 'qemu-virt', record: platform_record(platform),
+                device_kinds: ManifestContextFixture.device_kinds)
     arguments = ManifestContextFixture.arguments(@codec).merge(platform: record, build_kind: 'development',
                                                                  device_kinds: device_kinds)
     context = Erx::Manifest::Context.new(**arguments)
-    Erx::Manifest.admit(source: source, codec: @codec, context: context, planner: ManifestContextFixture.accepting_planner).bytes
+    Erx::Manifest.admit(source: source, codec: @codec, context: context, planner: ManifestContextFixture.accepting_planner)
   end
 
   def platform_record(platform) = Erx::Platform.load(root: ROOT, name: platform).record
@@ -599,6 +602,44 @@ end
     output, status = read(admitted)
     assert status.success?, output
     assert_includes output, "held_pins none\n"
+  end
+
+  # The root writes at boot only the rows of the pin controller the system domain holds
+  # (liberx/backend/core/boot_manifest.c, erx_boot_pin_rows): UART0's four on the Pi 4, and
+  # not a row whose device column names another device, which is not that controller's. The
+  # packer's report counts the same rows, which the boot's checkpoint expects
+  # (ProductionImage::Run.onboard_pins_points), so a record whose UART0 sits in a unit the
+  # manifest does not place gives no row to either.
+  def test_the_root_takes_only_the_held_controller_s_rows
+    pi = admission(pi_source, platform: 'raspi4b')
+    assert_equal 4, pi.report.fetch('boot_pin_rows')
+    assert_includes pi_read(pi.bytes), "pin_rows 4\n"
+
+    bytes = pi.bytes.dup
+    offset, count = bytes.byteslice(488, 8).unpack('L<L<')
+    row = offset + (48 * (0...count).find { |at| bytes.byteslice(offset + (48 * at) + 16, 4).unpack1('L<') == 30 })
+    bytes[row + 24, 4] = bytes.byteslice(row + 20, 4) # the device column names UART0, the row's owner
+    assert_includes pi_read(bytes), "pin_rows 3\n"
+
+    unplaced = admission(pi_source.sub(/^facet line\n(?:  .*\n)*/, ''), platform: 'raspi4b', record: uart0_unplaced)
+    assert_equal 0, unplaced.report.fetch('boot_pin_rows')
+    assert_includes pi_read(unplaced.bytes), "pin_rows 0\n"
+  end
+
+  # What the driver prints of a Pi 4 manifest's bytes.
+  def pi_read(bytes)
+    output, status = read(bytes, stdout_path: '/soc/serial@7e215040')
+    assert status.success?, output
+    output
+  end
+
+  # The Pi 4's record with UART0 in a unit of its own, which the manifest does not place.
+  def uart0_unplaced
+    record = platform_record('raspi4b')
+    path = '/soc/serial@7e201000'
+    uart0 = record.fetch('units').flat_map { |unit| unit.fetch('devices') }.find { |device| device['path'] == path }
+    units = record.fetch('units').map { |unit| unit.merge('devices' => unit.fetch('devices').reject { |device| device['path'] == path }) }
+    record.merge('units' => [*units, { 'key' => 'uart0', 'devices' => [uart0] }])
   end
 
   # The RNG200's row reaches the root from the platform record only through a unit the

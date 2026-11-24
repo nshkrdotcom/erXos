@@ -11,12 +11,15 @@ require_relative '../lib/erx/platform'
 
 # The platform record's reader (Erx::Platform, with its pin table, Erx::PinTable) over
 # mutations of the Raspberry Pi 4's record: values of every row and field replaced by
-# others of each JSON type, rows dropped, repeated and swapped, and the record's text
+# others of each JSON type, rows dropped, repeated and swapped, a second controller entry
+# whose console and JTAG rows are plain GPIO added beside the first, and the record's text
 # changed byte by byte. Each input is either refused with Erx::Error and nothing else, or
-# read into a map of one row for each of GPIO 0 to 27 whose PINS mask has no bit above 27,
-# whose device rows each carry an alternate of 0 to 5, and whose on-board rows are off the
-# header, with an alternate of 0 to 5 and their pull kept. Whether the reader's answers
-# are right is test/host/pin_table_test.rb's.
+# read into pin controller entries each with one row for each of GPIO 0 to 27 first, whose
+# firmware rows carry no pull and no states, whose device rows each carry a signal with an
+# alternate of 0 to 5, in or out, and in which no row but a firmware row sits on a pin of a
+# setting config.txt writes (the table's settings: the console's and JTAG's), so no row of
+# the build could reach them. Whether the reader's answers are right
+# is test/host/pin_table_test.rb's.
 module Erx
   module PlatformRecordFuzz
     ROOT = File.expand_path('../..', __dir__)
@@ -51,8 +54,17 @@ module Erx
       end
     end
 
+    # A second entry of the first's kind under another name, its console and JTAG rows plain
+    # GPIO: one table's pins named twice, out of reach of the checks that read one entry.
+    def twin(record)
+      entry = deep_copy(record.fetch('pins').first)
+      entry['rows'].each { |row| row.replace('gpio' => row['gpio'], 'use' => 'gpio') if row['use'] == 'jtag' || row['use'] == record['console'] }
+      entry.merge('name' => "#{entry['name']}_twin")
+    end
+
     def mutate(record, random)
       result = deep_copy(record)
+      result['pins'] = [*result['pins'], twin(record)] if random.rand(8).zero?
       targets = paths(result.slice('pins', 'units', 'console', 'hostlink')).reject(&:empty?)
       random.rand(1..3).times do
         path = targets.sample(random: random)
@@ -81,7 +93,10 @@ module Erx
       table = Platform.new(name: NAME, record: record).pins
       return if table.nil?
 
+      firmware_pins = table.settings.flat_map(&:pins)
       table.controllers.each do |entry|
+        raise 'a row of the build on a pin the firmware sets' unless
+          entry.rows.select { |row| firmware_pins.include?(row.gpio) }.all? { |row| row.owner == :firmware }
         raise 'a table without its header rows' unless entry.rows.map(&:gpio).take(28) == (0..27).to_a
         raise 'a firmware row with a pull or states' unless
           entry.rows.select { |row| row.owner == :firmware }.all? { |row| row.setting.pull.nil? && row.states.empty? }

@@ -773,13 +773,24 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   open, three forms' glue, MSI-X, the xHCI register walk and the virtio and GENET stand-ins. Give both a
   simplicity pass before either grows further.
 * [Medium] pin control, the pin table ([design-pinctrl.md](design-pinctrl.md#the-pin-table);
-  `tools/lib/erx/header_map.rb`, `config/platforms/raspi4b.json`, `abi/manifest.txt`): `pins` as a list of named controller
-  entries; on-board rows in the device rows' form, with an optional pull and states; `in`, `out` and `level`; the
-  boot description's table of the firmware settings that set pins, with the kinds of card each is written on,
-  and the console's and JTAG's rows checked against it; the header probe's GPFSEL1 and GPFSEL2 readings
-  recorded as its board evidence; the reader's refusals, each with a table that breaks only it; the manifest's `pins` table in place of `onboard_pins`;
-  the `pins` record and its packed layout in `abi/erx_abi.txt`, counted in the boot page's room; the map of function
-  numbers generated from `hw/pins/<kind>.txt`; the manifest check's unit, holder and one-GPIO-controller clauses.
+  `tools/lib/erx/pin_table.rb`, `abi/manifest.txt`): the header probe's GPFSEL1 and GPFSEL2 readings recorded as
+  its board evidence; the `pins` record and its packed layout in `abi/erx_abi.txt`, counted in the boot page's room,
+  and the domain library's writer; the map of function numbers generated from `hw/pins/<kind>.txt`, from which
+  `ERX_BCM2711_PINS_FIRST` (`include/erx/core/bcm2711_pins.h`) and `Pins::BANK0_PIN_COUNT` (`tools/lib/erx/pins.rb`),
+  two hand-written copies of bank 0's size, are derived; a range on `pins[].pin` in the manifest reader, bounded
+  by the most pins a controller of `hw/pins` has (today only the root's shim refuses a pin past GPIO 57); the
+  manifest check's unit, holder and one-GPIO-controller clauses.
+* [Medium] pin control, the rows the root writes at boot: `erx_boot_pin_rows`
+  (`liberx/backend/core/boot_manifest.c`) and the manifest report's `boot_pin_rows` (`tools/lib/erx/manifest.rb`),
+  which the boot's checkpoint expects, state one selection twice, in C and in Ruby; `boot_manifest_test.rb` holds
+  them to one count on the shipped Pi 4 manifest. The C takes the rows whose device column is the first
+  device-tree row of the BCM2711's compatible string in a unit the system domain holds (erx_boot_held_row), the
+  Ruby the rows of any device in a unit the system domain holds. The C's rows are always among the Ruby's, so
+  they differ only by the C taking fewer, which fails the boot's checkpoint rather than passing it: on a
+  manifest whose system domain holds a second row of that compatible string earlier in the devices table (a
+  gpiomem alias in another unit), or whose entry's first controller device is of another compatible string. And
+  since the checkpoint's count is the packer's, a packer that dropped a row from `pins` would pass the boot; only
+  `boot_manifest_test.rb`'s count of UART0's four rows catches that. The domain library's writer replaces both.
 * [Medium] pin control, the `erx_pins` driver on the BCM2711 ([design-pinctrl.md](design-pinctrl.md#the-pin-driver)),
   after the table, over the pure `erx_pins_core` and `erx_pins_bcm2711` that are built: the register module with
   `hw/svd/bcm2711_gpio`'s pull registers, the driver process that reads, plans, applies and checks, its start in
