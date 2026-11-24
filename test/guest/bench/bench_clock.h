@@ -83,6 +83,11 @@ void erx_bench_rounds_b(erx_bench_token_t *token, uint64_t (*read)(void), size_t
 erx_bench_offset_t erx_bench_offset(const erx_bench_round_t *rounds, size_t n,
     uint64_t increment);
 /*
+ * The hull of a pair's two calibrations, before and after a run, empty where either is: it holds the
+ * offset however it moved between them. A one-way cell is corrected by its middle.
+ */
+erx_bench_offset_t erx_bench_offset_hull(erx_bench_offset_t before, erx_bench_offset_t after);
+/*
  * Why a cell is unsupported, or NULL where it may report (docs/design-bench.md, "The one
  * clock"): one whose stamps are read on one CPU always may; one whose stamps are read on
  * two needs the pair's calibrations before and after its run to be non-empty and to

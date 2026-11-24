@@ -32,13 +32,28 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   `docs/guide/tracing.md` brought to match. Tests: the remaining tool rows of design-bench.md's Verification,
   each with its seed. Open review point of the first slice: `slower` and `faster` are not yet held to a paired run.
 * [High] benchmarks, `wake` ([design-bench.md](design-bench.md#1-wake-how-late-a-waiting-thread-runs)): the
-  histogram and the periodic schedule of `test/guest/bench/` and the `bench` QEMU suite, whose cells are pending,
-  and the guest library's `BENCH` and `CLOCK` line emitter and its calibration (read cost, smallest increment,
-  the offset rounds between two threads) exist; still to build are the native bench guest
-  `test/guest/native_bench/` reusing `native_irq`'s handshake and holder and `native_task`'s program,
-  `park-deadline`, the two wake handshakes, `trigger-take`, and `bench/erx_wake_bench.erl` with
-  `bench/erx_bench_hist.erl` for `erlang-timer` in the `xdomain` bench image, each boot given to the suite as its
-  runner. Lands with its two seeded runs.
+  guest library of `test/guest/bench/` and the native bench guest `test/guest/native_bench/` with its runner
+  `tools/lib/erx/native_bench.rb` exist: its root times `park-deadline`, the two wake handshakes and
+  `trigger-take` on two executors of its group and prints their `BENCH` lines and the `CLOCK` line, and its
+  build with `ERX_BENCH_SEED_LOST_WAKE` skips one wake. Still to build: the `bench` QEMU suite's run, whose
+  cells are pending, booting that image and giving its lines to `BenchMeasurement.boot` and the record's one
+  writer, with the seeded boot as the suite's seeded run; `bench/erx_wake_bench.erl` with
+  `bench/erx_bench_hist.erl` for `erlang-timer` in the `xdomain` bench image; and the load cells, whose
+  spinners are `native_task`'s program in new modes, which the landing matrix does not run yet.
+* [Medium] benchmarks, the native bench guest's sizes: `test/guest/native_bench/guest.c` states the landing
+  forms of the fast and periodic profiles as C constants and `tools/lib/erx/native_bench.rb` as
+  `LANDING_PROFILES`; generate one from the other, or pass the sizes in the root's argument.
+* [High] benchmarks, the native bench guest's short operations: `wake-same-cpu` (median 4 ticks) and `trigger-take`
+  (9 ticks) are under the 100 ticks after which [design-bench.md](design-bench.md#the-one-clock) times an
+  operation in batches, but a handshake cannot be batched (B returns before A pokes again); the guest reports
+  batch 1. The design needs an exemption for handshakes, or another clock, before these cells are compared.
+* [Medium] benchmarks, the native bench guest's handshake (`test/guest/native_bench/guest.c`): any `ERX_OK` from
+  B's park is taken as A's poke, which holds only while nothing else moves the group's epochs; A should
+  publish the poke's number and B re-park until it sees it. The executors run fixed scripts that must match the
+  root's order, so a lost wake in `wake-same-cpu` leaves `trigger-take` not run; the root should name each
+  phase. The root polls every 100 us on CPU 0 during `park-deadline`; a cross-CPU sample corrected below
+  minus its uncertainty is clamped to 0 instead of making the cell unsupported; and that the root runs on
+  CPU 0, which `same-cpu` and the pair assume, is unverified.
 * [Medium] benchmarks, the guest line validator (`tools/lib/erx/bench_measurement.rb`): a `BENCH` line's
   load cell, placement and clock are checked only as names, not against the cell the run asked for, and a
   two-CPU placement's pair is not checked against the `CLOCK` line's pairs; the suite's runner should pass the

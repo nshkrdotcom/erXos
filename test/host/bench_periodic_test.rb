@@ -67,7 +67,7 @@ class BenchPeriodicTest < Minitest::Test
     output = File.join(@directory, name.tr(" '<=,", '-----'))
     log, status = Open3.capture2e(ENV.fetch('ERX_CLANG', 'clang'), '-std=c17', '-Wall', '-Wextra', '-Werror', '-pedantic', '-O1', '-pthread',
                                   '-g', *@flags, *(mutant ? ['-Wno-unused-parameter'] : []),
-                                  '-I', File.join(ROOT, 'test/guest/bench'), *sources, '-o', output, stdin_data: '')
+                                  '-I', ROOT, '-I', File.join(ROOT, 'test/guest/bench'), *sources, '-o', output, stdin_data: '')
     assert status.success?, log
     output
   end

@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <strings.h>
+#include "liberx/backend/core/mem.h"
 
 #include "bench_periodic.h"
 

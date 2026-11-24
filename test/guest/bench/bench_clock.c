@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <strings.h>
+#include "liberx/backend/core/mem.h"
 
 #include "bench_clock.h"
 
@@ -76,22 +76,29 @@ erx_bench_offset_half_width(erx_bench_offset_t offset)
 	return (width / 2 + (width & 1));
 }
 
+erx_bench_offset_t
+erx_bench_offset_hull(erx_bench_offset_t before, erx_bench_offset_t after)
+{
+	erx_bench_offset_t hull = { .empty = false };
+
+	if (before.empty || after.empty)
+		return ((erx_bench_offset_t){ .empty = true });
+	hull.low = before.low < after.low ? before.low : after.low;
+	hull.high = before.high > after.high ? before.high : after.high;
+	return (hull);
+}
+
 const char *
 erx_bench_cell_unsupported(bool two_cpus, erx_bench_offset_t before,
     erx_bench_offset_t after, uint64_t median)
 {
-	erx_bench_offset_t hull;
-
 	if (!two_cpus)
 		return (NULL);
 	if (before.empty || after.empty)
 		return ("counters across CPUs contradicted each other");
 	if (before.low > after.high || after.low > before.high)
 		return ("counters across CPUs moved during the run");
-	/* The offset during the run lies between the two: their hull, not their overlap. */
-	hull.low = before.low < after.low ? before.low : after.low;
-	hull.high = before.high > after.high ? before.high : after.high;
-	if (erx_bench_offset_half_width(hull) > median / 10)
+	if (erx_bench_offset_half_width(erx_bench_offset_hull(before, after)) > median / 10)
 		return ("counters across CPUs not bounded closely enough");
 	return (NULL);
 }
