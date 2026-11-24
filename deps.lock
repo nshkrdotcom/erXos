@@ -105,6 +105,17 @@
       "status": "permanent"
     },
     {
+      "id": "oracle-toolchain-amd64",
+      "kind": "oci",
+      "version": "3.4.12-bookworm",
+      "repository": "docker.io/library/ruby",
+      "platform": "linux/amd64",
+      "sha256": "7044703d842c88d810121d38bc9011e9bfe8b90d19aa390ac85516db98a5165b",
+      "config_sha256": "39646d6e9feee4c90241f41f9655e3f297ade931ebc5143bd0234da7fe5387a5",
+      "license": "Various: Ruby, BSD-2-Clause, GPL/LGPL and Debian package licenses; development tools only",
+      "status": "permanent"
+    },
+    {
       "id": "fsimg",
       "kind": "git",
       "version": "b6c1ea25719de5cb47c686261ecd77bd711ad50f",

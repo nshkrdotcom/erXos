@@ -368,9 +368,10 @@ class OracleContainerTest < Minitest::Test
   # platform is the engine's architecture and refuses an engine it pins none for.
   def test_engine_architecture_selects_the_pin_of_its_platform
     lock = JSON.parse(File.read(File.join(@root, 'deps.lock')))
-    arm64 = lock.fetch('sources').find { |source| source.fetch('id') == 'oracle-toolchain-arm64' }
-    lock.fetch('sources') << arm64.merge('id' => 'oracle-toolchain-amd64', 'platform' => 'linux/amd64',
-                                         'sha256' => 'e' * 64, 'config_sha256' => 'f' * 64)
+    sources = lock.fetch('sources').reject { |source| source.fetch('id') == 'oracle-toolchain-amd64' }
+    arm64 = sources.find { |source| source.fetch('id') == 'oracle-toolchain-arm64' }
+    lock['sources'] = sources << arm64.merge('id' => 'oracle-toolchain-amd64', 'platform' => 'linux/amd64',
+                                             'sha256' => 'e' * 64, 'config_sha256' => 'f' * 64)
     File.write(File.join(@root, 'deps.lock'), JSON.generate(lock))
     adapter = Erx::OracleContainer.new(root: @root, context: 'orbstack', runner: @runner,
                                        docker_program: '/usr/bin/true')
