@@ -15,12 +15,16 @@ module Erx
   # cells' statuses through SUITE_STATUS.
   module BenchSuite
     # An operation: an exact act with a start and an end on one clock, the profile it is
-    # sampled by, and what a correct result of the act is.
-    Operation = Data.define(:name, :profile, :result) do
-      def initialize(name:, profile:, result:)
+    # sampled by, and what a correct result of the act is. A handshake (one thread acts,
+    # another answers before the first acts again) cannot be batched, so it is exempt
+    # from the short operations' batches and reports batch 1 (docs/design-bench.md, "The
+    # one clock").
+    Operation = Data.define(:name, :profile, :result, :handshake) do
+      def initialize(name:, profile:, result:, handshake: false)
         BenchRecord.check(name.is_a?(String) && BenchRecord::NAME.match?(name), 'operation is not a plain name')
         BenchRecord.check(BenchRecord::PROFILES.include?(profile), 'profile is not one of the profiles')
         BenchRecord.check(result.is_a?(String) && !result.empty?, "#{name} does not say what a correct result is")
+        BenchRecord.check([true, false].include?(handshake), "#{name}'s handshake is neither true nor false")
         super
       end
     end
@@ -40,6 +44,9 @@ module Erx
         BenchRecord.check(BenchRecord.plain_hash?(parameters), 'workload parameters are not a map')
         super(operation: operation, load: load, placement: placement, parameters: parameters.freeze)
       end
+
+      # The CPUs the cell's placement spans.
+      def cpus = PLACEMENTS.fetch(placement)
     end
 
     # A landing boot: the environment kind and CPU count it boots at.

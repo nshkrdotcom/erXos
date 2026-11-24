@@ -84,20 +84,35 @@ module Erx
     # the first wrong field.
     def clock(text) = refusing('CLOCK') { clock_group(text) }
 
+    # What a boot asked of its guest (docs/design-bench.md, "The gates"): the declared
+    # benchmark (a BenchSuite::Benchmark), its landing cells in that boot, the
+    # BenchRecord::Profile each operation ran at, the clock the environment reads, and the
+    # CPU pairs, lower first, that its two-CPU cells span.
+    Asked = Data.define(:benchmark, :cells, :profiles, :clock, :pairs)
+
     # A boot's clock group and cells from the guest lines it printed, each a BENCH or a
-    # CLOCK line (docs/design-bench.md, "A benchmark"). Without exactly one valid CLOCK
-    # line the boot has no calibration and its cells are rejected, and so is a cell whose
-    # frequency is not the CLOCK line's. A failed cell stays failed in both only when its
-    # failure does not depend on the clock (a lost wake, a wrong status), and keeps only
-    # its status, reason and counts. Each refused line's reason is returned in refused,
-    # never its text, for the runner to give the cells it expected.
-    def boot(lines, benchmark:, profiles:)
+    # CLOCK line (docs/design-bench.md, "A benchmark"), held to what the boot asked. A
+    # BENCH line reports one of asked's cells, once, on its clock; a handshake's in batch
+    # 1. The CLOCK line reads asked's clock and calibrates exactly its pairs. Without
+    # exactly one such CLOCK line the boot has no calibration and its cells are rejected,
+    # and so is a cell whose frequency is not the CLOCK line's. A failed cell stays failed
+    # in both only when its failure does not depend on the clock (a lost wake, a wrong
+    # status), and keeps only its status, reason and counts. A calibrated handshake carries
+    # the clock's read cost and increment. An asked cell no line reported is not_run, or
+    # rejected when a BENCH line was refused. Each refused line's reason is returned in
+    # refused, never its text.
+    def boot(lines, asked)
       clocks, benches = lines.partition { |text| text.is_a?(String) && text.b.start_with?('CLOCK ') }
-      cells, refused = benches.map { |text| judged { cell(text, benchmark: benchmark, profiles: profiles) } }
-                              .partition { |answer| answer.is_a?(BenchRecord::Cell) }
-      calibration = clocks.size == 1 ? judged { clock(clocks.first) } : 'the boot has not exactly one CLOCK line'
+      seen = {}
+      answers = benches.map do |text|
+        judged { held(cell(text, benchmark: asked.benchmark.name, profiles: asked.profiles), asked, seen) }
+      end
+      cells, refused = answers.partition { |answer| answer.is_a?(BenchRecord::Cell) }
+      calibration = clocks.size == 1 ? judged { calibrated(clocks.first, asked) } : 'the boot has not exactly one CLOCK line'
       group = calibration unless calibration.is_a?(String)
-      { clock: group, cells: cells.map { |found| verdict(found, group) }, refused: refused + [calibration].grep(String) }
+      unreported = (asked.cells - seen.values).map { |declared| unreported(declared, asked, refused: !refused.empty?) }
+      { clock: group, cells: cells.map { |found| verdict(found, group, asked) } + unreported,
+        refused: refused + [calibration].grep(String) }
     end
 
     # The block's answer, or the reason it was refused.
@@ -107,15 +122,67 @@ module Erx
       e.message
     end
 
-    def verdict(cell, group)
+    # cell, once it is shown to be one asked for; seen maps each asked cell reported to its
+    # line's cell.
+    def held(cell, asked, seen)
+      conditions = cell.conditions
+      declared = asked.cells.find do |wanted|
+        [wanted.operation, wanted.load, wanted.placement, wanted.parameters] ==
+          [cell.operation, conditions.load, conditions.placement, conditions.parameters]
+      end
+      refusing('BENCH') do
+        need(declared, 'reports a cell the boot did not ask for')
+        need(conditions.clock == asked.clock, 'reads a clock that is not the one the boot reads')
+        need(!handshake?(cell, asked) || conditions.batch == 1, 'times a handshake in batches, not in batch 1')
+        need(declared.cpus == 1 || cell.status == 'unsupported' || !asked.pairs.empty?,
+             'times across two CPUs the boot did not calibrate')
+        need(!seen.key?(cell.key), 'reports a cell twice')
+      end
+      seen[cell.key] = declared
+      cell
+    end
+
+    # The clock group of the boot's CLOCK line, on the clock asked and over its pairs.
+    def calibrated(text, asked)
+      group = clock(text)
+      refusing('CLOCK') do
+        need(group.fetch('clock') == asked.clock, 'field clock is not the clock the boot reads')
+        need(group.fetch('pairs').map { |pair| pair.fetch('cpus') }.sort == asked.pairs.sort,
+             'field pairs does not calibrate the pairs the boot asked for')
+      end
+      group
+    end
+
+    # An asked cell no line reported: not_run, or rejected where a line it may have been was refused.
+    def unreported(declared, asked, refused:)
+      status, reason = refused ? ['rejected', 'a line of the boot was refused'] : ['not_run', 'the guest printed no line for it']
+      BenchRecord::Cell.new(benchmark: asked.benchmark.name, operation: declared.operation,
+                            conditions: BenchRecord::Conditions.new(load: declared.load, placement: declared.placement,
+                                                                    parameters: declared.parameters, clock: asked.clock,
+                                                                    batch: 1),
+                            profile: asked.profiles.fetch(declared.operation), status: status, reason: reason,
+                            counts: COUNTS.to_h { |name| [name, 0] }, detail: {})
+    end
+
+    def handshake?(cell, asked) = asked.benchmark.operations.fetch(cell.operation).handshake
+
+    def verdict(cell, group, asked)
       unjudged = if group.nil? then 'no valid CLOCK line in the boot'
                  elsif cell.detail['frequency_hz'] != group.fetch('frequency_hz')
                    'frequency differs from the CLOCK line'
                  end
-      return cell if unjudged.nil?
+      return quantized(cell, group, asked) if unjudged.nil?
       return stripped(cell, status: 'failed', reason: cell.reason) if clock_free_failure?(cell)
 
       stripped(cell, status: 'rejected', reason: unjudged)
+    end
+
+    # A handshake's cell is timed one operation per sample, however short (docs/design-bench.md,
+    # "The one clock"), so it carries the clock's read cost and increment beside its samples.
+    def quantized(cell, group, asked)
+      return cell unless handshake?(cell, asked)
+
+      BenchRecord::Cell.new(**cell.to_h, detail: cell.detail.merge(group.slice('read_cost', 'increment')))
     end
 
     # A failure the clock did not judge: a lost wake, or a wrong result the counts do not
@@ -290,7 +357,7 @@ module Erx
     def need(valid, reason) = valid || raise(BenchRecord::Invalid, reason)
 
     private_class_method :measured, :judged, :verdict, :clock_free_failure?, :stripped, :refusing, :bench_cell,
-                         :clock_group, :decode,
+                         :clock_group, :decode, :held, :calibrated, :unreported, :handshake?, :quantized,
                          :parsed, :conditions, :tick?, :count?, :frequency?, :pairs, :cpu_pair?, :interval?, :ends?,
                          :parameter?, :counts, :detail, :histogram, :largest, :raw, :phases, :need
   end

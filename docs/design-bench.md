@@ -262,6 +262,17 @@ status), and then carries only its status, reason and counts, no tick
 statistics; a failure judged with the clock, an early return, is
 `rejected` like the cells that did not fail.
 
+The runner holds a boot's lines to what it asked the guest for: the
+declared cells of that boot, the clock its environment reads, and the
+pairs of CPUs its two-CPU cells span. A `BENCH` line is refused when its
+operation, load cell, placement and workload parameters are not one
+declared cell, when its clock is not the environment's, when it repeats
+a cell, or when it times across two CPUs in a boot that calibrated no
+pair; a `CLOCK` line is refused when its clock is not the environment's
+or its pairs are not exactly the boot's. A declared cell no accepted
+line reports is `not_run`, or `rejected` when one of the boot's `BENCH`
+lines was refused, since that line may have been its own.
+
 ### The histogram
 
 A guest does not send raw samples: on the Raspberry Pi 4 its console runs
@@ -340,9 +351,16 @@ A round trip is never halved into a one-way number.
 **Short operations.** An operation whose warm-up median is under 100
 ticks is timed in batches: the smallest power of two of operations that
 spans 100 ticks. The record states the batch size, and its percentiles
-are of batch means; they are never called per-operation tails. A sample
-is never corrected by subtracting the read cost; the cost is recorded
-beside it.
+are of batch means; they are never called per-operation tails. An
+operation timed as a handshake (`wake-same-cpu`, `wake-cross-cpu`,
+`trigger-take`) is exempt, because B must return before A pokes again,
+so its operations cannot run back to back: its declaration marks it a
+handshake, its cell reports batch 1 whatever its median, and the host
+refuses a line of it in any other batch. Such a cell carries the `CLOCK`
+line's read cost and smallest increment in its operation file beside
+its samples, so a median of a few ticks shows how coarsely the clock
+resolved it. A sample is never corrected by subtracting the read cost;
+the cost is recorded beside it.
 
 ### Profiles
 

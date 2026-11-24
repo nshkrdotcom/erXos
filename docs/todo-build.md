@@ -43,10 +43,6 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
 * [Medium] benchmarks, the native bench guest's sizes: `test/guest/native_bench/guest.c` states the landing
   forms of the fast and periodic profiles as C constants and `tools/lib/erx/native_bench.rb` as
   `LANDING_PROFILES`; generate one from the other, or pass the sizes in the root's argument.
-* [High] benchmarks, the native bench guest's short operations: `wake-same-cpu` (median 4 ticks) and `trigger-take`
-  (9 ticks) are under the 100 ticks after which [design-bench.md](design-bench.md#the-one-clock) times an
-  operation in batches, but a handshake cannot be batched (B returns before A pokes again); the guest reports
-  batch 1. The design needs an exemption for handshakes, or another clock, before these cells are compared.
 * [Medium] benchmarks, the native bench guest's handshake (`test/guest/native_bench/guest.c`): any `ERX_OK` from
   B's park is taken as A's poke, which holds only while nothing else moves the group's epochs; A should
   publish the poke's number and B re-park until it sees it. The executors run fixed scripts that must match the
@@ -54,10 +50,6 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   phase. The root polls every 100 us on CPU 0 during `park-deadline`; a cross-CPU sample corrected below
   minus its uncertainty is clamped to 0 instead of making the cell unsupported; and that the root runs on
   CPU 0, which `same-cpu` and the pair assume, is unverified.
-* [Medium] benchmarks, the guest line validator (`tools/lib/erx/bench_measurement.rb`): a `BENCH` line's
-  load cell, placement and clock are checked only as names, not against the cell the run asked for, and a
-  two-CPU placement's pair is not checked against the `CLOCK` line's pairs; the suite's runner should pass the
-  declared cell and the boot's calibration to `BenchMeasurement.boot` and refuse a line that reports another.
 * [Low] benchmarks, reasons the host writes itself (`timed_out`, `not_run`, a `rejected` cell's reason from
   `BenchMeasurement.boot`): `BenchRecord::Cell` holds every reason to `BenchRecord::REASON`, but a refusal's
   message, which embeds `JsonInput`'s reason and path names from the history destination, has no character-set

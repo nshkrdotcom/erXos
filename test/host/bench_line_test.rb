@@ -5,6 +5,7 @@
 require 'minitest/autorun'
 require 'json'
 require_relative '../../tools/fuzz/bench_line'
+require_relative '../../tools/lib/erx/bench_suite'
 
 # The BENCH line validator (docs/design-bench.md, "A benchmark", "Verification"): a
 # guest's line is accepted whole or refused whole, with a reason that never quotes it.
@@ -12,6 +13,24 @@ class BenchLineTest < Minitest::Test
   Fuzz = Erx::BenchLineFuzz
 
   def cell(text) = Erx::BenchMeasurement.cell(text, benchmark: 'wake', profiles: Fuzz::PROFILES)
+
+# A landing cell of the wake benchmark the boot asked for.
+def declared(operation, load: 'idle', placement: 'same-cpu', parameters: {})
+  Erx::BenchSuite::LandingCell.new(operation: operation, load: load, placement: placement, parameters: parameters)
+end
+
+# The guest's lines judged as one boot that asked for cells, read on clock, whose
+# two-CPU cells span pairs.
+def boot(lines, cells: [declared('wake-same-cpu')], clock: 'counter', pairs: [[0, 1]])
+  asked = Erx::BenchMeasurement::Asked.new(benchmark: Erx::BenchSuite.benchmark('wake'), cells: cells,
+                                           profiles: Fuzz::PROFILES, clock: clock, pairs: pairs)
+  Erx::BenchMeasurement.boot(lines, asked)
+end
+
+# Conditions of a line under load at placement.
+def on(load, placement: 'same-cpu', clock: 'counter', batch: 1, parameters: {})
+  { 'load' => load, 'placement' => placement, 'parameters' => parameters, 'clock' => clock, 'batch' => batch }
+end
 
   def refusal(text)
     assert_raises(Erx::Error) { cell(text) }.message
@@ -90,23 +109,21 @@ class BenchLineTest < Minitest::Test
 
   def test_a_boots_cells_need_its_one_valid_clock_line
     lines = [Fuzz.line('wake-same-cpu')]
-    measured = Erx::BenchMeasurement.boot(lines + [Fuzz.clock_line], benchmark: 'wake', profiles: Fuzz::PROFILES)
+    measured = boot(lines + [Fuzz.clock_line])
     assert_equal [['measured', nil]], measured.fetch(:cells).map { |cell| [cell.status, cell.reason] }
     assert_equal 24_000_000, measured.fetch(:clock).fetch('frequency_hz')
     # A refused line costs only its own cell, and its reason never quotes it.
-    kept = Erx::BenchMeasurement.boot(lines + ['BENCH zz-secret', nil, Fuzz.clock_line], benchmark: 'wake',
-                                                                                           profiles: Fuzz::PROFILES)
+    kept = boot(lines + ['BENCH zz-secret', nil, Fuzz.clock_line])
     assert_equal ['measured'], kept.fetch(:cells).map(&:status)
     assert_equal 2, kept.fetch(:refused).size
     refute kept.fetch(:refused).any? { |reason| reason.include?('zz-secret') }
-    [lines, lines + [Fuzz.clock_line(increment: 0)], lines + [Fuzz.clock_line] * 2].each do |boot|
-      answer = Erx::BenchMeasurement.boot(boot, benchmark: 'wake', profiles: Fuzz::PROFILES)
+    [lines, lines + [Fuzz.clock_line(increment: 0)], lines + [Fuzz.clock_line] * 2].each do |printed|
+      answer = boot(printed)
       assert_equal [['rejected', 'no valid CLOCK line in the boot', 0]],
                    answer.fetch(:cells).map { |cell| [cell.status, cell.reason, cell.detail.size] }
       assert_nil answer.fetch(:clock)
     end
-    other = Erx::BenchMeasurement.boot(lines + [Fuzz.clock_line(frequency_hz: 62_500_000)],
-                                       benchmark: 'wake', profiles: Fuzz::PROFILES)
+    other = boot(lines + [Fuzz.clock_line(frequency_hz: 62_500_000)])
     assert_equal [['rejected', 'frequency differs from the CLOCK line']],
                  other.fetch(:cells).map { |cell| [cell.status, cell.reason] }
   end
@@ -121,11 +138,14 @@ class BenchLineTest < Minitest::Test
     unsupported = Fuzz.line('trigger-take', status: 'unsupported', reason: 'one CPU', samples: 0, histogram: [],
                                              largest: [], raw: [])
     lines = [Fuzz.line('wake-same-cpu'), without(without(unsupported, 'min'), 'max'),
-             Fuzz.line('wake-same-cpu', status: 'failed', reason: 'lost wake', counts: lost),
-             Fuzz.line('trigger-take', status: 'failed', reason: 'wrong status'),
-             Fuzz.line('wake-same-cpu', status: 'failed', reason: 'early return', counts: early)]
-    [lines, lines + [Fuzz.clock_line(frequency_hz: 62_500_000)]].each do |boot|
-      answer = Erx::BenchMeasurement.boot(boot, benchmark: 'wake', profiles: Fuzz::PROFILES)
+             Fuzz.line('wake-same-cpu', status: 'failed', reason: 'lost wake', counts: lost, conditions: on('spin')),
+             Fuzz.line('trigger-take', status: 'failed', reason: 'wrong status', conditions: on('spin')),
+             Fuzz.line('wake-same-cpu', status: 'failed', reason: 'early return', counts: early,
+                                        conditions: on('spin-two'))]
+    asked = [declared('wake-same-cpu'), declared('trigger-take'), declared('wake-same-cpu', load: 'spin'),
+             declared('trigger-take', load: 'spin'), declared('wake-same-cpu', load: 'spin-two')]
+    [lines, lines + [Fuzz.clock_line(frequency_hz: 62_500_000)]].each do |printed|
+      answer = boot(printed, cells: asked)
       assert_equal [], answer.fetch(:refused).grep(/BENCH/)
       cells = answer.fetch(:cells)
       assert_equal %w[rejected rejected failed failed rejected], cells.map(&:status)
@@ -133,10 +153,64 @@ class BenchLineTest < Minitest::Test
       assert_equal [lost, { 'lost' => 0, 'early' => 0, 'missed' => 0 }], cells[2, 2].map(&:counts)
       assert(cells.all? { |kept| kept.detail.empty? })
     end
-    calibrated = Erx::BenchMeasurement.boot(lines + [Fuzz.clock_line], benchmark: 'wake', profiles: Fuzz::PROFILES)
+    calibrated = boot(lines + [Fuzz.clock_line], cells: asked)
     assert_equal %w[measured unsupported failed failed failed], calibrated.fetch(:cells).map(&:status)
     refute_empty calibrated.fetch(:cells)[2].detail
   end
+
+  # A line reports a cell the boot asked for, on the environment's clock, once; a cell
+  # the guest never reported is not_run, or rejected where one of its lines was refused.
+  def test_a_line_is_held_to_the_cell_its_boot_asked_for
+    others = { 'a load cell it did not ask for' => on('spin'),
+               'a placement it did not ask for' => on('idle', placement: 'cross-cpu'),
+               'parameters it did not ask for' => on('idle', parameters: { 'size' => 4 }),
+               'another clock' => on('idle', clock: 'virtual') }
+    others.each do |what, conditions|
+      answer = boot([Fuzz.line('wake-same-cpu', conditions: conditions), Fuzz.clock_line])
+      assert_equal [['rejected', 'a line of the boot was refused']],
+                   answer.fetch(:cells).map { |cell| [cell.status, cell.reason] }, what
+      assert_equal 1, answer.fetch(:refused).size, what
+      assert_match(/\ABENCH line /, answer.fetch(:refused).first, what)
+    end
+    twice = boot([Fuzz.line('wake-same-cpu')] * 2 + [Fuzz.clock_line])
+    assert_equal ['measured'], twice.fetch(:cells).map(&:status)
+    assert_match(/twice/, twice.fetch(:refused).first)
+    missing = boot([Fuzz.line('wake-same-cpu'), Fuzz.clock_line],
+                   cells: [declared('wake-same-cpu'), declared('trigger-take')])
+    assert_equal [%w[wake-same-cpu measured], %w[trigger-take not_run]],
+                 missing.fetch(:cells).map { |cell| [cell.operation, cell.status] }
+    assert_equal 'counter', missing.fetch(:cells).last.conditions.clock
+  end
+
+  # A handshake cannot be batched (docs/design-bench.md, "The one clock"): its line
+  # reports batch 1, and its cell carries the CLOCK line's read cost and increment.
+  def test_a_handshake_reports_batch_one_and_carries_the_clocks_quantization
+    refused = boot([Fuzz.line('wake-same-cpu', conditions: on('idle', batch: 2)), Fuzz.clock_line])
+    assert_match(/batch/, refused.fetch(:refused).first)
+    handshake = boot([Fuzz.line('wake-same-cpu'), Fuzz.line('park-deadline'), Fuzz.clock_line(read_cost: 3, increment: 2)],
+                     cells: [declared('wake-same-cpu'), declared('park-deadline')])
+    shook, parked = handshake.fetch(:cells)
+    assert_equal [3, 2], shook.detail.values_at('read_cost', 'increment')
+    refute parked.detail.key?('read_cost')
+  end
+
+  # The CLOCK line reads the environment's clock and calibrates exactly the pairs the
+  # boot's two-CPU cells span; a two-CPU cell with samples needs a calibrated pair.
+  def test_the_clock_line_calibrates_the_pairs_the_boot_asked_for
+    lines = [Fuzz.line('wake-same-cpu')]
+    [boot(lines + [Fuzz.clock_line], pairs: [[0, 3]]), boot(lines + [Fuzz.clock_line(clock: 'virtual')]),
+     boot(lines + [Fuzz.clock_line(pairs: [])])].each do |answer|
+      assert_equal [['rejected', 'no valid CLOCK line in the boot']],
+                   answer.fetch(:cells).map { |cell| [cell.status, cell.reason] }
+      assert_match(/\ACLOCK line /, answer.fetch(:refused).last)
+    end
+    cross = declared('wake-same-cpu', placement: 'cross-cpu')
+    one_cpu = boot([Fuzz.line('wake-same-cpu', conditions: on('idle', placement: 'cross-cpu')),
+                    Fuzz.clock_line(pairs: [])], cells: [cross], pairs: [])
+    assert_equal ['rejected'], one_cpu.fetch(:cells).map(&:status)
+    assert_match(/two CPUs/, one_cpu.fetch(:refused).first)
+  end
+
   def test_a_wrong_answer_is_failed_and_a_partial_cell_says_so
     assert_raises(Erx::Error) { cell(Fuzz.line('wake-same-cpu', counts: { 'lost' => 1, 'early' => 0, 'missed' => 0 })) }
     failed = cell(Fuzz.line('wake-same-cpu', status: 'failed', reason: 'lost wake',

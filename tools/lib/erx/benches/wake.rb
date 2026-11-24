@@ -14,11 +14,11 @@ Erx::BenchSuite.declare_benchmark(
   operations: [
     operation.new(name: 'park-deadline', profile: 'periodic',
                   result: 'ERX_ETIMEDOUT, not before its deadline'),
-    operation.new(name: 'wake-same-cpu', profile: 'fast',
+    operation.new(name: 'wake-same-cpu', profile: 'fast', handshake: true,
                   result: "B's park returns ERX_OK; ERX_ETIMEDOUT is a lost wake"),
-    operation.new(name: 'wake-cross-cpu', profile: 'fast',
+    operation.new(name: 'wake-cross-cpu', profile: 'fast', handshake: true,
                   result: "B's park returns ERX_OK; ERX_ETIMEDOUT is a lost wake"),
-    operation.new(name: 'trigger-take', profile: 'fast',
+    operation.new(name: 'trigger-take', profile: 'fast', handshake: true,
                   result: 'the label the bind gave, once per fire'),
     operation.new(name: 'erlang-timer', profile: 'periodic',
                   result: 'one message per deadline, none before it')
