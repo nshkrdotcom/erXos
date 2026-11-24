@@ -1,0 +1,89 @@
+{
+  "$schema": "https://repomix.com/schemas/latest/schema.json",
+  "output": {
+    "filePath": "repomix-output.xml",
+    "style": "xml",
+    "removeComments": false,
+    "removeEmptyLines": true,
+    "showLineNumbers": false,
+    "topFilesLength": 15,
+    "copyToClipboard": false
+  },
+  "include": [
+    "README.md",
+    "CLAUDE.md",
+    "TODO.md",
+    "DEMOS.md",
+    "Makefile",
+    ".github/**",
+
+    "docs/design.md",
+    "docs/design-abi.md",
+    "docs/design-build.md",
+    "docs/design-host-oracle.md",
+
+    "specs/**",
+    "test/cbmc/**",
+    "test/litmus/**",
+    "test/conformance/**",
+    "test/fuzz/**",
+
+    "kernel/**",
+    "include/**",
+    "abi/**",
+    "hw/**",
+    "config/**",
+    "sdk/**",
+    "liberx/*.c",
+    "liberx/*.h",
+    "liberx/exec/**",
+    "liberx/system/**",
+
+    "erlang/apps/erx/src/**",
+    "erlang/apps/*/src/*.app.src",
+
+    "test/integration/**",
+    "test/bt/**",
+    "test/shell/**",
+    "test/vt/**",
+    "test/raspi4b/**",
+
+    "bench/*.erl",
+    "tools/*.rb",
+    "tools/erx",
+    "tools/erx-app",
+    "tools/host/**",
+    "web/package.json",
+    "web/tsconfig.json",
+    "web/src/**"
+  ],
+  "ignore": {
+    "useGitignore": true,
+    "useDefaultPatterns": true,
+    "customPatterns": [
+      "repomix-output.*",
+      "musl/**",
+      "openssl/**",
+      "otp/**",
+      "fiasco/**",
+      "ctaes/**",
+      "littlefs/**",
+      "monocypher/**",
+      "build/**",
+      "display/fonts/**",
+      "test/fixtures/**",
+      "test/erlang/**",
+      "test/host/**",
+      "tools/lib/**",
+      "tools/fuzz/**",
+      "docs/book/**",
+      "**/pnpm-lock.yaml",
+      "**/*.png",
+      "**/*.ttf",
+      "**/*.svg"
+    ]
+  },
+  "security": {
+    "enableSecurityCheck": true
+  }
+}
