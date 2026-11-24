@@ -98,9 +98,11 @@ module Erx
     # a comment, or a literal true for the packer's test_code keyword. The check reads
     # lines, as the JSON check does, so it catches a slip, not a name assembled from
     # pieces. Tests outside tools/ may name either.
-    # block_device.rb lends its test image to driver_domains.rb (BlockDevice::Run#test_image_for).
+    # block_device.rb lends its test image to driver_domains.rb (BlockDevice::Run#test_image_for);
+    # bt_domain.rb boots the Bluetooth suite's echo domain, a test application.
     TEST_IMAGE_BUILDERS = %w[tools/lib/erx/oracle_qemu.rb tools/lib/erx/block_device.rb tools/lib/erx/system_domain.rb
-                             tools/lib/erx/programs.rb tools/lib/erx/apps.rb tools/lib/erx/display_domain.rb].freeze
+                             tools/lib/erx/programs.rb tools/lib/erx/apps.rb tools/lib/erx/display_domain.rb
+                             tools/lib/erx/bt_domain.rb].freeze
     TEST_IMAGE_DEFINER = 'tools/lib/erx/production_image.rb'
     TEST_IMAGE_ENTRY = /\bbuild_test_image\b|\btest_code:\s*true\b/
     # The development login key admits its holder as root (docs/design-ssh.md, "Login
