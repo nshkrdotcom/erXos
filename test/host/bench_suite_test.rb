@@ -80,9 +80,12 @@ class BenchSuiteTest < Minitest::Test
         clock: {}, cells: [cell]
       )
     end
-    assert_equal 'passed', Suite.boot_cell(record.call(1, 'cross-cpu', 'unsupported'), seed_caught: true)
-    assert_equal 'partial', Suite.boot_cell(record.call(4, 'cross-cpu', 'unsupported'), seed_caught: true)
-    assert_equal 'not_run', Suite.boot_cell(record.call(4, 'cross-cpu', 'not_run'), seed_caught: true)
-    assert_equal 'failed', Suite.boot_cell(record.call(1, 'cross-cpu', 'unsupported'), seed_caught: false)
+    assert_equal 'passed', Suite.boot_cell(record.call(1, 'cross-cpu', 'unsupported'), seed_caught: true, refused: [])
+    # A refused line may have been a failure, so the boot is at best partial.
+    assert_equal 'partial', Suite.boot_cell(record.call(1, 'cross-cpu', 'unsupported'), seed_caught: true,
+                                                                                     refused: ['BENCH line is long'])
+    assert_equal 'partial', Suite.boot_cell(record.call(4, 'cross-cpu', 'unsupported'), seed_caught: true, refused: [])
+    assert_equal 'not_run', Suite.boot_cell(record.call(4, 'cross-cpu', 'not_run'), seed_caught: true, refused: [])
+    assert_equal 'failed', Suite.boot_cell(record.call(1, 'cross-cpu', 'unsupported'), seed_caught: false, refused: [])
   end
 end

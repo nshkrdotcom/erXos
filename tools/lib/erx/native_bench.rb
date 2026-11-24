@@ -10,6 +10,7 @@ require_relative 'error'
 require_relative 'fiasco'
 require_relative 'native_root'
 require_relative 'qemu'
+require_relative 'qemu_gate'
 require_relative 'runner'
 require_relative 'source_revision'
 
@@ -42,6 +43,8 @@ module Erx
 
     # The BENCH and CLOCK lines of a serial log, each without its line end. They are the
     # guest's, untrusted: BenchMeasurement.boot is their one judge.
+    def guest_lines(serial) = serial.b.split(/\r?\n/n).grep(GUEST_LINE)
+
     # The root's build flags: the test hooks, the landing profiles' sizes, which
     # test/guest/native_bench/guest.c takes from them alone, and the seeded fault when asked for.
     def flags(seed_lost_wake:)
@@ -49,8 +52,6 @@ module Erx
       ['-DERX_FIASCO_TEST_HOOKS', "-DERX_BENCH_FAST_WARMUP=#{fast.warmup}u", "-DERX_BENCH_FAST_SAMPLES=#{fast.samples}u",
        "-DERX_BENCH_PERIODIC_SAMPLES=#{periodic.samples}u", *(seed_lost_wake ? ['-DERX_BENCH_SEED_LOST_WAKE'] : [])].freeze
     end
-
-    def guest_lines(serial) = serial.b.split(/\r?\n/n).grep(GUEST_LINE)
 
     # The profile each operation of benchmark ran at, in its landing form.
     def profiles(benchmark)
@@ -127,6 +128,7 @@ module Erx
                  .build(directory: File.join(build, 'image'), stand_in_root: root_task)
       end
     end
+
     # The native boot of the landing matrix (docs/design-bench.md, "The gates"): one boot
     # of the image and one of its seeded build. The first boot's lines, judged against
     # what it asked, are a record, which BenchRecord.write adds to the history unless the
@@ -145,14 +147,17 @@ module Erx
       def call(benchmark, boot:, history:)
         accel = boot.kind.delete_prefix('qemu-')
         asked = NativeBench.asked(benchmark, cpus: boot.cpus)
+        revision = revision()
+        model = sysctl('hw.model')
         date = Time.now.utc
-        before = load_average
+        before = QemuGate.one_minute_load
         measured = @run.call(accel: accel, cpus: boot.cpus)
-        after = load_average
-        seeded = @run.call(accel: accel, cpus: boot.cpus, seed_lost_wake: true)
+        after = QemuGate.one_minute_load
         answer = BenchMeasurement.boot(measured.fetch(:lines), asked)
+        # The record is written before the seeded boot, so a failure there does not lose it.
         record = BenchRecord::Record.new(
-          environment: environment(boot, accel: accel, measured: measured), subject: subject(measured),
+          environment: environment(boot, accel: accel, model: model, measured: measured),
+          subject: subject(revision, measured),
           run: BenchRecord::Run.new(date: date, started_by: 'landing', load: before && after && [before, after],
                                     host_cpus: Etc.nprocessors, reused_from: measured.fetch(:reused_from)),
           clock: answer.fetch(:clock) || {}, cells: answer.fetch(:cells)
@@ -160,33 +165,29 @@ module Erx
         written = unless record.run.replayed?
                     BenchRecord.write(record, history: history, erxos_root: @root, boots: [{ serial: measured.fetch(:serial) }])
                   end
+        seeded = @run.call(accel: accel, cpus: boot.cpus, seed_lost_wake: true)
         { record: record, written: written, refused: answer.fetch(:refused),
           seed_caught: NativeBench.seed_caught?(BenchMeasurement.boot(seeded.fetch(:lines), asked).fetch(:cells)) }
       end
 
       private
 
-      def environment(boot, accel:, measured:)
+      def environment(boot, accel:, model:, measured:)
         BenchRecord::Environment.new(
-          kind: boot.kind, model: sysctl('hw.model'), cpus: boot.cpus, system: nil,
+          kind: boot.kind, model: model, cpus: boot.cpus, system: nil,
           details: { 'memory_mib' => MEMORY_MIB, 'accelerator' => accel, 'machine' => 'virt',
                      'qemu' => measured.fetch(:qemu_version), 'host_os' => RbConfig::CONFIG['host_os'] }.compact
         )
       end
 
-      def subject(measured)
-        revision = SourceRevision.read(root: @root, runner: @runner)
-        raise Error, "bench: #{@root} is not a git checkout, so a record has no revision" unless revision
-
-        BenchRecord::Subject.new(revision: revision.commit, dirty: revision.dirty,
-                                 details: measured.slice(:image_sha256, :flags, :compiler).transform_keys(&:to_s))
+      def revision
+        SourceRevision.read(root: @root, runner: @runner) ||
+          raise(Error, "bench: #{@root} is not a git checkout, so a record has no revision")
       end
 
-      # The host's one-minute load average, nil where it cannot be read.
-      def load_average
-        sysctl('vm.loadavg')[/\d+(?:\.\d+)?/]&.to_f
-      rescue Error
-        nil
+      def subject(revision, measured)
+        BenchRecord::Subject.new(revision: revision.commit, dirty: revision.dirty,
+                                 details: measured.slice(:image_sha256, :flags, :compiler).transform_keys(&:to_s))
       end
 
       def sysctl(name)

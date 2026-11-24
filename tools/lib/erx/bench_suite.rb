@@ -128,12 +128,14 @@ module Erx
     end
 
     # The suite cell of one boot's benchmark from its record: the worst of its cells,
-    # each judged in the record's environment, and failed when the boot's seeded run
+    # each judged in the record's environment, at best partial when a line of the boot
+    # was refused, since what it said is unknown, and failed when the boot's seeded run
     # did not show its fault.
-    def boot_cell(record, seed_caught:)
+    def boot_cell(record, seed_caught:, refused:)
       return 'failed' unless seed_caught
 
-      suite_cell(record.cells.map { |cell| [cell.status, expected_unsupported?(cell.conditions, record.environment)] })
+      judged = record.cells.map { |cell| [cell.status, expected_unsupported?(cell.conditions, record.environment)] }
+      suite_cell(judged + (refused.empty? ? [] : [['rejected', false]]))
     end
 
     # The suite's run: the native boot's wake cells and its seeded run, recorded in
@@ -144,20 +146,22 @@ module Erx
                                                                    history: history)
       record = landing.fetch(:record)
       cells = suite_cells.to_h { |cell| [cell, 'pending'] }
-                         .merge(suite_cell_name('native', 'wake') => boot_cell(record, seed_caught: landing.fetch(:seed_caught)))
+                         .merge(suite_cell_name('native', 'wake') => boot_cell(record, seed_caught: landing.fetch(:seed_caught),
+                                                                             refused: landing.fetch(:refused)))
       { cells: cells, notes: landing_notes(landing) + ['bench: the xdomain boot has no bench image to boot'] }
     end
 
-    # What the report says of the native boot. A refusal never quotes a guest's line, but
-    # may carry JsonInput's words about it, so each is escaped for the terminal.
+    # What the report says of the native boot, each note escaped for the terminal: a
+    # refusal never quotes a guest's line but may carry JsonInput's words about it.
     def landing_notes(landing)
       record = landing.fetch(:record)
       written = landing.fetch(:written)
-      [written ? "bench: native: recorded #{LineEscape.escape(written)}" : "bench: native: replayed #{LineEscape.escape(record.run.reused_from)}, no record added",
-       *("bench: native: the seeded lost wake was not caught" unless landing.fetch(:seed_caught)),
-       *record.cells.reject { |cell| cell.status == 'measured' }
-              .map { |cell| "bench: native: #{cell.operation} #{cell.conditions.placement}: #{cell.status} (#{cell.reason})" },
-       *landing.fetch(:refused).map { |reason| "bench: native: refused: #{LineEscape.escape(reason)}" }]
+      kept = written ? "recorded #{written}" : "replayed the stored log #{record.run.reused_from}, no record added"
+      seed = landing.fetch(:seed_caught) ? [] : ['the seeded lost wake was not caught']
+      cells = record.cells.reject { |cell| cell.status == 'measured' }
+                    .map { |cell| "#{cell.operation} #{cell.conditions.placement}: #{cell.status} (#{cell.reason})" }
+      refused = landing.fetch(:refused).map { |reason| "refused: #{reason}" }
+      [kept, *seed, *cells, *refused].map { |note| "bench: native: #{LineEscape.escape(note)}" }
     end
     private_class_method :landing_notes
   end

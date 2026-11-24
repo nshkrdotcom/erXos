@@ -98,21 +98,28 @@ module Erx
     # and so is a cell whose frequency is not the CLOCK line's. A failed cell stays failed
     # in both only when its failure does not depend on the clock (a lost wake, a wrong
     # status), and keeps only its status, reason and counts. A calibrated handshake carries
-    # the clock's read cost and increment. An asked cell no line reported is not_run, or
-    # rejected when a BENCH line was refused. Each refused line's reason is returned in
-    # refused, never its text.
+    # the clock's read cost and increment. An asked cell no accepted line reported is
+    # not_run, or rejected when a BENCH line was refused; one reported more than once is
+    # rejected, whatever its lines said. The cells come in asked's order, and each refused
+    # line's reason is returned in refused, never its text.
     def boot(lines, asked)
       clocks, benches = lines.partition { |text| text.is_a?(String) && text.b.start_with?('CLOCK ') }
-      seen = {}
       answers = benches.map do |text|
-        judged { held(cell(text, benchmark: asked.benchmark.name, profiles: asked.profiles), asked, seen) }
+        judged { asked_cell(cell(text, benchmark: asked.benchmark.name, profiles: asked.profiles), asked) }
       end
-      cells, refused = answers.partition { |answer| answer.is_a?(BenchRecord::Cell) }
+      accepted, refused = answers.partition { |answer| answer.is_a?(Array) }
+      reported = accepted.group_by(&:first).transform_values { |pairs| pairs.map(&:last) }
       calibration = clocks.size == 1 ? judged { calibrated(clocks.first, asked) } : 'the boot has not exactly one CLOCK line'
       group = calibration unless calibration.is_a?(String)
-      unreported = (asked.cells - seen.values).map { |declared| unreported(declared, asked, refused: !refused.empty?) }
-      { clock: group, cells: cells.map { |found| verdict(found, group, asked) } + unreported,
-        refused: refused + [calibration].grep(String) }
+      cells = asked.cells.map do |declared|
+        case reported.fetch(declared, [])
+        in [found] then verdict(found, group, asked)
+        in [] if refused.empty? then unreported(declared, asked, status: 'not_run', reason: 'the guest printed no line for it')
+        in [] then unreported(declared, asked, status: 'rejected', reason: 'a line of the boot was refused')
+        else unreported(declared, asked, status: 'rejected', reason: 'the guest reported it more than once')
+        end
+      end
+      { clock: group, cells: cells, refused: refused + [calibration].grep(String) }
     end
 
     # The block's answer, or the reason it was refused.
@@ -122,9 +129,8 @@ module Erx
       e.message
     end
 
-    # cell, once it is shown to be one asked for; seen maps each asked cell reported to its
-    # line's cell.
-    def held(cell, asked, seen)
+    # The asked cell a line's cell reports, and the cell: [declared, cell].
+    def asked_cell(cell, asked)
       conditions = cell.conditions
       declared = asked.cells.find do |wanted|
         [wanted.operation, wanted.load, wanted.placement, wanted.parameters] ==
@@ -136,10 +142,8 @@ module Erx
         need(!handshake?(cell, asked) || conditions.batch == 1, 'times a handshake in batches, not in batch 1')
         need(declared.cpus == 1 || cell.status == 'unsupported' || !asked.pairs.empty?,
              'times across two CPUs the boot did not calibrate')
-        need(!seen.key?(cell.key), 'reports a cell twice')
       end
-      seen[cell.key] = declared
-      cell
+      [declared, cell]
     end
 
     # The clock group of the boot's CLOCK line, on the clock asked and over its pairs.
@@ -153,9 +157,8 @@ module Erx
       group
     end
 
-    # An asked cell no line reported: not_run, or rejected where a line it may have been was refused.
-    def unreported(declared, asked, refused:)
-      status, reason = refused ? ['rejected', 'a line of the boot was refused'] : ['not_run', 'the guest printed no line for it']
+    # An asked cell no single accepted line reported, with no samples.
+    def unreported(declared, asked, status:, reason:)
       BenchRecord::Cell.new(benchmark: asked.benchmark.name, operation: declared.operation,
                             conditions: BenchRecord::Conditions.new(load: declared.load, placement: declared.placement,
                                                                     parameters: declared.parameters, clock: asked.clock,
@@ -357,7 +360,7 @@ module Erx
     def need(valid, reason) = valid || raise(BenchRecord::Invalid, reason)
 
     private_class_method :measured, :judged, :verdict, :clock_free_failure?, :stripped, :refusing, :bench_cell,
-                         :clock_group, :decode, :held, :calibrated, :unreported, :handshake?, :quantized,
+                         :clock_group, :decode, :asked_cell, :calibrated, :unreported, :handshake?, :quantized,
                          :parsed, :conditions, :tick?, :count?, :frequency?, :pairs, :cpu_pair?, :interval?, :ends?,
                          :parameter?, :counts, :detail, :histogram, :largest, :raw, :phases, :need
   end

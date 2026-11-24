@@ -14,23 +14,23 @@ class BenchLineTest < Minitest::Test
 
   def cell(text) = Erx::BenchMeasurement.cell(text, benchmark: 'wake', profiles: Fuzz::PROFILES)
 
-# A landing cell of the wake benchmark the boot asked for.
-def declared(operation, load: 'idle', placement: 'same-cpu', parameters: {})
-  Erx::BenchSuite::LandingCell.new(operation: operation, load: load, placement: placement, parameters: parameters)
-end
+  # A landing cell of the wake benchmark the boot asked for.
+  def declared(operation, load: 'idle', placement: 'same-cpu', parameters: {})
+    Erx::BenchSuite::LandingCell.new(operation: operation, load: load, placement: placement, parameters: parameters)
+  end
 
-# The guest's lines judged as one boot that asked for cells, read on clock, whose
-# two-CPU cells span pairs.
-def boot(lines, cells: [declared('wake-same-cpu')], clock: 'counter', pairs: [[0, 1]])
-  asked = Erx::BenchMeasurement::Asked.new(benchmark: Erx::BenchSuite.benchmark('wake'), cells: cells,
-                                           profiles: Fuzz::PROFILES, clock: clock, pairs: pairs)
-  Erx::BenchMeasurement.boot(lines, asked)
-end
+  # The guest's lines judged as one boot that asked for cells, read on clock, whose
+  # two-CPU cells span pairs.
+  def boot(lines, cells: [declared('wake-same-cpu')], clock: 'counter', pairs: [[0, 1]])
+    asked = Erx::BenchMeasurement::Asked.new(benchmark: Erx::BenchSuite.benchmark('wake'), cells: cells,
+                                             profiles: Fuzz::PROFILES, clock: clock, pairs: pairs)
+    Erx::BenchMeasurement.boot(lines, asked)
+  end
 
-# Conditions of a line under load at placement.
-def on(load, placement: 'same-cpu', clock: 'counter', batch: 1, parameters: {})
-  { 'load' => load, 'placement' => placement, 'parameters' => parameters, 'clock' => clock, 'batch' => batch }
-end
+  # Conditions of a line under load at placement.
+  def on(load, placement: 'same-cpu', clock: 'counter', batch: 1, parameters: {})
+    { 'load' => load, 'placement' => placement, 'parameters' => parameters, 'clock' => clock, 'batch' => batch }
+  end
 
   def refusal(text)
     assert_raises(Erx::Error) { cell(text) }.message
@@ -172,9 +172,15 @@ end
       assert_equal 1, answer.fetch(:refused).size, what
       assert_match(/\ABENCH line /, answer.fetch(:refused).first, what)
     end
-    twice = boot([Fuzz.line('wake-same-cpu')] * 2 + [Fuzz.clock_line])
-    assert_equal ['measured'], twice.fetch(:cells).map(&:status)
-    assert_match(/twice/, twice.fetch(:refused).first)
+    # A cell reported twice is rejected whatever either line said, its batch changed or not.
+    lost = Fuzz.line('wake-same-cpu', status: 'failed', reason: 'lost wake', counts: { 'lost' => 1, 'early' => 0, 'missed' => 0 })
+    [[Fuzz.line('wake-same-cpu'), lost],
+     [Fuzz.line('park-deadline'), Fuzz.line('park-deadline', conditions: on('idle', batch: 2))]].each do |pair|
+      twice = boot(pair + [Fuzz.clock_line], cells: [declared(Fuzz::MEASUREMENT.cell(pair.first, benchmark: 'wake', profiles: Fuzz::PROFILES).operation)])
+      assert_equal [['rejected', 'the guest reported it more than once']],
+                   twice.fetch(:cells).map { |cell| [cell.status, cell.reason] }
+      assert_empty twice.fetch(:refused)
+    end
     missing = boot([Fuzz.line('wake-same-cpu'), Fuzz.clock_line],
                    cells: [declared('wake-same-cpu'), declared('trigger-take')])
     assert_equal [%w[wake-same-cpu measured], %w[trigger-take not_run]],

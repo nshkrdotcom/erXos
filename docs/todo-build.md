@@ -39,6 +39,17 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   fails its cell unless the second loses its wake. Still to build: `bench/erx_wake_bench.erl` with
   `bench/erx_bench_hist.erl` for `erlang-timer` in the `xdomain` bench image; and the load cells, whose
   spinners are `native_task`'s program in new modes, which the landing matrix does not run yet.
+* [Medium] benchmarks, the landing run's record (`tools/lib/erx/native_bench.rb` `Landing`,
+  `tools/lib/erx/bench_record.rb`): a `not_run` or `rejected` cell the host makes carries zero counts and batch 1,
+  which nobody observed, because `BenchRecord::Cell` requires both; the format should let such a cell carry none. The
+  subject holds the compiler's path and the root's `-D` flags, not the compiler's version and the complete compile
+  and link flags; the environment's `host_os` is Ruby's build target, not the host's OS version; a boot without a
+  valid `CLOCK` line records `clock: {}`; the record has no `boot-1.qemu.log`; a replayed boot's `reused_from`
+  names the gate store's log, not the history run that recorded it. `Landing#call` and the suite's notes have no
+  test (a stub `Run` would cover the replay, the write before the seeded boot and the escaping), and the line fuzz
+  target does not reach `BenchMeasurement.boot`. The pair `[0, cpus - 1]` is stated in `NativeBench.asked` and in
+  the guest's choice of executor CPU; `tools/lib/erx/bench.rb`'s load average is a third reader beside
+  `QemuGate.one_minute_load`.
 * [Medium] benchmarks, the native bench guest's handshake (`test/guest/native_bench/guest.c`): any `ERX_OK` from
   B's park is taken as A's poke, which holds only while nothing else moves the group's epochs; A should
   publish the poke's number and B re-park until it sees it. The executors run fixed scripts that must match the

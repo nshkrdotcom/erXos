@@ -16,7 +16,7 @@
  * cell is calibrated before and after it, between the root and executor 1.
  *
  * Every interval is ticks of erx_fiasco_counter. A setup failure ends the machine with a
- * FAILED line and prints no cell, which the host reports as not run; a wrong result in a
+ * FAILED line and prints no cell, which fails the host's run; a wrong result in a
  * cell is that cell's failed status. Built with ERX_BENCH_SEED_LOST_WAKE, the root skips
  * one wake of wake-same-cpu, which must come back as a failed cell with one lost wake.
  */
